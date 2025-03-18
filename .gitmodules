@@ -19,3 +19,6 @@
 [submodule "rust-node"]
 	path = rust-node
 	url = git@github.com:runar-labs/rust-node.git
+[submodule "rust-e2e-test"]
+	path = rust-e2e-test
+	url = git@github.com:runar-labs/rust-e2e-test.git
