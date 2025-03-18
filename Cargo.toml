@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "node",
+    "kagi_macros",
+    "apps/common/gateway",
+    "common",
+    "test_service_info",
+    "utils",
+    "examples"
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Kagi Node System"
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] } 

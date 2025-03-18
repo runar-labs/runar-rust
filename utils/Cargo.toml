@@ -1,0 +1,12 @@
+[package]
+name = "kagi_utils"
+version = "0.1.0"
+edition = "2021"
+description = "Utility macros and functions for the KAGI system"
+authors = ["KAGI Team"]
+license = "MIT"
+
+[dependencies]
+kagi_node = { path = "../node" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
