@@ -36,7 +36,7 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 - [x] Verify no critical functionality is lost during consolidation
 - [x] Update tests to reflect new import paths
 - [x] Verify the build works with consolidated code but before removing old packages
-- [ ] Remove redundant packages after verification (kagi_utils, utils, etc.)
+- [x] Remove redundant packages after verification (kagi_utils, utils, etc.)
 
 ## 2. Renaming from Kagi to Runar
 
