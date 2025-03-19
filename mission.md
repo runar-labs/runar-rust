@@ -45,7 +45,7 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 - [x] Update package names in Cargo.toml files
 - [x] Update module names and references in source code
 - [x] Update documentation references from "kagi" to "runar"
-- [ ] Update README files and other project documentation
+- [x] Update README files and other project documentation
 - [ ] Ensure all references to the project in comments are updated
 - [ ] Verify proper references to implementations (rust-runar-node, go-runar-node, ts-runar-node)
 
