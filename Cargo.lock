@@ -3601,15 +3601,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runar_utils"
-version = "0.1.0"
-dependencies = [
- "runar_common",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "rusqlite"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
