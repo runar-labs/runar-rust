@@ -75,9 +75,9 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 
 - [x] Verify that all crates build successfully after changes
 - [x] Run the full test suite across all submodules
-- [ ] Ensure all examples work correctly
+- [ ] Ensure all examples work correctly (Needs Implementation)
 - [ ] Performance testing to verify no regressions
-- [ ] Create integration tests that verify cross-module functionality
+- [ ] Create integration tests that verify cross-module functionality (Needs Implementation)
 - [ ] Test on different platforms if applicable
 - [ ] Document any breaking changes and required migrations for users
 
@@ -94,6 +94,7 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 
 - The `pub_sub_macros_test.rs` test file is temporarily parked as it requires additional work to function with the updated macro system. We'll revisit this after completing the main migration tasks.
 - Current focus is on ensuring all core functionality is working properly in the restructured repository.
+- **Macro API Changes**: We identified that the current macro implementation doesn't support our desired API pattern (returning plain data instead of ServiceResponse, removing manual operation handling). This will require additional implementation work to update the macros.
 
 
 
