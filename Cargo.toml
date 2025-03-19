@@ -2,8 +2,7 @@
 members = [
     "rust-node",
     "rust-macros",
-    "rust-common",
-    "utils"
+    "rust-common"
 ]
 resolver = "2"
 
