@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "node",
-    "kagi_macros",
+    "rust-node",
+    "rust-macros",
     "apps/common/gateway",
-    "common",
+    "rust-common",
     "test_service_info",
     "utils",
     "examples"
@@ -13,8 +13,8 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "Kagi Node System"
+authors = ["Runar Team"]
+description = "Runar Node System"
 license = "MIT"
 
 [workspace.dependencies]
