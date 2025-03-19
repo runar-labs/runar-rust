@@ -28,11 +28,11 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 
 ## 1. Code Consolidation and Deduplication
 
-- [ ] Analyze duplicate code between rust-common, kagi_utils, utils, kagi_node, test_service_info
-- [ ] Create a consolidation plan with mapping of which files go where
-- [ ] Move all common utilities and shared code to rust-common crate
-- [ ] Update all import paths across the codebase to point to consolidated code in rust-common
-- [ ] Ensure proper dependency structure in Cargo.toml files after consolidation
+- [x] Analyze duplicate code between rust-common, kagi_utils, utils, kagi_node, test_service_info
+- [x] Create a consolidation plan with mapping of which files go where
+- [x] Move all common utilities and shared code to rust-common crate
+- [x] Update all import paths across the codebase to point to consolidated code in rust-common
+- [x] Ensure proper dependency structure in Cargo.toml files after consolidation
 - [ ] Verify no critical functionality is lost during consolidation
 - [ ] Update tests to reflect new import paths
 - [ ] Verify the build works with consolidated code but before removing old packages
@@ -40,10 +40,10 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 
 ## 2. Renaming from Kagi to Runar
 
-- [ ] Create a comprehensive grep search to identify all "kagi" references throughout the codebase
-- [ ] Update all file and directory names from "kagi_*" to "runar_*"
-- [ ] Update package names in Cargo.toml files
-- [ ] Update module names and references in source code
+- [x] Create a comprehensive grep search to identify all "kagi" references throughout the codebase
+- [x] Update all file and directory names from "kagi_*" to "runar_*"
+- [x] Update package names in Cargo.toml files
+- [x] Update module names and references in source code
 - [ ] Update documentation references from "kagi" to "runar"
 - [ ] Update README files and other project documentation
 - [ ] Ensure all references to the project in comments are updated
@@ -51,11 +51,11 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 
 ## 3. Macro Analysis and Reorganization
 
-- [ ] Identify all macros across the codebase
-- [ ] Create inventory of macros in rust-node core package
-- [ ] Determine which macros should move to rust-macros
-- [ ] Migrate appropriate macros to rust-macros package
-- [ ] Update all references to moved macros
+- [x] Identify all macros across the codebase
+- [x] Create inventory of macros in rust-node core package
+- [x] Determine which macros should move to rust-macros
+- [x] Migrate appropriate macros to rust-macros package
+- [x] Update all references to moved macros
 - [ ] Ensure backward compatibility or provide clear migration path
 - [ ] Add comprehensive documentation for all macros and their usage
 - [ ] Write tests for any moved macros
