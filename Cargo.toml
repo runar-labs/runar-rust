@@ -4,7 +4,7 @@ members = [
     "rust-macros",
     "rust-common",
     "rust-macros-tests",
-    "node-api-test"
+    "rust-node-api-test"
 ]
 resolver = "2"
 
