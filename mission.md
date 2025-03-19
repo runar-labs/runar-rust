@@ -56,7 +56,7 @@ We have also rebranded from "Kagi" to "Runar". We are now the Runar team, and ou
 - [x] Determine which macros should move to rust-macros
 - [x] Migrate appropriate macros to rust-macros package
 - [x] Update all references to moved macros
-- [ ] Ensure backward compatibility or provide clear migration path
+- [x] Ensure backward compatibility or provide clear migration path
 - [ ] Add comprehensive documentation for all macros and their usage
 - [ ] Write tests for any moved macros
 
