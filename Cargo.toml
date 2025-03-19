@@ -2,11 +2,8 @@
 members = [
     "rust-node",
     "rust-macros",
-    "apps/common/gateway",
     "rust-common",
-    "test_service_info",
-    "utils",
-    "examples"
+    "utils"
 ]
 resolver = "2"
 
