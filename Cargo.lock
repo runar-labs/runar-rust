@@ -3578,6 +3578,7 @@ dependencies = [
  "rand 0.8.5",
  "runar_common",
  "runar_node",
+ "serde",
  "serde_json",
  "syn 2.0.100",
  "tempfile",
