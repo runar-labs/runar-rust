@@ -820,4 +820,15 @@ The system follows specific rules for how paths and topics work in service commu
   - Consolidating related information
   - Maintaining consistent formatting and style
 
-WHEN UPDATING THIS FILE DO NOT MOVE IT, LEAVE WHRE IT IS AT rust-docs/specs/guidelines.md
+When summarizing code changes, follow these guidelines:
+Format: Create a concise, bulleted summary of each change, organizing related changes under clear headings.
+Content: For each change, include:
+What was changed
+Why it was changed
+Impact of the change
+Links: Every specific code change mentioned should include a clickable reference to the relevant file or location, even when referring to code that was removed. For deleted code, link to the vicinity where it used to be.
+Clarity: Use clear, technical language that accurately describes the changes without being overly verbose.
+Verification: Always include a statement about testing or verification of changes.
+Organization: Group related changes under meaningful headings, ordered logically (most important to least important).
+Brevity: Keep the summary concise while still conveying all necessary information.
+
