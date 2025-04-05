@@ -13,7 +13,7 @@ use runar_common::types::ValueType;
 use runar_common::logging::{Logger, Component};
 use runar_node_new::node::{Node, NodeConfig};
 use runar_node_new::services::{EventContext, ServiceResponse, NodeRequestHandler};
-use runar_node_new::services::abstract_service::AbstractService;
+use runar_node_new::services::abstract_service::{AbstractService, ServiceState};
 
 // Import the test fixtures
 use crate::fixtures::math_service::MathService;
@@ -220,18 +220,57 @@ async fn test_node_lifecycle() {
     node.add_service(math_service).await.unwrap();
     node.add_service(second_math_service).await.unwrap();
     
+    // Verify services are in the Initialized state
+    assert_eq!(
+        node.get_service_state("math").await,
+        Some(ServiceState::Initialized),
+        "Service 'math' should be in Initialized state after add_service"
+    );
+    
+    assert_eq!(
+        node.get_service_state("second_math").await,
+        Some(ServiceState::Initialized),
+        "Service 'second_math' should be in Initialized state after add_service"
+    );
+    
     // Start all services at once
     let start_result = node.start().await;
     assert!(start_result.is_ok(), "Failed to start node services: {:?}", start_result.err());
     
-    // Verify both services are running
-    // TODO: Add a way to check service state once service metadata is stored in Node
+    // Verify both services are in the Running state
+    assert_eq!(
+        node.get_service_state("math").await,
+        Some(ServiceState::Running),
+        "Service 'math' should be in Running state after start"
+    );
+    
+    assert_eq!(
+        node.get_service_state("second_math").await,
+        Some(ServiceState::Running),
+        "Service 'second_math' should be in Running state after start"
+    );
     
     // Stop all services at once
     let stop_result = node.stop().await;
     assert!(stop_result.is_ok(), "Failed to stop node services: {:?}", stop_result.err());
     
-    // Verify both services are stopped
-    // TODO: Add a way to check service state once service metadata is stored in Node
+    // Verify both services are in the Stopped state
+    assert_eq!(
+        node.get_service_state("math").await,
+        Some(ServiceState::Stopped),
+        "Service 'math' should be in Stopped state after stop"
+    );
+    
+    assert_eq!(
+        node.get_service_state("second_math").await,
+        Some(ServiceState::Stopped),
+        "Service 'second_math' should be in Stopped state after stop"
+    );
+    
+    // Test getting all service states at once
+    let all_states = node.get_all_service_states().await;
+    assert_eq!(all_states.len(), 2, "Should have state records for two services");
+    assert_eq!(all_states.get("math"), Some(&ServiceState::Stopped));
+    assert_eq!(all_states.get("second_math"), Some(&ServiceState::Stopped));
 }
  

@@ -72,6 +72,9 @@ pub struct Node {
     /// Service map for tracking registered services
     services: Arc<RwLock<HashMap<String, Arc<dyn AbstractService>>>>,
     
+    /// Service state map for tracking the lifecycle state of services
+    service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
+    
     /// Logger instance for this node
     logger: Logger,
 }
@@ -101,6 +104,7 @@ impl Node {
             service_registry: Arc::new(registry),
             network_id: config.network_id.clone(),
             services: Arc::new(RwLock::new(HashMap::new())),
+            service_states: Arc::new(RwLock::new(HashMap::new())),
             logger,
         };
         
@@ -172,6 +176,25 @@ impl Node {
             .with_registrar(registrar)
     }
     
+    /// Get the current state of a service
+    ///
+    /// INTENTION: Retrieve the current lifecycle state of a service.
+    /// This method allows checking if a service is initialized, running, or stopped.
+    pub async fn get_service_state(&self, service_path: &str) -> Option<ServiceState> {
+        let states = self.service_states.read().await;
+        states.get(service_path).cloned()
+    }
+
+    /// Update the state of a service
+    ///
+    /// INTENTION: Update the lifecycle state of a service in the centralized metadata.
+    /// This is used by the Node to track service states during initialization, startup, and shutdown.
+    async fn update_service_state(&self, service_path: &str, state: ServiceState) {
+        let mut states = self.service_states.write().await;
+        self.logger.debug(format!("Updating service '{}' state to {:?}", service_path, state));
+        states.insert(service_path.to_string(), state);
+    }
+
     /// Add a service to the node
     pub async fn add_service<S>(&mut self, service: S) -> Result<()>
     where
@@ -188,6 +211,9 @@ impl Node {
         let mut services = self.services.write().await;
         services.insert(path.clone(), service_arc.clone());
         
+        // Initialize service state as Initialized
+        self.update_service_state(&path, ServiceState::Initialized).await;
+        
         // Log the registration
         self.logger.debug(format!("Adding service '{}' to node registry", path));
         
@@ -198,6 +224,7 @@ impl Node {
         // The service will register its action handlers during initialization
         if let Err(e) = service_arc.init(lifecycle_context).await {
             self.logger.error(format!("Failed to initialize service '{}': {}", name, e));
+            self.update_service_state(&path, ServiceState::Error).await;
             return Err(anyhow!("Failed to initialize service: {}", e));
         }
         
@@ -412,15 +439,15 @@ impl Node {
                     self.logger.info(format!("Service '{}' started successfully", path));
                     success_count += 1;
                     
-                    // TODO: When CompleteServiceMetadata is stored in Node, update the state
-                    // self.update_service_state(path, ServiceState::Running).await;
+                    // Update the service state to Running
+                    self.update_service_state(path, ServiceState::Running).await;
                 },
                 Err(e) => {
                     self.logger.error(format!("Failed to start service '{}': {}", path, e));
                     failure_count += 1;
                     
-                    // TODO: When CompleteServiceMetadata is stored in Node, update the state
-                    // self.update_service_state(path, ServiceState::Error).await;
+                    // Update the service state to Error
+                    self.update_service_state(path, ServiceState::Error).await;
                 }
             }
         }
@@ -479,15 +506,15 @@ impl Node {
                     self.logger.info(format!("Service '{}' stopped successfully", path));
                     success_count += 1;
                     
-                    // TODO: When CompleteServiceMetadata is stored in Node, update the state
-                    // self.update_service_state(path, ServiceState::Stopped).await;
+                    // Update the service state to Stopped
+                    self.update_service_state(path, ServiceState::Stopped).await;
                 },
                 Err(e) => {
                     self.logger.error(format!("Failed to stop service '{}': {}", path, e));
                     failure_count += 1;
                     
-                    // TODO: When CompleteServiceMetadata is stored in Node, update the state
-                    // self.update_service_state(path, ServiceState::Error).await;
+                    // Update the service state to Error
+                    self.update_service_state(path, ServiceState::Error).await;
                 }
             }
         }
@@ -507,6 +534,15 @@ impl Node {
             // Return an error if any services failed to stop
             Err(anyhow!(message))
         }
+    }
+
+    /// Get all service states
+    ///
+    /// INTENTION: Retrieve the current lifecycle state of all services.
+    /// This is useful for monitoring service health and debugging.
+    pub async fn get_all_service_states(&self) -> HashMap<String, ServiceState> {
+        let states = self.service_states.read().await;
+        states.clone()
     }
 }
 
