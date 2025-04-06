@@ -1,8 +1,8 @@
 [workspace]
 members = [
+    "rust-common",
     "rust-node",
     "rust-macros",
-    "rust-common",
     "rust-macros-tests",
 ]
 resolver = "2"

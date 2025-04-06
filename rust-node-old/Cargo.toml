@@ -1,0 +1,79 @@
+[package]
+name = "runar_node"
+version = "0.1.0"
+edition = "2021"
+authors = ["Runar Team"]
+description = "Core node implementation for the Runar P2P stack"
+
+[features]
+default = ["remote_json"]
+direct_process = []          # For direct memory references in process
+local_ipc = []               # For fast binary serialization through IPC
+remote_json = []             # For JSON serialization for remote services
+max_concurrent_requests = []
+distributed_slice = ["linkme"] # For distributed slices in macros
+
+[dependencies]
+tokio = { version = "1.25", features = ["full"] }
+quinn = "0.10"
+webrtc = "0.7"
+ed25519-dalek = { version = "1.0", features = ["serde"] }
+chacha20poly1305 = "0.10"
+rusqlite = { version = "0.28", features = ["bundled"] }
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+log = "0.4"
+env_logger = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3" # Added for binary serialization in local IPC
+anyhow = "1.0"
+thiserror = "1.0"
+webbrowser = "0.8"
+async-trait = "0.1"
+qrcodegen = "1.8" # Added for QR code generation and parsing
+ed25519-hd-key = "0.3" # Added for HD key derivation
+rustls = { version = "0.21", features = [
+    "dangerous_configuration",
+] } # Added for TLS in QUIC connections
+getrandom = "0.2" # Added for secure random number generation
+libp2p = { version = "0.51", features = [
+    "tokio",
+    "dns",
+    "quic",
+    "kad",
+    "identify",
+    "noise",
+    "mplex",
+    "tcp",
+    "yamux",
+    "mdns",
+    "macros",
+] }
+dirs = "5.0"
+clap = { version = "4.1", features = ["derive"] }
+hyper = { version = "0.14", features = ["server", "http1", "http2", "tcp", "client"] }
+futures = "0.3"
+serde_urlencoded = "0.7"
+open = "5.3.2"
+uuid = { version = "1.3", features = ["serde", "v4"] }
+base64 = "0.13"
+num_cpus = "1.13.1"
+serde_bytes = "0.11.17"
+chrono = "0.4"
+rcgen = "0.10" # Added for certificate generation
+tracing = "0.1" # Added for logging
+tracing-subscriber = { version = "0.3", features = ["env-filter"] } # Added for tracing setup
+lazy_static = "1.4.0"
+hex = "0.4"
+windows-sys = { version = "0.48", features = ["Win32_Foundation"] }
+windows-named-pipe = "0.1.0"
+linkme = { version = "0.3", features = ["used_linker"], optional = true } # Added for distributed slices
+once_cell = "1.18" # Added for runtime registry
+runar_common = { path = "../rust-common" } # Common traits and types
+
+[dev-dependencies]
+tempfile = "3.3"
+serial_test = "2.0.0"
+runar_macros = { path = "../rust-macros", features = ["node_implementation"] } # Added for using macros in tests

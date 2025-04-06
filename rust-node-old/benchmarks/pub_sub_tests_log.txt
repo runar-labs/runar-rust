@@ -1,0 +1,1547 @@
+warning: virtual workspace defaulting to `resolver = "1"` despite one or more workspace members being on edition 2021 which implies `resolver = "2"`
+note: to keep the current resolver, specify `workspace.resolver = "1"` in the workspace root's manifest
+note: to use the edition 2021 resolver, specify `workspace.resolver = "2"` in the workspace root's manifest
+note: for more details see https://doc.rust-lang.org/cargo/reference/resolver.html#resolver-versions
+warning: unused import: `crate::vmap`
+  --> node/src/node.rs:12:5
+   |
+12 | use crate::vmap;
+   |     ^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `crate::p2p::crypto::PeerId`
+  --> node/src/node.rs:16:5
+   |
+16 | use crate::p2p::crypto::PeerId;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `rand::rngs::OsRng`
+ --> node/src/p2p/crypto.rs:5:5
+  |
+5 | use rand::rngs::OsRng;
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> node/src/p2p/dht.rs:5:5
+  |
+5 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::db::SqliteDatabase`
+ --> node/src/p2p/peer.rs:1:5
+  |
+1 | use crate::db::SqliteDatabase;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Crypto`
+ --> node/src/p2p/peer.rs:2:39
+  |
+2 | use crate::p2p::crypto::{AccessToken, Crypto, NetworkId, PeerId};
+  |                                       ^^^^^^
+
+warning: unused import: `crate::p2p::transport::P2PTransport`
+ --> node/src/p2p/peer.rs:4:5
+  |
+4 | use crate::p2p::transport::P2PTransport;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `async_trait::async_trait`
+ --> node/src/p2p/peer.rs:6:5
+  |
+6 | use async_trait::async_trait;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `base64`
+ --> node/src/p2p/peer.rs:7:5
+  |
+7 | use base64;
+  |     ^^^^^^
+
+warning: unused imports: `ClientConfig`, `EndpointConfig`, `ServerConfig`, and `TransportConfig`
+  --> node/src/p2p/peer.rs:10:13
+   |
+10 | use quinn::{ClientConfig, EndpointConfig, ServerConfig, TransportConfig};
+   |             ^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused imports: `RecvStream` and `SendStream`
+  --> node/src/p2p/peer.rs:11:35
+   |
+11 | use quinn::{Connection, Endpoint, RecvStream, SendStream};
+   |                                   ^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `rand`
+  --> node/src/p2p/peer.rs:12:5
+   |
+12 | use rand;
+   |     ^^^^
+
+warning: unused imports: `Certificate` and `PrivateKey`
+  --> node/src/p2p/peer.rs:14:14
+   |
+14 | use rustls::{Certificate, PrivateKey};
+   |              ^^^^^^^^^^^  ^^^^^^^^^^
+
+warning: unused import: `de::DeserializeOwned`
+  --> node/src/p2p/peer.rs:15:13
+   |
+15 | use serde::{de::DeserializeOwned, Serialize};
+   |             ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::pin::Pin`
+  --> node/src/p2p/peer.rs:18:5
+   |
+18 | use std::pin::Pin;
+   |     ^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+  --> node/src/p2p/peer.rs:20:5
+   |
+20 | use std::time::Duration;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `RwLock`
+  --> node/src/p2p/peer.rs:22:25
+   |
+22 | use tokio::sync::{mpsc, RwLock};
+   |                         ^^^^^^
+
+warning: unused import: `tokio::time::timeout`
+  --> node/src/p2p/peer.rs:23:5
+   |
+23 | use tokio::time::timeout;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+  --> node/src/p2p/peer.rs:24:35
+   |
+24 | use tracing::{debug, error, info, warn};
+   |                                   ^^^^
+
+warning: unused import: `AccessToken`
+ --> node/src/p2p/service.rs:2:26
+  |
+2 | use crate::p2p::crypto::{AccessToken, NetworkId, PeerId};
+  |                          ^^^^^^^^^^^
+
+warning: unused import: `ResponseStatus`
+ --> node/src/p2p/service.rs:7:39
+  |
+7 | use crate::services::{RequestContext, ResponseStatus, ServiceRequest, ServiceResponse, ValueType};
+  |                                       ^^^^^^^^^^^^^^
+
+warning: unused import: `crate::vmap`
+ --> node/src/p2p/service.rs:9:5
+  |
+9 | use crate::vmap;
+  |     ^^^^^^^^^^^
+
+warning: unused import: `futures::future::BoxFuture`
+  --> node/src/p2p/service.rs:13:5
+   |
+13 | use futures::future::BoxFuture;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `debug`, `error`, and `info`
+  --> node/src/p2p/service.rs:14:11
+   |
+14 | use log::{debug, error, info};
+   |           ^^^^^  ^^^^^  ^^^^
+
+warning: unused import: `serde_json::json`
+  --> node/src/p2p/service.rs:15:5
+   |
+15 | use serde_json::json;
+   |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `serde_json::Value`
+  --> node/src/p2p/service.rs:16:5
+   |
+16 | use serde_json::Value;
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpsc`
+  --> node/src/p2p/service.rs:21:19
+   |
+21 | use tokio::sync::{mpsc, RwLock};
+   |                   ^^^^
+
+warning: unused import: `crate::p2p::stun::get_public_endpoint`
+ --> node/src/p2p/transport.rs:3:5
+  |
+3 | use crate::p2p::stun::get_public_endpoint;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `de::DeserializeOwned`
+  --> node/src/p2p/transport.rs:10:13
+   |
+10 | use serde::{de::DeserializeOwned, Deserialize, Serialize};
+   |             ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::any::Any`
+  --> node/src/p2p/transport.rs:11:5
+   |
+11 | use std::any::Any;
+   |     ^^^^^^^^^^^^^
+
+warning: unused import: `std::env`
+  --> node/src/p2p/transport.rs:13:5
+   |
+13 | use std::env;
+   |     ^^^^^^^^
+
+warning: unused import: `tokio::time::timeout`
+  --> node/src/p2p/transport.rs:17:5
+   |
+17 | use tokio::time::timeout;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `debug`, `error`, `info`, and `warn`
+  --> node/src/p2p/transport.rs:18:15
+   |
+18 | use tracing::{debug, error, info, warn};
+   |               ^^^^^  ^^^^^  ^^^^  ^^^^
+
+warning: unused import: `crate::vmap`
+  --> node/src/services/mod.rs:13:5
+   |
+13 | use crate::vmap;
+   |     ^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> node/src/services/abstract_service.rs:1:5
+  |
+1 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `serde_json::Value`
+ --> node/src/services/abstract_service.rs:3:5
+  |
+3 | use serde_json::Value;
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `base64`
+ --> node/src/services/sqlite.rs:3:5
+  |
+3 | use base64;
+  |     ^^^^^^
+
+warning: unused imports: `debug`, `error`, `info`, and `warn`
+ --> node/src/services/sqlite.rs:4:11
+  |
+4 | use log::{debug, error, info, warn};
+  |           ^^^^^  ^^^^^  ^^^^  ^^^^
+
+warning: unused import: `Connection`
+ --> node/src/services/sqlite.rs:5:24
+  |
+5 | use rusqlite::{params, Connection, ToSql};
+  |                        ^^^^^^^^^^
+
+warning: unused imports: `Row` and `Statement`
+ --> node/src/services/sqlite.rs:6:16
+  |
+6 | use rusqlite::{Row, Statement};
+  |                ^^^  ^^^^^^^^^
+
+warning: unused imports: `Map` and `json`
+ --> node/src/services/sqlite.rs:8:18
+  |
+8 | use serde_json::{json, Map, Value};
+  |                  ^^^^  ^^^
+
+warning: unused import: `Mutex`
+  --> node/src/services/sqlite.rs:10:22
+   |
+10 | use std::sync::{Arc, Mutex};
+   |                      ^^^^^
+
+warning: unused import: `crate::vmap`
+  --> node/src/services/sqlite.rs:12:5
+   |
+12 | use crate::vmap;
+   |     ^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> node/src/services/node_info.rs:1:14
+  |
+1 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `Duration`
+ --> node/src/services/node_info.rs:5:17
+  |
+5 | use std::time::{Duration, Instant};
+  |                 ^^^^^^^^
+
+warning: unused imports: `DateTime` and `Utc`
+ --> node/src/services/registry.rs:3:14
+  |
+3 | use chrono::{DateTime, Utc};
+  |              ^^^^^^^^  ^^^
+
+warning: unused import: `info`
+ --> node/src/services/registry.rs:4:25
+  |
+4 | use log::{debug, error, info};
+  |                         ^^^^
+
+warning: unused import: `serde_json::json`
+ --> node/src/services/registry.rs:5:5
+  |
+5 | use serde_json::json;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fmt`
+ --> node/src/services/registry.rs:7:5
+  |
+7 | use std::fmt;
+  |     ^^^^^^^^
+
+warning: unused import: `std::time::SystemTime`
+ --> node/src/services/registry.rs:9:5
+  |
+9 | use std::time::SystemTime;
+  |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `serde_json::Value`
+  --> node/src/services/registry.rs:11:5
+   |
+11 | use serde_json::Value;
+   |     ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `RemoteService`
+  --> node/src/services/registry.rs:20:45
+   |
+20 | use crate::services::remote::{P2PTransport, RemoteService};
+   |                                             ^^^^^^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> node/src/services/registry_info.rs:1:14
+  |
+1 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `serde_json::json`
+ --> node/src/services/registry_info.rs:3:5
+  |
+3 | use serde_json::json;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> node/src/services/utils.rs:5:5
+  |
+5 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `error_log` and `warn_log`
+ --> node/src/services/remote.rs:4:39
+  |
+4 | use crate::util::logging::{debug_log, error_log, info_log, warn_log, Component};
+  |                                       ^^^^^^^^^            ^^^^^^^^
+
+warning: unused import: `anyhow`
+ --> node/src/services/remote.rs:5:14
+  |
+5 | use anyhow::{anyhow, Result};
+  |              ^^^^^^
+
+warning: unused import: `serde_json::json`
+ --> node/src/services/remote.rs:7:5
+  |
+7 | use serde_json::json;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> node/src/services/remote.rs:8:5
+  |
+8 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `serde_json::json`
+ --> node/src/services/anonymous_subscriber.rs:3:5
+  |
+3 | use serde_json::json;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `Arc`
+ --> node/src/services/anonymous_subscriber.rs:4:17
+  |
+4 | use std::sync::{Arc, Mutex};
+  |                 ^^^
+
+warning: unused import: `ResponseStatus`
+  --> node/src/services/anonymous_subscriber.rs:10:23
+   |
+10 | use crate::services::{ResponseStatus, ServiceRequest, ServiceResponse, ValueType};
+   |                       ^^^^^^^^^^^^^^
+
+warning: unused import: `manager::*`
+  --> node/src/services/mod.rs:45:9
+   |
+45 | pub use manager::*;
+   |         ^^^^^^^^^^
+
+warning: unused import: `crate::node::NodeConfig`
+ --> node/src/util/logging.rs:1:5
+  |
+1 | use crate::node::NodeConfig;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `db`
+  --> node/src/p2p/service.rs:92:9
+   |
+92 |         db: Arc<SqliteDatabase>,
+   |         ^^ help: if this is intentional, prefix it with an underscore: `_db`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `effective_peer_id`
+   --> node/src/p2p/service.rs:134:13
+    |
+134 |         let effective_peer_id = peer_id.unwrap_or(transport_peer_id);
+    |             ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_effective_peer_id`
+
+warning: unused variable: `node_handler`
+   --> node/src/node.rs:389:13
+    |
+389 |         let node_handler = Arc::new(NodeRequestHandlerImpl::new(self.service_registry.clone()));
+    |             ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_handler`
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:512:13
+    |
+512 |             vmap_opt! {},
+    |             ------------ in this macro invocation
+    |
+    = note: `#[warn(unused_mut)]` on by default
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `params`
+   --> node/src/services/registry.rs:976:21
+    |
+976 |                 let params = serde_json::json!({
+    |                     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `transport_ref`
+   --> node/src/p2p/service.rs:178:18
+    |
+178 |             Some(transport_ref) => {
+    |                  ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_transport_ref`
+
+warning: unused variable: `timeout_duration`
+   --> node/src/p2p/transport.rs:436:13
+    |
+436 |         let timeout_duration = Duration::from_secs(10);
+    |             ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timeout_duration`
+
+warning: unused variable: `db`
+   --> node/src/web.rs:390:5
+    |
+390 |     db: Arc<SqliteDatabase>,
+    |     ^^ help: if this is intentional, prefix it with an underscore: `_db`
+
+warning: unused variable: `node_arc`
+   --> node/src/cli.rs:141:17
+    |
+141 |             let node_arc = Arc::new(node);
+    |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_arc`
+
+warning: unused variable: `node_arc`
+   --> node/src/cli.rs:199:25
+    |
+199 |                     let node_arc = Arc::new(node);
+    |                         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_node_arc`
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:561:13
+    |
+561 |             vmap_opt! {},
+    |             ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:588:13
+    |
+588 |             vmap_opt! {},
+    |             ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `request_context`
+   --> node/src/node.rs:636:13
+    |
+636 |         let request_context = Arc::new(RequestContext::new_with_option(
+    |             ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_request_context`
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:638:13
+    |
+638 |             vmap_opt! {},
+    |             ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:673:13
+    |
+673 |             vmap_opt! {},
+    |             ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `id`
+   --> node/src/services/registry.rs:362:21
+    |
+362 |         if let Some(id) = subscription_id {
+    |                     ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:733:13
+    |
+733 |             vmap_opt! {},
+    |             ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `network_id`
+  --> node/src/p2p/dht.rs:92:41
+   |
+92 |     async fn iterative_find_node(&self, network_id: NetworkId, target: PeerId) -> Result<()> {
+   |                                         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_network_id`
+
+warning: unused variable: `target`
+  --> node/src/p2p/dht.rs:92:64
+   |
+92 |     async fn iterative_find_node(&self, network_id: NetworkId, target: PeerId) -> Result<()> {
+   |                                                                ^^^^^^ help: if this is intentional, prefix it with an underscore: `_target`
+
+warning: unused variable: `peer_id`
+   --> node/src/p2p/transport.rs:485:9
+    |
+485 |         peer_id: &PeerId,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_peer_id`
+
+warning: unused variable: `timeout_duration`
+   --> node/src/p2p/transport.rs:486:9
+    |
+486 |         timeout_duration: Duration,
+    |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timeout_duration`
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+633 |             vmap_opt! {},
+    |             ------------ in this macro invocation
+...
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: use of deprecated method `services::abstract_service::AbstractService::process_request`: use handle_request instead
+   --> node/src/services/mod.rs:752:17
+    |
+752 |         service.process_request(request).await
+    |                 ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: unused variable: `context`
+   --> node/src/services/sqlite.rs:147:30
+    |
+147 |     pub async fn init(&self, context: &crate::services::RequestContext) -> Result<()> {
+    |                              ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: unused variable: `context`
+   --> node/src/services/sqlite.rs:690:30
+    |
+690 |     pub async fn init(&self, context: &crate::services::RequestContext) -> Result<()> {
+    |                              ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_context`
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/services/sqlite.rs:826:17
+    |
+826 |                 vmap_opt! {},
+    |                 ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `transport`
+   --> node/src/services/registry.rs:147:43
+    |
+147 |     pub async fn set_p2p_transport(&self, transport: Arc<dyn P2PTransport>) {
+    |                                           ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_transport`
+
+warning: use of deprecated method `services::abstract_service::AbstractService::process_request`: use handle_request instead
+    --> node/src/services/registry.rs:1195:27
+     |
+1195 |             match service.process_request(request).await {
+     |                           ^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> node/src/services/mod.rs:865:13
+     |
+865  |         let mut map = std::collections::HashMap::new();
+     |             ----^^^
+     |             |
+     |             help: remove this `mut`
+     |
+    ::: node/src/services/registry.rs:1181:17
+     |
+1181 |                 vmap! {},
+     |                 -------- in this macro invocation
+     |
+     = note: this warning originates in the macro `vmap` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:865:13
+    |
+865 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/services/registry.rs:626:63
+    |
+626 |                         let params = request.params.unwrap_or(vmap! {});
+    |                                                               -------- in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `path`
+    --> node/src/services/registry.rs:1817:45
+     |
+1817 |     pub async fn get_service_by_path(&self, path: &str) -> Option<Arc<dyn AbstractService>> {
+     |                                             ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+
+warning: use of deprecated method `services::abstract_service::AbstractService::process_request`: use handle_request instead
+   --> node/src/node.rs:915:39
+    |
+915 |                         match service.process_request(request).await {
+    |                                       ^^^^^^^^^^^^^^^
+
+warning: unused import: `Verifier`
+ --> node/src/key_management.rs:6:49
+  |
+6 | use ed25519_dalek::{Keypair, Signature, Signer, Verifier};
+  |                                                 ^^^^^^^^
+
+warning: unused import: `tokio::io::AsyncReadExt`
+  --> node/src/p2p/peer.rs:21:5
+   |
+21 | use tokio::io::AsyncReadExt;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:230:17
+    |
+230 |                 vmap_opt! {},
+    |                 ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused variable: `service`
+   --> node/src/node.rs:254:21
+    |
+254 |         if let Some(service) = service_name {
+    |                     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_service`
+
+warning: unused variable: `network_id`
+   --> node/src/node.rs:881:17
+    |
+881 |             let network_id = config.network_id.clone();
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_network_id`
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:901:29
+    |
+901 | ...                   vmap_opt! {},
+    |                       ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:910:37
+    |
+910 | ...                   params: vmap_opt! {},
+    |                               ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: variable does not need to be mutable
+   --> node/src/services/mod.rs:881:13
+    |
+881 |         let mut map = std::collections::HashMap::new();
+    |             ----^^^
+    |             |
+    |             help: remove this `mut`
+    |
+   ::: node/src/node.rs:945:53
+    |
+945 | ...                   vmap_opt! {},
+    |                       ------------ in this macro invocation
+    |
+    = note: this warning originates in the macro `vmap_opt` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: variable does not need to be mutable
+   --> node/src/p2p/peer.rs:243:13
+    |
+243 |         let mut endpoint_config = quinn::EndpointConfig::default();
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `amt`
+ --> node/src/p2p/stun.rs:8:23
+  |
+8 |         while let Ok((amt, src)) = socket.recv_from(&mut buf) {
+  |                       ^^^ help: if this is intentional, prefix it with an underscore: `_amt`
+
+warning: unused variable: `sql`
+   --> node/src/services/sqlite.rs:926:51
+    |
+926 |                     if let Some(ValueType::String(sql)) = params.get("sql") {
+    |                                                   ^^^ help: if this is intentional, prefix it with an underscore: `_sql`
+
+warning: type `NetworkQr` is more private than the item `parse_qr`
+   --> node/src/p2p/qr.rs:110:1
+    |
+110 | pub fn parse_qr(data: &str) -> Result<(Option<NetworkQr>, Option<TokenQr>, Option<PeerQr>)> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function `parse_qr` is reachable at visibility `pub`
+    |
+note: but type `NetworkQr` is only usable at visibility `pub(self)`
+   --> node/src/p2p/qr.rs:9:1
+    |
+9   | struct NetworkQr {
+    | ^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `TokenQr` is more private than the item `parse_qr`
+   --> node/src/p2p/qr.rs:110:1
+    |
+110 | pub fn parse_qr(data: &str) -> Result<(Option<NetworkQr>, Option<TokenQr>, Option<PeerQr>)> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function `parse_qr` is reachable at visibility `pub`
+    |
+note: but type `TokenQr` is only usable at visibility `pub(self)`
+   --> node/src/p2p/qr.rs:18:1
+    |
+18  | struct TokenQr {
+    | ^^^^^^^^^^^^^^
+
+warning: type `PeerQr` is more private than the item `parse_qr`
+   --> node/src/p2p/qr.rs:110:1
+    |
+110 | pub fn parse_qr(data: &str) -> Result<(Option<NetworkQr>, Option<TokenQr>, Option<PeerQr>)> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ function `parse_qr` is reachable at visibility `pub`
+    |
+note: but type `PeerQr` is only usable at visibility `pub(self)`
+   --> node/src/p2p/qr.rs:27:1
+    |
+27  | struct PeerQr {
+    | ^^^^^^^^^^^^^
+
+warning: function `status` is never used
+   --> node/src/cli.rs:349:10
+    |
+349 | async fn status(config_dir: PathBuf) -> Result<()> {
+    |          ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: field `created_at` is never read
+  --> node/src/key_management.rs:37:5
+   |
+31 | pub struct KagiKeypair {
+   |            ----------- field in this struct
+...
+37 |     created_at: Instant,
+   |     ^^^^^^^^^^
+   |
+   = note: `KagiKeypair` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: method `get_or_generate_node_id` is never used
+  --> node/src/node.rs:70:8
+   |
+53 | impl NodeConfig {
+   | --------------- method in this implementation
+...
+70 |     fn get_or_generate_node_id(&self) -> String {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `handle_connection` is never used
+   --> node/src/p2p/peer.rs:591:14
+    |
+79  | impl Peer {
+    | --------- method in this implementation
+...
+591 |     async fn handle_connection(&self, connection: Connection) -> Result<()> {
+    |              ^^^^^^^^^^^^^^^^^
+
+warning: methods `notify_message_handlers` and `notify_connection_handlers` are never used
+   --> node/src/p2p/service.rs:271:14
+    |
+88  | impl P2PRemoteServiceDelegate {
+    | ----------------------------- methods in this implementation
+...
+271 |     async fn notify_message_handlers(&self, event: P2PMessageEvent) {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^
+...
+287 |     async fn notify_connection_handlers(&self, event: P2PConnectionEvent) {
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `option_as` is never used
+   --> node/src/services/mod.rs:991:4
+    |
+991 | fn option_as<U: 'static>(value: &dyn Any) -> Option<&U> {
+    |    ^^^^^^^^^
+
+warning: field `storage_options` is never read
+  --> node/src/services/sqlite.rs:95:5
+   |
+91 | pub struct SqliteCrudMixin {
+   |            --------------- field in this struct
+...
+95 |     storage_options: SqliteStorageOptions,
+   |     ^^^^^^^^^^^^^^^
+
+warning: field `storage_options` is never read
+   --> node/src/services/sqlite.rs:649:5
+    |
+645 | pub struct SqliteQueryMixin {
+    |            ---------------- field in this struct
+...
+649 |     storage_options: SqliteStorageOptions,
+    |     ^^^^^^^^^^^^^^^
+
+warning: field `crud_mixin` is never read
+   --> node/src/services/sqlite.rs:789:5
+    |
+781 | pub struct SqliteService {
+    |            ------------- field in this struct
+...
+789 |     crud_mixin: SqliteCrudMixin,
+    |     ^^^^^^^^^^
+
+warning: method `execute_query` is never used
+   --> node/src/services/sqlite.rs:813:14
+    |
+794 | impl SqliteService {
+    | ------------------ method in this implementation
+...
+813 |     async fn execute_query(&self, query: &str) -> Result<ValueType> {
+    |              ^^^^^^^^^^^^^
+
+warning: method `propagate_service_info_to_peers` is never used
+    --> node/src/services/registry.rs:1034:14
+     |
+90   | impl ServiceRegistry {
+     | -------------------- method in this implementation
+...
+1034 |     async fn propagate_service_info_to_peers(
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `db` is never read
+    --> node/src/services/registry.rs:1795:5
+     |
+1787 | pub struct RegistryService {
+     |            --------------- field in this struct
+...
+1795 |     db: Arc<SqliteDatabase>,
+     |     ^^
+
+warning: fields `name` and `state` are never read
+  --> node/src/services/registry_info.rs:14:5
+   |
+12 | pub struct RegistryInfoService {
+   |            ------------------- fields in this struct
+13 |     /// The service name
+14 |     name: String,
+   |     ^^^^
+...
+20 |     state: Mutex<ServiceState>,
+   |     ^^^^^
+
+warning: field `uptime` is never read
+  --> node/src/services/remote.rs:49:5
+   |
+32 | pub struct RemoteService {
+   |            ------------- field in this struct
+...
+49 |     uptime: Instant,
+   |     ^^^^^^
+
+warning: fields `network_id` and `creation_time` are never read
+  --> node/src/services/anonymous_subscriber.rs:47:5
+   |
+36 | pub struct AnonymousSubscriberService {
+   |            -------------------------- fields in this struct
+...
+47 |     network_id: String,
+   |     ^^^^^^^^^^
+...
+65 |     creation_time: SystemTime,
+   |     ^^^^^^^^^^^^^
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:195:9
+    |
+195 |         debug_log(Component::Node, &format!("NodeRequestHandlerImpl::request - Path: {}", path));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+    = note: `#[warn(unused_must_use)]` on by default
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:214:9
+    |
+214 | /         debug_log(
+215 | |             Component::Node,
+216 | |             &format!(
+217 | |                 "NodeRequestHandlerImpl::request - Service: {}, Operation: {}",
+218 | |                 service_name, operation
+219 | |             ),
+220 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:382:9
+    |
+382 |         info_log(Component::Node, "Initializing node");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:414:9
+    |
+414 |         info_log(Component::Node, "Node initialized");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:421:9
+    |
+421 |         info_log(Component::Node, "Initializing P2P functionality");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:448:17
+    |
+448 | /                 debug_log(
+449 | |                     Component::Node,
+450 | |                     &format!("Connecting to bootstrap node: {}", bootstrap_addr),
+451 | |                 );
+    | |_________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:457:25
+    |
+457 | /                         info_log(
+458 | |                             Component::Node,
+459 | |                             &format!(
+460 | |                                 "Successfully connected to bootstrap node: {}",
+461 | |                                 bootstrap_addr
+462 | |                             ),
+463 | |                         );
+    | |_________________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:466:25
+    |
+466 | /                         warn_log(
+467 | |                             Component::Node,
+468 | |                             &format!(
+469 | |                                 "Failed to connect to bootstrap node {}: {}",
+470 | |                                 bootstrap_addr, e
+471 | |                             ),
+472 | |                         );
+    | |_________________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:478:9
+    |
+478 |         info_log(Component::Node, "P2P functionality initialized");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:484:9
+    |
+484 |         info_log(Component::Node, "Initializing services");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:801:9
+    |
+801 | /         warn_log(
+802 | |             Component::Node,
+803 | |             "Warning: Using service_registry() which returns a new empty clone",
+804 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:810:9
+    |
+810 | /         debug_log(
+811 | |             Component::Node,
+812 | |             "Using service_registry_arc() which returns the actual registry",
+813 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:951:49
+    |
+951 | / ...                   error_log(
+952 | | ...                       Component::Node,
+953 | | ...                       &format!(
+954 | | ...                           "Failed to stop service {}: {}",
+955 | | ...                           name, e
+956 | | ...                       ),
+957 | | ...                   );
+    | |_______________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:962:45
+    |
+962 | / ...                   info_log(
+963 | | ...                       Component::Node,
+964 | | ...                       &format!(
+965 | | ...                           "Cleaned up expired anonymous service: {}",
+966 | | ...                           name
+967 | | ...                       ),
+968 | | ...                   );
+    | |_______________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:977:33
+    |
+977 | / ...                   error_log(
+978 | | ...                       Component::Node,
+979 | | ...                       &format!("Error checking anonymous service status: {}", e),
+980 | | ...                   );
+    | |_______________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/node.rs:987:21
+    |
+987 | /                     info_log(
+988 | |                         Component::Node,
+989 | |                         &format!("Cleaned up {} expired anonymous services", removed_count),
+990 | |                     );
+    | |_____________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+  --> node/src/p2p/service.rs:94:9
+   |
+94 | /         info_log(
+95 | |             Component::P2P,
+96 | |             &format!("Creating P2P delegate for network {}", network_id_str),
+97 | |         );
+   | |_________^
+   |
+   = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:112:21
+    |
+112 | /                     error_log(
+113 | |                         Component::P2P,
+114 | |                         &format!("Failed to create P2P transport: {:?}", e),
+115 | |                     );
+    | |_____________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:228:9
+    |
+228 |         info_log(Component::P2P, "Starting P2P delegate");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:241:9
+    |
+241 |         info_log(Component::P2P, "Stopping P2P delegate");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:272:9
+    |
+272 | /         debug_log(
+273 | |             Component::P2P,
+274 | |             &format!(
+275 | |                 "Notifying message handlers of message from {:?}",
+276 | |                 event.peer_id
+277 | |             ),
+278 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:288:9
+    |
+288 | /         debug_log(
+289 | |             Component::P2P,
+290 | |             &format!(
+291 | |                 "Notifying connection handlers of event for peer {:?}",
+292 | |                 event.peer_id
+293 | |             ),
+294 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:304:9
+    |
+304 | /         info_log(
+305 | |             Component::P2P,
+306 | |             &format!("Connecting to peer {:?} at {}", *peer_id, address),
+307 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:374:9
+    |
+374 | /         debug_log(
+375 | |             Component::P2P,
+376 | |             &format!("Sending message to peer {:?}: {}", peer_id, message),
+377 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:394:21
+    |
+394 | /                     debug_log(
+395 | |                         Component::P2P,
+396 | |                         &format!(
+397 | |                             "Successfully sent message to peer {:?} on attempt {}",
+398 | |                             peer_id, attempts
+399 | |                         ),
+400 | |                     );
+    | |_____________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:405:25
+    |
+405 | /                         error_log(
+406 | |                             Component::P2P,
+407 | |                             &format!(
+408 | |                                 "Failed to send message to peer {:?} after {} attempts: {:?}",
+409 | |                                 peer_id, attempts, e
+410 | |                             ),
+411 | |                         );
+    | |_________________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:415:21
+    |
+415 | /                     warn_log(
+416 | |                         Component::P2P,
+417 | |                         &format!(
+418 | |                             "Failed to send message to peer {:?} on attempt {}: {:?}. Retrying...",
+419 | |                             peer_id, attempts, e
+420 | |                         ),
+421 | |                     );
+    | |_____________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:431:25
+    |
+431 | /                         debug_log(
+432 | |                             Component::P2P,
+433 | |                             &format!(
+434 | |                                 "Attempting to reconnect to peer {:?} at {}",
+435 | |                                 peer_id, address
+436 | |                             ),
+437 | |                         );
+    | |_________________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:463:9
+    |
+463 | /         debug_log(
+464 | |             Component::P2P,
+465 | |             &format!("Publishing event to peer {:?}: topic={}", peer_id, topic),
+466 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:479:13
+    |
+479 | /             debug_log(
+480 | |                 Component::P2P,
+481 | |                 &format!("Successfully published event to peer {:?}", peer_id),
+482 | |             );
+    | |_____________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:484:13
+    |
+484 | /             error_log(
+485 | |                 Component::P2P,
+486 | |                 &format!("Failed to publish event to peer {:?}", peer_id),
+487 | |             );
+    | |_____________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:495:9
+    |
+495 |         debug_log(Component::P2P, "Broadcasting message to all peers");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:528:9
+    |
+528 | /         debug_log(
+529 | |             Component::P2P,
+530 | |             &format!("Processing request: {}", request.operation),
+531 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:653:17
+    |
+653 | /                 info_log(
+654 | |                     Component::P2P,
+655 | |                     &format!("Publishing event to topic {} for peer {:?}", topic, peer_id),
+656 | |                 );
+    | |_________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:739:9
+    |
+739 | /         debug_log(
+740 | |             Component::P2P,
+741 | |             &format!("Cloning P2P Delegate: {}", self.name),
+742 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:766:9
+    |
+766 | /         debug_log(
+767 | |             Component::P2P,
+768 | |             &format!("Sending request to peer {:?}: {}", peer_id, path),
+769 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/p2p/service.rs:797:9
+    |
+797 | /         debug_log(
+798 | |             Component::P2P,
+799 | |             &format!("Publishing event to peer {:?}: {}", peer_id, topic),
+800 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/services/registry.rs:866:21
+    |
+866 | /                     error_log(
+867 | |                         Component::Service,
+868 | |                         &format!("Error unsubscribing after TTL: {}", e),
+869 | |                     );
+    | |_____________________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/services/registry.rs:880:9
+    |
+880 | /         debug_log(
+881 | |             Component::Service,
+882 | |             &format!("ServiceRegistry::subscribe - Done: {}", topic),
+883 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+    --> node/src/services/registry.rs:1601:13
+     |
+1601 | /             debug_log(
+1602 | |                 Component::ServiceRegistry,
+1603 | |                 &format!("No subscribers found for topic {}", topic),
+1604 | |             );
+     | |_____________^
+     |
+     = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+    --> node/src/services/registry.rs:1656:13
+     |
+1656 | /             debug_log(
+1657 | |                 Component::Registry,
+1658 | |                 &format!(
+1659 | |                     "Remote service '{}' already exists in registry",
+1660 | |                     service_info.name
+1661 | |                 ),
+1662 | |             );
+     | |_____________^
+     |
+     = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+  --> node/src/services/remote.rs:64:9
+   |
+64 | /         info_log(
+65 | |             Component::Service,
+66 | |             &format!(
+67 | |                 "Creating RemoteService: name={}, peer_id={:?}",
+68 | |                 name, peer_id
+69 | |             ),
+70 | |         );
+   | |_________^
+   |
+   = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+   --> node/src/services/remote.rs:134:9
+    |
+134 | /         debug_log(
+135 | |             Component::Service,
+136 | |             &format!(
+137 | |                 "RemoteService processing request: service={}, path={}",
+138 | |                 self.name, request.path
+139 | |             ),
+140 | |         );
+    | |_________^
+    |
+    = note: futures do nothing unless you `.await` or poll them
+
+warning: unused implementer of `futures::Future` that must be used
+  --> node/src/services/anonymous_subscriber.rs:90:9
+   |
+90 | /         info_log(
+91 | |             Component::Service,
+92 | |             &format!(
+93 | |                 "Created anonymous subscriber service {} for topic '{}'",
+94 | |                 service.name, subscription_topic
+95 | |             ),
+96 | |         );
+   | |_________^
+   |
+   = note: futures do nothing unless you `.await` or poll them
+
+warning: `kagi_node` (lib) generated 169 warnings (run `cargo fix --lib -p kagi_node` to apply 79 suggestions)
+warning: unused import: `anyhow::anyhow`
+ --> node/tests/pub_sub_tests.rs:1:5
+  |
+1 | use anyhow::anyhow;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `kagi_node::services::abstract_service::ServiceState`
+ --> node/tests/pub_sub_tests.rs:5:5
+  |
+5 | use kagi_node::services::abstract_service::ServiceState;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `kagi_node::services::registry::ServiceRegistry`
+ --> node/tests/pub_sub_tests.rs:6:5
+  |
+6 | use kagi_node::services::registry::ServiceRegistry;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Component` and `debug_log`
+  --> node/tests/pub_sub_tests.rs:11:32
+   |
+11 | use kagi_node::util::logging::{debug_log, Component};
+   |                                ^^^^^^^^^  ^^^^^^^^^
+
+warning: unused import: `std::ops::Deref`
+  --> node/tests/pub_sub_tests.rs:13:5
+   |
+13 | use std::ops::Deref;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::pin::Pin`
+  --> node/tests/pub_sub_tests.rs:14:5
+   |
+14 | use std::pin::Pin;
+   |     ^^^^^^^^^^^^^
+
+warning: unused import: `std::future::Future`
+  --> node/tests/pub_sub_tests.rs:15:5
+   |
+15 | use std::future::Future;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::RwLock`
+  --> node/tests/pub_sub_tests.rs:20:5
+   |
+20 | use tokio::sync::RwLock;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::test`
+  --> node/tests/pub_sub_tests.rs:21:5
+   |
+21 | use tokio::test;
+   |     ^^^^^^^^^^^
+
+warning: unused import: `kagi_node::services::remote::P2PTransport`
+ --> node/tests/pub_sub_tests.rs:7:5
+  |
+7 | use kagi_node::services::remote::P2PTransport;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `log_ensure_subscriptions` is never used
+  --> node/tests/subscription_logger.rs:12:8
+   |
+12 | pub fn log_ensure_subscriptions(service_name: &str, setup_status: bool) {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `log_setup_subscriptions` is never used
+  --> node/tests/subscription_logger.rs:26:8
+   |
+26 | pub fn log_setup_subscriptions(service_name: &str) {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `kagi_node` (test "pub_sub_tests") generated 12 warnings (run `cargo fix --test "pub_sub_tests"` to apply 9 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running tests/pub_sub_tests.rs (/home/rafael/Developer/kagi/target/debug/deps/pub_sub_tests-b6cc39fc6041bf87)
+
+running 1 test
+test test_p2p_publish_subscribe ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
