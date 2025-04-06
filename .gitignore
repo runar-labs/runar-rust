@@ -33,4 +33,7 @@ Thumbs.db
 
 # Temporary files
 *.tmp
-*.log 
+*.log
+
+# Reference files
+**/Cargo.toml.reference 
