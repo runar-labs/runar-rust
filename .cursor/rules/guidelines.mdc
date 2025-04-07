@@ -4,6 +4,10 @@ globs:
 alwaysApply: true
 ---
 ALWAYS USE IDE TOOLS don t use cat vi grep etc to read and modify file.s. use the IDE too.s if tgheuy fail.. let me know so I can restart the IDE
+DO NOT USE clic tools to change files.
+
+Split you into two role the coder and the reviews. afer every code change. the reviews. needs to double check if the code just written is aligned ewith this guidelines and the architecreu of tehs sytem.
+
 
 1. **Source of Truth**: Documentation in source files and test files is the source of truth
    - Every component, module, and test has documented INTENTION
@@ -130,19 +134,14 @@ The builder pattern strikes a balance between API simplicity and flexibility, ma
    - Clearly mark architectural violations in legacy code
    - Document migration paths for anti-patterns
 
-## Enabling LLM-Friendly Development
-
 1. **Documentation-Driven Development**:
-   - LLMs can understand and follow clear documentation
-   - Document architectural intentions to guide LLM code generation
+   - Document architectural intentions 
    - Use intention comments to make architecture explicit
 
 2. **Test-Driven Refactoring**:
    - Tests document expected behavior
-   - LLMs can understand test intentions to guide refactoring
    - Document constraints and boundaries in tests
 
 3. **Clear Refactoring Plans**:
    - Document refactoring steps in detail
-   - LLMs can follow structured plans more effectively
    - Track progress in the plan as refactoring proceed
