@@ -1368,6 +1368,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.13.1",
+ "bincode",
  "chrono",
  "env_logger",
  "lazy_static",
