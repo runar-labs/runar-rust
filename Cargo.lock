@@ -1367,7 +1367,8 @@ name = "runar_common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.13.1",
+ "async-trait",
+ "base64 0.21.7",
  "bincode",
  "chrono",
  "env_logger",
@@ -1378,6 +1379,8 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2059,6 +2062,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 dependencies = [
  "getrandom 0.3.2",
+ "serde",
 ]
 
 [[package]]
