@@ -1320,6 +1320,7 @@ dependencies = [
  "env_logger",
  "lazy_static",
  "log",
+ "rustc-hash",
  "serde",
  "serde_bytes",
  "serde_json",
