@@ -60,6 +60,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
+name = "arc-swap"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -410,6 +416,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "5.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
+dependencies = [
+ "cfg-if",
+ "hashbrown",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "deranged"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -611,6 +630,12 @@ dependencies = [
  "cfg-if",
  "crunchy",
 ]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hermit-abi"
@@ -1335,19 +1360,23 @@ name = "runar_node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
  "bincode",
  "bytes",
  "chrono",
  "criterion",
+ "dashmap",
  "env_logger",
  "futures-util",
  "log",
  "quinn",
  "rand 0.9.1",
  "rcgen",
+ "ring 0.17.14",
  "runar_common",
  "rustls 0.21.12",
+ "rustls-native-certs",
  "rustls-pemfile",
  "serde",
  "serde_json",
