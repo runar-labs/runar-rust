@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for dir in rust-node-api-test node_webui rust-apps rust-common rust-docs rust-e2e-test rust-examples rust-macros rust-macros-tests rust-node; do
+for dir in rust-node-api-test node_webui rust-apps rust-common rust-docs rust-e2e-test rust-examples rust-macros rust-node; do
   echo "Initializing Git in $dir"
   cd "$dir"
   git init
