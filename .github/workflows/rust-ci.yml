@@ -141,5 +141,6 @@ jobs:
       - name: Run benchmarks
         run: |
           cd rust-node
+          pwd
           cargo bench --all-features --no-run
           cargo bench --all-features -- --list | tail -n +2 | head -n -1 | xargs -I{} bash -c "echo 'Running benchmark: {}' && cargo bench --all-features -- '{}'"
