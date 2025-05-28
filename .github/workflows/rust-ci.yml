@@ -50,25 +50,35 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
           
-          # Function to update submodule URLs
+          # Function to update and initialize a submodule with proper authentication
           update_submodule() {
             local submodule=$1
-            echo "Updating $submodule URLs..."
+            echo "Updating $submodule..."
             
             # Get the current URL
             local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
             echo "Original URL: $url"
             
-            # Convert SSH to HTTPS URL if needed
+            # Convert SSH to HTTPS with token
             if [[ $url == git@github.com:* ]]; then
-              url="https://github.com/${url#*:}"
-              echo "Converted to HTTPS: $url"
-              git config -f .gitmodules "submodule.$submodule.url" "$url"
+              repo_path="${url#*:}"  # Remove 'git@github.com:'
+              repo_path="${repo_path%.git}"  # Remove '.git' if present
+              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
+              echo "Using authenticated URL: https://github.com/${repo_path}.git"
+              
+              # Update the URL in .git/config
+              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
+              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
+              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
             fi
             
-            # Initialize the submodule
+            # Initialize and update the submodule with the new URL
             echo "Initializing $submodule..."
-            git submodule update --init --recursive "$submodule"
+            git submodule update --init --recursive --depth=1 "$submodule"
+            
+            # Verify the remote URL
+            echo -n "Final remote URL: "
+            git -C "$submodule" remote get-url origin
           }
           
           # Update and initialize required submodules
@@ -141,25 +151,35 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
           
-          # Function to update submodule URLs
+          # Function to update and initialize a submodule with proper authentication
           update_submodule() {
             local submodule=$1
-            echo "Updating $submodule URLs..."
+            echo "Updating $submodule..."
             
             # Get the current URL
             local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
             echo "Original URL: $url"
             
-            # Convert SSH to HTTPS URL if needed
+            # Convert SSH to HTTPS with token
             if [[ $url == git@github.com:* ]]; then
-              url="https://github.com/${url#*:}"
-              echo "Converted to HTTPS: $url"
-              git config -f .gitmodules "submodule.$submodule.url" "$url"
+              repo_path="${url#*:}"  # Remove 'git@github.com:'
+              repo_path="${repo_path%.git}"  # Remove '.git' if present
+              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
+              echo "Using authenticated URL: https://github.com/${repo_path}.git"
+              
+              # Update the URL in .git/config
+              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
+              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
+              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
             fi
             
-            # Initialize the submodule
+            # Initialize and update the submodule with the new URL
             echo "Initializing $submodule..."
-            git submodule update --init --recursive "$submodule"
+            git submodule update --init --recursive --depth=1 "$submodule"
+            
+            # Verify the remote URL
+            echo -n "Final remote URL: "
+            git -C "$submodule" remote get-url origin
           }
           
           # Update and initialize required submodules
@@ -225,25 +245,35 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
           
-          # Function to update submodule URLs
+          # Function to update and initialize a submodule with proper authentication
           update_submodule() {
             local submodule=$1
-            echo "Updating $submodule URLs..."
+            echo "Updating $submodule..."
             
             # Get the current URL
             local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
             echo "Original URL: $url"
             
-            # Convert SSH to HTTPS URL if needed
+            # Convert SSH to HTTPS with token
             if [[ $url == git@github.com:* ]]; then
-              url="https://github.com/${url#*:}"
-              echo "Converted to HTTPS: $url"
-              git config -f .gitmodules "submodule.$submodule.url" "$url"
+              repo_path="${url#*:}"  # Remove 'git@github.com:'
+              repo_path="${repo_path%.git}"  # Remove '.git' if present
+              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
+              echo "Using authenticated URL: https://github.com/${repo_path}.git"
+              
+              # Update the URL in .git/config
+              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
+              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
+              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
             fi
             
-            # Initialize the submodule
+            # Initialize and update the submodule with the new URL
             echo "Initializing $submodule..."
-            git submodule update --init --recursive "$submodule"
+            git submodule update --init --recursive --depth=1 "$submodule"
+            
+            # Verify the remote URL
+            echo -n "Final remote URL: "
+            git -C "$submodule" remote get-url origin
           }
           
           # Update and initialize required submodules
@@ -322,25 +352,35 @@ jobs:
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
           
-          # Function to update submodule URLs
+          # Function to update and initialize a submodule with proper authentication
           update_submodule() {
             local submodule=$1
-            echo "Updating $submodule URLs..."
+            echo "Updating $submodule..."
             
             # Get the current URL
             local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
             echo "Original URL: $url"
             
-            # Convert SSH to HTTPS URL if needed
+            # Convert SSH to HTTPS with token
             if [[ $url == git@github.com:* ]]; then
-              url="https://github.com/${url#*:}"
-              echo "Converted to HTTPS: $url"
-              git config -f .gitmodules "submodule.$submodule.url" "$url"
+              repo_path="${url#*:}"  # Remove 'git@github.com:'
+              repo_path="${repo_path%.git}"  # Remove '.git' if present
+              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
+              echo "Using authenticated URL: https://github.com/${repo_path}.git"
+              
+              # Update the URL in .git/config
+              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
+              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
+              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
             fi
             
-            # Initialize the submodule
+            # Initialize and update the submodule with the new URL
             echo "Initializing $submodule..."
-            git submodule update --init --recursive "$submodule"
+            git submodule update --init --recursive --depth=1 "$submodule"
+            
+            # Verify the remote URL
+            echo -n "Final remote URL: "
+            git -C "$submodule" remote get-url origin
           }
           
           # Update and initialize required submodules
