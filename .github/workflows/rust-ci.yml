@@ -19,6 +19,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
+  # Configure git to use the token for all GitHub URLs
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: "url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf"
+  GIT_CONFIG_VALUE_0: "git@github.com:"
 
 jobs:
   check:
@@ -29,7 +33,16 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: 'true'
+          # Only fetch the submodules we need
+          repository: runar-labs/rust-mono
+          # Convert SSH URLs to HTTPS
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          # Force checkout with lfs
+          lfs: true
+          # This will make the checkout use the token for all submodules
+          persist-credentials: true
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -61,7 +74,16 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: 'true'
+          # Only fetch the submodules we need
+          repository: runar-labs/rust-mono
+          # Convert SSH URLs to HTTPS
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          # Force checkout with lfs
+          lfs: true
+          # This will make the checkout use the token for all submodules
+          persist-credentials: true
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -92,7 +114,16 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: 'true'
+          # Only fetch the submodules we need
+          repository: runar-labs/rust-mono
+          # Convert SSH URLs to HTTPS
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          # Force checkout with lfs
+          lfs: true
+          # This will make the checkout use the token for all submodules
+          persist-credentials: true
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -124,7 +155,16 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: 'true'
+          # Only fetch the submodules we need
+          repository: runar-labs/rust-mono
+          # Convert SSH URLs to HTTPS
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+          # Force checkout with lfs
+          lfs: true
+          # This will make the checkout use the token for all submodules
+          persist-credentials: true
       
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
