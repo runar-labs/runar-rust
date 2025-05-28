@@ -20,10 +20,6 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
 
-defaults:
-  run:
-    working-directory: ${{ github.workspace }}
-
 jobs:
   check:
     name: Check
@@ -48,10 +44,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Check code format
-        run: cargo fmt --all -- --check
+        run: |
+          cd rust-node
+          cargo fmt --all -- --check
       
       - name: Check with clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: |
+          cd rust-node
+          cargo clippy --all-targets --all-features -- -D warnings
 
   test:
     name: Test
@@ -76,7 +76,9 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Run tests
-        run: cargo test --all-features --workspace
+        run: |
+          cd rust-node
+          cargo test --all-features
 
   build:
     name: Build (${{ matrix.os }})
@@ -105,10 +107,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Build
-        run: cargo build --workspace --verbose
+        run: |
+          cd rust-node
+          cargo build --verbose
       
       - name: Build release
-        run: cargo build --release --workspace --verbose
+        run: |
+          cd rust-node
+          cargo build --release --verbose
 
   benchmarks:
     name: Benchmarks
@@ -134,5 +140,6 @@ jobs:
       
       - name: Run benchmarks
         run: |
+          cd rust-node
           cargo bench --all-features --no-run
           cargo bench --all-features -- --list | tail -n +2 | head -n -1 | xargs -I{} bash -c "echo 'Running benchmark: {}' && cargo bench --all-features -- '{}'"
