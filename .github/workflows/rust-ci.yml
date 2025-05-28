@@ -34,15 +34,47 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          submodules: 'true'
-          # Only fetch the submodules we need
+          # Don't initialize submodules automatically
+          submodules: false
+          # Only fetch the current repository
           repository: runar-labs/rust-mono
-          # Convert SSH URLs to HTTPS
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
-          # Force checkout with lfs
+          # Enable LFS
           lfs: true
           # This will make the checkout use the token for all submodules
           persist-credentials: true
+          
+      # Configure git to use HTTPS with token for authentication
+      - name: Configure Git authentication
+        run: |
+          # Configure Git to use HTTPS with token for all GitHub URLs
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
+          
+          # Function to update submodule URLs
+          update_submodule() {
+            local submodule=$1
+            echo "Updating $submodule URLs..."
+            
+            # Get the current URL
+            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
+            echo "Original URL: $url"
+            
+            # Convert SSH to HTTPS URL if needed
+            if [[ $url == git@github.com:* ]]; then
+              url="https://github.com/${url#*:}"
+              echo "Converted to HTTPS: $url"
+              git config -f .gitmodules "submodule.$submodule.url" "$url"
+            fi
+            
+            # Initialize the submodule
+            echo "Initializing $submodule..."
+            git submodule update --init --recursive "$submodule"
+          }
+          
+          # Update and initialize required submodules
+          update_submodule rust-common
+          update_submodule rust-macros
+          update_submodule rust-node
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -58,12 +90,30 @@ jobs:
       
       - name: Check code format
         run: |
-          cd rust-node
+          echo "=== Formatting rust-common ==="
+          cd rust-common
+          cargo fmt --all -- --check
+          
+          echo "\n=== Formatting rust-macros ==="
+          cd ../rust-macros
+          cargo fmt --all -- --check
+          
+          echo "\n=== Formatting rust-node ==="
+          cd ../rust-node
           cargo fmt --all -- --check
       
       - name: Check with clippy
         run: |
-          cd rust-node
+          echo "=== Checking rust-common with clippy ==="
+          cd rust-common
+          cargo clippy --all-targets --all-features -- -D warnings
+          
+          echo "\n=== Checking rust-macros with clippy ==="
+          cd ../rust-macros
+          cargo clippy --all-targets --all-features -- -D warnings
+          
+          echo "\n=== Checking rust-node with clippy ==="
+          cd ../rust-node
           cargo clippy --all-targets --all-features -- -D warnings
 
   test:
@@ -75,15 +125,47 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          submodules: 'true'
-          # Only fetch the submodules we need
+          # Don't initialize submodules automatically
+          submodules: false
+          # Only fetch the current repository
           repository: runar-labs/rust-mono
-          # Convert SSH URLs to HTTPS
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
-          # Force checkout with lfs
+          # Enable LFS
           lfs: true
           # This will make the checkout use the token for all submodules
           persist-credentials: true
+          
+      # Configure git to use HTTPS with token for authentication
+      - name: Configure Git authentication
+        run: |
+          # Configure Git to use HTTPS with token for all GitHub URLs
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
+          
+          # Function to update submodule URLs
+          update_submodule() {
+            local submodule=$1
+            echo "Updating $submodule URLs..."
+            
+            # Get the current URL
+            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
+            echo "Original URL: $url"
+            
+            # Convert SSH to HTTPS URL if needed
+            if [[ $url == git@github.com:* ]]; then
+              url="https://github.com/${url#*:}"
+              echo "Converted to HTTPS: $url"
+              git config -f .gitmodules "submodule.$submodule.url" "$url"
+            fi
+            
+            # Initialize the submodule
+            echo "Initializing $submodule..."
+            git submodule update --init --recursive "$submodule"
+          }
+          
+          # Update and initialize required submodules
+          update_submodule rust-common
+          update_submodule rust-macros
+          update_submodule rust-node
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -99,7 +181,19 @@ jobs:
       
       - name: Run tests
         run: |
-          cd rust-node
+          # Test rust-common first
+          echo "=== Testing rust-common ==="
+          cd rust-common
+          cargo test --all-features
+          
+          # Then test rust-macros
+          echo "\n=== Testing rust-macros ==="
+          cd ../rust-macros
+          cargo test --all-features
+          
+          # Finally test rust-node
+          echo "\n=== Testing rust-node ==="
+          cd ../rust-node
           cargo test --all-features
 
   build:
@@ -115,15 +209,47 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          submodules: 'true'
-          # Only fetch the submodules we need
+          # Don't initialize submodules automatically
+          submodules: false
+          # Only fetch the current repository
           repository: runar-labs/rust-mono
-          # Convert SSH URLs to HTTPS
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
-          # Force checkout with lfs
+          # Enable LFS
           lfs: true
           # This will make the checkout use the token for all submodules
           persist-credentials: true
+          
+      # Configure git to use HTTPS with token for authentication
+      - name: Configure Git authentication
+        run: |
+          # Configure Git to use HTTPS with token for all GitHub URLs
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
+          
+          # Function to update submodule URLs
+          update_submodule() {
+            local submodule=$1
+            echo "Updating $submodule URLs..."
+            
+            # Get the current URL
+            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
+            echo "Original URL: $url"
+            
+            # Convert SSH to HTTPS URL if needed
+            if [[ $url == git@github.com:* ]]; then
+              url="https://github.com/${url#*:}"
+              echo "Converted to HTTPS: $url"
+              git config -f .gitmodules "submodule.$submodule.url" "$url"
+            fi
+            
+            # Initialize the submodule
+            echo "Initializing $submodule..."
+            git submodule update --init --recursive "$submodule"
+          }
+          
+          # Update and initialize required submodules
+          update_submodule rust-common
+          update_submodule rust-macros
+          update_submodule rust-node
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -139,12 +265,36 @@ jobs:
       
       - name: Build
         run: |
-          cd rust-node
+          # Build rust-common first
+          echo "=== Building rust-common ==="
+          cd rust-common
+          cargo build --verbose
+          
+          # Then build rust-macros
+          echo "\n=== Building rust-macros ==="
+          cd ../rust-macros
+          cargo build --verbose
+          
+          # Finally build rust-node
+          echo "\n=== Building rust-node ==="
+          cd ../rust-node
           cargo build --verbose
       
       - name: Build release
         run: |
-          cd rust-node
+          # Build rust-common in release mode
+          echo "=== Building rust-common (release) ==="
+          cd rust-common
+          cargo build --release --verbose
+          
+          # Build rust-macros in release mode
+          echo "\n=== Building rust-macros (release) ==="
+          cd ../rust-macros
+          cargo build --release --verbose
+          
+          # Build rust-node in release mode
+          echo "\n=== Building rust-node (release) ==="
+          cd ../rust-node
           cargo build --release --verbose
 
   benchmarks:
@@ -156,15 +306,47 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          submodules: 'true'
-          # Only fetch the submodules we need
+          # Don't initialize submodules automatically
+          submodules: false
+          # Only fetch the current repository
           repository: runar-labs/rust-mono
-          # Convert SSH URLs to HTTPS
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
-          # Force checkout with lfs
+          # Enable LFS
           lfs: true
           # This will make the checkout use the token for all submodules
           persist-credentials: true
+          
+      # Configure git to use HTTPS with token for authentication
+      - name: Configure Git authentication
+        run: |
+          # Configure Git to use HTTPS with token for all GitHub URLs
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
+          
+          # Function to update submodule URLs
+          update_submodule() {
+            local submodule=$1
+            echo "Updating $submodule URLs..."
+            
+            # Get the current URL
+            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
+            echo "Original URL: $url"
+            
+            # Convert SSH to HTTPS URL if needed
+            if [[ $url == git@github.com:* ]]; then
+              url="https://github.com/${url#*:}"
+              echo "Converted to HTTPS: $url"
+              git config -f .gitmodules "submodule.$submodule.url" "$url"
+            fi
+            
+            # Initialize the submodule
+            echo "Initializing $submodule..."
+            git submodule update --init --recursive "$submodule"
+          }
+          
+          # Update and initialize required submodules
+          update_submodule rust-common
+          update_submodule rust-macros
+          update_submodule rust-node
       
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
