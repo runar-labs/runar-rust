@@ -32,59 +32,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Don't initialize submodules automatically
-          submodules: false
-          # Only fetch the current repository
-          repository: runar-labs/rust-mono
-          # Enable LFS
-          lfs: true
-          # This will make the checkout use the token for all submodules
+          submodules: recursive
+          fetch-depth: 1
           persist-credentials: true
+          # Only fetch the required submodules
+          repository: runar-labs/rust-mono
+          path: .
+          # This ensures the token is used for all submodule operations
+          ssh-key: ${{ secrets.GH_PAT || '' }}
+          # Explicitly list the submodules to initialize
+          submodules: |
+            rust-common
+            rust-macros
+            rust-node
           
-      # Configure git to use HTTPS with token for authentication
-      - name: Configure Git authentication
+      # Verify submodules were checked out
+      - name: Verify submodules
         run: |
-          # Configure Git to use HTTPS with token for all GitHub URLs
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
-          
-          # Function to update and initialize a submodule with proper authentication
-          update_submodule() {
-            local submodule=$1
-            echo "Updating $submodule..."
-            
-            # Get the current URL
-            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
-            echo "Original URL: $url"
-            
-            # Convert SSH to HTTPS with token
-            if [[ $url == git@github.com:* ]]; then
-              repo_path="${url#*:}"  # Remove 'git@github.com:'
-              repo_path="${repo_path%.git}"  # Remove '.git' if present
-              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
-              echo "Using authenticated URL: https://github.com/${repo_path}.git"
-              
-              # Update the URL in .git/config
-              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
-              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
-              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
+          echo "Verifying submodules..."
+          for submodule in rust-common rust-macros rust-node; do
+            echo "Checking $submodule..."
+            if [ ! -d "$submodule" ]; then
+              echo "Error: $submodule directory not found"
+              exit 1
             fi
-            
-            # Initialize and update the submodule with the new URL
-            echo "Initializing $submodule..."
-            git submodule update --init --recursive --depth=1 "$submodule"
-            
-            # Verify the remote URL
-            echo -n "Final remote URL: "
-            git -C "$submodule" remote get-url origin
-          }
-          
-          # Update and initialize required submodules
-          update_submodule rust-common
-          update_submodule rust-macros
-          update_submodule rust-node
+            echo "$submodule path: $(cd "$submodule" && pwd)"
+            echo "$submodule remote: $(cd "$submodule" && git remote -v)"
+          done
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -133,59 +108,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Don't initialize submodules automatically
-          submodules: false
-          # Only fetch the current repository
-          repository: runar-labs/rust-mono
-          # Enable LFS
-          lfs: true
-          # This will make the checkout use the token for all submodules
+          fetch-depth: 1
           persist-credentials: true
-          
-      # Configure git to use HTTPS with token for authentication
-      - name: Configure Git authentication
+          path: .
+          # Don't initialize submodules yet
+          submodules: false
+
+      - name: Configure Git for HTTPS
         run: |
-          # Configure Git to use HTTPS with token for all GitHub URLs
+          # Configure Git to use HTTPS with token for all GitHub operations
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
           
-          # Function to update and initialize a submodule with proper authentication
-          update_submodule() {
-            local submodule=$1
-            echo "Updating $submodule..."
-            
-            # Get the current URL
-            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
-            echo "Original URL: $url"
-            
-            # Convert SSH to HTTPS with token
-            if [[ $url == git@github.com:* ]]; then
-              repo_path="${url#*:}"  # Remove 'git@github.com:'
-              repo_path="${repo_path%.git}"  # Remove '.git' if present
-              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
-              echo "Using authenticated URL: https://github.com/${repo_path}.git"
-              
-              # Update the URL in .git/config
-              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
-              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
-              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
-            fi
-            
-            # Initialize and update the submodule with the new URL
-            echo "Initializing $submodule..."
-            git submodule update --init --recursive --depth=1 "$submodule"
-            
-            # Verify the remote URL
-            echo -n "Final remote URL: "
-            git -C "$submodule" remote get-url origin
-          }
+          # Update submodule URLs to use HTTPS
+          git submodule sync --recursive
+          git submodule update --init --recursive --remote
           
-          # Update and initialize required submodules
-          update_submodule rust-common
-          update_submodule rust-macros
-          update_submodule rust-node
+          # Verify the remote URLs
+          echo "Verifying submodule remote URLs..."
+          for submodule in rust-common rust-macros rust-node; do
+            if [ -d "$submodule" ]; then
+              echo "$submodule remote: $(git -C "$submodule" remote -v)"
+            else
+              echo "Warning: $submodule directory not found"
+            fi
+          done
+          
+      # Verify submodules were checked out
+      - name: Verify submodules
+        run: |
+          echo "Verifying submodules..."
+          for submodule in rust-common rust-macros rust-node; do
+            echo "Checking $submodule..."
+            if [ ! -d "$submodule" ]; then
+              echo "Error: $submodule directory not found"
+              exit 1
+            fi
+            echo "$submodule path: $(cd "$submodule" && pwd)"
+            echo "$submodule remote: $(cd "$submodule" && git remote -v)"
+          done
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -227,59 +189,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Don't initialize submodules automatically
-          submodules: false
-          # Only fetch the current repository
-          repository: runar-labs/rust-mono
-          # Enable LFS
-          lfs: true
-          # This will make the checkout use the token for all submodules
+          fetch-depth: 1
           persist-credentials: true
-          
-      # Configure git to use HTTPS with token for authentication
-      - name: Configure Git authentication
+          path: .
+          # Don't initialize submodules yet
+          submodules: false
+
+      - name: Configure Git for HTTPS
         run: |
-          # Configure Git to use HTTPS with token for all GitHub URLs
+          # Configure Git to use HTTPS with token for all GitHub operations
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
           
-          # Function to update and initialize a submodule with proper authentication
-          update_submodule() {
-            local submodule=$1
-            echo "Updating $submodule..."
-            
-            # Get the current URL
-            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
-            echo "Original URL: $url"
-            
-            # Convert SSH to HTTPS with token
-            if [[ $url == git@github.com:* ]]; then
-              repo_path="${url#*:}"  # Remove 'git@github.com:'
-              repo_path="${repo_path%.git}"  # Remove '.git' if present
-              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
-              echo "Using authenticated URL: https://github.com/${repo_path}.git"
-              
-              # Update the URL in .git/config
-              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
-              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
-              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
-            fi
-            
-            # Initialize and update the submodule with the new URL
-            echo "Initializing $submodule..."
-            git submodule update --init --recursive --depth=1 "$submodule"
-            
-            # Verify the remote URL
-            echo -n "Final remote URL: "
-            git -C "$submodule" remote get-url origin
-          }
+          # Update submodule URLs to use HTTPS
+          git submodule sync --recursive
+          git submodule update --init --recursive --remote
           
-          # Update and initialize required submodules
-          update_submodule rust-common
-          update_submodule rust-macros
-          update_submodule rust-node
+          # Verify the remote URLs
+          echo "Verifying submodule remote URLs..."
+          for submodule in rust-common rust-macros rust-node; do
+            if [ -d "$submodule" ]; then
+              echo "$submodule remote: $(git -C "$submodule" remote -v)"
+            else
+              echo "Warning: $submodule directory not found"
+            fi
+          done
+          
+      # Verify submodules were checked out
+      - name: Verify submodules
+        run: |
+          echo "Verifying submodules..."
+          for submodule in rust-common rust-macros rust-node; do
+            echo "Checking $submodule..."
+            if [ ! -d "$submodule" ]; then
+              echo "Error: $submodule directory not found"
+              exit 1
+            fi
+            echo "$submodule path: $(cd "$submodule" && pwd)"
+            echo "$submodule remote: $(cd "$submodule" && git remote -v)"
+          done
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -334,59 +283,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Don't initialize submodules automatically
-          submodules: false
-          # Only fetch the current repository
-          repository: runar-labs/rust-mono
-          # Enable LFS
-          lfs: true
-          # This will make the checkout use the token for all submodules
+          fetch-depth: 1
           persist-credentials: true
-          
-      # Configure git to use HTTPS with token for authentication
-      - name: Configure Git authentication
+          path: .
+          # Don't initialize submodules yet
+          submodules: false
+
+      - name: Configure Git for HTTPS
         run: |
-          # Configure Git to use HTTPS with token for all GitHub URLs
+          # Configure Git to use HTTPS with token for all GitHub operations
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
           
-          # Function to update and initialize a submodule with proper authentication
-          update_submodule() {
-            local submodule=$1
-            echo "Updating $submodule..."
-            
-            # Get the current URL
-            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
-            echo "Original URL: $url"
-            
-            # Convert SSH to HTTPS with token
-            if [[ $url == git@github.com:* ]]; then
-              repo_path="${url#*:}"  # Remove 'git@github.com:'
-              repo_path="${repo_path%.git}"  # Remove '.git' if present
-              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
-              echo "Using authenticated URL: https://github.com/${repo_path}.git"
-              
-              # Update the URL in .git/config
-              git config --file=.git/modules/$submodule/config remote.origin.url "$url" || true
-              # Update the URL in .gitmodules (for reference, though it shouldn't be used directly)
-              git config -f .gitmodules "submodule.$submodule.url" "https://github.com/${repo_path}.git"
-            fi
-            
-            # Initialize and update the submodule with the new URL
-            echo "Initializing $submodule..."
-            git submodule update --init --recursive --depth=1 "$submodule"
-            
-            # Verify the remote URL
-            echo -n "Final remote URL: "
-            git -C "$submodule" remote get-url origin
-          }
+          # Update submodule URLs to use HTTPS
+          git submodule sync --recursive
+          git submodule update --init --recursive --remote
           
-          # Update and initialize required submodules
-          update_submodule rust-common
-          update_submodule rust-macros
-          update_submodule rust-node
+          # Verify the remote URLs
+          echo "Verifying submodule remote URLs..."
+          for submodule in rust-common rust-macros rust-node; do
+            if [ -d "$submodule" ]; then
+              echo "$submodule remote: $(git -C "$submodule" remote -v)"
+            else
+              echo "Warning: $submodule directory not found"
+            fi
+          done
+          
+      # Verify submodules were checked out
+      - name: Verify submodules
+        run: |
+          echo "Verifying submodules..."
+          for submodule in rust-common rust-macros rust-node; do
+            echo "Checking $submodule..."
+            if [ ! -d "$submodule" ]; then
+              echo "Error: $submodule directory not found"
+              exit 1
+            fi
+            echo "$submodule path: $(cd "$submodule" && pwd)"
+            echo "$submodule remote: $(cd "$submodule" && git remote -v)"
+          done
       
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
