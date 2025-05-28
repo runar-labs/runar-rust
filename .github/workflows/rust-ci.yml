@@ -29,41 +29,41 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout repository and submodules
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+          submodules: recursive
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Don't initialize submodules automatically
-          submodules: false
-          # Only fetch the current repository
-          repository: runar-labs/rust-mono
-          # Enable LFS
-          lfs: true
-          # This will make the checkout use the token for all submodules
-          persist-credentials: true
-          
-      # Configure git to use HTTPS with token for authentication
-      - name: Configure Git authentication
+
+      - name: Show .gitmodules and .git/config for debugging
         run: |
-          # Configure Git to use HTTPS with token for all GitHub URLs
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "ssh://git@github.com/"
-          
-          # Function to update and initialize a submodule with proper authentication
-          update_submodule() {
-            local submodule=$1
-            echo "Updating $submodule..."
-            
-            # Get the current URL
-            local url=$(git config -f .gitmodules --get "submodule.$submodule.url")
-            echo "Original URL: $url"
-            
-            # Convert SSH to HTTPS with token
-            if [[ $url == git@github.com:* ]]; then
-              repo_path="${url#*:}"  # Remove 'git@github.com:'
-              repo_path="${repo_path%.git}"  # Remove '.git' if present
-              url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
+          echo "---- .gitmodules ----"
+          cat .gitmodules || true
+          echo "---- .git/config ----"
+          cat .git/config || true
+          echo "---- Submodule remotes ----"
+          git submodule foreach 'echo $name: $(git remote -v)'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check code format
+        run: |
+          cargo fmt --all -- --check
+
+      - name: Check with clippy
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: |
+          cargo test --all-features
+
+      - name: Build
+        run: |
+          cargo build --verbose
+="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${repo_path}.git"
               echo "Using authenticated URL: https://github.com/${repo_path}.git"
               
               # Update the URL in .git/config
