@@ -3,6 +3,7 @@ members = [
     "rust-node",
     "rust-macros",
     "rust-common",
+    "rust-services",
     # "rust-macros-tests",
 ]
 resolver = "2"
@@ -13,6 +14,7 @@ edition = "2021"
 authors = ["Runar Team"]
 description = "Runar Node System"
 license = "MIT"
+license-file = "LICENSE"
 
 [workspace.dependencies]
 tokio = { version = "1.0", features = ["full"] }

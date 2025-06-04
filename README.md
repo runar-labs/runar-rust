@@ -1,4 +1,10 @@
-# Rust Monorepo\n\nThis is the main monorepo for Runar Labs Rust projects.
+# Rust Monorepo
+
+This is the main monorepo for Runar Labs Rust projects.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Repository Structure
 
