@@ -124,7 +124,10 @@ async fn test_remote_action_call() -> Result<()> {
         .await?;
     // response is now directly f64 due to generic deserialization in request()
     assert_eq!(response, 28.0);
-    logger.info(format!("Multiply operation succeeded: 4 * 7 = {}", response));
+    logger.info(format!(
+        "Multiply operation succeeded: 4 * 7 = {}",
+        response
+    ));
 
     // add a new service to node1 and test remote call
     let new_service = MathService::new("math3", "math3");

@@ -3,13 +3,13 @@
 // INTENTION: Verify that the Registry Service correctly provides
 // information about registered services through standard requests.
 
+use anyhow::Result;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::ArcValueType;
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::services::RegistryDelegate;
 use runar_node::{Node, NodeConfig, ServiceMetadata, ServiceState};
 use serde_json::Value;
-use anyhow::Result;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -47,34 +47,34 @@ async fn test_registry_service_list_services() {
 
         // Parse the response to verify it contains our registered services
         // services is now Vec<ServiceMetadata>
-            // .as_list_ref::<ServiceMetadata>() is no longer needed as response is already Option<Vec<ServiceMetadata>>
-            // The services list should contain at least the math service and the registry service itself
-            assert!(
-                services.len() >= 2,
-                "Expected at least 2 services, got {}",
-                services.len()
-            );
+        // .as_list_ref::<ServiceMetadata>() is no longer needed as response is already Option<Vec<ServiceMetadata>>
+        // The services list should contain at least the math service and the registry service itself
+        assert!(
+            services.len() >= 2,
+            "Expected at least 2 services, got {}",
+            services.len()
+        );
 
-            // Verify the math service is in the list by checking the service_path field
-            let has_math_service = services
-                .iter()
-                .any(|service| service.service_path == "math");
-            assert!(
-                has_math_service,
-                "Math service not found in registry service response"
-            );
+        // Verify the math service is in the list by checking the service_path field
+        let has_math_service = services
+            .iter()
+            .any(|service| service.service_path == "math");
+        assert!(
+            has_math_service,
+            "Math service not found in registry service response"
+        );
 
-            // Optionally, validate structure of ServiceMetadata for at least one service
-            let math_service = services
-                .iter()
-                .find(|service| service.service_path == "math")
-                .expect("Math service not found");
-            assert_eq!(math_service.name, "Math", "Math service name mismatch");
-            assert_eq!(
-                math_service.version, "1.0.0",
-                "Math service version mismatch"
-            );
-            // Add more field checks as desired
+        // Optionally, validate structure of ServiceMetadata for at least one service
+        let math_service = services
+            .iter()
+            .find(|service| service.service_path == "math")
+            .expect("Math service not found");
+        assert_eq!(math_service.name, "Math", "Math service name mismatch");
+        assert_eq!(
+            math_service.version, "1.0.0",
+            "Math service version mismatch"
+        );
+        // Add more field checks as desired
     })
     .await
     {
@@ -119,12 +119,18 @@ async fn test_registry_service_get_service_info() {
         // test_logger.debug(format!("Service states AFTER start: {:?}", states_after));
 
         // Debug log available handlers using logger
-        let list_response: Vec<ServiceMetadata> = node.request("$registry/services/list", None::<()>).await.unwrap();
+        let list_response: Vec<ServiceMetadata> = node
+            .request("$registry/services/list", None::<()>)
+            .await
+            .unwrap();
         test_logger.debug(format!("Available services: {:?}", list_response));
 
         // Use the request method to query the registry service for the math service
         // Note: We should use the correct parameter path format
-        let response: ServiceMetadata = node.request("$registry/services/math", None::<()>).await.unwrap();
+        let response: ServiceMetadata = node
+            .request("$registry/services/math", None::<()>)
+            .await
+            .unwrap();
         test_logger.debug(format!("Service info response: {:?}", response));
 
         // Dump the complete response data for debugging
@@ -243,7 +249,8 @@ async fn test_registry_service_missing_parameter() {
         }
 
         // Test with an invalid path format for service_path/state endpoint
-        let state_response: Result<Value> = node.request("$registry/services//state", None::<()>).await;
+        let state_response: Result<Value> =
+            node.request("$registry/services//state", None::<()>).await;
 
         // The request should fail or return an error response
         match state_response {

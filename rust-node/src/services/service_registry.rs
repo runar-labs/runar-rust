@@ -933,9 +933,9 @@ impl ServiceRegistry {
             result.insert(
                 path_str,
                 ServiceMetadata {
-                // Use the network_id from the service_entry's topic_path
-                network_id: service_entry.service_topic.network_id().to_string(),
-                service_path: service.path().to_string(),
+                    // Use the network_id from the service_entry's topic_path
+                    network_id: service_entry.service_topic.network_id().to_string(),
+                    service_path: service.path().to_string(),
                     name: service.name().to_string(),
                     version: service.version().to_string(),
                     description: service.description().to_string(),

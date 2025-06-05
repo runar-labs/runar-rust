@@ -75,7 +75,12 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     for fn_arg in &input.sig.inputs {
         if let FnArg::Typed(pat_type) = fn_arg {
             if let Type::Path(type_path) = &*pat_type.ty {
-                if type_path.path.segments.iter().any(|segment| segment.ident == "RequestContext") {
+                if type_path
+                    .path
+                    .segments
+                    .iter()
+                    .any(|segment| segment.ident == "RequestContext")
+                {
                     if let Pat::Ident(pat_ident) = &*pat_type.pat {
                         ctx_ident_opt = Some(pat_ident.ident.clone());
                         break;
@@ -84,7 +89,8 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
-    let ctx_ident = ctx_ident_opt.unwrap_or_else(|| Ident::new("ctx", proc_macro2::Span::call_site()));
+    let ctx_ident =
+        ctx_ident_opt.unwrap_or_else(|| Ident::new("ctx", proc_macro2::Span::call_site()));
 
     // Generate the register action method based on return type information
     let register_action_method = generate_register_action_method(
@@ -114,7 +120,7 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Extract information about the return type for proper handling.
 /// This function robustly supports all valid Rust types, including nested generics.
 fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
-    use syn::{Type, PathArguments, GenericArgument};
+    use syn::{GenericArgument, PathArguments, Type};
     match return_type {
         ReturnType::Default => ReturnTypeInfo {
             is_result: false,
@@ -147,7 +153,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
                 (false, &**ty)
             };
 
-
             let type_name = quote! { #inner_type_ast }.to_string();
 
             // Determine if this is a primitive type
@@ -175,7 +180,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
         }
     }
 }
-
 
 /// Struct to hold information about the return type
 struct ReturnTypeInfo {
@@ -242,7 +246,8 @@ fn generate_register_action_method(
             // For () return type, convert to ArcValueType::null()
             Ok(runar_common::types::ArcValueType::null())
         }
-    } else if type_name == "ArcValueType" { // Check if the result is already an ArcValueType
+    } else if type_name == "ArcValueType" {
+        // Check if the result is already an ArcValueType
         quote! {
             // Result is already ArcValueType, pass it through directly
             Ok(result)
@@ -342,7 +347,11 @@ fn determine_common_type(params: &[(Ident, Type)]) -> Option<Type> {
 }
 
 /// Generate parameter extraction code
-fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str, func_param_ctx_ident: &Ident) -> TokenStream2 {
+fn generate_parameter_extractions(
+    params: &[(Ident, Type)],
+    _fn_name_str: &str,
+    func_param_ctx_ident: &Ident,
+) -> TokenStream2 {
     let mut extractions = TokenStream2::new();
 
     if params.is_empty() {
@@ -391,12 +400,13 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str, 
             };
         });
 
-        for (param_ident, param_type) in params { // param_type is effectively common_type_token
+        for (param_ident, param_type) in params {
+            // param_type is effectively common_type_token
             let param_name_str = param_ident.to_string();
             let param_type_str_for_check = quote!(#param_type).to_string().replace(" ", "");
-            let is_option_common_type = param_type_str_for_check.starts_with("Option<") ||
-                                       param_type_str_for_check.starts_with("std::option::Option<") ||
-                                       param_type_str_for_check.starts_with("core::option::Option<");
+            let is_option_common_type = param_type_str_for_check.starts_with("Option<")
+                || param_type_str_for_check.starts_with("std::option::Option<")
+                || param_type_str_for_check.starts_with("core::option::Option<");
 
             if is_option_common_type {
                 // Common type is Option<T>. Map is Map<String, Option<T>>.
@@ -447,9 +457,9 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str, 
         for (param_ident, param_type) in params {
             let param_name_str = param_ident.to_string();
             let param_type_str_for_check = quote!(#param_type).to_string().replace(" ", "");
-            let is_option_param_type = param_type_str_for_check.starts_with("Option<") ||
-                                       param_type_str_for_check.starts_with("std::option::Option<") ||
-                                       param_type_str_for_check.starts_with("core::option::Option<");
+            let is_option_param_type = param_type_str_for_check.starts_with("Option<")
+                || param_type_str_for_check.starts_with("std::option::Option<")
+                || param_type_str_for_check.starts_with("core::option::Option<");
 
             let per_param_extraction_code = if is_option_param_type {
                 quote! {
@@ -500,7 +510,11 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str, 
 }
 
 /// Generate method call with extracted parameters
-fn generate_method_call(fn_ident: &Ident, params: &[(Ident, Type)], is_async: bool) -> TokenStream2 {
+fn generate_method_call(
+    fn_ident: &Ident,
+    params: &[(Ident, Type)],
+    is_async: bool,
+) -> TokenStream2 {
     let param_idents = params.iter().map(|(ident, _)| {
         quote! { #ident }
     });

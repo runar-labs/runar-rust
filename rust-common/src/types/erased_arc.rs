@@ -377,7 +377,7 @@ impl ErasedArc {
                     e_key == a_key || (e_key.contains("String") && a_key.contains("String"));
 
                 // Values can be more complex - look for type compatibility
-                let values_compatible = e_value == a_value 
+                let values_compatible = e_value == a_value
                     || (e_value.contains("String") && a_value.contains("String"))
                     || (e_value.contains("i32") && a_value.contains("i32"))
                     || (e_value.contains("i64") && a_value.contains("i64"))

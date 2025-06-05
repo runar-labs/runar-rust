@@ -10,16 +10,16 @@
 // the necessary information and functionality to process the event,
 // while maintaining proper isolation between events.
 
-use crate::routing::TopicPath;
 use crate::node::Node; // Added for concrete type
+use crate::routing::TopicPath;
 use crate::services::PublishOptions; // Restored
-use runar_common::types::AsArcValueType; // Corrected: Only AsArcValueType needed here
 use crate::NodeDelegate; // Keep one instance
 use anyhow::{anyhow, Result}; // Restored
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
 use runar_common::types::ArcValueType;
-use std::fmt::Debug;
+use runar_common::types::AsArcValueType; // Corrected: Only AsArcValueType needed here
 use std::fmt;
+use std::fmt::Debug;
 use std::sync::Arc;
 
 /// Context for handling events
@@ -186,11 +186,7 @@ impl EventContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P, T>(
-        &self,
-        path: impl Into<String>,
-        payload: Option<P>,
-    ) -> Result<T>
+    pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
     where
         P: AsArcValueType + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,

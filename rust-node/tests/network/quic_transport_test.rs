@@ -247,7 +247,7 @@ async fn test_quic_transport_connection_end_to_end() {
 
                             // Validate that the addresses contain the expected address
                             let expected_addr = node_b_addr.to_string();
-                            assert!(peer_node_info.addresses.contains(&expected_addr), 
+                            assert!(peer_node_info.addresses.contains(&expected_addr),
                                   "Addresses in received NodeInfo doesn't contain expected address: {}", expected_addr);
 
                             // Validate version
@@ -302,7 +302,7 @@ async fn test_quic_transport_connection_end_to_end() {
 
                             // Validate that the addresses contain the expected address
                             let expected_addr = node_a_addr.to_string();
-                            assert!(peer_node_info.addresses.contains(&expected_addr), 
+                            assert!(peer_node_info.addresses.contains(&expected_addr),
                                   "Addresses in received NodeInfo doesn't contain expected address: {}", expected_addr);
 
                             // Validate version

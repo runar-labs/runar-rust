@@ -26,18 +26,16 @@ pub mod request_context;
 pub mod service_registry;
 
 // Import necessary components
-use crate::routing::TopicPath;
 use crate::node::Node; // Added for concrete type Node
+use crate::routing::TopicPath;
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
-use runar_common::types::{
-    ActionMetadata, ArcValueType, FieldSchema, SerializerRegistry,
-};
+use runar_common::types::AsArcValueType;
+use runar_common::types::{ActionMetadata, ArcValueType, FieldSchema, SerializerRegistry};
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
-use runar_common::types::AsArcValueType;
-use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -525,11 +523,7 @@ impl Default for EventRegistrationOptions {
 #[async_trait::async_trait]
 pub trait NodeRequestHandler: Send + Sync {
     /// Process a service request
-    async fn request(
-        &self,
-        path: String,
-        params: Option<ArcValueType>,
-    ) -> Result<ArcValueType>;
+    async fn request(&self, path: String, params: Option<ArcValueType>) -> Result<ArcValueType>;
 
     /// Publish an event to a topic
     async fn publish(&self, topic: String, data: Option<ArcValueType>) -> Result<()>;
@@ -653,11 +647,7 @@ pub trait EventDispatcher: Send + Sync {
 #[async_trait::async_trait]
 pub trait NodeDelegate: Send + Sync {
     /// Process a service request
-    async fn request<P, T>(
-        &self,
-        path: impl Into<String> + Send,
-        payload: Option<P>,
-    ) -> Result<T>
+    async fn request<P, T>(&self, path: impl Into<String> + Send, payload: Option<P>) -> Result<T>
     where
         P: AsArcValueType + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>;

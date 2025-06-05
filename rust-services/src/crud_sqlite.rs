@@ -259,21 +259,34 @@ impl CrudSqliteService {
             let provided_category = arc_value.category; // Access as a field
 
             let type_match = match (expected_db_type, provided_category) {
-                (DataType::Integer, ValueCategory::Primitive) => arc_value.value.as_ref().map_or(false, |v| v.type_name() == "i64"),
-                (DataType::Real, ValueCategory::Primitive) => arc_value.value.as_ref().map_or(false, |v| v.type_name() == "f64"),
-                (DataType::Text, ValueCategory::Primitive) => arc_value.value.as_ref().map_or(false, |v| {
-                    let tn = v.type_name();
-                    tn == "String" || tn == "alloc::string::String"
-                }),
-                (DataType::Boolean, ValueCategory::Primitive) => arc_value.value.as_ref().map_or(false, |v| v.type_name() == "bool"),
+                (DataType::Integer, ValueCategory::Primitive) => arc_value
+                    .value
+                    .as_ref()
+                    .map_or(false, |v| v.type_name() == "i64"),
+                (DataType::Real, ValueCategory::Primitive) => arc_value
+                    .value
+                    .as_ref()
+                    .map_or(false, |v| v.type_name() == "f64"),
+                (DataType::Text, ValueCategory::Primitive) => {
+                    arc_value.value.as_ref().map_or(false, |v| {
+                        let tn = v.type_name();
+                        tn == "String" || tn == "alloc::string::String"
+                    })
+                }
+                (DataType::Boolean, ValueCategory::Primitive) => arc_value
+                    .value
+                    .as_ref()
+                    .map_or(false, |v| v.type_name() == "bool"),
                 (DataType::Blob, ValueCategory::Bytes) => arc_value.value.is_some(), // Ensure value exists for Bytes category
                 (_, ValueCategory::Null) => arc_value.value.is_none(), // Ensure value is None for Null category
                 _ => false, // All other combinations are mismatches or inconsistent states
             };
 
             if !type_match {
-                let provided_type_name_for_error = arc_value.value.as_ref()
-                .map_or_else(|| format!("N/A (value is None, category: {:?})", provided_category), |v| v.type_name().to_string());
+                let provided_type_name_for_error = arc_value.value.as_ref().map_or_else(
+                    || format!("N/A (value is None, category: {:?})", provided_category),
+                    |v| v.type_name().to_string(),
+                );
                 let error_message = format!(
                     "Type mismatch or inconsistent state for field '{}': schema expects DB type {:?}. Received category {:?} with specific type '{}'.",
                     field_name, expected_db_type, provided_category, provided_type_name_for_error
@@ -462,11 +475,8 @@ impl CrudSqliteService {
             ));
             match document_arc_value_map.as_type::<HashMap<String, ArcValueType>>() {
                 Ok(map_data) => {
-                    match self.schema_aware_convert_row_values(
-                        &req.collection,
-                        map_data,
-                        &context,
-                    ) {
+                    match self.schema_aware_convert_row_values(&req.collection, map_data, &context)
+                    {
                         Ok(converted_map_data) => {
                             let response_struct = FindOneResponse {
                                 document: Some(converted_map_data),

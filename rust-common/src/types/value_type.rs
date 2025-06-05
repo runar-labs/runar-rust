@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::erased_arc::ErasedArc;
 use crate::logging::Logger;
@@ -420,11 +420,13 @@ impl SerializerRegistry {
 
     /// Serialize a value to bytes, returning an Arc<[u8]>
     pub fn serialize_value(&self, value: &ArcValueType) -> Result<Arc<[u8]>> {
-    match value.value.as_ref() {
-            Some(erased_arc_ref) => { // value.value is Some(erased_arc_ref)
+        match value.value.as_ref() {
+            Some(erased_arc_ref) => {
+                // value.value is Some(erased_arc_ref)
                 if erased_arc_ref.is_lazy {
                     // LAZY PATH
-                    if let Ok(lazy) = erased_arc_ref.get_lazy_data() { // Use erased_arc_ref
+                    if let Ok(lazy) = erased_arc_ref.get_lazy_data() {
+                        // Use erased_arc_ref
                         self.logger.debug(format!(
                             "Serializing lazy value with type: {} (category: {:?})",
                             lazy.type_name, value.category
@@ -435,7 +437,9 @@ impl SerializerRegistry {
                             ValueCategory::List => 0x02,
                             ValueCategory::Map => 0x03,
                             ValueCategory::Struct => 0x04,
-                            ValueCategory::Null => return Err(anyhow!("Cannot serialize lazy Null value")),
+                            ValueCategory::Null => {
+                                return Err(anyhow!("Cannot serialize lazy Null value"))
+                            }
                             ValueCategory::Bytes => 0x06,
                         };
                         result_vec.push(category_byte);
@@ -445,7 +449,9 @@ impl SerializerRegistry {
                         }
                         result_vec.push(type_bytes.len() as u8);
                         result_vec.extend_from_slice(type_bytes);
-                        result_vec.extend_from_slice(&lazy.original_buffer[lazy.start_offset..lazy.end_offset]);
+                        result_vec.extend_from_slice(
+                            &lazy.original_buffer[lazy.start_offset..lazy.end_offset],
+                        );
                         return Ok(Arc::from(result_vec));
                     } else {
                         return Err(anyhow!(
@@ -470,8 +476,9 @@ impl SerializerRegistry {
                     };
                     result_vec.push(category_byte);
 
-                    if value.category == ValueCategory::Null { // Should ideally not be hit if erased_arc_ref is Some.
-                                                               // This implies an inconsistent ArcValueType state.
+                    if value.category == ValueCategory::Null {
+                        // Should ideally not be hit if erased_arc_ref is Some.
+                        // This implies an inconsistent ArcValueType state.
                         return Ok(Arc::from(result_vec));
                     }
 
@@ -501,13 +508,16 @@ impl SerializerRegistry {
                                 ));
                             }
                         }
-                        ValueCategory::Null => unreachable!("Handled by category check or inconsistent state"),
+                        ValueCategory::Null => {
+                            unreachable!("Handled by category check or inconsistent state")
+                        }
                     };
                     result_vec.extend_from_slice(&data_bytes);
                     return Ok(Arc::from(result_vec));
                 }
             }
-            None => { // value.value is None
+            None => {
+                // value.value is None
                 // EAGER NULL PATH
                 if value.category != ValueCategory::Null {
                     return Err(anyhow!(
@@ -599,7 +609,10 @@ impl AsArcValueType for () {
 impl ArcValueType {
     /// Create a new ArcValueType
     pub fn new(value: ErasedArc, category: ValueCategory) -> Self {
-        Self { category, value: Some(value) }
+        Self {
+            category,
+            value: Some(value),
+        }
     }
 
     /// Create a new primitive value
@@ -691,9 +704,12 @@ impl ArcValueType {
             let end_offset_val: usize;
 
             {
-                let lazy_data_arc = current_erased_arc
-                    .get_lazy_data()
-                    .map_err(|e| anyhow!("Failed to get lazy data from ErasedArc despite is_lazy flag: {}", e))?;
+                let lazy_data_arc = current_erased_arc.get_lazy_data().map_err(|e| {
+                    anyhow!(
+                        "Failed to get lazy data from ErasedArc despite is_lazy flag: {}",
+                        e
+                    )
+                })?;
                 type_name_clone = lazy_data_arc.type_name.clone();
                 original_buffer_clone = lazy_data_arc.original_buffer.clone();
                 start_offset_val = lazy_data_arc.start_offset;
@@ -738,7 +754,10 @@ impl ArcValueType {
         T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
     {
         if self.category != ValueCategory::List {
-            return Err(anyhow!("Value is not a list (category: {:?})", self.category));
+            return Err(anyhow!(
+                "Value is not a list (category: {:?})",
+                self.category
+            ));
         }
 
         let mut current_erased_arc = match self.value.take() {
@@ -757,9 +776,12 @@ impl ArcValueType {
             let end_offset_val: usize;
 
             {
-                let lazy_data_arc = current_erased_arc
-                    .get_lazy_data()
-                    .map_err(|e| anyhow!("Failed to get lazy data from ErasedArc for list despite is_lazy flag: {}", e))?;
+                let lazy_data_arc = current_erased_arc.get_lazy_data().map_err(|e| {
+                    anyhow!(
+                        "Failed to get lazy data from ErasedArc for list despite is_lazy flag: {}",
+                        e
+                    )
+                })?;
                 type_name_clone = lazy_data_arc.type_name.clone();
                 original_buffer_clone = lazy_data_arc.original_buffer.clone();
                 start_offset_val = lazy_data_arc.start_offset;
@@ -767,7 +789,10 @@ impl ArcValueType {
             }
 
             let expected_list_type_name = std::any::type_name::<Vec<T>>();
-            if !crate::types::erased_arc::compare_type_names(&expected_list_type_name, &type_name_clone) {
+            if !crate::types::erased_arc::compare_type_names(
+                &expected_list_type_name,
+                &type_name_clone,
+            ) {
                 self.value = Some(current_erased_arc); // Put the original lazy value back
                 return Err(anyhow!(
                     "Lazy list data type mismatch: expected compatible with Vec<{}> (is {}), but stored type is {}",
@@ -827,9 +852,9 @@ impl ArcValueType {
                     let end_offset_val: usize;
 
                     {
-                        let lazy_data_arc = actual_value
-                            .get_lazy_data()
-                            .map_err(|e| anyhow!("Failed to get lazy data despite is_lazy flag: {}", e))?;
+                        let lazy_data_arc = actual_value.get_lazy_data().map_err(|e| {
+                            anyhow!("Failed to get lazy data despite is_lazy flag: {}", e)
+                        })?;
                         type_name_clone = lazy_data_arc.type_name.clone();
                         original_buffer_clone = lazy_data_arc.original_buffer.clone();
                         start_offset_val = lazy_data_arc.start_offset;
@@ -837,7 +862,10 @@ impl ArcValueType {
                     }
 
                     let expected_type_name = std::any::type_name::<HashMap<K, V>>();
-                    if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
+                    if !crate::types::erased_arc::compare_type_names(
+                        expected_type_name,
+                        &type_name_clone,
+                    ) {
                         return Err(anyhow!(
                             "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
                             expected_type_name,
@@ -853,18 +881,20 @@ impl ArcValueType {
                                 type_name_clone, std::any::type_name::<K>(), std::any::type_name::<V>(), e
                             )
                         })?;
-                    
+
                     *actual_value = ErasedArc::new(Arc::new(deserialized_map));
                 }
-                actual_value.as_arc::<HashMap<K, V>>().map_err(|e| 
+                actual_value.as_arc::<HashMap<K, V>>().map_err(|e|
                     anyhow!("Failed to cast eager value to map: {}. Expected HashMap<{},{}>, got {}. Category: {:?}", 
                         e, std::any::type_name::<K>(), std::any::type_name::<V>(), actual_value.type_name(), self.category)
                 )
             }
-            None => Err(anyhow!("Cannot get map reference from a null ArcValueType (category: {:?})", self.category)),
+            None => Err(anyhow!(
+                "Cannot get map reference from a null ArcValueType (category: {:?})",
+                self.category
+            )),
         }
     }
-
 
     /// Get value as the specified type (makes a clone).
     pub fn as_type<T: 'static + Clone>(&mut self) -> Result<T>
@@ -897,9 +927,9 @@ impl ArcValueType {
                     let end_offset_val: usize;
 
                     {
-                        let lazy_data_arc = actual_value
-                            .get_lazy_data()
-                            .map_err(|e| anyhow!("Failed to get lazy data despite is_lazy flag: {}", e))?;
+                        let lazy_data_arc = actual_value.get_lazy_data().map_err(|e| {
+                            anyhow!("Failed to get lazy data despite is_lazy flag: {}", e)
+                        })?;
                         type_name_clone = lazy_data_arc.type_name.clone();
                         original_buffer_clone = lazy_data_arc.original_buffer.clone();
                         start_offset_val = lazy_data_arc.start_offset;
@@ -907,7 +937,10 @@ impl ArcValueType {
                     }
 
                     let expected_type_name = std::any::type_name::<T>();
-                    if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
+                    if !crate::types::erased_arc::compare_type_names(
+                        expected_type_name,
+                        &type_name_clone,
+                    ) {
                         return Err(anyhow!(
                             "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
                             expected_type_name,
@@ -924,7 +957,7 @@ impl ArcValueType {
                             e
                         )
                     })?;
-                    
+
                     *actual_value = ErasedArc::new(Arc::new(deserialized_struct));
                 }
                 // Explicitly assign and return
@@ -939,7 +972,10 @@ impl ArcValueType {
                 });
                 result // Return the result
             }
-            None => Err(anyhow!("Cannot get struct reference from a null ArcValueType (category: {:?})", self.category)),
+            None => Err(anyhow!(
+                "Cannot get struct reference from a null ArcValueType (category: {:?})",
+                self.category
+            )),
         }
     }
 }
@@ -965,64 +1001,64 @@ impl fmt::Display for ArcValueType {
         match &self.value {
             Some(actual_value) => {
                 if actual_value.is_lazy {
-            // Attempt to get LazyDataWithOffset details
-            // Note: get_lazy_data() returns Result<Arc<LazyDataWithOffset>>
-            // For Display, we might not want to propagate errors, so we handle it gracefully.
-            match actual_value.get_lazy_data() {
-                Ok(lazy) => write!(
-                    f,
-                    "Lazy<{}>(size: {} bytes)",
-                    lazy.type_name,
-                    lazy.end_offset - lazy.start_offset
-                ),
-                Err(_) => write!(f, "Lazy<Error Retrieving Details>"),
-            }
-        } else {
-            // Handle eager values
-            match self.category {
-                ValueCategory::Null => write!(f, "null"),
-                ValueCategory::Primitive => {
-                    // Attempt to downcast and display common primitives
-                    let any_val = actual_value.as_any().map_err(|_| fmt::Error)?;
-                    if let Some(s) = any_val.downcast_ref::<String>() {
-                        write!(f, "\"{}\"", s)
-                    } else if let Some(i) = any_val.downcast_ref::<i32>() {
-                        write!(f, "{}", i)
-                    } else if let Some(i) = any_val.downcast_ref::<i64>() {
-                        write!(f, "{}", i)
-                    } else if let Some(fl) = any_val.downcast_ref::<f32>() {
-                        write!(f, "{}", fl)
-                    } else if let Some(fl) = any_val.downcast_ref::<f64>() {
-                        write!(f, "{}", fl)
-                    } else if let Some(b) = any_val.downcast_ref::<bool>() {
-                        write!(f, "{}", b)
-                    } else {
-                        write!(f, "Primitive<{}>", actual_value.type_name())
+                    // Attempt to get LazyDataWithOffset details
+                    // Note: get_lazy_data() returns Result<Arc<LazyDataWithOffset>>
+                    // For Display, we might not want to propagate errors, so we handle it gracefully.
+                    match actual_value.get_lazy_data() {
+                        Ok(lazy) => write!(
+                            f,
+                            "Lazy<{}>(size: {} bytes)",
+                            lazy.type_name,
+                            lazy.end_offset - lazy.start_offset
+                        ),
+                        Err(_) => write!(f, "Lazy<Error Retrieving Details>"),
+                    }
+                } else {
+                    // Handle eager values
+                    match self.category {
+                        ValueCategory::Null => write!(f, "null"),
+                        ValueCategory::Primitive => {
+                            // Attempt to downcast and display common primitives
+                            let any_val = actual_value.as_any().map_err(|_| fmt::Error)?;
+                            if let Some(s) = any_val.downcast_ref::<String>() {
+                                write!(f, "\"{}\"", s)
+                            } else if let Some(i) = any_val.downcast_ref::<i32>() {
+                                write!(f, "{}", i)
+                            } else if let Some(i) = any_val.downcast_ref::<i64>() {
+                                write!(f, "{}", i)
+                            } else if let Some(fl) = any_val.downcast_ref::<f32>() {
+                                write!(f, "{}", fl)
+                            } else if let Some(fl) = any_val.downcast_ref::<f64>() {
+                                write!(f, "{}", fl)
+                            } else if let Some(b) = any_val.downcast_ref::<bool>() {
+                                write!(f, "{}", b)
+                            } else {
+                                write!(f, "Primitive<{}>", actual_value.type_name())
+                            }
+                        }
+                        ValueCategory::List => {
+                            // For lists, try to get a summary. Need to access Arc<Vec<T>>.
+                            // This is tricky for Display without knowing T.
+                            // We'll provide a generic summary.
+                            // Getting actual count would require downcasting to specific Vec types.
+                            write!(f, "List<{}>", actual_value.type_name())
+                        }
+                        ValueCategory::Map => {
+                            // Similar for maps.
+                            write!(f, "Map<{}>", actual_value.type_name())
+                        }
+                        ValueCategory::Struct => {
+                            write!(f, "Struct<{}>", actual_value.type_name())
+                        }
+                        ValueCategory::Bytes => {
+                            if let Ok(bytes_arc) = actual_value.as_arc::<Vec<u8>>() {
+                                write!(f, "Bytes(size: {} bytes)", bytes_arc.len())
+                            } else {
+                                write!(f, "Bytes<Error Retrieving Size>")
+                            }
+                        }
                     }
                 }
-                ValueCategory::List => {
-                    // For lists, try to get a summary. Need to access Arc<Vec<T>>.
-                    // This is tricky for Display without knowing T.
-                    // We'll provide a generic summary.
-                    // Getting actual count would require downcasting to specific Vec types.
-                    write!(f, "List<{}>", actual_value.type_name())
-                }
-                ValueCategory::Map => {
-                    // Similar for maps.
-                    write!(f, "Map<{}>", actual_value.type_name())
-                }
-                ValueCategory::Struct => {
-                    write!(f, "Struct<{}>", actual_value.type_name())
-                }
-                ValueCategory::Bytes => {
-                    if let Ok(bytes_arc) = actual_value.as_arc::<Vec<u8>>() {
-                        write!(f, "Bytes(size: {} bytes)", bytes_arc.len())
-                    } else {
-                        write!(f, "Bytes<Error Retrieving Size>")
-                    }
-                }
-            }
-        }
             }
             None => {
                 if self.category == ValueCategory::Null {
@@ -1047,4 +1083,3 @@ where
         }
     }
 }
-

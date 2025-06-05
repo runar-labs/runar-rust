@@ -11,14 +11,14 @@
 // and consistent handling. The context avoids data duplication by
 // deriving values from the TopicPath when needed.
 
-use crate::routing::TopicPath;
 use crate::node::Node; // Added for concrete type
+use crate::routing::TopicPath;
 use crate::services::NodeDelegate;
 use anyhow::Result;
 use runar_common::{
-    types::AsArcValueType, // Moved from this file
-    types::ArcValueType, // Added ValueCategory for AsArcValueType for S
     logging::{Component, Logger, LoggingContext},
+    types::ArcValueType,   // Added ValueCategory for AsArcValueType for S
+    types::AsArcValueType, // Moved from this file
 };
 use std::fmt::Debug;
 
@@ -27,7 +27,6 @@ use std::fmt::Debug;
 // -----------------------------------------------------------------------------
 
 use std::{collections::HashMap, fmt, sync::Arc};
-
 
 /// Context for handling service requests
 ///
@@ -101,11 +100,7 @@ impl RequestContext {
     /// Create a new RequestContext with a TopicPath and logger
     ///
     /// This is the primary constructor that takes the minimum required parameters.
-    pub fn new(
-        topic_path: &TopicPath,
-        node_delegate: Arc<Node>,
-        logger: Arc<Logger>,
-    ) -> Self {
+    pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, logger: Arc<Logger>) -> Self {
         // Add action path to logger if available from topic_path
         let action_path = topic_path.action_path();
         let action_logger = if !action_path.is_empty() {
@@ -223,11 +218,7 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P, T>(
-        &self,
-        path: impl Into<String>,
-        payload: Option<P>,
-    ) -> Result<T>
+    pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
     where
         P: AsArcValueType + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
@@ -253,7 +244,7 @@ impl RequestContext {
 
         self.logger
             .debug(format!("Making request to processed path: {}", full_path));
-        
+
         // Call Node::request, specifying the generic types P and T.
         // Node::request itself will handle deserialization to T.
         self.node_delegate.request::<P, T>(full_path, payload).await
