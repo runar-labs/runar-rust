@@ -13,6 +13,3 @@
 [submodule "rust-e2e-test"]
 	path = rust-e2e-test
 	url = git@github.com:runar-labs/rust-e2e-test.git
-[submodule "rust-services"]
-	path = rust-services
-	url = git@github.com:runar-labs/rust-services.git
