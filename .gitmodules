@@ -7,9 +7,6 @@
 [submodule "rust-docs"]
 	path = rust-docs
 	url = git@github.com:runar-labs/rust-docs.git
-[submodule "rust-examples"]
-	path = rust-examples
-	url = git@github.com:runar-labs/rust-examples.git
 [submodule "rust-e2e-test"]
 	path = rust-e2e-test
 	url = git@github.com:runar-labs/rust-e2e-test.git
