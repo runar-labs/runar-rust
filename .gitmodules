@@ -10,9 +10,6 @@
 [submodule "rust-examples"]
 	path = rust-examples
 	url = git@github.com:runar-labs/rust-examples.git
-[submodule "rust-macros"]
-	path = rust-macros
-	url = git@github.com:runar-labs/rust-macros.git
 [submodule "rust-node"]
 	path = rust-node
 	url = git@github.com:runar-labs/rust-node.git
