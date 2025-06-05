@@ -4,9 +4,6 @@
 [submodule "rust-apps"]
 	path = rust-apps
 	url = git@github.com:runar-labs/rust-apps.git
-[submodule "rust-common"]
-	path = rust-common
-	url = git@github.com:runar-labs/rust-common.git
 [submodule "rust-docs"]
 	path = rust-docs
 	url = git@github.com:runar-labs/rust-docs.git
