@@ -5,6 +5,7 @@ members = [
     "rust-common",
     "rust-services",
     # "rust-macros-tests",
+    "rust-examples/micro_services_demo",
 ]
 resolver = "2"
 
