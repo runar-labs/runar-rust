@@ -1,0 +1,28 @@
+[package]
+name = "runnar-gateway"
+version = "0.1.0"
+edition = "2021"
+authors = ["Runar Team"]
+description = "Runar Gateway"
+license = "MIT"
+
+[dependencies]
+async-trait = "0.1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0" # Added for crud_sqlite.rs
+uuid = { version = "1.8", features = ["v4", "serde"] } # Added for crud_sqlite.rs
+futures = "0.3"
+tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
+runar_common = { path = "../rust-common", features = ["abstract_service"] }
+runar_node = { path = "../rust-node" }
+
+[dev-dependencies]
+tempfile = "3.10"
+tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "test-util"] }
+runar_common = { path = "../rust-common", features = ["abstract_service"] }
+runar_macros = { path = "../rust-macros" }
+serde_json = "1.0"
+# These are required for integration tests in tests/rusqlite_examples.rs

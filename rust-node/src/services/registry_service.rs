@@ -23,9 +23,7 @@ use runar_common::types::ArcValueType;
 
 /// Registry Info Service - provides information about registered services without holding state
 pub struct RegistryService {
-    /// The service path
-    path: String,
-
+     
     /// Logger instance
     logger: Arc<Logger>,
 
@@ -37,7 +35,6 @@ impl RegistryService {
     /// Create a new Registry Service
     pub fn new(logger: Arc<Logger>, delegate: Arc<dyn RegistryDelegate>) -> Self {
         RegistryService {
-            path: "$registry".to_string(),
             logger,
             registry_delegate: delegate,
         }
@@ -236,7 +233,7 @@ impl AbstractService for RegistryService {
     }
 
     fn path(&self) -> &str {
-        &self.path
+        "$registry"
     }
 
     fn version(&self) -> &str {
@@ -311,7 +308,6 @@ impl AbstractService for RegistryService {
 impl Clone for RegistryService {
     fn clone(&self) -> Self {
         Self {
-            path: self.path.clone(),
             logger: self.logger.clone(),
             registry_delegate: self.registry_delegate.clone(),
         }
