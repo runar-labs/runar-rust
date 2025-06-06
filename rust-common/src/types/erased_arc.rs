@@ -59,10 +59,9 @@ impl Clone for Box<dyn ArcRead> {
 }
 
 /// The actual type-erased Arc implementation
-// NOTE: ErasedArc cannot be serialized or deserialized because it is type-erased and dynamic.
-// Any attempt to serialize/deserialize should panic at compile time.
-// This is documented in ArcValueType, and the field is marked with #[serde(skip_serializing, skip_deserializing)].
-
+/// This struct holds an `Arc<dyn Any + Send + Sync>` and provides methods
+/// to interact with the underlying data in a type-safe manner, including
+/// downcasting and checking type compatibility.
 pub struct ErasedArc {
     /// The type-erased Arc reader
     pub reader: Box<dyn ArcRead>,
@@ -151,7 +150,7 @@ impl<T: 'static + fmt::Debug + Send + Sync> ArcRead for ArcReader<T> {
         if std::any::type_name::<T>().contains("Box<dyn") {
             // For a type that is Box<dyn Any>, we need to first get the reference to T
             // and then get the reference to the boxed value
-            let arc_ref: &T = &*self.arc;
+            let arc_ref: &T = &self.arc;
 
             // Check if the boxed value is a Box<dyn Any + Send + Sync>
             if let Some(boxed_any) =
@@ -308,8 +307,8 @@ impl ErasedArc {
         // Handle some common cases where type names might differ but are compatible
         match (expected_type_name, actual_type_name) {
             // String variations
-            ("alloc::string::String", "String") => return true,
-            ("String", "alloc::string::String") => return true,
+            ("alloc::string::String", "String") => true,
+            ("String", "alloc::string::String") => true,
 
             // Vec variations
             (e, a) if e.contains("Vec<") && a.contains("Vec<") => {
@@ -328,11 +327,11 @@ impl ErasedArc {
                     .split('>')
                     .next()
                     .unwrap_or("");
-                return e_elem == a_elem
+                e_elem == a_elem
                     || (e_elem.contains("String") && a_elem.contains("String"))
                     || (e_elem.contains("i32") && a_elem.contains("i32"))
                     || (e_elem.contains("i64") && a_elem.contains("i64"))
-                    || (e_elem.contains("f64") && a_elem.contains("f64"));
+                    || (e_elem.contains("f64") && a_elem.contains("f64"))
             }
 
             // HashMap variations - more robust check for both simple and complex value types
@@ -386,12 +385,12 @@ impl ErasedArc {
                     // Handle when one side has a fully qualified path and the other has a simple type name
                     || compare_type_names(&e_value, &a_value);
 
-                return keys_compatible && values_compatible;
+                keys_compatible && values_compatible
             }
 
             // Generic structs and other types
             (e, a) => {
-                return compare_type_names(e, a);
+                compare_type_names(e, a)
             }
         }
     }

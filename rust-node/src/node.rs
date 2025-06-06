@@ -33,7 +33,7 @@ use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, Tra
 use crate::routing::TopicPath;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
 use crate::services::registry_service::RegistryService;
-use crate::services::remote_service::RemoteService;
+use crate::services::remote_service::{CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies};
 use crate::services::service_registry::{ServiceEntry, ServiceRegistry};
 use crate::services::EventContext; // Explicit import for EventContext
 use crate::services::NodeDelegate;
@@ -366,8 +366,7 @@ impl Node {
             Ok(tp) => tp,
             Err(e) => {
                 self.logger.error(format!(
-                    "Failed to create topic path for service name:{} path:{} error:{}",
-                    service_name, service_path, e
+                    "Failed to create topic path for service name:{service_name} path:{service_path} error:{e}"
                 ));
                 return Err(anyhow!(
                     "Failed to create topic path for service {}: {}",
@@ -1185,7 +1184,7 @@ impl Node {
         };
 
         self.logger
-            .debug(format!("Processing request: {}", topic_path));
+            .debug(format!("Processing request: {topic_path}"));
 
         // First check for local handlers
         if let Some((handler, registration_path)) = self
@@ -1194,7 +1193,7 @@ impl Node {
             .await
         {
             self.logger
-                .debug(format!("Executing local handler for: {}", topic_path));
+                .debug(format!("Executing local handler for: {topic_path}"));
 
             // Create request context
             let mut context =
@@ -1213,7 +1212,7 @@ impl Node {
             // Execute the handler and return result
             return handler(payload, context).await;
         } else {
-            return Err(anyhow!("No local handler found for topic: {}", topic_path));
+            Err(anyhow!("No local handler found for topic: {topic_path}"))
         }
     }
 
@@ -1229,7 +1228,7 @@ impl Node {
         P: AsArcValueType + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
-        let request_payload_av = payload.map(|p| p.as_arc_value_type());
+        let request_payload_av = payload.map(P::into_arc_value_type);
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
             Ok(tp) => tp,
@@ -1243,7 +1242,7 @@ impl Node {
         };
 
         self.logger
-            .debug(format!("Processing request: {}", topic_path));
+            .debug(format!("Processing request: {topic_path}"));
 
         // First check for local handlers
         if let Some((handler, registration_path)) = self
@@ -1252,7 +1251,7 @@ impl Node {
             .await
         {
             self.logger
-                .debug(format!("Executing local handler for: {}", topic_path));
+                .debug(format!("Executing local handler for: {topic_path}"));
 
             // Create request context
             let mut context =
@@ -1347,8 +1346,7 @@ impl Node {
             // Execute the callback with correct arguments
             if let Err(e) = callback(event_context, data.clone()).await {
                 self.logger.error(format!(
-                    "Error in local event handler for {}: {}",
-                    topic_string, e
+                    "Error in local event handler for {topic_string}: {e}"
                 ));
             }
         }
@@ -1359,7 +1357,7 @@ impl Node {
                 //TODO
                 // Log message since we can't implement send yet
                 self.logger
-                    .debug(format!("Would broadcast event {} to network", topic_string));
+                    .debug(format!("Would broadcast event {topic_string} to network"));
             }
         }
 
@@ -1379,7 +1377,7 @@ impl Node {
         if let Some(existing_peer) = known_peers.get(&new_peer.peer_id) {
             //check if node info is older then the stored peer
             if new_peer.version > existing_peer.version {
-                self.remove_peer_services(&existing_peer).await?;
+                self.remove_peer_services(existing_peer).await?;
                 //remove and add again
                 known_peers.remove(&new_peer.peer_id);
                 known_peers.insert(new_peer.peer_id.clone(), new_peer.clone());
@@ -1429,23 +1427,27 @@ impl Node {
         let local_peer_id = self.peer_id.clone();
 
         // Create RemoteService instances directly
-        let remote_services = match RemoteService::create_from_capabilities(
-            node_info.peer_id.clone(),
+        let rs_config = CreateRemoteServicesConfig {
             capabilities,
-            self.network_transport.clone(),
-            self.serializer.clone(),
-            self.pending_requests.clone(),
-            self.logger.clone(), // Pass logger directly
-            local_peer_id,
-            self.config.request_timeout_ms,
-        )
+            peer_id: node_info.peer_id.clone(),
+            request_timeout_ms: self.config.request_timeout_ms,
+        };
+
+        let rs_dependencies = RemoteServiceDependencies {
+            network_transport: self.network_transport.clone(),
+            serializer: self.serializer.clone(),
+            local_node_id: local_peer_id, // This is self.peer_id.clone()
+            pending_requests: self.pending_requests.clone(),
+            logger: self.logger.clone(),
+        };
+
+        let remote_services = match RemoteService::create_from_capabilities(rs_config, rs_dependencies)
         .await
         {
             Ok(services) => services,
             Err(e) => {
                 self.logger.error(format!(
-                    "Failed to create remote services from capabilities: {}",
-                    e
+                    "Failed to create remote services from capabilities: {e}"
                 ));
                 return Err(e);
             }
@@ -1525,8 +1527,7 @@ impl Node {
             // Ignore errors from notify_node_change_impl; log if needed
             if let Err(e) = this.notify_node_change_impl().await {
                 this.logger.warn(format!(
-                    "notify_node_change_impl failed after debounce: {}",
-                    e
+                    "notify_node_change_impl failed after debounce: {e}"
                 ));
             }
         });
@@ -1635,8 +1636,7 @@ impl Node {
             if let Ok(ip) = self.get_non_loopback_ip() {
                 address = address.replace("0.0.0.0", &ip);
                 self.logger.debug(format!(
-                    "Replaced 0.0.0.0 with network interface IP: {}",
-                    ip
+                    "Replaced 0.0.0.0 with network interface IP: {ip}"
                 ));
             } else {
                 // Fall back to localhost if we can't get a real IP
@@ -1678,7 +1678,7 @@ impl Node {
         };
 
         self.logger
-            .debug(format!("Discovered local network interface IP: {}", ip));
+            .debug(format!("Discovered local network interface IP: {ip}"));
         Ok(ip)
     }
 
@@ -1816,20 +1816,18 @@ impl NodeDelegate for Node {
     async fn unsubscribe(&self, subscription_id: Option<&str>) -> Result<()> {
         if let Some(id) = subscription_id {
             self.logger
-                .debug(format!("Unsubscribing from with ID: {}", id));
+                .debug(format!("Unsubscribing from with ID: {id}"));
             // Directly forward to service registry's method
             let registry = self.service_registry.clone();
             match registry.unsubscribe_local(id).await {
                 Ok(_) => {
                     self.logger.debug(format!(
-                        "Successfully unsubscribed locally from  with id {}",
-                        id
+                        "Successfully unsubscribed locally from  with id {id}"
                     ));
                 }
                 Err(e) => {
                     self.logger.error(format!(
-                        "Failed to unsubscribe locally from  with id {}: {}",
-                        id, e
+                        "Failed to unsubscribe locally from  with id {id}: {e}"
                     ));
                     return Err(anyhow!("Failed to unsubscribe locally: {}", e));
                 }

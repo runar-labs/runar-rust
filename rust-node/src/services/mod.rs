@@ -67,6 +67,15 @@ pub type ActionRegistrar = Arc<
         + Sync,
 >;
 
+pub type EventCallback = Box<
+    dyn Fn(
+            Arc<EventContext>,
+            Option<ArcValueType>,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Context for service lifecycle management
 ///
 /// INTENTION: Provide services with the context needed for lifecycle operations
@@ -161,7 +170,7 @@ impl LifecycleContext {
 
         // More detailed debug after TopicPath creation
         self.logger
-            .debug(format!("register_action: created TopicPath {}", topic_path));
+            .debug(format!("register_action: created TopicPath {topic_path}"));
 
         let metadata = ActionMetadata {
             name: action_name_string.clone(),
@@ -214,20 +223,14 @@ impl LifecycleContext {
             .await
     }
 
+
     pub async fn subscribe(
         &self,
         topic: impl Into<String>,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValueType>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
+        callback: EventCallback,
     ) -> Result<String> {
         let delegate = &self.node_delegate;
-        return delegate.subscribe(topic.into(), callback).await;
+        delegate.subscribe(topic.into(), callback).await
     }
 }
 
@@ -276,7 +279,7 @@ impl ServiceRequest {
         // Create a path string combining service path and action
         let service_path_string = service_path.into();
         let action_or_event_string = action_or_event.into();
-        let path_string = format!("{}/{}", service_path_string, action_or_event_string);
+        let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method
         let topic_path =
@@ -318,7 +321,7 @@ impl ServiceRequest {
         // Create a TopicPath from the service path and action
         let service_path_string = service_path.into();
         let action_or_event_string = action_or_event.into();
-        let path_string = format!("{}/{}", service_path_string, action_or_event_string);
+        let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method
         let topic_path =
@@ -326,7 +329,7 @@ impl ServiceRequest {
 
         Self {
             topic_path,
-            data: data.unwrap_or_else(|| ArcValueType::null()),
+            data: data.unwrap_or_else(ArcValueType::null),
             context,
         }
     }
@@ -357,7 +360,7 @@ impl ServiceRequest {
     }
 }
 
-/// Response from a service handler
+// /// Response from a service handler
 // #[derive(Debug, Clone)]
 // pub struct ServiceResponse {
 //     /// HTTP-like status code
@@ -437,7 +440,7 @@ pub struct SubscriptionOptions {
 ///
 /// INTENTION: Provide configuration options for event publishing,
 /// allowing control over delivery scope, guarantees, and retention.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Whether this event should be broadcast to all nodes in the network
     pub broadcast: bool,
@@ -453,22 +456,13 @@ pub struct PublishOptions {
     pub target: Option<String>,
 }
 
-impl Default for PublishOptions {
-    fn default() -> Self {
-        Self {
-            broadcast: false,
-            guaranteed_delivery: false,
-            retention_seconds: None,
-            target: None,
-        }
-    }
-}
 
 /// Options for registering an action handler
 ///
 /// INTENTION: Provide a way to specify metadata about an action when registering it,
 /// reducing the need for services to define complete metadata upfront.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ActionRegistrationOptions {
     /// Description of what the action does
     pub description: Option<String>,
@@ -478,21 +472,12 @@ pub struct ActionRegistrationOptions {
     pub output_schema: Option<FieldSchema>,
 }
 
-impl Default for ActionRegistrationOptions {
-    fn default() -> Self {
-        Self {
-            description: None,
-            input_schema: None,
-            output_schema: None,
-        }
-    }
-}
 
 /// Options for registering an event
 ///
 /// INTENTION: Provide a way to specify metadata about an event when registering it,
 /// reducing the need for services to define complete metadata upfront.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EventRegistrationOptions {
     /// Description of what the event represents
     pub description: Option<String>,
@@ -500,14 +485,6 @@ pub struct EventRegistrationOptions {
     pub data_schema: Option<FieldSchema>,
 }
 
-impl Default for EventRegistrationOptions {
-    fn default() -> Self {
-        Self {
-            description: None,
-            data_schema: None,
-        }
-    }
-}
 
 /// Interface for handling service requests
 ///

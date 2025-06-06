@@ -5,7 +5,6 @@ edition = "2021"
 description = "Runar Node implementation"
 authors = ["Runar Team"]
 license = "MIT"
-license-file = "LICENSE"
 
 [dependencies]
 dashmap = "5"

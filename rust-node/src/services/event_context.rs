@@ -169,7 +169,7 @@ impl EventContext {
             };
 
             self.logger
-                .debug(format!("Publishing to processed topic: {}", full_topic));
+                .debug(format!("Publishing to processed topic: {full_topic}"));
             delegate.publish(full_topic, data).await
         } else {
             Err(anyhow!("No node delegate available in this context"))
@@ -212,7 +212,7 @@ impl EventContext {
             };
 
             self.logger
-                .debug(format!("Making request to processed path: {}", full_path));
+                .debug(format!("Making request to processed path: {full_path}"));
 
             // Call Node::request, specifying the generic types P and T.
             // Node::request itself will handle deserialization to T.

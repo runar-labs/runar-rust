@@ -45,25 +45,6 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
     }
 }
 
-/// Helper function to generate self-signed certificates for testing
-///
-/// INTENTION: Provide a consistent way to generate test certificates across test and core code, using explicit rustls namespaces to avoid type conflicts.
-pub(crate) fn generate_test_certificates() -> (Vec<rustls::Certificate>, rustls::PrivateKey) {
-    use rcgen;
-    use rustls;
-    let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()]);
-    params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
-    params.not_before = rcgen::date_time_ymd(2023, 1, 1);
-    params.not_after = rcgen::date_time_ymd(2026, 1, 1);
-    let cert = rcgen::Certificate::from_params(params).expect("Failed to generate certificate");
-    let cert_der = cert
-        .serialize_der()
-        .expect("Failed to serialize certificate");
-    let key_der = cert.serialize_private_key_der();
-    let rustls_cert = rustls::Certificate(cert_der);
-    let rustls_key = rustls::PrivateKey(key_der);
-    (vec![rustls_cert], rustls_key)
-}
 
 // Removed WebSocket module completely
 
@@ -112,15 +93,16 @@ pub struct TransportOptions {
     pub bind_address: SocketAddr,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TransportOptions {
     fn default() -> Self {
         let port = pick_free_port(50000..51000).unwrap_or(0);
         let bind_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
-        println!("TransportOptions Using port: {}", port);
+        println!("TransportOptions Using port: {port}");
         Self {
             timeout: Some(Duration::from_secs(30)),
             max_message_size: Some(1024 * 1024), // 1MB default
-            bind_address: bind_address,
+            bind_address,
         }
     }
 }

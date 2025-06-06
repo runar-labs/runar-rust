@@ -114,7 +114,7 @@ impl RequestContext {
             topic_path: topic_path.clone(),
             metadata: None,
             logger: action_logger,
-            node_delegate: node_delegate,
+            node_delegate,
             path_params: HashMap::new(),
         }
     }
@@ -204,7 +204,7 @@ impl RequestContext {
         };
 
         self.logger
-            .debug(format!("Publishing to processed topic: {}", full_topic));
+            .debug(format!("Publishing to processed topic: {full_topic}"));
         self.node_delegate.publish(full_topic, data).await
     }
 
@@ -243,7 +243,7 @@ impl RequestContext {
         };
 
         self.logger
-            .debug(format!("Making request to processed path: {}", full_path));
+            .debug(format!("Making request to processed path: {full_path}"));
 
         // Call Node::request, specifying the generic types P and T.
         // Node::request itself will handle deserialization to T.

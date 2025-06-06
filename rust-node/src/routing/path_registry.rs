@@ -78,7 +78,7 @@ impl<T: Clone> PathTrie<T> {
         let network_trie = self
             .networks
             .entry(network_id.to_string())
-            .or_insert_with(PathTrie::new);
+            .or_default();
 
         // Add to the network-specific trie
         network_trie.set_values_internal(&topic.get_segments(), 0, content_list);
@@ -103,7 +103,7 @@ impl<T: Clone> PathTrie<T> {
         let network_trie = self
             .networks
             .entry(network_id.to_string())
-            .or_insert_with(PathTrie::new);
+            .or_default();
 
         // Remove from the network-specific trie
         network_trie.remove_values_internal(&topic.get_segments(), 0);
@@ -175,7 +175,7 @@ impl<T: Clone> PathTrie<T> {
             let child = self
                 .children
                 .entry(segment.clone())
-                .or_insert_with(PathTrie::new);
+                .or_default();
 
             child.set_values_internal(segments, index + 1, handlers);
         }
@@ -245,7 +245,7 @@ impl<T: Clone> PathTrie<T> {
         if segment == "*" {
             // Single wildcard - match any single segment
             // Check all children at this level
-            for (_, child) in &self.children {
+            for child in self.children.values() {
                 child.collect_wildcard_matches(pattern_segments, index + 1, results);
             }
 
@@ -288,7 +288,7 @@ impl<T: Clone> PathTrie<T> {
         }
 
         // Recursively add handlers from all children
-        for (_, child) in &self.children {
+        for child in self.children.values() {
             child.collect_all_handlers(results);
         }
 
@@ -454,7 +454,7 @@ impl<T: Clone> PathTrie<T> {
         let mut count = self.content.len() + self.multi_wildcard.len();
 
         // Count handlers in children
-        for (_, child) in &self.children {
+        for child in self.children.values() {
             count += child.handler_count();
         }
 
@@ -469,7 +469,7 @@ impl<T: Clone> PathTrie<T> {
         }
 
         // Count handlers in network-specific tries
-        for (_, network_trie) in &self.networks {
+        for network_trie in self.networks.values() {
             count += network_trie.handler_count();
         }
 

@@ -8,7 +8,7 @@
 // ArcValueType will be qualified from self::value_type directly in the trait
 
 pub trait AsArcValueType {
-    fn as_arc_value_type(self) -> self::value_type::ArcValueType;
+    fn into_arc_value_type(self) -> self::value_type::ArcValueType;
 }
 
 pub mod erased_arc;

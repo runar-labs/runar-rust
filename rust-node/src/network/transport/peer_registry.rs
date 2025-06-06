@@ -47,7 +47,7 @@ impl PeerEntry {
     /// Create a new peer entry from node information and network ID
     pub fn new(peer_info: PeerInfo) -> Self {
         Self {
-            peer_info: peer_info,
+            peer_info,
             last_seen: SystemTime::now(),
             status: PeerStatus::Discovered,
             status_changed: SystemTime::now(),

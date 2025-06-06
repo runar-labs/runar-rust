@@ -34,3 +34,4 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.log 
+target_clippy_common**

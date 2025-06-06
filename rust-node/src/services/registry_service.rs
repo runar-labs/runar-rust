@@ -56,8 +56,7 @@ impl RegistryService {
         // Look for the path parameter that was extracted during template matching
         if let Some(path) = ctx.path_params.get("service_path") {
             ctx.logger.debug(format!(
-                "Using service_path '{}' from path parameters",
-                path
+                "Using service_path '{path}' from path parameters"
             ));
             return Ok(path.clone());
         }
@@ -72,9 +71,7 @@ impl RegistryService {
     async fn register_list_services_action(&self, context: &LifecycleContext) -> Result<()> {
         let self_clone = self.clone();
         // Add debug to see what is registered
-        context.logger.debug(format!(
-            "Registering list_services handler with path: services/list"
-        ));
+        context.logger.debug("Registering list_services handler with path: services/list");
         context
             .register_action(
                 "services/list",
@@ -83,7 +80,7 @@ impl RegistryService {
                     Box::pin(async move {
                         inner_self
                             .handle_list_services(
-                                params.unwrap_or_else(|| ArcValueType::null()),
+                                params.unwrap_or_else(ArcValueType::null),
                                 ctx,
                             )
                             .await
@@ -100,9 +97,7 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context.logger.debug(format!(
-            "Registering service_info handler with path: services/{{service_path}}"
-        ));
+        context.logger.debug("Registering service_info handler with path: services/{service_path}");
 
         context
             .register_action(
@@ -112,7 +107,7 @@ impl RegistryService {
                     Box::pin(async move {
                         inner_self
                             .handle_service_info(
-                                params.unwrap_or_else(|| ArcValueType::null()),
+                                params.unwrap_or_else(ArcValueType::null),
                                 ctx,
                             )
                             .await
@@ -132,9 +127,7 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context.logger.debug(format!(
-            "Registering service_state handler with path: services/{{service_path}}/state"
-        ));
+        context.logger.debug("Registering service_state handler with path: services/{service_path}/state");
 
         context
             .register_action(
@@ -200,7 +193,7 @@ impl RegistryService {
             Ok(ArcValueType::from_struct(service_metadata))
         } else {
             ctx.logger
-                .debug(format!("Service '{}' not found", actual_service_path));
+                .debug(format!("Service '{actual_service_path}' not found"));
             Ok(ArcValueType::null())
         }
     }
@@ -230,7 +223,7 @@ impl RegistryService {
             Ok(state_info)
         } else {
             ctx.logger
-                .debug(format!("Service '{}' not found", service_path));
+                .debug(format!("Service '{service_path}' not found"));
             Ok(ArcValueType::null())
         }
     }

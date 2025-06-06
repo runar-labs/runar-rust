@@ -39,29 +39,6 @@ mod vmap_macros;
 /// let empty = vmap!{};
 /// ```
 // vmap! is defined in vmap_macros.rs
-
-/// Create a HashMap with key-value pairs
-///
-/// This macro allows you to create a HashMap with string keys and arbitrary values.
-/// The keys are converted to strings.
-///
-/// ## Map Creation Usage:
-///
-/// ```
-/// use runar_common::hmap;
-/// use std::collections::HashMap;
-/// // Create a new HashMap:
-/// let params = hmap!("a" => 5.0, "b" => 3.0);
-/// ```
-///
-/// ## Empty Map:
-///
-/// ```
-/// use runar_common::hmap;
-/// use std::collections::HashMap;
-/// // Create an empty map
-/// let empty = hmap!{};
-/// ```
 #[macro_export]
 macro_rules! hmap {
     // Empty map

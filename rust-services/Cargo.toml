@@ -5,7 +5,6 @@ edition = "2021"
 authors = ["Runar Team"]
 description = "SQLite integration and utilities for the Runar ecosystem."
 license = "MIT"
-license-file = "LICENSE"
 
 [dependencies]
 async-trait = "0.1"

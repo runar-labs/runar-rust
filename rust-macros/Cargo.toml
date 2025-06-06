@@ -5,7 +5,6 @@ edition = "2021"
 description = "Procedural macros for the Runar Node system"
 authors = ["Runar Team"]
 license = "MIT"
-license-file = "LICENSE"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -31,6 +31,12 @@ pub struct RoundRobinLoadBalancer {
     current_index: Arc<AtomicUsize>,
 }
 
+impl Default for RoundRobinLoadBalancer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoundRobinLoadBalancer {
     /// Create a new round-robin load balancer
     pub fn new() -> Self {
@@ -47,8 +53,6 @@ impl LoadBalancingStrategy for RoundRobinLoadBalancer {
         }
 
         // Get the next index in a thread-safe way
-        let index = self.current_index.fetch_add(1, Ordering::SeqCst) % handlers.len();
-
-        index
+        self.current_index.fetch_add(1, Ordering::SeqCst) % handlers.len()
     }
 }

@@ -124,6 +124,15 @@ impl std::fmt::Debug for ServiceEntry {
     }
 }
 
+// Type alias for the value stored in local_action_handlers PathTrie
+pub type LocalActionEntryValue = (ActionHandler, TopicPath, Option<ActionMetadata>);
+
+// Type alias for the Vec stored in local_event_subscriptions PathTrie
+pub type LocalEventSubscribersVec = Vec<(String, EventCallback, Option<EventMetadata>)>;
+
+// Type alias for the Vec stored in remote_event_subscriptions PathTrie
+pub type RemoteEventSubscribersVec = Vec<(String, EventCallback)>;
+
 /// Service registry for managing services and their handlers
 ///
 /// INTENTION: Provide a centralized registry for action handlers and event subscriptions.
@@ -136,7 +145,7 @@ pub struct ServiceRegistry {
     /// Local action handlers organized by path (using PathTrie instead of HashMap)
     /// Store both the handler and the original registration topic path for parameter extraction
     local_action_handlers:
-        Arc<RwLock<PathTrie<(ActionHandler, TopicPath, Option<ActionMetadata>)>>>,
+        Arc<RwLock<PathTrie<LocalActionEntryValue>>>,
 
     //reverse index where we store the events that a service listens to
     local_events_by_service: Arc<RwLock<PathTrie<Vec<EventMetadata>>>>,
@@ -146,10 +155,10 @@ pub struct ServiceRegistry {
 
     /// Local event subscriptions (using PathTrie instead of WildcardSubscriptionRegistry)
     local_event_subscriptions:
-        Arc<RwLock<PathTrie<Vec<(String, EventCallback, Option<EventMetadata>)>>>>,
+        Arc<RwLock<PathTrie<LocalEventSubscribersVec>>>,
 
     /// Remote event subscriptions (using PathTrie instead of WildcardSubscriptionRegistry)
-    remote_event_subscriptions: Arc<RwLock<PathTrie<Vec<(String, EventCallback)>>>>,
+    remote_event_subscriptions: Arc<RwLock<PathTrie<RemoteEventSubscribersVec>>>,
 
     /// Map subscription IDs back to TopicPath for efficient unsubscription
     /// (Single HashMap for both local and remote subscriptions)
@@ -194,6 +203,7 @@ impl Clone for ServiceRegistry {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ServiceRegistry {
     fn default() -> Self {
         Self::new_with_default_logger()
@@ -240,7 +250,7 @@ impl ServiceRegistry {
         let service_entry = service.clone();
         let service_topic = service_entry.service_topic.clone();
         self.logger
-            .info(format!("Registering local service: {}", service_topic));
+            .info(format!("Registering local service: {service_topic}"));
 
         // Store the service in the local services registry
         self.local_services
@@ -301,8 +311,7 @@ impl ServiceRegistry {
         let peer_id = service.peer_id().clone();
 
         self.logger.info(format!(
-            "Registering remote service: {} from peer: {}",
-            service_path, peer_id
+            "Registering remote service: {service_path} from peer: {peer_id}"
         ));
 
         // Add to remote services using PathTrie
@@ -335,8 +344,7 @@ impl ServiceRegistry {
         metadata: Option<ActionMetadata>,
     ) -> Result<()> {
         self.logger.debug(format!(
-            "Registering local action handler for: {}",
-            topic_path
+            "Registering local action handler for: {topic_path}"
         ));
 
         // Store in the new local action handlers trie with the original topic path for parameter extraction
@@ -350,8 +358,7 @@ impl ServiceRegistry {
 
     pub async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()> {
         self.logger.debug(format!(
-            "Removing remote action handler for: {}",
-            topic_path
+            "Removing remote action handler for: {topic_path}"
         ));
 
         // Remove from remote action handlers trie
@@ -410,7 +417,7 @@ impl ServiceRegistry {
 
         if !matches.is_empty() {
             let (handler, topic_path, _metadata) = matches[0].content.clone();
-            return Some((handler, topic_path));
+            Some((handler, topic_path))
         } else {
             None
         }
@@ -503,8 +510,7 @@ impl ServiceRegistry {
             TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
 
         // store metadata in local_events_by_service
-        if metadata.is_some() {
-            let metadata = metadata.unwrap();
+        if let Some(metadata) = metadata {
 
             let mut events = self.local_events_by_service.write().await;
             let matches = events.find_matches(&service_topic);
@@ -636,11 +642,7 @@ impl ServiceRegistry {
 
     pub async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
         let map = self.service_states_by_service_path.read().await;
-        if let Some(state) = map.get(service_path.as_str()) {
-            Some(state.clone())
-        } else {
-            None
-        }
+        map.get(service_path.as_str()).copied()
     }
 
     /// Get metadata for all events under a specific service path
@@ -650,7 +652,7 @@ impl ServiceRegistry {
     pub async fn get_events_metadata(&self, search_path: &TopicPath) -> Vec<EventMetadata> {
         // Search in the events trie local_event_handlers
         let events = self.local_events_by_service.read().await;
-        let matches = events.find_matches(&search_path);
+        let matches = events.find_matches(search_path);
 
         // Collect all events that match the service path
         let mut result = Vec::new();
@@ -675,7 +677,7 @@ impl ServiceRegistry {
     pub async fn get_actions_metadata(&self, search_path: &TopicPath) -> Vec<ActionMetadata> {
         // Search in the actions trie local_action_handlers
         let actions = self.local_action_handlers.read().await;
-        let matches = actions.find_matches(&search_path);
+        let matches = actions.find_matches(search_path);
 
         // Collect all actions that match the service path
         let mut result = Vec::new();
@@ -703,8 +705,7 @@ impl ServiceRegistry {
 
     pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<()> {
         self.logger.debug(format!(
-            "Attempting to unsubscribe local subscription ID: {}",
-            subscription_id
+            "Attempting to unsubscribe local subscription ID: {subscription_id}"
         ));
 
         // Find the TopicPath associated with the subscription ID
@@ -804,8 +805,7 @@ impl ServiceRegistry {
             }
         } else {
             let msg = format!(
-                "No topic path found mapping to subscription ID: {}. Cannot unsubscribe.",
-                subscription_id
+                "No topic path found mapping to subscription ID: {subscription_id}. Cannot unsubscribe."
             );
             self.logger.warn(msg.clone());
             Err(anyhow!(msg))
@@ -818,8 +818,7 @@ impl ServiceRegistry {
     /// providing a simpler API that doesn't require the original topic.
     pub async fn unsubscribe_remote(&self, subscription_id: &str) -> Result<()> {
         self.logger.debug(format!(
-            "Attempting to unsubscribe remote subscription ID: {}",
-            subscription_id
+            "Attempting to unsubscribe remote subscription ID: {subscription_id}"
         ));
 
         // Find the TopicPath associated with the subscription ID
@@ -888,8 +887,7 @@ impl ServiceRegistry {
             }
         } else {
             let msg = format!(
-                "No topic path found mapping to remote subscription ID: {}. Cannot unsubscribe.",
-                subscription_id
+                "No topic path found mapping to remote subscription ID: {subscription_id}. Cannot unsubscribe."
             );
             self.logger.warn(msg.clone());
             Err(anyhow!(msg))
@@ -939,8 +937,8 @@ impl ServiceRegistry {
                     name: service.name().to_string(),
                     version: service.version().to_string(),
                     description: service.description().to_string(),
-                    actions: actions,
-                    events: events,
+                    actions,
+                    events,
                     registration_time: service_entry.registration_time,
                     last_start_time: service_entry.last_start_time,
                 },

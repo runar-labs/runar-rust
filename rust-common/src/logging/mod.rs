@@ -145,12 +145,12 @@ impl Logger {
 
         // Add action path if available
         if let Some(path) = &self.action_path {
-            parts.push(format!("action={}", path));
+            parts.push(format!("action={path}"));
         }
 
         // Add event path if available
         if let Some(path) = &self.event_path {
-            parts.push(format!("event={}", path));
+            parts.push(format!("event={path}"));
         }
 
         parts.join("|")
@@ -318,12 +318,12 @@ pub trait LoggingContext {
 
         // Add action path if available
         if let Some(path) = self.action_path() {
-            parts.push(format!("action={}", path));
+            parts.push(format!("action={path}"));
         }
 
         // Add event path if available
         if let Some(path) = self.event_path() {
-            parts.push(format!("event={}", path));
+            parts.push(format!("event={path}"));
         }
 
         parts.join("|")

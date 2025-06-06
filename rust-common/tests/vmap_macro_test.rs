@@ -8,7 +8,7 @@ fn test_vmap_basic() {
     let map = vmap! {
         "string" => "value",
         "number" => 42,
-        "float" => 3.14,
+        "float" => std::f64::consts::PI,
         "bool" => true,
         "null" => runar_common::types::ArcValueType::null()
     };

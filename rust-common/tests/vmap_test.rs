@@ -59,8 +59,7 @@ mod tests {
         let err_msg = err.to_string();
         assert!(
             err_msg.contains("mismatch"),
-            "Error message should mention type conversion issue: {}",
-            err_msg
+            "Error message should mention type conversion issue: {err_msg}"
         );
 
         Ok(())

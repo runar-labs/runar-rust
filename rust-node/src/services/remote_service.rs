@@ -55,63 +55,72 @@ pub struct RemoteService {
     request_timeout_ms: u64,
 }
 
+/// Configuration for creating a RemoteService instance.
+pub struct RemoteServiceConfig {
+    pub name: String,
+    pub service_topic: TopicPath,
+    pub version: String,
+    pub description: String,
+    pub peer_id: PeerId, // ID of the remote peer hosting the service
+    pub request_timeout_ms: u64,
+}
+
+/// Dependencies required by a RemoteService instance, provided by the local node.
+pub struct RemoteServiceDependencies {
+    pub network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
+    pub serializer: Arc<RwLock<SerializerRegistry>>,
+    pub local_node_id: PeerId, // ID of the local node
+    pub pending_requests: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValueType>>>>>,
+    pub logger: Arc<Logger>,
+}
+
+/// Configuration for creating multiple RemoteService instances from capabilities.
+pub struct CreateRemoteServicesConfig {
+    pub capabilities: Vec<ServiceMetadata>,
+    pub peer_id: PeerId, // ID of the remote peer hosting the services
+    pub request_timeout_ms: u64,
+}
+
 impl RemoteService {
     /// Create a new RemoteService instance
     pub fn new(
-        name: String,
-        service_topic: TopicPath,
-        version: String,
-        description: String,
-        peer_id: PeerId,
-        network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
-        serializer: Arc<RwLock<SerializerRegistry>>,
-        local_node_id: PeerId,
-        pending_requests: Arc<
-            RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValueType>>>>,
-        >,
-        logger: Arc<Logger>,
-        request_timeout_ms: u64,
+        config: RemoteServiceConfig,
+        dependencies: RemoteServiceDependencies,
     ) -> Self {
+        let network_id = config.service_topic.network_id();
         Self {
-            name,
-            service_topic,
-            version,
-            description,
-            peer_id,
-            network_transport,
-            serializer: serializer,
-            actions: Arc::new(RwLock::new(HashMap::new())),
-            logger,
-            local_node_id,
-            pending_requests,
-            request_timeout_ms,
-            network_id: String::new(),
+            name: config.name,
+            service_topic: config.service_topic,
+            version: config.version,
+            description: config.description,
+            network_id, // Derived from service_topic
+            peer_id: config.peer_id,
+            network_transport: dependencies.network_transport,
+            serializer: dependencies.serializer,
+            actions: Arc::new(RwLock::new(HashMap::new())), 
+            logger: dependencies.logger,
+            local_node_id: dependencies.local_node_id,
+            pending_requests: dependencies.pending_requests,
+            request_timeout_ms: config.request_timeout_ms,
         }
     }
 
-    /// Create RemoteService instances from service metadata
+    /// Create RemoteService instances from a list of service metadata.
     ///
-    /// INTENTION: Parse service metadata from a discovered node and create
-    /// RemoteService instances for each service.
+    /// INTENTION: To instantiate multiple `RemoteService` proxies based on a list
+    /// of `ServiceMetadata` (typically received from a remote peer), using shared
+    /// dependencies and peer-specific configuration.
     pub async fn create_from_capabilities(
-        peer_id: PeerId,
-        capabilities: Vec<ServiceMetadata>,
-        network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
-        serializer: Arc<RwLock<SerializerRegistry>>,
-        pending_requests: Arc<
-            RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValueType>>>>,
-        >,
-        logger: Arc<Logger>,
-        local_node_id: PeerId,
-        request_timeout_ms: u64,
+        config: CreateRemoteServicesConfig,
+        dependencies: RemoteServiceDependencies,
     ) -> Result<Vec<Arc<RemoteService>>> {
-        logger.info(format!(
+        dependencies.logger.info(format!(
             "Creating RemoteServices from {} service metadata entries",
-            capabilities.len()
+            config.capabilities.len()
         ));
 
         // Make sure we have a valid transport
-        let transport_guard = network_transport.read().await;
+        let transport_guard = dependencies.network_transport.read().await;
         if transport_guard.is_none() {
             return Err(anyhow!("Network transport not available"));
         }
@@ -119,13 +128,13 @@ impl RemoteService {
         // Create remote services for each service metadata
         let mut remote_services = Vec::new();
 
-        for service_metadata in capabilities {
+        for service_metadata in config.capabilities {
             // Create a topic path using the service name as the path
             let service_path =
                 match TopicPath::new(&service_metadata.name, &service_metadata.network_id) {
                     Ok(path) => path,
                     Err(e) => {
-                        logger.error(format!(
+                        dependencies.logger.error(format!(
                             "Invalid service path '{}': {}",
                             service_metadata.name, e
                         ));
@@ -133,20 +142,27 @@ impl RemoteService {
                     }
                 };
 
+            // Prepare config for RemoteService::new
+            let rs_config = RemoteServiceConfig {
+                name: service_metadata.name.clone(),
+                service_topic: service_path,
+                version: service_metadata.version.clone(),
+                description: service_metadata.description.clone(),
+                peer_id: config.peer_id.clone(),
+                request_timeout_ms: config.request_timeout_ms,
+            };
+
+            // Prepare dependencies for RemoteService::new (cloning Arcs)
+            let rs_dependencies = RemoteServiceDependencies {
+                network_transport: dependencies.network_transport.clone(),
+                serializer: dependencies.serializer.clone(),
+                local_node_id: dependencies.local_node_id.clone(),
+                pending_requests: dependencies.pending_requests.clone(),
+                logger: dependencies.logger.clone(),
+            };
+
             // Create the remote service
-            let service = Arc::new(Self::new(
-                service_metadata.name.clone(),
-                service_path,
-                service_metadata.version.clone(),
-                service_metadata.description.clone(),
-                peer_id.clone(),
-                network_transport.clone(),
-                serializer.clone(),
-                local_node_id.clone(),
-                pending_requests.clone(),
-                logger.clone(),
-                request_timeout_ms,
-            ));
+            let service = Arc::new(Self::new(rs_config, rs_dependencies));
 
             // Add actions to the service
             for action in service_metadata.actions {
@@ -156,7 +172,7 @@ impl RemoteService {
             remote_services.push(service);
         }
 
-        logger.info(format!(
+        dependencies.logger.info(format!(
             "Created {} RemoteService instances",
             remote_services.len()
         ));

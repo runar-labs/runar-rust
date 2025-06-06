@@ -5,7 +5,6 @@ edition = "2021"
 authors = ["Runar Team"]
 description = "Common traits and utilities for the Runar P2P stack"
 license = "MIT"
-license-file = "LICENSE"
 
 [features]
 default = []

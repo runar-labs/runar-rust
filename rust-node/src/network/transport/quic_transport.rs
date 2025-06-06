@@ -135,6 +135,20 @@ impl fmt::Debug for QuicTransportOptions {
     }
 }
 
+/// Configuration for creating a QuicTransport instance.
+// Note: The message_handler is a Box, so QuicTransportConfig itself won't be Clone
+// unless message_handler is changed to something like Arc<Box<...>>.
+// For now, we'll assume the config is passed by value and its fields moved where needed.
+pub struct QuicTransportConfig {
+    pub local_node_info: NodeInfo,
+    pub bind_addr: SocketAddr,
+    pub message_handler: Box<
+        dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static,
+    >,
+    pub options: QuicTransportOptions,
+    pub logger: Arc<Logger>,
+}
+
 /// Helper function to generate self-signed certificates for testing
 ///
 /// INTENTION: Provide a consistent way to generate test certificates across test and core code, using explicit rustls namespaces to avoid type conflicts.
@@ -298,70 +312,29 @@ impl QuicTransportImpl {
     ///
     /// INTENTION: Initialize the core implementation with the provided parameters.
     fn new(
-        local_node: NodeInfo,
-        bind_addr: SocketAddr,
-        message_handler: Box<
-            dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static,
-        >,
-        options: QuicTransportOptions,
-        logger: Arc<Logger>,
+        config: QuicTransportConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let connection_pool = Arc::new(ConnectionPool::new(logger.clone()));
+        let connection_pool = Arc::new(ConnectionPool::new(config.logger.clone()));
 
         // Create a broadcast channel for peer node info updates
         // The channel size determines how many messages can be buffered before lagging
         let (peer_node_info_sender, _) = tokio::sync::broadcast::channel(32);
 
         Ok(Self {
-            node_id: local_node.peer_id.clone(),
-            bind_addr,
+            node_id: config.local_node_info.peer_id.clone(),
+            bind_addr: config.bind_addr,
             // Initialize with Mutex for proper interior mutability
             endpoint: Mutex::new(None),
             connection_pool,
-            options,
-            logger,
-            message_handler: Arc::new(StdRwLock::new(message_handler)),
-            local_node,
+            options: config.options,
+            logger: config.logger,
+            message_handler: Arc::new(StdRwLock::new(config.message_handler)),
+            local_node: config.local_node_info,
             peer_node_info_sender,
             running: Arc::new(AtomicBool::new(false)),
         })
     }
 
-    /// Configure and create a QUIC endpoint
-    ///
-    /// INTENTION: Set up the QUIC endpoint with appropriate TLS and transport settings.
-    async fn configure_endpoint(self: &Arc<Self>) -> Result<Endpoint, NetworkError> {
-        // Apply Quinn log level filter to reduce noisy connection logs
-        // Instead of using set_max_level which affects all crates, we'll use an environment
-        // variable to specifically target Quinn logs
-        let quinn_log_level = self.options.quinn_log_level;
-        self.logger.debug(&format!(
-            "Setting Quinn log level to: {:?}",
-            quinn_log_level
-        ));
-
-        // Set RUST_LOG environment variable for Quinn specifically
-        // This is more targeted than using log::set_max_level
-        std::env::set_var(
-            "RUST_LOG",
-            format!("quinn={},rustls={}", quinn_log_level, quinn_log_level),
-        );
-
-        // Configure TLS for the endpoint
-        let (server_config, client_config) = self.create_quinn_configs()?;
-
-        // Create the endpoint
-        let mut endpoint = quinn::Endpoint::server(server_config, self.bind_addr).map_err(|e| {
-            NetworkError::TransportError(format!("Failed to create QUIC endpoint: {}", e))
-        })?;
-
-        // Set default client config for outgoing connections
-        endpoint.set_default_client_config(client_config);
-
-        self.logger
-            .info(&format!("QUIC endpoint configured on {}", self.bind_addr));
-        Ok(endpoint)
-    }
 
     /// Create QUIC server and client configurations
     ///
@@ -1318,20 +1291,23 @@ impl QuicTransport {
         options: QuicTransportOptions,
         logger: Arc<Logger>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        // Create the inner implementation
-        let inner = QuicTransportImpl::new(
-            local_node_info.clone(),
+        // Create the config struct to pass to the inner implementation
+        let config = QuicTransportConfig {
+            local_node_info: local_node_info.clone(), // Clone for the inner impl
             bind_addr,
             message_handler,
             options,
-            logger.clone(),
-        )?;
+            logger: logger.clone(), // Clone for the inner impl
+        };
+
+        // Create the inner implementation using the config struct
+        let inner_impl = QuicTransportImpl::new(config)?;
 
         // Create and return the public API wrapper with proper task management
         Ok(Self {
-            inner: Arc::new(inner),
-            logger,
-            node_id: local_node_info.peer_id.clone(),
+            inner: Arc::new(inner_impl),
+            logger, // Use the original logger passed to QuicTransport::new
+            node_id: local_node_info.peer_id, // local_node_info is already cloned for config, can move peer_id here
             background_tasks: Mutex::new(Vec::new()),
         })
     }

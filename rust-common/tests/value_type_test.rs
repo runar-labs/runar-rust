@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use bincode;
 use runar_common::logging::{Component, Logger};
-use runar_common::types::{ArcValueType, ErasedArc, SerializerRegistry, ValueCategory};
+use runar_common::types::{ArcValueType, SerializerRegistry};
 use serde::{Deserialize, Serialize};
 
 // Create a test registry for use in tests
@@ -153,7 +153,7 @@ fn test_struct_serialization() -> Result<()> {
     let registry = create_test_registry();
 
     // First, directly create an ArcValueType from the struct
-    let mut value = ArcValueType::from_struct(test_struct.clone());
+    let value = ArcValueType::from_struct(test_struct.clone());
 
     // Manually serialize it
     let serialized_bytes = registry.serialize_value(&value)?;
@@ -213,7 +213,7 @@ fn test_nested() -> Result<()> {
 
     // Let's check serialization
     let mut registry = create_test_registry();
-    registry.register::<HashMap<String, ArcValueType>>();
+    let _ = registry.register::<HashMap<String, ArcValueType>>();
 
     // let bytes = registry.serialize_value(&value)?;
     // let mut value_from_bytes = registry.deserialize_value(bytes)?;
@@ -273,7 +273,7 @@ fn test_map_of_struts_serialization() -> Result<()> {
     println!("Content verified for ref2");
 
     // Let's check serialization
-    let mut registry = create_test_registry();
+    let registry = create_test_registry();
     println!("Created registry");
 
     // Print registered deserializers
@@ -318,7 +318,7 @@ fn test_type_mismatch_errors() -> Result<()> {
 
 #[test]
 fn test_null_value() -> Result<()> {
-    let mut value = ArcValueType::null();
+    let value = ArcValueType::null();
     assert!(value.is_null());
 
     Ok(())

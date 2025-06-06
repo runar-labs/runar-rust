@@ -18,7 +18,8 @@
 use anyhow::Result;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
-use std::str::FromStr;
+use std::fmt;
+
 
 /// Type of a path, indicating what kind of resource is being addressed
 ///
@@ -97,22 +98,10 @@ impl PathSegment {
         matches!(self, Self::Template(_))
     }
 
-    /// Convert segment to string representation
-    ///
-    /// INTENTION: Get the string representation of this segment for path construction.
-    fn to_string(&self) -> String {
-        match self {
-            Self::Literal(s) => s.clone(),
-            Self::Template(name) => format!("{{{}}}", name),
-            Self::SingleWildcard => "*".to_string(),
-            Self::MultiWildcard => ">".to_string(),
-        }
-    }
-
     /// Get segment as string slice for display
     ///
     /// INTENTION: Get a string representation without allocating when possible.
-    fn as_str(&self) -> &str {
+    fn _as_str(&self) -> &str {
         match self {
             Self::Literal(s) => s.as_str(),
             // These require allocations - we return slices to the static strings
@@ -134,6 +123,18 @@ impl PathSegment {
 /// - `auth/login` (Shorthand without network_id, which will be added when TopicPath is created)
 /// - `services/*/state` (Pattern with single-segment wildcard)
 /// - `events/>` (Pattern with multi-segment wildcard)
+
+impl fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PathSegment::Literal(s) => f.write_str(s),
+            PathSegment::Template(name) => write!(f, "{{{name}}}"),
+            PathSegment::SingleWildcard => f.write_str("*"),
+            PathSegment::MultiWildcard => f.write_str(">"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TopicPath {
     /// The raw path string with validated format
@@ -169,7 +170,7 @@ pub struct TopicPath {
     /// - 01: Template
     /// - 10: SingleWildcard
     /// - 11: MultiWildcard
-    /// This allows us to quickly check segment types without iterating through segments
+    ///   This allows us to quickly check segment types without iterating through segments
     segment_type_bitmap: u64,
 }
 
@@ -331,12 +332,12 @@ impl TopicPath {
             // Split at the first colon to separate network_id and path
             let parts: Vec<&str> = path.split(':').collect();
             if parts.len() != 2 {
-                return Err(format!("Invalid path format - should be 'network_id:service_path' or 'service_path': {}", path));
+                return Err(format!("Invalid path format - should be 'network_id:service_path' or 'service_path': {path}"));
             }
 
             // Reject empty network IDs
             if parts[0].is_empty() {
-                return Err(format!("Network ID cannot be empty: {}", path));
+                return Err(format!("Network ID cannot be empty: {path}"));
             }
 
             (parts[0], parts[1])
@@ -354,8 +355,7 @@ impl TopicPath {
         // Paths must have at least one segment (the service name)
         if path_segments.is_empty() {
             return Err(format!(
-                "Invalid path - must have at least one segment: {}",
-                path
+                "Invalid path - must have at least one segment: {path}"
             ));
         }
 
@@ -437,13 +437,13 @@ impl TopicPath {
         // Save the service path (first segment) for easy access
         let service_path = match &segments[0] {
             PathSegment::Literal(s) => s.clone(),
-            PathSegment::Template(s) => format!("{{{}}}", s),
+            PathSegment::Template(s) => format!("{{{s}}}"),
             PathSegment::SingleWildcard => "*".to_string(),
             PathSegment::MultiWildcard => ">".to_string(),
         };
 
         // Create the full path string (for display/serialization)
-        let full_path_str = format!("{}:{}", network_id, path_without_network);
+        let full_path_str = format!("{network_id}:{path_without_network}");
 
         // Pre-compute the action path for caching
         let cached_action_path = if segments.len() <= 1 {
@@ -576,7 +576,7 @@ impl TopicPath {
         let network_id_string = network_id.to_string();
         let service_name_string = service_name.to_string();
 
-        let path = format!("{}:{}", network_id_string, service_name_string);
+        let path = format!("{network_id_string}:{service_name_string}");
         Self {
             path,
             network_id: network_id_string,
@@ -629,7 +629,7 @@ impl TopicPath {
     pub fn child(&self, segment: &str) -> Result<Self, String> {
         // Ensure segment doesn't contain slashes
         if segment.contains('/') {
-            return Err(format!("Child segment cannot contain slashes: {}", segment));
+            return Err(format!("Child segment cannot contain slashes: {segment}"));
         }
 
         // Create the new path string
@@ -894,7 +894,7 @@ impl TopicPath {
     pub fn matches_template(&self, template: &str) -> bool {
         // Fast path: if neither has templates, do simple comparison
         if !self.has_templates && !template.contains('{') {
-            return self.path.contains(&template);
+            return self.path.contains(template);
         }
 
         // Use faster matching for common template patterns
@@ -1022,9 +1022,7 @@ impl TopicPath {
         }
 
         // Otherwise, perform segment-by-segment matching
-        let result = self.segments_match(&self.segments, &topic.segments);
-
-        result
+        self.segments_match(&self.segments, &topic.segments)
     }
 
     // Optimized segment matching with improved template handling
@@ -1159,7 +1157,7 @@ impl TopicPath {
                 // Look up the parameter value
                 match params.get(param_name) {
                     Some(value) => path_segments.push(PathSegment::Literal(value.clone())),
-                    None => return Err(format!("Missing parameter value for '{}'", param_name)),
+                    None => return Err(format!("Missing parameter value for '{param_name}'")),
                 }
             } else {
                 // This is a literal segment

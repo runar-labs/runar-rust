@@ -22,11 +22,16 @@ use super::erased_arc::ErasedArc;
 use crate::logging::Logger;
 use crate::types::AsArcValueType; // Added import for the trait
 
+// Type alias for complex deserialization function signature
+pub(crate) type DeserializationFn = Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>;
+// Type alias for the inner part of the complex serialization function signature
+pub(crate) type SerializationFnInner = Box<dyn Fn(&dyn Any) -> Result<Vec<u8>> + Send + Sync>;
+
 /// Wrapper struct for deserializer function that implements Debug
 #[derive(Clone)]
 pub struct DeserializerFnWrapper {
     // The actual deserializer function
-    pub func: Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>,
+    pub func: DeserializationFn,
 }
 
 impl std::fmt::Debug for DeserializerFnWrapper {
@@ -90,7 +95,7 @@ pub enum ValueCategory {
 
 /// Registry for type-specific serialization and deserialization handlers
 pub struct SerializerRegistry {
-    serializers: FxHashMap<String, Box<dyn Fn(&dyn Any) -> Result<Vec<u8>> + Send + Sync>>,
+    serializers: FxHashMap<String, SerializationFnInner>,
     deserializers: FxHashMap<String, DeserializerFnWrapper>,
     is_sealed: bool,
     /// Logger for SerializerRegistry operations
@@ -350,14 +355,12 @@ impl SerializerRegistry {
         }
 
         self.logger.debug(format!(
-            "Deserializing value with type: {} (category: {:?})",
-            type_name, original_category
+            "Deserializing value with type: {type_name} (category: {original_category:?})"
         ));
 
         // For complex types, store LazyDataWithOffset
         self.logger.debug(format!(
-            "Lazy deserialization setup for complex type: {}",
-            type_name
+            "Lazy deserialization setup for complex type: {type_name}"
         ));
 
         // Check if a deserializer exists (even though we don't store it in LazyDataWithOffset,
@@ -376,15 +379,15 @@ impl SerializerRegistry {
 
             // Store Arc<LazyDataWithOffset> in value, keeping original category
             let value = ErasedArc::from_value(lazy_data);
-            return Ok(ArcValueType {
+            Ok(ArcValueType {
                 category: original_category, // Keep original category (Map, Struct, etc.)
                 value: Some(value),
-            });
+            })
         } else {
-            return Err(anyhow!(
+            Err(anyhow!(
                 "No deserializer registered for complex type, cannot create lazy value: {}",
                 type_name
-            ));
+            ))
         }
     }
 
@@ -393,28 +396,10 @@ impl SerializerRegistry {
         self.deserializers.get(type_name).cloned()
     }
 
-    /// Helper to decide if a type should be immediately deserialized
-    fn is_simple_immediate_type(&self, type_name: &str) -> bool {
-        // Simple types that should be deserialized immediately
-        type_name == "i32"
-            || type_name == "i64"
-            || type_name == "f32"
-            || type_name == "f64"
-            || type_name == "bool"
-            || type_name == "String"
-            || type_name.contains("Vec<")
-                && (type_name.contains("i32")
-                    || type_name.contains("i64")
-                    || type_name.contains("f32")
-                    || type_name.contains("f64")
-                    || type_name.contains("bool")
-                    || type_name.contains("String"))
-    }
-
     /// Print all registered deserializers for debugging
     pub fn debug_print_deserializers(&self) {
         for key in self.deserializers.keys() {
-            self.logger.debug(format!("  - {}", key));
+            self.logger.debug(format!("  - {key}"));
         }
     }
 
@@ -452,11 +437,11 @@ impl SerializerRegistry {
                         result_vec.extend_from_slice(
                             &lazy.original_buffer[lazy.start_offset..lazy.end_offset],
                         );
-                        return Ok(Arc::from(result_vec));
+                        Ok(Arc::from(result_vec))
                     } else {
-                        return Err(anyhow!(
+                        Err(anyhow!(
                             "Value's ErasedArc is lazy, but failed to extract LazyDataWithOffset"
-                        ));
+                        ))
                     }
                 } else {
                     // EAGER NON-NULL PATH (value.value is Some(erased_arc_ref) and not lazy)
@@ -513,7 +498,7 @@ impl SerializerRegistry {
                         }
                     };
                     result_vec.extend_from_slice(&data_bytes);
-                    return Ok(Arc::from(result_vec));
+                    Ok(Arc::from(result_vec))
                 }
             }
             None => {
@@ -529,9 +514,8 @@ impl SerializerRegistry {
                     "Serializing null value (category: {:?}, value is None)",
                     value.category
                 ));
-                let mut result_vec = Vec::new();
-                result_vec.push(0x05); // Null category marker
-                return Ok(Arc::from(result_vec));
+                let result_vec = vec![0x05]; // Null category marker
+                Ok(Arc::from(result_vec))
             }
         }
     }
@@ -565,43 +549,43 @@ impl PartialEq for ArcValueType {
 impl Eq for ArcValueType {}
 
 impl AsArcValueType for ArcValueType {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         self // It already is an ArcValueType
     }
 }
 
 impl AsArcValueType for bool {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         ArcValueType::new_primitive(self)
     }
 }
 
 impl AsArcValueType for String {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         ArcValueType::new_primitive(self)
     }
 }
 
 impl AsArcValueType for &str {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         ArcValueType::new_primitive(self.to_string())
     }
 }
 
 impl AsArcValueType for i32 {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         ArcValueType::new_primitive(self)
     }
 }
 
 impl AsArcValueType for i64 {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         ArcValueType::new_primitive(self)
     }
 }
 
 impl AsArcValueType for () {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         ArcValueType::null() // Represent unit type as null payload
     }
 }
@@ -683,7 +667,7 @@ impl ArcValueType {
     }
 
     /// Get value as a reference of the specified type
-    pub fn as_type_ref<T: 'static>(&mut self) -> Result<Arc<T>>
+    pub fn as_type_ref<T>(&mut self) -> Result<Arc<T>>
     where
         T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
     {
@@ -749,7 +733,7 @@ impl ArcValueType {
     }
 
     /// Get list as a reference of the specified element type
-    pub fn as_list_ref<T: 'static>(&mut self) -> Result<Arc<Vec<T>>>
+    pub fn as_list_ref<T>(&mut self) -> Result<Arc<Vec<T>>>
     where
         T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
     {
@@ -790,7 +774,7 @@ impl ArcValueType {
 
             let expected_list_type_name = std::any::type_name::<Vec<T>>();
             if !crate::types::erased_arc::compare_type_names(
-                &expected_list_type_name,
+                expected_list_type_name,
                 &type_name_clone,
             ) {
                 self.value = Some(current_erased_arc); // Put the original lazy value back
@@ -897,7 +881,7 @@ impl ArcValueType {
     }
 
     /// Get value as the specified type (makes a clone).
-    pub fn as_type<T: 'static + Clone>(&mut self) -> Result<T>
+    pub fn as_type<T>(&mut self) -> Result<T>
     where
         T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
     {
@@ -1021,17 +1005,17 @@ impl fmt::Display for ArcValueType {
                             // Attempt to downcast and display common primitives
                             let any_val = actual_value.as_any().map_err(|_| fmt::Error)?;
                             if let Some(s) = any_val.downcast_ref::<String>() {
-                                write!(f, "\"{}\"", s)
+                                write!(f, "\"{s}\"")
                             } else if let Some(i) = any_val.downcast_ref::<i32>() {
-                                write!(f, "{}", i)
+                                write!(f, "{i}")
                             } else if let Some(i) = any_val.downcast_ref::<i64>() {
-                                write!(f, "{}", i)
+                                write!(f, "{i}")
                             } else if let Some(fl) = any_val.downcast_ref::<f32>() {
-                                write!(f, "{}", fl)
+                                write!(f, "{fl}")
                             } else if let Some(fl) = any_val.downcast_ref::<f64>() {
-                                write!(f, "{}", fl)
+                                write!(f, "{fl}")
                             } else if let Some(b) = any_val.downcast_ref::<bool>() {
-                                write!(f, "{}", b)
+                                write!(f, "{b}")
                             } else {
                                 write!(f, "Primitive<{}>", actual_value.type_name())
                             }
@@ -1076,9 +1060,9 @@ impl<T> super::AsArcValueType for Option<T>
 where
     T: super::AsArcValueType,
 {
-    fn as_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValueType {
         match self {
-            Some(value) => value.as_arc_value_type(),
+            Some(value) => value.into_arc_value_type(),
             None => ArcValueType::null(),
         }
     }
