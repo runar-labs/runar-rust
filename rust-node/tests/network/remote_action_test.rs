@@ -107,7 +107,7 @@ async fn test_remote_action_call() -> Result<()> {
     });
 
     // Use the proper network path format - with network ID for remote actions
-    let response: f64 = node2.request("test:math1/add", Some(add_params)).await?;
+    let response: f64 = node2.request("math1/add", Some(add_params)).await?;
     // response is now directly f64 due to generic deserialization in request()
     assert_eq!(response, 8.0);
     logger.info(format!("Add operation succeeded: 5 + 3 = {}", response));
@@ -120,7 +120,7 @@ async fn test_remote_action_call() -> Result<()> {
     });
 
     let response: f64 = node1
-        .request("test:math2/multiply", Some(multiply_params))
+        .request("math2/multiply", Some(multiply_params))
         .await?;
     // response is now directly f64 due to generic deserialization in request()
     assert_eq!(response, 28.0);
@@ -143,7 +143,7 @@ async fn test_remote_action_call() -> Result<()> {
         "b" => 3.0
     });
 
-    let response: f64 = node2.request("test:math3/add", Some(add_params)).await?;
+    let response: f64 = node2.request("math3/add", Some(add_params)).await?;
     // response is now directly f64 due to generic deserialization in request()
     assert_eq!(response, 8.0);
     logger.info(format!("Add operation succeeded: 5 + 3 = {}", response));
