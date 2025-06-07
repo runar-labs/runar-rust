@@ -45,7 +45,6 @@ async fn test_node_create() {
 
         println!("Node created successfully!");
         // Basic verification that the node exists
-        assert!(true);
     })
     .await
     {

@@ -9,7 +9,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 use syn::{
-    parse_macro_input, parse_quote, Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Lit,
+    parse_macro_input, Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Lit,
     LitStr, Meta, Pat, PatType, ReturnType, Type, TypePath,
 };
 

@@ -100,11 +100,11 @@ async fn test_quic_transport_connection_end_to_end() {
     };
 
     // Log test setup information
-    logger_a.info(&format!(
+    logger_a.info(format!(
         "Setting up test with Node A (ID: {}, Address: {})",
         node_a_id, node_a_addr
     ));
-    logger_b.info(&format!(
+    logger_b.info(format!(
         "Setting up test with Node B (ID: {}, Address: {})",
         node_b_id, node_b_addr
     ));

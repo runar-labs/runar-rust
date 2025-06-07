@@ -87,8 +87,6 @@ pub struct MulticastDiscovery {
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>,
     tx: Arc<Mutex<Option<Sender<MulticastMessage>>>>,
     // Task fields
-    listener_task: Mutex<Option<JoinHandle<()>>>,
-    sender_task: Mutex<Option<JoinHandle<()>>>,
     announce_task: Mutex<Option<JoinHandle<()>>>,
     cleanup_task: Mutex<Option<JoinHandle<()>>>,
     // Multicast address field
@@ -151,21 +149,16 @@ impl MulticastDiscovery {
             listeners: Arc::new(RwLock::new(Vec::new())),
             tx: Arc::new(Mutex::new(None)),
             multicast_addr: Arc::new(Mutex::new(socket_addr)),
-            // Initialize task fields
-            listener_task: Mutex::new(None),
-            sender_task: Mutex::new(None),
             announce_task: Mutex::new(None),
             cleanup_task: Mutex::new(None),
             logger: discovery_logger,
         };
 
         // Initialize the tasks
-        let listener_handle = instance.start_listener_task();
-        *instance.listener_task.lock().await = Some(listener_handle);
+        instance.start_listener_task();
 
         // Call start_sender_task and store results
-        let (sender_handle, tx) = instance.start_sender_task();
-        *instance.sender_task.lock().await = Some(sender_handle);
+        let (_sender_handle, tx) = instance.start_sender_task();
         *instance.tx.lock().await = Some(tx);
 
         // Start cleanup task

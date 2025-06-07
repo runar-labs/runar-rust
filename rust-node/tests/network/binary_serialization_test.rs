@@ -24,7 +24,7 @@ fn test_message_payload_item_serialization() -> Result<()> {
     let logger = Logger::new_root(Component::Network, "binary_serialization_test");
 
     // Create a SerializerRegistry for serialization
-    let mut registry = SerializerRegistry::with_defaults(Arc::new(logger.clone()));
+    let registry = SerializerRegistry::with_defaults(Arc::new(logger.clone()));
 
     // Serialize the ArcValueType
     let value_bytes = registry.serialize_value(&value)?;
@@ -69,7 +69,7 @@ fn test_network_message_serialization() -> Result<()> {
     let logger = Logger::new_root(Component::Network, "binary_serialization_test");
 
     // Create a SerializerRegistry for serialization
-    let mut registry = SerializerRegistry::with_defaults(Arc::new(logger.clone()));
+    let registry = SerializerRegistry::with_defaults(Arc::new(logger.clone()));
 
     // Serialize the ArcValueType
     let value_bytes = registry.serialize_value(&value)?;

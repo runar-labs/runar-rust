@@ -244,7 +244,7 @@ async fn test_registry_service_missing_parameter() {
             Err(e) => {
                 // If it returns an error, that's also acceptable - service not found
                 test_logger.debug(format!("Error for missing parameter: {:?}", e));
-                assert!(true, "Request properly failed with error: {:?}", e);
+                // Request properly failed, error logged above
             }
         }
 
@@ -261,7 +261,7 @@ async fn test_registry_service_missing_parameter() {
             Err(e) => {
                 // If it returns an error, that's also acceptable - service not found
                 test_logger.debug(format!("Error for invalid state path: {:?}", e));
-                assert!(true, "Request properly failed with error: {:?}", e);
+                // Request properly failed, error logged above
             }
         }
         Ok::<(), anyhow::Error>(())

@@ -172,7 +172,7 @@ impl MathService {
     ) -> Result<ArcValueType> {
         context.info("Handling add operation request".to_string());
         let zero = 0.0;
-        let mut data = params.unwrap_or_else(|| ArcValueType::null());
+        let mut data = params.unwrap_or_else(ArcValueType::null);
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
                 let a = *map.get("a").unwrap_or_else(|| {
@@ -203,7 +203,7 @@ impl MathService {
     ) -> Result<ArcValueType> {
         context.info("Handling subtract operation request".to_string());
         let zero = 0.0;
-        let mut data = params.unwrap_or_else(|| ArcValueType::null());
+        let mut data = params.unwrap_or_else(ArcValueType::null);
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
                 let a = *map.get("a").unwrap_or_else(|| {
@@ -237,7 +237,7 @@ impl MathService {
     ) -> Result<ArcValueType> {
         context.info("Handling multiply operation request".to_string());
         let zero = 0.0;
-        let mut data = params.unwrap_or_else(|| ArcValueType::null());
+        let mut data = params.unwrap_or_else(ArcValueType::null);
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
                 let a = *map.get("a").unwrap_or_else(|| {
@@ -270,7 +270,7 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValueType> {
         context.info("Handling divide operation request".to_string());
-        let mut data = params.unwrap_or_else(|| ArcValueType::null());
+        let mut data = params.unwrap_or_else(ArcValueType::null);
         let zero = 0.0;
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
