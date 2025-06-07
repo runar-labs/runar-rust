@@ -3,7 +3,7 @@ use crate::{
     types::{current_unix_timestamp, NetworkId, NetworkKey, PeerId},
     Result,
 };
-use ed25519_dalek::{VerifyingKey, Signature};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 
@@ -34,8 +34,8 @@ pub struct AccessToken {
     pub expiration: u64,
     pub capabilities: Vec<Capability>,
     pub signature_hex: String, // Added signature_hex field
-    // Signature is not part of the struct for direct serialization of the token itself,
-    // but handled during the sign/verify process where the token data is serialized to JSON for signing.
+                               // Signature is not part of the struct for direct serialization of the token itself,
+                               // but handled during the sign/verify process where the token data is serialized to JSON for signing.
 }
 
 impl AccessToken {
@@ -71,9 +71,10 @@ impl AccessToken {
             capabilities: self.capabilities.clone(),
         };
 
-        let json_payload = serde_json::to_string(&data_to_sign)
-            .map_err(|e| KeyError::SerializationError(format!("Failed to serialize token data: {}", e)))?;
-        
+        let json_payload = serde_json::to_string(&data_to_sign).map_err(|e| {
+            KeyError::SerializationError(format!("Failed to serialize token data: {}", e))
+        })?;
+
         let signature = network_key.sign(json_payload.as_bytes());
         Ok(hex::encode(signature.to_bytes())) // Using hex for signature representation
     }
@@ -82,10 +83,15 @@ impl AccessToken {
     /// The `signed_token_string` is expected to be a JSON representation of `SignedAccessToken` (token + signature_hex).
     /// Alternatively, if we pass token and signature separately:
     /// Verifies the token against a given hex-encoded signature and the `NetworkId` (public key).
-    pub fn verify(token_json_str: &str, signature_hex: &str, verifying_network_id: &NetworkId) -> Result<Self> {
+    pub fn verify(
+        token_json_str: &str,
+        signature_hex: &str,
+        verifying_network_id: &NetworkId,
+    ) -> Result<Self> {
         // Deserialize the token part first
-        let token: AccessToken = serde_json::from_str(token_json_str)
-            .map_err(|e| KeyError::DeserializationError(format!("Failed to deserialize token from JSON: {}", e)))?;
+        let token: AccessToken = serde_json::from_str(token_json_str).map_err(|e| {
+            KeyError::DeserializationError(format!("Failed to deserialize token from JSON: {}", e))
+        })?;
 
         // Check if the token's network_id matches the one we are verifying against
         if token.network_id != *verifying_network_id {
@@ -106,21 +112,32 @@ impl AccessToken {
             expiration: token.expiration,
             capabilities: token.capabilities.clone(),
         };
-        let original_json_payload = serde_json::to_string(&data_that_was_signed)
-            .map_err(|e| KeyError::SerializationError(format!("Failed to re-serialize token data for verification: {}", e)))?;
+        let original_json_payload = serde_json::to_string(&data_that_was_signed).map_err(|e| {
+            KeyError::SerializationError(format!(
+                "Failed to re-serialize token data for verification: {}",
+                e
+            ))
+        })?;
 
         // Decode signature from hex
         let signature_bytes_vec = hex::decode(signature_hex)
             .map_err(|e| KeyError::InvalidToken(format!("Invalid signature hex: {}", e)))?;
 
-        let signature_bytes_array: [u8; 64] = signature_bytes_vec.as_slice().try_into()
-            .map_err(|e| KeyError::InvalidSignatureFormat(format!("Signature bytes length incorrect: {}", e)))?;
-        
+        let signature_bytes_array: [u8; 64] =
+            signature_bytes_vec.as_slice().try_into().map_err(|e| {
+                KeyError::InvalidSignatureFormat(format!("Signature bytes length incorrect: {}", e))
+            })?;
+
         let signature = Signature::from_bytes(&signature_bytes_array);
 
         // Convert NetworkId to VerifyingKey for verification
         let network_public_key = VerifyingKey::from_bytes(verifying_network_id.as_bytes())
-            .map_err(|e| KeyError::InvalidPublicKey(format!("Failed to create VerifyingKey from NetworkId: {}", e)))?;
+            .map_err(|e| {
+                KeyError::InvalidPublicKey(format!(
+                    "Failed to create VerifyingKey from NetworkId: {}",
+                    e
+                ))
+            })?;
 
         // Verify the signature against the reconstructed payload and the public key
         network_public_key
@@ -132,11 +149,11 @@ impl AccessToken {
 
     /// A convenience method to create a JSON string of the token itself (not the signed payload).
     pub fn to_json_string(&self) -> Result<String> {
-        serde_json::to_string(self)
-            .map_err(|e| KeyError::SerializationError(format!("Failed to serialize token to JSON: {}", e)))
+        serde_json::to_string(self).map_err(|e| {
+            KeyError::SerializationError(format!("Failed to serialize token to JSON: {}", e))
+        })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -174,8 +191,9 @@ mod tests {
 
         // For verification, we need the token data (as JSON) and the signature hex
         let token_json_str = token.to_json_string().unwrap();
-        let verified_token_result = AccessToken::verify(&token_json_str, &signed_token_hex, &network_id);
-        
+        let verified_token_result =
+            AccessToken::verify(&token_json_str, &signed_token_hex, &network_id);
+
         assert!(verified_token_result.is_ok());
         let verified_token = verified_token_result.unwrap();
 
@@ -207,10 +225,14 @@ mod tests {
         let token_json_str = token.to_json_string().unwrap();
 
         // Try to verify with the wrong network_id
-        let verification_result = AccessToken::verify(&token_json_str, &signature_hex, &other_network_id);
+        let verification_result =
+            AccessToken::verify(&token_json_str, &signature_hex, &other_network_id);
         assert!(verification_result.is_err());
         match verification_result.unwrap_err() {
-            KeyError::InvalidToken(msg) => assert!(msg.contains("Token network_id does not match verifying network_id") || msg.contains("Signature verification failed") ),
+            KeyError::InvalidToken(msg) => assert!(
+                msg.contains("Token network_id does not match verifying network_id")
+                    || msg.contains("Signature verification failed")
+            ),
             _ => panic!("Expected InvalidToken error for wrong network_id verification"),
         }
     }
@@ -249,14 +271,15 @@ mod tests {
         );
         let signature_hex = token.sign(&network_key).unwrap();
         // Original token_json_str for verification
-        // let original_token_json_str = token.to_json_string().unwrap(); 
+        // let original_token_json_str = token.to_json_string().unwrap();
 
         // Create a tampered token JSON string
         let mut tampered_token_data = token.clone();
         tampered_token_data.capabilities = vec![Capability::Admin]; // Change capabilities
         let tampered_token_json_str = tampered_token_data.to_json_string().unwrap();
 
-        let verification_result = AccessToken::verify(&tampered_token_json_str, &signature_hex, &network_id);
+        let verification_result =
+            AccessToken::verify(&tampered_token_json_str, &signature_hex, &network_id);
         assert!(verification_result.is_err());
         match verification_result.unwrap_err() {
             KeyError::InvalidToken(msg) => assert!(msg.contains("Signature verification failed")),
@@ -277,7 +300,7 @@ mod tests {
         // Token is for the original network_id
         let token = AccessToken::new(
             peer_id.clone(),
-            network_id_orig.clone(), 
+            network_id_orig.clone(),
             current_unix_timestamp() + 3600,
             vec![Capability::Read],
         );
@@ -286,7 +309,9 @@ mod tests {
         let sign_result = token.sign(&network_key_other);
         assert!(sign_result.is_err());
         match sign_result.unwrap_err() {
-            KeyError::InvalidOperation(msg) => assert!(msg.contains("Token network_id does not match signing key's network_id")),
+            KeyError::InvalidOperation(msg) => {
+                assert!(msg.contains("Token network_id does not match signing key's network_id"))
+            }
             _ => panic!("Expected InvalidOperation error for mismatched signing key"),
         }
     }

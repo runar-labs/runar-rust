@@ -389,9 +389,7 @@ impl ErasedArc {
             }
 
             // Generic structs and other types
-            (e, a) => {
-                compare_type_names(e, a)
-            }
+            (e, a) => compare_type_names(e, a),
         }
     }
 

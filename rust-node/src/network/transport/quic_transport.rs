@@ -142,9 +142,8 @@ impl fmt::Debug for QuicTransportOptions {
 pub struct QuicTransportConfig {
     pub local_node_info: NodeInfo,
     pub bind_addr: SocketAddr,
-    pub message_handler: Box<
-        dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static,
-    >,
+    pub message_handler:
+        Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>,
     pub options: QuicTransportOptions,
     pub logger: Arc<Logger>,
 }
@@ -311,9 +310,7 @@ impl QuicTransportImpl {
     /// Create a new QuicTransportImpl instance
     ///
     /// INTENTION: Initialize the core implementation with the provided parameters.
-    fn new(
-        config: QuicTransportConfig,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    fn new(config: QuicTransportConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let connection_pool = Arc::new(ConnectionPool::new(config.logger.clone()));
 
         // Create a broadcast channel for peer node info updates
@@ -334,7 +331,6 @@ impl QuicTransportImpl {
             running: Arc::new(AtomicBool::new(false)),
         })
     }
-
 
     /// Create QUIC server and client configurations
     ///
@@ -974,7 +970,7 @@ impl QuicTransportImpl {
                         let _ = self.peer_node_info_sender.send(peer_node_info);
                     }
                     Err(e) => {
-                        self.logger.error(&format!(
+                        self.logger.error(format!(
                             "Failed to deserialize node info from {}: {}",
                             message.source, e
                         ));
@@ -994,7 +990,7 @@ impl QuicTransportImpl {
             Ok(handler) => {
                 if let Err(e) = handler(message.clone()) {
                     self.logger
-                        .error(&format!("Error in message handler: {}", e));
+                        .error(format!("Error in message handler: {}", e));
                 }
                 Ok(())
             }
@@ -1128,7 +1124,7 @@ impl QuicTransportImpl {
                     ))
                 }
                 Err(e) => {
-                    self.logger.error(&format!(
+                    self.logger.error(format!(
                         "Failed to read message length from {}: {}",
                         peer_id, e
                     ));

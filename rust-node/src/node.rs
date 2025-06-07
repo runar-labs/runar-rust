@@ -33,7 +33,9 @@ use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, Tra
 use crate::routing::TopicPath;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
 use crate::services::registry_service::RegistryService;
-use crate::services::remote_service::{CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies};
+use crate::services::remote_service::{
+    CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
+};
 use crate::services::service_registry::{ServiceEntry, ServiceRegistry};
 use crate::services::EventContext; // Explicit import for EventContext
 use crate::services::NodeDelegate;
@@ -1441,17 +1443,16 @@ impl Node {
             logger: self.logger.clone(),
         };
 
-        let remote_services = match RemoteService::create_from_capabilities(rs_config, rs_dependencies)
-        .await
-        {
-            Ok(services) => services,
-            Err(e) => {
-                self.logger.error(format!(
-                    "Failed to create remote services from capabilities: {e}"
-                ));
-                return Err(e);
-            }
-        };
+        let remote_services =
+            match RemoteService::create_from_capabilities(rs_config, rs_dependencies).await {
+                Ok(services) => services,
+                Err(e) => {
+                    self.logger.error(format!(
+                        "Failed to create remote services from capabilities: {e}"
+                    ));
+                    return Err(e);
+                }
+            };
 
         // Register each service and initialize it to register its handlers
         for service in &remote_services {
@@ -1635,9 +1636,8 @@ impl Node {
             // Try to get a real network interface IP address
             if let Ok(ip) = self.get_non_loopback_ip() {
                 address = address.replace("0.0.0.0", &ip);
-                self.logger.debug(format!(
-                    "Replaced 0.0.0.0 with network interface IP: {ip}"
-                ));
+                self.logger
+                    .debug(format!("Replaced 0.0.0.0 with network interface IP: {ip}"));
             } else {
                 // Fall back to localhost if we can't get a real IP
                 address = address.replace("0.0.0.0", "127.0.0.1");

@@ -1,19 +1,16 @@
-use crate::{
-    error::KeyError,
-    types::NodeKey,
-    Result,
-};
+use crate::{error::KeyError, types::NodeKey, Result};
 use aes_gcm::aead::generic_array::typenum::U12;
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Nonce, // Or Aes128Gcm, depending on desired key size
+    Aes256Gcm,
+    Nonce, // Or Aes128Gcm, depending on desired key size
 };
-use hkdf::Hkdf;
 use ed25519_dalek::SECRET_KEY_LENGTH;
+use hkdf::Hkdf;
 use sha2::Sha256;
 
 const SYMMETRIC_KEY_LENGTH: usize = 32; // For AES-256
-// const NONCE_LENGTH: usize = 12; // AES-GCM standard nonce size (96 bits) - Not directly used as generate_nonce provides it.
+                                        // const NONCE_LENGTH: usize = 12; // AES-GCM standard nonce size (96 bits) - Not directly used as generate_nonce provides it.
 
 /// Derives a symmetric encryption key from a NodeKey's secret using HKDF-SHA256.
 ///
@@ -41,16 +38,25 @@ pub fn encrypt_data(
     plaintext: &[u8],
     associated_data: Option<&[u8]>, // Optional Associated Data (AAD)
 ) -> Result<(Vec<u8>, Nonce<U12>)> {
-    let cipher = Aes256Gcm::new_from_slice(symmetric_key)
-        .map_err(|e| KeyError::CryptoError(format!("Failed to initialize AES-GCM cipher: {}", e)))?;
-    
+    let cipher = Aes256Gcm::new_from_slice(symmetric_key).map_err(|e| {
+        KeyError::CryptoError(format!("Failed to initialize AES-GCM cipher: {}", e))
+    })?;
+
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng); // Generate a random nonce
 
     let final_ciphertext = if let Some(aad_data) = associated_data {
-        cipher.encrypt(&nonce, aes_gcm::aead::Payload { msg: plaintext, aad: aad_data })
+        cipher
+            .encrypt(
+                &nonce,
+                aes_gcm::aead::Payload {
+                    msg: plaintext,
+                    aad: aad_data,
+                },
+            )
             .map_err(|e| KeyError::CryptoError(format!("Encryption with AAD failed: {}", e)))?
     } else {
-        cipher.encrypt(&nonce, plaintext.as_ref())
+        cipher
+            .encrypt(&nonce, plaintext.as_ref())
             .map_err(|e| KeyError::CryptoError(format!("Encryption failed: {}", e)))?
     };
 
@@ -64,26 +70,34 @@ pub fn decrypt_data(
     nonce: &Nonce<U12>,
     associated_data: Option<&[u8]>, // Optional Associated Data (AAD), must match encryption AAD
 ) -> Result<Vec<u8>> {
-    let cipher = Aes256Gcm::new_from_slice(symmetric_key)
-        .map_err(|e| KeyError::CryptoError(format!("Failed to initialize AES-GCM cipher: {}", e)))?;
+    let cipher = Aes256Gcm::new_from_slice(symmetric_key).map_err(|e| {
+        KeyError::CryptoError(format!("Failed to initialize AES-GCM cipher: {}", e))
+    })?;
 
     let plaintext = if let Some(aad_data) = associated_data {
-        cipher.decrypt(nonce, aes_gcm::aead::Payload { msg: ciphertext, aad: aad_data })
+        cipher
+            .decrypt(
+                nonce,
+                aes_gcm::aead::Payload {
+                    msg: ciphertext,
+                    aad: aad_data,
+                },
+            )
             .map_err(|e| KeyError::CryptoError(format!("Decryption with AAD failed: {}", e)))?
     } else {
-        cipher.decrypt(nonce, ciphertext.as_ref())
+        cipher
+            .decrypt(nonce, ciphertext.as_ref())
             .map_err(|e| KeyError::CryptoError(format!("Decryption failed: {}", e)))?
     };
 
     Ok(plaintext)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::UserMasterKey;
     use crate::hd::derive_node_key_from_master_key;
+    use crate::types::UserMasterKey;
 
     fn get_test_node_key() -> NodeKey {
         let master_key = UserMasterKey::generate();
@@ -108,7 +122,8 @@ mod tests {
 
         let different_info_bytes = b"another_context";
         let different_info = different_info_bytes.as_slice();
-        let sym_key_different = derive_symmetric_key_from_node_key(&node_key, salt, different_info).unwrap();
+        let sym_key_different =
+            derive_symmetric_key_from_node_key(&node_key, salt, different_info).unwrap();
         assert_ne!(sym_key, sym_key_different);
     }
 
@@ -121,7 +136,7 @@ mod tests {
 
         let plaintext = b"This is a secret message.";
         let (ciphertext, nonce) = encrypt_data(&symmetric_key, plaintext, None).unwrap();
-        
+
         assert_ne!(plaintext.as_slice(), ciphertext.as_slice());
 
         let decrypted_plaintext = decrypt_data(&symmetric_key, &ciphertext, &nonce, None).unwrap();
@@ -147,7 +162,8 @@ mod tests {
 
         let tampered_aad_bytes = b"tampered_associated_data";
         let tampered_aad = Some(tampered_aad_bytes.as_slice());
-        let decrypt_result_tampered_aad = decrypt_data(&symmetric_key, &ciphertext, &nonce, tampered_aad);
+        let decrypt_result_tampered_aad =
+            decrypt_data(&symmetric_key, &ciphertext, &nonce, tampered_aad);
         assert!(decrypt_result_tampered_aad.is_err());
 
         let decrypt_result_missing_aad = decrypt_data(&symmetric_key, &ciphertext, &nonce, None);
@@ -165,11 +181,14 @@ mod tests {
         let (mut ciphertext, nonce) = encrypt_data(&symmetric_key, plaintext, None).unwrap();
 
         if !ciphertext.is_empty() {
-            ciphertext[0] ^= 0x01; 
+            ciphertext[0] ^= 0x01;
         }
 
         let decrypt_result = decrypt_data(&symmetric_key, &ciphertext, &nonce, None);
-        assert!(decrypt_result.is_err(), "Decryption of tampered ciphertext should fail");
+        assert!(
+            decrypt_result.is_err(),
+            "Decryption of tampered ciphertext should fail"
+        );
     }
 
     #[test]
@@ -192,6 +211,9 @@ mod tests {
         let (ciphertext, nonce) = encrypt_data(&symmetric_key1, plaintext, None).unwrap();
 
         let decrypt_result = decrypt_data(&symmetric_key2, &ciphertext, &nonce, None);
-        assert!(decrypt_result.is_err(), "Decryption with wrong key should fail");
+        assert!(
+            decrypt_result.is_err(),
+            "Decryption with wrong key should fail"
+        );
     }
 }

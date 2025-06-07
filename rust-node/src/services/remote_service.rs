@@ -70,7 +70,8 @@ pub struct RemoteServiceDependencies {
     pub network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
     pub serializer: Arc<RwLock<SerializerRegistry>>,
     pub local_node_id: PeerId, // ID of the local node
-    pub pending_requests: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValueType>>>>>,
+    pub pending_requests:
+        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValueType>>>>>,
     pub logger: Arc<Logger>,
 }
 
@@ -83,10 +84,7 @@ pub struct CreateRemoteServicesConfig {
 
 impl RemoteService {
     /// Create a new RemoteService instance
-    pub fn new(
-        config: RemoteServiceConfig,
-        dependencies: RemoteServiceDependencies,
-    ) -> Self {
+    pub fn new(config: RemoteServiceConfig, dependencies: RemoteServiceDependencies) -> Self {
         let network_id = config.service_topic.network_id();
         Self {
             name: config.name,
@@ -97,7 +95,7 @@ impl RemoteService {
             peer_id: config.peer_id,
             network_transport: dependencies.network_transport,
             serializer: dependencies.serializer,
-            actions: Arc::new(RwLock::new(HashMap::new())), 
+            actions: Arc::new(RwLock::new(HashMap::new())),
             logger: dependencies.logger,
             local_node_id: dependencies.local_node_id,
             pending_requests: dependencies.pending_requests,

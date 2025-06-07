@@ -223,7 +223,6 @@ impl LifecycleContext {
             .await
     }
 
-
     pub async fn subscribe(
         &self,
         topic: impl Into<String>,
@@ -456,13 +455,11 @@ pub struct PublishOptions {
     pub target: Option<String>,
 }
 
-
 /// Options for registering an action handler
 ///
 /// INTENTION: Provide a way to specify metadata about an action when registering it,
 /// reducing the need for services to define complete metadata upfront.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ActionRegistrationOptions {
     /// Description of what the action does
     pub description: Option<String>,
@@ -471,7 +468,6 @@ pub struct ActionRegistrationOptions {
     /// Return value schema for documentation
     pub output_schema: Option<FieldSchema>,
 }
-
 
 /// Options for registering an event
 ///
@@ -484,7 +480,6 @@ pub struct EventRegistrationOptions {
     /// Schema of the event data
     pub data_schema: Option<FieldSchema>,
 }
-
 
 /// Interface for handling service requests
 ///

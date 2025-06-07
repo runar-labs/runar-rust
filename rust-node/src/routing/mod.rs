@@ -16,10 +16,9 @@
 // to function in a decentralized, loosely-coupled manner.
 
 use anyhow::Result;
+use std::fmt;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
-use std::fmt;
-
 
 /// Type of a path, indicating what kind of resource is being addressed
 ///

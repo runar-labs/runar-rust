@@ -23,7 +23,8 @@ use crate::logging::Logger;
 use crate::types::AsArcValueType; // Added import for the trait
 
 // Type alias for complex deserialization function signature
-pub(crate) type DeserializationFn = Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>;
+pub(crate) type DeserializationFn =
+    Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>;
 // Type alias for the inner part of the complex serialization function signature
 pub(crate) type SerializationFnInner = Box<dyn Fn(&dyn Any) -> Result<Vec<u8>> + Send + Sync>;
 
@@ -945,7 +946,7 @@ impl ArcValueType {
                     *actual_value = ErasedArc::new(Arc::new(deserialized_struct));
                 }
                 // Explicitly assign and return
-                let result = actual_value.as_arc::<T>().map_err(|e| {
+                actual_value.as_arc::<T>().map_err(|e| {
                     anyhow!(
                         "Failed to cast eager value to struct: {}. Expected {}, got {}. Category: {:?}",
                         e,
@@ -953,8 +954,7 @@ impl ArcValueType {
                         actual_value.type_name(),
                         self.category
                     )
-                });
-                result // Return the result
+                }) // Return the result
             }
             None => Err(anyhow!(
                 "Cannot get struct reference from a null ArcValueType (category: {:?})",

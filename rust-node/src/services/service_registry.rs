@@ -144,8 +144,7 @@ pub type RemoteEventSubscribersVec = Vec<(String, EventCallback)>;
 pub struct ServiceRegistry {
     /// Local action handlers organized by path (using PathTrie instead of HashMap)
     /// Store both the handler and the original registration topic path for parameter extraction
-    local_action_handlers:
-        Arc<RwLock<PathTrie<LocalActionEntryValue>>>,
+    local_action_handlers: Arc<RwLock<PathTrie<LocalActionEntryValue>>>,
 
     //reverse index where we store the events that a service listens to
     local_events_by_service: Arc<RwLock<PathTrie<Vec<EventMetadata>>>>,
@@ -154,8 +153,7 @@ pub struct ServiceRegistry {
     remote_action_handlers: Arc<RwLock<PathTrie<Vec<ActionHandler>>>>,
 
     /// Local event subscriptions (using PathTrie instead of WildcardSubscriptionRegistry)
-    local_event_subscriptions:
-        Arc<RwLock<PathTrie<LocalEventSubscribersVec>>>,
+    local_event_subscriptions: Arc<RwLock<PathTrie<LocalEventSubscribersVec>>>,
 
     /// Remote event subscriptions (using PathTrie instead of WildcardSubscriptionRegistry)
     remote_event_subscriptions: Arc<RwLock<PathTrie<RemoteEventSubscribersVec>>>,
@@ -357,9 +355,8 @@ impl ServiceRegistry {
     }
 
     pub async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()> {
-        self.logger.debug(format!(
-            "Removing remote action handler for: {topic_path}"
-        ));
+        self.logger
+            .debug(format!("Removing remote action handler for: {topic_path}"));
 
         // Remove from remote action handlers trie
         self.remote_action_handlers
@@ -511,7 +508,6 @@ impl ServiceRegistry {
 
         // store metadata in local_events_by_service
         if let Some(metadata) = metadata {
-
             let mut events = self.local_events_by_service.write().await;
             let matches = events.find_matches(&service_topic);
 

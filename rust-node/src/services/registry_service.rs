@@ -23,7 +23,6 @@ use runar_common::types::ArcValueType;
 
 /// Registry Info Service - provides information about registered services without holding state
 pub struct RegistryService {
-     
     /// Logger instance
     logger: Arc<Logger>,
 
@@ -52,9 +51,8 @@ impl RegistryService {
     fn extract_service_path(&self, ctx: &RequestContext) -> Result<String> {
         // Look for the path parameter that was extracted during template matching
         if let Some(path) = ctx.path_params.get("service_path") {
-            ctx.logger.debug(format!(
-                "Using service_path '{path}' from path parameters"
-            ));
+            ctx.logger
+                .debug(format!("Using service_path '{path}' from path parameters"));
             return Ok(path.clone());
         }
 
@@ -68,7 +66,9 @@ impl RegistryService {
     async fn register_list_services_action(&self, context: &LifecycleContext) -> Result<()> {
         let self_clone = self.clone();
         // Add debug to see what is registered
-        context.logger.debug("Registering list_services handler with path: services/list");
+        context
+            .logger
+            .debug("Registering list_services handler with path: services/list");
         context
             .register_action(
                 "services/list",
@@ -76,10 +76,7 @@ impl RegistryService {
                     let inner_self = self_clone.clone();
                     Box::pin(async move {
                         inner_self
-                            .handle_list_services(
-                                params.unwrap_or_else(ArcValueType::null),
-                                ctx,
-                            )
+                            .handle_list_services(params.unwrap_or_else(ArcValueType::null), ctx)
                             .await
                     })
                 }),
@@ -94,7 +91,9 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context.logger.debug("Registering service_info handler with path: services/{service_path}");
+        context
+            .logger
+            .debug("Registering service_info handler with path: services/{service_path}");
 
         context
             .register_action(
@@ -103,10 +102,7 @@ impl RegistryService {
                     let inner_self = self_clone.clone();
                     Box::pin(async move {
                         inner_self
-                            .handle_service_info(
-                                params.unwrap_or_else(ArcValueType::null),
-                                ctx,
-                            )
+                            .handle_service_info(params.unwrap_or_else(ArcValueType::null), ctx)
                             .await
                     })
                 }),
@@ -124,7 +120,9 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context.logger.debug("Registering service_state handler with path: services/{service_path}/state");
+        context
+            .logger
+            .debug("Registering service_state handler with path: services/{service_path}/state");
 
         context
             .register_action(

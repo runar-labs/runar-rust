@@ -75,10 +75,7 @@ impl<T: Clone> PathTrie<T> {
         let network_id = topic.network_id();
 
         // Get or create network-specific trie
-        let network_trie = self
-            .networks
-            .entry(network_id.to_string())
-            .or_default();
+        let network_trie = self.networks.entry(network_id.to_string()).or_default();
 
         // Add to the network-specific trie
         network_trie.set_values_internal(&topic.get_segments(), 0, content_list);
@@ -100,10 +97,7 @@ impl<T: Clone> PathTrie<T> {
         let network_id = topic.network_id();
 
         // Get or create network-specific trie
-        let network_trie = self
-            .networks
-            .entry(network_id.to_string())
-            .or_default();
+        let network_trie = self.networks.entry(network_id.to_string()).or_default();
 
         // Remove from the network-specific trie
         network_trie.remove_values_internal(&topic.get_segments(), 0);
@@ -172,10 +166,7 @@ impl<T: Clone> PathTrie<T> {
             }
         } else {
             // Literal segment - create/get child and continue
-            let child = self
-                .children
-                .entry(segment.clone())
-                .or_default();
+            let child = self.children.entry(segment.clone()).or_default();
 
             child.set_values_internal(segments, index + 1, handlers);
         }

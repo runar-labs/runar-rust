@@ -1,8 +1,10 @@
 use crate::error::KeyError;
 use crate::Result;
-use ed25519_dalek::{VerifyingKey, Signature, SigningKey, Signer, PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
-use rand::RngCore;
+use ed25519_dalek::{
+    Signature, Signer, SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH,
+};
 use rand::rngs::OsRng;
+use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -91,13 +93,19 @@ impl NetworkKey {
         let signing_key = SigningKey::generate(&mut OsRng);
         let public_key = signing_key.verifying_key(); // Method call
         let id = NetworkId::new(*public_key.as_bytes());
-        NetworkKey { keypair: signing_key, id }
+        NetworkKey {
+            keypair: signing_key,
+            id,
+        }
     }
 
     pub fn new(signing_key: SigningKey) -> Self {
         let public_key = signing_key.verifying_key(); // Method call
         let id = NetworkId::new(*public_key.as_bytes());
-        NetworkKey { keypair: signing_key, id }
+        NetworkKey {
+            keypair: signing_key,
+            id,
+        }
     }
 
     pub fn id(&self) -> &NetworkId {
@@ -113,7 +121,8 @@ impl NetworkKey {
     }
 
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
-        self.keypair.verifying_key() // Method call
+        self.keypair
+            .verifying_key() // Method call
             .verify_strict(message, signature)
             .map_err(|e| KeyError::CryptoError(format!("Signature verification failed: {}", e)))
     }
@@ -128,11 +137,15 @@ pub struct QuicKey {
 impl QuicKey {
     pub fn new_random() -> Self {
         let signing_key = SigningKey::generate(&mut OsRng);
-        QuicKey { keypair: signing_key }
+        QuicKey {
+            keypair: signing_key,
+        }
     }
 
     pub fn new(signing_key: SigningKey) -> Self {
-        QuicKey { keypair: signing_key }
+        QuicKey {
+            keypair: signing_key,
+        }
     }
 
     pub fn public_key(&self) -> VerifyingKey {
@@ -198,13 +211,19 @@ impl NodeKey {
         let signing_key = SigningKey::generate(&mut OsRng);
         let public_key = signing_key.verifying_key(); // Method call
         let peer_id = PeerId::from_public_key(&public_key);
-        NodeKey { keypair: signing_key, peer_id }
+        NodeKey {
+            keypair: signing_key,
+            peer_id,
+        }
     }
 
     pub fn new(signing_key: SigningKey) -> Self {
         let public_key = signing_key.verifying_key(); // Method call
         let peer_id = PeerId::from_public_key(&public_key);
-        NodeKey { keypair: signing_key, peer_id }
+        NodeKey {
+            keypair: signing_key,
+            peer_id,
+        }
     }
 
     pub fn peer_id(&self) -> &PeerId {
@@ -220,7 +239,8 @@ impl NodeKey {
     }
 
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
-        self.keypair.verifying_key() // Method call
+        self.keypair
+            .verifying_key() // Method call
             .verify_strict(message, signature)
             .map_err(|e| KeyError::CryptoError(format!("Signature verification failed: {}", e)))
     }
@@ -233,7 +253,6 @@ pub fn current_unix_timestamp() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -336,6 +355,9 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let ts2 = current_unix_timestamp();
         assert!(ts2 > ts1, "Timestamp should advance");
-        assert!(ts2 >= ts1 + 1, "Timestamp should advance by at least 1 second");
+        assert!(
+            ts2 >= ts1 + 1,
+            "Timestamp should advance by at least 1 second"
+        );
     }
 }

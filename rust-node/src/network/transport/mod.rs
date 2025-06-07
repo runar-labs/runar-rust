@@ -45,7 +45,6 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
     }
 }
 
-
 // Removed WebSocket module completely
 
 // Re-export types/traits from submodules or parent modules
