@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use runar_common::{
     types::{ArcValueType, SerializerRegistry},
     Component, Logger,

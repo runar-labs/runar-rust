@@ -9,7 +9,6 @@ use runar_common::logging::{Component, Logger};
 use runar_common::types::ArcValueType;
 use runar_node::routing::TopicPath;
 use runar_node::services::EventContext;
-use runar_node::services::SubscriptionOptions;
 use runar_node::ServiceRegistry;
 
 /// INTENTION: Test comprehensive scenarios for wildcard pattern matching in TopicPath
@@ -171,13 +170,12 @@ mod topic_path_wildcard_tests {
                 println!("Found handler for template: {}", template);
                 println!("Handler: {}", handler);
                 // Found a matching handler, use it
-                assert!(true);
                 return;
             }
         }
 
         // No matching template found
-        assert!(false, "No matching template found for {}", concrete_path);
+        panic!("No matching template found for {}", concrete_path);
     }
 
     /// Generate all possible template patterns that could match a concrete path

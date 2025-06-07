@@ -5,9 +5,7 @@
 
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValueType;
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
-use runar_node::services::RegistryDelegate;
 use runar_node::{Node, NodeConfig, ServiceMetadata, ServiceState};
 use serde_json::Value;
 use std::time::Duration;

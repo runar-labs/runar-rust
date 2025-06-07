@@ -69,13 +69,13 @@ impl TestService {
     async fn complex_data(
         &self,
         data: Vec<HashMap<String, String>>,
-        ctx: &RequestContext,
+        _ctx: &RequestContext,
     ) -> Result<Vec<HashMap<String, String>>> {
         Ok(data)
     }
 
     #[action]
-    async fn get_user(&self, id: i32, ctx: &RequestContext) -> Result<User> {
+    async fn get_user(&self, id: i32, _ctx: &RequestContext) -> Result<User> {
         let user = User {
             id,
             name: "John Doe".to_string(),
@@ -275,7 +275,7 @@ impl TestService {
     // Test action that demonstrates the lifetime issue with references
     // This is similar to what happens in the SQLite service
     #[action]
-    async fn test_lifetime_issue(&self, ctx: &RequestContext) -> Result<String> {
+    async fn test_lifetime_issue(&self, _ctx: &RequestContext) -> Result<String> {
         // Create a string that we'll take a reference to
         let data = "test_data".to_string();
 
@@ -296,13 +296,11 @@ impl TestService {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::hash_map;
 
     use super::*;
     use runar_common::hmap;
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
-    use runar_node::vmap;
     use runar_node::Node;
     use runar_node::NodeConfig;
 
@@ -507,6 +505,7 @@ mod tests {
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
+        #[allow(clippy::useless_conversion)]
         let arc_bytes = Arc::from(bytes);
 
         let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();
@@ -525,6 +524,7 @@ mod tests {
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
+        #[allow(clippy::useless_conversion)]
         let arc_bytes = Arc::from(bytes);
 
         let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();
@@ -631,6 +631,7 @@ mod tests {
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
+        #[allow(clippy::useless_conversion)]
         let arc_bytes = Arc::from(bytes);
 
         let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();
@@ -649,6 +650,7 @@ mod tests {
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
+        #[allow(clippy::useless_conversion)]
         let arc_bytes = Arc::from(bytes);
 
         let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();

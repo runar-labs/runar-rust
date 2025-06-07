@@ -224,7 +224,7 @@ async fn test_node_events() {
 
         // Create a handler function for subscription
         // Note: Using the full handler signature with Arc<EventContext> for the node API
-        let handler = move |_ctx: Arc<EventContext>, mut data: Option<ArcValueType>| {
+        let handler = move |_ctx: Arc<EventContext>, data: Option<ArcValueType>| {
             println!("Received event data: {:?}", data);
 
             // Verify the data matches what we published

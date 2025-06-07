@@ -264,7 +264,7 @@ mod tests {
         let master_key2 = UserMasterKey::generate();
         assert_ne!(master_key1.as_bytes(), master_key2.as_bytes());
 
-        let seed_bytes = master_key1.as_bytes().clone();
+        let seed_bytes = *master_key1.as_bytes();
         let master_key_from_bytes = UserMasterKey::from_bytes(&seed_bytes).unwrap();
         assert_eq!(master_key1.as_bytes(), master_key_from_bytes.as_bytes());
 
@@ -355,9 +355,6 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let ts2 = current_unix_timestamp();
         assert!(ts2 > ts1, "Timestamp should advance");
-        assert!(
-            ts2 >= ts1 + 1,
-            "Timestamp should advance by at least 1 second"
-        );
+        assert!(ts2 > ts1, "Timestamp should advance by at least 1 second");
     }
 }

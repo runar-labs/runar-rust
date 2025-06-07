@@ -40,9 +40,7 @@ impl Parse for SubscribeImpl {
         let path = input.parse::<LitStr>()?;
 
         // Just a path string
-        Ok(SubscribeImpl {
-            path,
-        })
+        Ok(SubscribeImpl { path })
     }
 }
 
@@ -167,9 +165,7 @@ fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
             // Skip the self parameter and context parameter
             if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
                 let ident_string = ident.to_string();
-                if ident_string != "self"
-                    && ident_string != "ctx"
-                    && !ident_string.ends_with("ctx")
+                if ident_string != "self" && ident_string != "ctx" && !ident_string.ends_with("ctx")
                 {
                     params.push((ident.clone(), (**ty).clone()));
                 }

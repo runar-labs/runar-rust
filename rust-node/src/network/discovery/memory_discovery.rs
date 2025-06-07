@@ -287,7 +287,6 @@ mod tests {
         discovery.set_local_node(local_node);
 
         // Create NodeInfo for test
-
     }
     // TODO: Add tests for register, update, discover, cleanup, listener
 }

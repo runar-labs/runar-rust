@@ -3,14 +3,13 @@
 // INTENTION: This test validates that the ServiceRegistry properly retrieves
 // all registered local services without using a dummy path.
 
-use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
 use runar_node::routing::TopicPath;
-use runar_node::services::abstract_service::{AbstractService, ServiceState};
+use runar_node::services::abstract_service::ServiceState;
 use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
 
 use crate::fixtures::math_service::MathService;

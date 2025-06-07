@@ -16,14 +16,14 @@ use runar_common::logging::{Component, Logger};
 use runar_common::types::ArcValueType;
 use runar_node::routing::TopicPath;
 use runar_node::services::service_registry::ServiceRegistry;
-use runar_node::services::{ActionHandler, EventContext, RequestContext, SubscriptionOptions};
+use runar_node::services::{ActionHandler, EventContext, RequestContext};
 
 /// Create a test handler that validates its network ID
 fn create_test_handler(name: &str, expected_network_id: &str) -> ActionHandler {
     let name = name.to_string();
     let expected_network_id = expected_network_id.to_string();
 
-    Arc::new(move |params, context| {
+    Arc::new(move |_params, context| {
         let name = name.clone();
         let expected_network_id = expected_network_id.clone();
 
@@ -128,7 +128,7 @@ async fn test_wildcard_subscriptions() {
         let wildcard2 = TopicPath::new("test/events/#", "net1").expect("Valid topic path");
 
         // Subscribe to wildcard topics using the correct method
-        let id1 = registry
+        let _id1 = registry
             .register_local_event_subscription(&wildcard1, callback.clone(), None)
             .await
             .unwrap();

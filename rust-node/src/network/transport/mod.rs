@@ -137,7 +137,9 @@ pub fn pick_free_port(port_range: Range<u16>) -> Option<u16> {
             if std::net::UdpSocket::bind(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 bound_port,
-            )).is_ok() {
+            ))
+            .is_ok()
+            {
                 return Some(bound_port);
             }
         }

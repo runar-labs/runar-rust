@@ -236,10 +236,7 @@ impl CrudSqliteService {
 
         for (field_name, arc_value) in &mut doc_to_insert {
             // Validate field against schema
-            if !table_def
-                .columns
-                .iter().any(|c| &c.name == field_name)
-            {
+            if !table_def.columns.iter().any(|c| &c.name == field_name) {
                 let err_msg = format!(
                     "Field '{}' not defined in schema for collection '{}'.",
                     field_name, req.collection
@@ -400,10 +397,7 @@ impl CrudSqliteService {
         let mut value_params: Vec<SqliteValue> = Vec::new();
 
         for (field_name, arc_value) in &mut req.filter {
-            if !table_def
-                .columns
-                .iter().any(|c| &c.name == field_name)
-            {
+            if !table_def.columns.iter().any(|c| &c.name == field_name) {
                 let err_msg = format!(
                     "Filter field '{}' not defined in schema for collection '{}'.",
                     field_name, req.collection

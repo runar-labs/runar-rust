@@ -9,8 +9,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 use syn::{
-    parse_macro_input, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl,
-    Pat, PatType, ReturnType, Type, TypePath,
+    parse_macro_input, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType, ReturnType,
+    Type, TypePath,
 };
 
 /// Implementation of the service macro
@@ -195,7 +195,6 @@ fn format_type_string(type_str: &str) -> Option<String> {
     }
 }
 
-
 /// Generate the AbstractService trait implementation
 /// Ensure the struct implements Clone for proper action handler support
 #[allow(clippy::cmp_owned)]
@@ -275,8 +274,7 @@ fn generate_abstract_service_impl(
         .iter()
         .map(|t| {
             // Use syn::Type to support all valid Rust types, including nested generics.
-            syn::parse_str::<syn::Type>(t)
-                .unwrap_or_else(|_| panic!("Failed to parse type: {}", t))
+            syn::parse_str::<syn::Type>(t).unwrap_or_else(|_| panic!("Failed to parse type: {}", t))
         })
         .collect::<Vec<_>>();
 

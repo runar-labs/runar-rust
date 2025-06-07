@@ -80,10 +80,8 @@ impl PeerState {
         let mut last = self.last_activity.lock().await;
         *last = std::time::Instant::now();
         let _ = self.status_tx.send(true).await;
-        self.logger.info(format!(
-            "Connection established with peer {}",
-            self.peer_id
-        ));
+        self.logger
+            .info(format!("Connection established with peer {}", self.peer_id));
     }
 
     /// Check if peer is connected

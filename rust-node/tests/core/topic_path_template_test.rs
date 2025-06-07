@@ -87,7 +87,7 @@ fn test_registry_service_use_case() {
     let service_template = "services/{service_path}";
     let state_template = "services/{service_path}/state";
     let actions_template = "services/{service_path}/actions";
-    let events_template = "services/{service_path}/events";
+    let _events_template = "services/{service_path}/events";
 
     // Test matching for various paths
     let list_path = TopicPath::new("main:services/list", "default").expect("Valid path");
@@ -411,7 +411,7 @@ mod tests {
     // Test the event path creation with templates
     #[test]
     fn test_event_path_with_templates() {
-        let service_path =
+        let _service_path =
             TopicPath::new("main:services/{service_type}", "default").expect("Valid path");
 
         // Instead of using new_event_topic, create the event path manually
@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(event_path.as_str(), event_path_str);
         assert!(event_path.has_templates());
 
-        let events_template = "services/{service_path}/events";
+        let _events_template = "services/{service_path}/events";
     }
 
     /*

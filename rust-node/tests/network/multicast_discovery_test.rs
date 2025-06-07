@@ -19,9 +19,11 @@ use std::time::SystemTime;
 use tokio::sync::oneshot;
 
 async fn create_test_discovery(network_id: &str, node_id: &str) -> Result<MulticastDiscovery> {
-    let mut options = DiscoveryOptions::default();
-    options.multicast_group = format!("{}:45678", DEFAULT_MULTICAST_ADDR);
-    options.announce_interval = Duration::from_secs(1); // Use shorter interval for tests
+    let options = DiscoveryOptions {
+        multicast_group: format!("{}:45678", DEFAULT_MULTICAST_ADDR),
+        announce_interval: Duration::from_secs(1), // Use shorter interval for tests
+        ..DiscoveryOptions::default()
+    };
 
     // Create a logger for testing
     let logger = Logger::new_root(Component::NetworkDiscovery, node_id);
@@ -76,8 +78,8 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
         let discovery2 = create_test_discovery("test-network", "test-node-2").await?;
 
         // Create channels for receiving notifications
-        let (tx1, mut rx1) = mpsc::channel::<PeerInfo>(10);
-        let (tx2, mut rx2) = mpsc::channel::<PeerInfo>(10);
+        let (tx1, _rx1) = mpsc::channel::<PeerInfo>(10);
+        let (tx2, _rx2) = mpsc::channel::<PeerInfo>(10);
 
         // Add oneshot channels to signal when discoveries are made
         let (done_tx1, done_rx1) = oneshot::channel::<()>();
@@ -104,8 +106,6 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                             let _ = done_tx.send(());
                         }
                     }
-
-                    ()
                 })
             }))
             .await?;
@@ -128,8 +128,6 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                             let _ = done_tx.send(());
                         }
                     }
-
-                    ()
                 })
             }))
             .await?;

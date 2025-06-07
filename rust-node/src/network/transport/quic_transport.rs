@@ -35,7 +35,8 @@ use super::{
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::NodeInfo;
 
-type MessageHandlerFn = Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>;
+type MessageHandlerFn =
+    Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>;
 
 /// QuicTransportImpl - Core implementation of QUIC transport
 ///
@@ -496,7 +497,8 @@ impl QuicTransportImpl {
         // Set client configuration for outgoing connections
         endpoint.set_default_client_config(client_config);
 
-        self.logger.info("Endpoint created successfully with server and client configs");
+        self.logger
+            .info("Endpoint created successfully with server and client configs");
 
         // Store the endpoint in our state using proper interior mutability pattern
         let mut endpoint_guard = self.endpoint.lock().await;
@@ -724,10 +726,8 @@ impl QuicTransportImpl {
             };
 
             // Connect to the peer
-            self.logger.info(format!(
-                "Connecting to peer {} at {}",
-                peer_id, socket_addr
-            ));
+            self.logger
+                .info(format!("Connecting to peer {} at {}", peer_id, socket_addr));
 
             // Print detailed connection information for debugging
             self.logger.info(format!(
@@ -826,10 +826,8 @@ impl QuicTransportImpl {
                 }],
             };
             self.send_message(message).await?;
-            self.logger.info(format!(
-                "Sent NODE_INFO_UPDATE message to peer {}",
-                peer_id
-            ));
+            self.logger
+                .info(format!("Sent NODE_INFO_UPDATE message to peer {}", peer_id));
         }
         Ok(())
     }
@@ -1081,8 +1079,7 @@ impl QuicTransportImpl {
                         }
                         Err(e) => {
                             // Other connection error
-                            logger
-                                .error(format!("Connection error from {}: {}", peer_id_clone, e));
+                            logger.error(format!("Connection error from {}: {}", peer_id_clone, e));
                             break;
                         }
                     }

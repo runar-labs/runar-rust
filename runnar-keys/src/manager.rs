@@ -39,7 +39,8 @@ impl KeyManager {
 
     /// Gets an existing `NetworkKey` for the given index, or derives and stores it if not present.
     pub fn get_or_create_network_key(&mut self, network_index: u32) -> Result<&NetworkKey> {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.network_keys.entry(network_index) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.network_keys.entry(network_index)
+        {
             let network_key = derive_network_key(&self.master_key, network_index)?;
             e.insert(network_key);
         }

@@ -461,7 +461,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
     assert_eq!(*product_price_arc, 25.49f64);
     let mut product_in_stock_av = found_product.get("in_stock").unwrap().clone();
     let product_in_stock_arc = product_in_stock_av.as_type_ref::<bool>()?;
-    assert_eq!(*product_in_stock_arc, true);
+    assert!(*product_in_stock_arc);
 
     Ok(())
 }
