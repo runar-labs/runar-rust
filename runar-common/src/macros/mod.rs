@@ -6,7 +6,7 @@
 // the complexity of procedural macros. These include simple utility macros,
 // helper macros, and formatting macros.
 
-// Note: Most complex macros should go in the rust-macros crate instead.
+// Note: Most complex macros should go in the runar-macros crate instead.
 
 // Import additional macro modules
 mod vmap_macros;

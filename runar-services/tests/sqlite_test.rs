@@ -12,7 +12,7 @@ use runar_common::types::ArcValueType; // Removed ErasedArc and ValueCategory
                                        // use std::sync::Arc; // Duplicate import removed
                                        // use std::time::Duration; // Unused import removed
                                        // use tempfile::tempdir; // Unused import removed
-use rust_services::sqlite::{
+use runar_services::sqlite::{
     ColumnDefinition, DataType, Params, Schema, SqlQuery, SqliteConfig, SqliteService,
     TableDefinition, Value,
 };

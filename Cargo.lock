@@ -1634,6 +1634,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-keys"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "ed25519-dalek",
+ "ed25519-hd-key",
+ "futures",
+ "hex",
+ "hkdf",
+ "rand 0.8.5",
+ "runar_common",
+ "runar_macros",
+ "runar_node",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "runar_common"
 version = "0.1.0"
 dependencies = [
@@ -1717,25 +1743,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "runnar-keys"
+name = "runar_services"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
  "async-trait",
- "ed25519-dalek",
- "ed25519-hd-key",
  "futures",
- "hex",
- "hkdf",
- "rand 0.8.5",
  "runar_common",
  "runar_macros",
  "runar_node",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1754,25 +1773,6 @@ dependencies = [
  "hashlink",
  "libsqlite3-sys",
  "smallvec",
-]
-
-[[package]]
-name = "rust-services"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures",
- "runar_common",
- "runar_macros",
- "runar_node",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "uuid",
 ]
 
 [[package]]

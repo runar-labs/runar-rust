@@ -1,4 +1,4 @@
-// rust-common/src/models/mod.rs
+// runar-common/src/models/mod.rs
 //
 // Models module for common data structures
 

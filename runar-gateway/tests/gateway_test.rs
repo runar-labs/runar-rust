@@ -14,10 +14,10 @@ use std::collections::HashMap;
 use std::sync::Arc; // For downcasting
 
 // Assuming crud_sqlite.rs and sqlite.rs are part of the same crate (rust_services)
-use rust_services::crud_sqlite::{
+use runar_services::crud_sqlite::{
     CrudSqliteService, FindOneRequest, FindOneResponse, InsertOneRequest, InsertOneResponse,
 };
-use rust_services::sqlite::{
+use runar_services::sqlite::{
     ColumnDefinition, DataType, Schema as SqliteSchema, SqliteConfig, SqliteService,
     TableDefinition,
 };
@@ -461,7 +461,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
     assert_eq!(*product_price_arc, 25.49f64);
     let mut product_in_stock_av = found_product.get("in_stock").unwrap().clone();
     let product_in_stock_arc = product_in_stock_av.as_type_ref::<bool>()?;
-    assert!(*product_in_stock_arc);
+    assert_eq!(*product_in_stock_arc, true);
 
     Ok(())
 }

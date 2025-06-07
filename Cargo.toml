@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "rust-node",
-    "rust-macros",
-    "rust-common",
-    "rust-services",
+    "runar-node",
+    "runar-macros",
+    "runar-common",
+    "runar-services",
     # "rust-macros-tests",
     "rust-examples/micro_services_demo",
-    "runnar-keys",
+    "runar-keys",
 ]
 resolver = "2"
 

@@ -15,7 +15,7 @@ pub use logging::{Component, Logger, LoggingContext};
 pub use service_info::ServiceInfo;
 
 // Note: The logging macros have been removed in favor of direct logger usage.
-// See rust-common/src/logging/macros.rs for details on the recommended approach.
+// See runar-common/src/logging/macros.rs for details on the recommended approach.
 
 // Re-export the macros so they can be used with `use runar_common::vmap;` syntax
 // These macros are already automatically available at the crate root namespace with #[macro_export]

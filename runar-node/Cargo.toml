@@ -22,7 +22,7 @@ chrono = "0.4"
 rand = "0.9.0"
 
 # Local dependencies
-runar_common = { path = "../rust-common" }
+runar_common = { path = "../runar-common" }
 
 # Network dependencies
 quinn = "0.10.1"
