@@ -97,7 +97,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Wait for discovery and connection to happen (simple sleep)
     logger.info("Waiting for nodes to discover each other...");
-    sleep(Duration::from_secs(3)).await;
+    sleep(Duration::from_secs(4)).await;
 
     // Test calling math service1 (on node1) from node2
     logger.info("Testing remote action call from node2 to node1...");
