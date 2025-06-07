@@ -19,6 +19,17 @@ tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
 runar_common = { path = "../rust-common", features = ["abstract_service"] }
 runar_node = { path = "../rust-node" }
 
+# Cryptography dependencies for runnar-keys POC
+ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "std"] } # For Ed25519 operations, version 2.x is common
+ed25519-hd-key = "^0.3.0" # As specified in keys-management.md (check for latest compatible version)
+sha2 = "0.10" # For SHA-256 hashing
+rand = "0.8" # For random data generation
+hex = "0.4" # For hex encoding/decoding of keys/signatures
+
+# Symmetric encryption dependencies
+hkdf = "0.12" # For HKDF
+aes-gcm = "0.10" # For AES-GCM encryption
+
 [dev-dependencies]
 tempfile = "3.10"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "test-util"] }
