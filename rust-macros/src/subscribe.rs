@@ -5,17 +5,15 @@
 // parameter extraction and event handling.
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
     parse::Parse, parse::ParseStream, parse_macro_input, Expr, FnArg, Ident, ItemFn, Lit, LitStr,
-    Meta, Pat, PatIdent, PatType, Result, Token, Type,
+    Meta, Pat, PatIdent, PatType, Result, Type,
 };
 
 // Define a struct to parse the macro attributes
 pub struct SubscribeImpl {
     pub path: LitStr,
-    pub handler: Option<Expr>,
 }
 
 impl Parse for SubscribeImpl {
@@ -30,7 +28,6 @@ impl Parse for SubscribeImpl {
                         if let Lit::Str(lit_str) = &expr_lit.lit {
                             return Ok(SubscribeImpl {
                                 path: lit_str.clone(),
-                                handler: None,
                             });
                         }
                     }
@@ -42,21 +39,10 @@ impl Parse for SubscribeImpl {
         // Otherwise, try to parse as a string literal followed by a handler
         let path = input.parse::<LitStr>()?;
 
-        // Check if we have a handler
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-            let handler = input.parse::<Expr>()?;
-            Ok(SubscribeImpl {
-                path,
-                handler: Some(handler),
-            })
-        } else {
-            // Just a path string
-            Ok(SubscribeImpl {
-                path,
-                handler: None,
-            })
-        }
+        // Just a path string
+        Ok(SubscribeImpl {
+            path,
+        })
     }
 }
 
@@ -177,20 +163,17 @@ fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
     let mut params = Vec::new();
 
     for arg in &input.sig.inputs {
-        match arg {
-            FnArg::Typed(PatType { pat, ty, .. }) => {
-                // Skip the self parameter and context parameter
-                if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
-                    let ident_string = ident.to_string();
-                    if ident_string != "self"
-                        && ident_string != "ctx"
-                        && !ident_string.ends_with("ctx")
-                    {
-                        params.push((ident.clone(), (**ty).clone()));
-                    }
+        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
+            // Skip the self parameter and context parameter
+            if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
+                let ident_string = ident.to_string();
+                if ident_string != "self"
+                    && ident_string != "ctx"
+                    && !ident_string.ends_with("ctx")
+                {
+                    params.push((ident.clone(), (**ty).clone()));
                 }
             }
-            _ => {}
         }
     }
 

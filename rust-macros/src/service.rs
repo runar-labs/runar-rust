@@ -9,8 +9,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 use syn::{
-    parse_macro_input, Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Lit,
-    LitStr, Meta, Pat, PatType, ReturnType, Type, TypePath,
+    parse_macro_input, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl,
+    Pat, PatType, ReturnType, Type, TypePath,
 };
 
 /// Implementation of the service macro
@@ -195,32 +195,10 @@ fn format_type_string(type_str: &str) -> Option<String> {
     }
 }
 
-/// Check if a type is a primitive type
-fn is_primitive_type(type_str: &str) -> bool {
-    matches!(
-        type_str,
-        "i8" | "i16"
-            | "i32"
-            | "i64"
-            | "i128"
-            | "isize"
-            | "u8"
-            | "u16"
-            | "u32"
-            | "u64"
-            | "u128"
-            | "usize"
-            | "f32"
-            | "f64"
-            | "bool"
-            | "char"
-            | "()"
-            | "String"
-    )
-}
 
 /// Generate the AbstractService trait implementation
 /// Ensure the struct implements Clone for proper action handler support
+#[allow(clippy::cmp_owned)]
 fn generate_abstract_service_impl(
     struct_type: &Ident,
     all_methods: &[(Ident, &str, ImplItemFn)],
@@ -297,9 +275,8 @@ fn generate_abstract_service_impl(
         .iter()
         .map(|t| {
             // Use syn::Type to support all valid Rust types, including nested generics.
-            let type_ty = syn::parse_str::<syn::Type>(t)
-                .unwrap_or_else(|_| panic!("Failed to parse type: {}", t));
-            type_ty
+            syn::parse_str::<syn::Type>(t)
+                .unwrap_or_else(|_| panic!("Failed to parse type: {}", t))
         })
         .collect::<Vec<_>>();
 

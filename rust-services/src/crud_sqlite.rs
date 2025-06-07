@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use runar_common::types::{erased_arc::ErasedArc, ArcValueType, ValueCategory};
+use runar_common::types::{ArcValueType, ValueCategory};
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
 use serde::{Deserialize, Serialize};
@@ -236,11 +236,9 @@ impl CrudSqliteService {
 
         for (field_name, arc_value) in &mut doc_to_insert {
             // Validate field against schema
-            if table_def
+            if !table_def
                 .columns
-                .iter()
-                .find(|c| &c.name == field_name)
-                .is_none()
+                .iter().any(|c| &c.name == field_name)
             {
                 let err_msg = format!(
                     "Field '{}' not defined in schema for collection '{}'.",
@@ -262,13 +260,13 @@ impl CrudSqliteService {
                 (DataType::Integer, ValueCategory::Primitive) => arc_value
                     .value
                     .as_ref()
-                    .map_or(false, |v| v.type_name() == "i64"),
+                    .is_some_and(|v| v.type_name() == "i64"),
                 (DataType::Real, ValueCategory::Primitive) => arc_value
                     .value
                     .as_ref()
-                    .map_or(false, |v| v.type_name() == "f64"),
+                    .is_some_and(|v| v.type_name() == "f64"),
                 (DataType::Text, ValueCategory::Primitive) => {
-                    arc_value.value.as_ref().map_or(false, |v| {
+                    arc_value.value.as_ref().is_some_and(|v| {
                         let tn = v.type_name();
                         tn == "String" || tn == "alloc::string::String"
                     })
@@ -276,7 +274,7 @@ impl CrudSqliteService {
                 (DataType::Boolean, ValueCategory::Primitive) => arc_value
                     .value
                     .as_ref()
-                    .map_or(false, |v| v.type_name() == "bool"),
+                    .is_some_and(|v| v.type_name() == "bool"),
                 (DataType::Blob, ValueCategory::Bytes) => arc_value.value.is_some(), // Ensure value exists for Bytes category
                 (_, ValueCategory::Null) => arc_value.value.is_none(), // Ensure value is None for Null category
                 _ => false, // All other combinations are mismatches or inconsistent states
@@ -402,11 +400,9 @@ impl CrudSqliteService {
         let mut value_params: Vec<SqliteValue> = Vec::new();
 
         for (field_name, arc_value) in &mut req.filter {
-            if table_def
+            if !table_def
                 .columns
-                .iter()
-                .find(|c| &c.name == field_name)
-                .is_none()
+                .iter().any(|c| &c.name == field_name)
             {
                 let err_msg = format!(
                     "Filter field '{}' not defined in schema for collection '{}'.",
@@ -616,7 +612,7 @@ impl CrudSqliteService {
     // Helper to get an Arc<Self> for action registration, assuming Self is Clone.
     // This is a common pattern if the service itself needs to be Clone.
     // If AbstractService methods were on Arc<Self>, this wouldn't be needed.
-    async fn clone_arc_safe(self: &Self) -> Result<Self>
+    async fn clone_arc_safe(&self) -> Result<Self>
     where
         Self: Clone,
     {

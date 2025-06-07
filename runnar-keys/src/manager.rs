@@ -39,9 +39,9 @@ impl KeyManager {
 
     /// Gets an existing `NetworkKey` for the given index, or derives and stores it if not present.
     pub fn get_or_create_network_key(&mut self, network_index: u32) -> Result<&NetworkKey> {
-        if !self.network_keys.contains_key(&network_index) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.network_keys.entry(network_index) {
             let network_key = derive_network_key(&self.master_key, network_index)?;
-            self.network_keys.insert(network_index, network_key);
+            e.insert(network_key);
         }
         // We can unwrap here because we've just ensured the key exists.
         Ok(self.network_keys.get(&network_index).unwrap())
@@ -56,9 +56,9 @@ impl KeyManager {
 
     /// Gets an existing `NodeKey` for the given peer index, or derives and stores it if not present.
     pub fn get_or_create_node_key(&mut self, peer_index: u32) -> Result<&NodeKey> {
-        if !self.node_keys.contains_key(&peer_index) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.node_keys.entry(peer_index) {
             let node_key = derive_node_key_from_master_key(&self.master_key, peer_index)?;
-            self.node_keys.insert(peer_index, node_key);
+            e.insert(node_key);
         }
         // We can unwrap here because we've just ensured the key exists.
         Ok(self.node_keys.get(&peer_index).unwrap())

@@ -252,7 +252,7 @@ fn execute_internal(
             let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
                 rusqlite_params.iter().map(|b| b.as_ref()).collect();
             logger.debug(format!("Executing SQL: {} with params: {:?}", sql, params));
-            conn.execute(sql, params_from_iter(params_for_iter.into_iter()))
+            conn.execute(sql, params_from_iter(params_for_iter))
                 .map_err(|e| {
                     let err_msg = format!("Failed to execute SQL '{}': {}", sql, e);
                     logger.error(&err_msg);
@@ -372,7 +372,7 @@ fn internal_value_to_arc_value(value: &Value) -> ArcValueType {
     }
 }
 
-//// Core value types for SQLite operations
+/// Core value types for SQLite operations
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Null,
@@ -654,7 +654,7 @@ impl SqliteService {
                     self.name, e
                 );
                 context.error(err_msg.clone());
-                return Err(anyhow!(err_msg));
+                Err(anyhow!(err_msg))
             }
         }
     }

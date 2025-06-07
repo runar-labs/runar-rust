@@ -98,7 +98,6 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         &action_name,
         &action_path,
         &params,
-        &input.sig.output,
         &return_type_info.is_primitive,
         &return_type_info.type_name,
         &return_type_info.needs_registration,
@@ -123,7 +122,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
     use syn::{GenericArgument, PathArguments, Type};
     match return_type {
         ReturnType::Default => ReturnTypeInfo {
-            is_result: false,
             type_name: "()".to_string(),
             is_primitive: true,
             needs_registration: false,
@@ -147,10 +145,10 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
                 None
             }
 
-            let (is_result, inner_type_ast) = if let Some(ok_ty) = extract_result_ok_type(ty) {
-                (true, ok_ty)
+            let inner_type_ast = if let Some(ok_ty) = extract_result_ok_type(ty) {
+                ok_ty
             } else {
-                (false, &**ty)
+                &**ty
             };
 
             let type_name = quote! { #inner_type_ast }.to_string();
@@ -172,7 +170,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
                 !is_primitive && !type_name.contains("Vec") && !type_name.contains("HashMap");
 
             ReturnTypeInfo {
-                is_result,
                 type_name,
                 is_primitive,
                 needs_registration,
@@ -183,7 +180,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 
 /// Struct to hold information about the return type
 struct ReturnTypeInfo {
-    is_result: bool,          // Whether the return type is a Result
     type_name: String,        // The name of the type (or inner type if Result)
     is_primitive: bool,       // Whether it's a primitive type
     needs_registration: bool, // Whether it needs registration with the serializer
@@ -194,20 +190,17 @@ fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
     let mut params = Vec::new();
 
     for arg in &input.sig.inputs {
-        match arg {
-            FnArg::Typed(PatType { pat, ty, .. }) => {
-                // Skip the context parameter
-                if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
-                    let ident_string = ident.to_string();
-                    if ident_string != "self"
-                        && ident_string != "ctx"
-                        && !ident_string.ends_with("ctx")
-                    {
-                        params.push((ident.clone(), (**ty).clone()));
-                    }
+        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
+            // Skip the context parameter
+            if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
+                let ident_string = ident.to_string();
+                if ident_string != "self"
+                    && ident_string != "ctx"
+                    && !ident_string.ends_with("ctx")
+                {
+                    params.push((ident.clone(), (**ty).clone()));
                 }
             }
-            _ => {}
         }
     }
 
@@ -215,12 +208,12 @@ fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
 }
 
 /// Generate the register action method
+#[allow(clippy::too_many_arguments)]
 fn generate_register_action_method(
     fn_ident: &Ident,
     action_name: &str,
     action_path: &str,
     params: &[(Ident, Type)],
-    return_type: &ReturnType,
     is_primitive: &bool,
     type_name: &String,
     needs_registration: &bool,
