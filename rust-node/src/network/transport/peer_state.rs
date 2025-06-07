@@ -19,6 +19,7 @@ use tokio::sync::{mpsc, Mutex};
 /// - Only accessed by ConnectionPool and QuicTransportImpl
 /// - Manages its own StreamPool instance
 /// - Handles connection lifecycle for a single peer
+///
 /// PeerState - Manages the state of a connection to a remote peer
 ///
 /// INTENTION: This component tracks the state of individual peer connections,
@@ -68,7 +69,7 @@ impl PeerState {
         let mut info = self.node_info.write().await;
         *info = Some(node_info);
         self.logger
-            .info(&format!("Node info set for peer {}", self.peer_id));
+            .info(format!("Node info set for peer {}", self.peer_id));
     }
     /// Set the connection for this peer
     ///
@@ -79,7 +80,7 @@ impl PeerState {
         let mut last = self.last_activity.lock().await;
         *last = std::time::Instant::now();
         let _ = self.status_tx.send(true).await;
-        self.logger.info(&format!(
+        self.logger.info(format!(
             "Connection established with peer {}",
             self.peer_id
         ));
@@ -105,11 +106,11 @@ impl PeerState {
             match conn.open_uni().await {
                 Ok(stream) => {
                     self.logger
-                        .debug(&format!("Opened new stream to peer {}", self.peer_id));
+                        .debug(format!("Opened new stream to peer {}", self.peer_id));
                     Ok(stream)
                 }
                 Err(e) => {
-                    self.logger.error(&format!(
+                    self.logger.error(format!(
                         "Failed to open stream to peer {}: {}",
                         self.peer_id, e
                     ));
@@ -150,7 +151,7 @@ impl PeerState {
             conn.close(0u32.into(), b"Connection closed by peer");
             let _ = self.status_tx.send(false).await;
             self.logger
-                .info(&format!("Connection closed with peer {}", self.peer_id));
+                .info(format!("Connection closed with peer {}", self.peer_id));
         }
         let _ = self.stream_pool.clear().await;
         Ok(())

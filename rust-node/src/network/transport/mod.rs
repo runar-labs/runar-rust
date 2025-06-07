@@ -134,10 +134,10 @@ pub fn pick_free_port(port_range: Range<u16>) -> Option<u16> {
 
             // For UDP/QUIC protocols, we should also check UDP availability
             // Since TcpListener only checks TCP ports
-            if let Ok(_) = std::net::UdpSocket::bind(SocketAddr::new(
+            if std::net::UdpSocket::bind(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 bound_port,
-            )) {
+            )).is_ok() {
                 return Some(bound_port);
             }
         }

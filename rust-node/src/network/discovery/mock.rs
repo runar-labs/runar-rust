@@ -17,6 +17,12 @@ pub struct MockNodeDiscovery {
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>, // DiscoveryListener is now Arc<...>
 }
 
+impl Default for MockNodeDiscovery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockNodeDiscovery {
     /// Create a new mock discovery instance
     pub fn new() -> Self {

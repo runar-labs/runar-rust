@@ -67,6 +67,12 @@ impl LogLevel {
     }
 }
 
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoggingConfig {
     /// Create a new logging configuration with default settings
     pub fn new() -> Self {

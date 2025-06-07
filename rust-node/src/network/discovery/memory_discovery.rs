@@ -287,23 +287,7 @@ mod tests {
         discovery.set_local_node(local_node);
 
         // Create NodeInfo for test
-        let node_info_1 = NodeInfo {
-            peer_id: PeerId::new("node1".to_string()),
-            network_ids: vec!["net1".to_string()], // Added network_ids
-            addresses: vec!["addr1".to_string()],
-            services: vec![],
-            version: 0,
-        };
-        // discovery.register_node(node_info_1).await.unwrap();
 
-        // Find the node
-        // let found_node = discovery.find_node("net1", "node1").await.unwrap();
-        // assert!(found_node.is_some());
-        // assert_eq!(found_node.unwrap().peer_id.public_key, "node1");
-
-        // Find non-existent node
-        // let not_found_node = discovery.find_node("net1", "node2").await.unwrap();
-        // assert!(not_found_node.is_none());
     }
     // TODO: Add tests for register, update, discover, cleanup, listener
 }

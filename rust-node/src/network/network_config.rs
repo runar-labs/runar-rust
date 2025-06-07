@@ -134,6 +134,12 @@ impl DiscoveryProviderConfig {
     }
 }
 
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkConfig {
     /// Creates a new network configuration with default settings.
     pub fn new() -> Self {

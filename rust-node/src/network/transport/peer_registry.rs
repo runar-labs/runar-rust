@@ -97,6 +97,12 @@ pub struct PeerRegistry {
     options: PeerRegistryOptions,
 }
 
+impl Default for PeerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PeerRegistry {
     /// Create a new peer registry with default options
     pub fn new() -> Self {

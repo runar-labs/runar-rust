@@ -15,6 +15,7 @@ use std::sync::Arc;
 /// ARCHITECTURAL BOUNDARIES:
 /// - Only accessed by QuicTransportImpl
 /// - Handles connection lifecycle across all peers
+///
 /// ConnectionPool - Manages active peer connections using a concurrent map
 ///
 /// INTENTION: Use DashMap for concurrent peer map access; PeerState is now granularly locked.

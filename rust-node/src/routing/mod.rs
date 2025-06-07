@@ -122,7 +122,6 @@ impl PathSegment {
 /// - `auth/login` (Shorthand without network_id, which will be added when TopicPath is created)
 /// - `services/*/state` (Pattern with single-segment wildcard)
 /// - `events/>` (Pattern with multi-segment wildcard)
-
 impl fmt::Display for PathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

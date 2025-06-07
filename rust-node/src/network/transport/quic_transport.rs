@@ -35,6 +35,8 @@ use super::{
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::NodeInfo;
 
+type MessageHandlerFn = Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>;
+
 /// QuicTransportImpl - Core implementation of QUIC transport
 ///
 /// INTENTION: This component is the core implementation of the QUIC transport,
@@ -55,9 +57,7 @@ struct QuicTransportImpl {
     connection_pool: Arc<ConnectionPool>,
     options: QuicTransportOptions,
     logger: Arc<Logger>,
-    message_handler: Arc<
-        StdRwLock<Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>>,
-    >,
+    message_handler: Arc<StdRwLock<MessageHandlerFn>>,
     local_node: NodeInfo,
     // Channel for sending peer node info updates
     peer_node_info_sender: tokio::sync::broadcast::Sender<NodeInfo>,
@@ -477,7 +477,7 @@ impl QuicTransportImpl {
         }
 
         self.logger
-            .info(&format!("Starting QUIC transport on {}", self.bind_addr));
+            .info(format!("Starting QUIC transport on {}", self.bind_addr));
 
         // Create configurations for the QUIC endpoint
         let (server_config, client_config) = self.create_quinn_configs()?;
@@ -487,7 +487,7 @@ impl QuicTransportImpl {
         let bind_addr =
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), self.bind_addr.port());
         self.logger
-            .info(&format!("Creating endpoint bound to {}", bind_addr));
+            .info(format!("Creating endpoint bound to {}", bind_addr));
 
         let mut endpoint = Endpoint::server(server_config, bind_addr).map_err(|e| {
             NetworkError::TransportError(format!("Failed to create endpoint: {}", e))
@@ -496,9 +496,7 @@ impl QuicTransportImpl {
         // Set client configuration for outgoing connections
         endpoint.set_default_client_config(client_config);
 
-        self.logger.info(&format!(
-            "Endpoint created successfully with server and client configs"
-        ));
+        self.logger.info("Endpoint created successfully with server and client configs");
 
         // Store the endpoint in our state using proper interior mutability pattern
         let mut endpoint_guard = self.endpoint.lock().await;
@@ -531,10 +529,10 @@ impl QuicTransportImpl {
                     // Process the connection in a separate task
                     let inner_arc = self.clone();
                     let logger = self.logger.clone();
-                    let _ = tokio::spawn(async move {
+                    tokio::spawn(async move {
                         match inner_arc.handle_new_connection(connecting).await {
                             Ok(_) => {} // Task handle is returned but not stored here
-                            Err(e) => logger.error(&format!("Error handling connection: {}", e)),
+                            Err(e) => logger.error(format!("Error handling connection: {}", e)),
                         }
                     });
                     // Note: We're not storing these task handles since they're short-lived
@@ -658,7 +656,7 @@ impl QuicTransportImpl {
             .map_err(|e| NetworkError::MessageError(format!("Failed to finish stream: {}", e)))?;
 
         self.logger
-            .debug(&format!("Sent message to peer {}", peer_id));
+            .debug(format!("Sent message to peer {}", peer_id));
         Ok(())
     }
 
@@ -690,7 +688,7 @@ impl QuicTransportImpl {
         // Check if we're already connected to this peer
         if self.connection_pool.is_peer_connected(&peer_id).await {
             self.logger
-                .info(&format!("Already connected to peer {}", peer_id));
+                .info(format!("Already connected to peer {}", peer_id));
 
             // Return a dummy task that does nothing
             let task = tokio::spawn(async {});
@@ -716,7 +714,7 @@ impl QuicTransportImpl {
                 Ok(addr) => addr,
                 Err(e) => {
                     self.logger
-                        .warn(&format!("Invalid address {}: {}", peer_addr, e));
+                        .warn(format!("Invalid address {}: {}", peer_addr, e));
                     last_error = Some(NetworkError::ConnectionError(format!(
                         "Invalid address {}: {}",
                         peer_addr, e
@@ -726,13 +724,13 @@ impl QuicTransportImpl {
             };
 
             // Connect to the peer
-            self.logger.info(&format!(
+            self.logger.info(format!(
                 "Connecting to peer {} at {}",
                 peer_id, socket_addr
             ));
 
             // Print detailed connection information for debugging
-            self.logger.info(&format!(
+            self.logger.info(format!(
                 "Detailed connection attempt - Local node: {}, Remote peer: {}, Socket: {}",
                 self.node_id, peer_id, socket_addr
             ));
@@ -748,7 +746,7 @@ impl QuicTransportImpl {
                     match connecting.await {
                         Ok(connection) => {
                             self.logger
-                                .info(&format!("Connected to peer {} at {}", peer_id, socket_addr));
+                                .info(format!("Connected to peer {} at {}", peer_id, socket_addr));
 
                             // Get or create the peer state
                             let peer_state = self.connection_pool.get_or_create_peer(
@@ -770,7 +768,7 @@ impl QuicTransportImpl {
                             // Verify the connection is properly registered
                             let is_connected =
                                 self.connection_pool.is_peer_connected(&peer_id).await;
-                            self.logger.info(&format!(
+                            self.logger.info(format!(
                                 "Connection verification for {}: {}",
                                 peer_id, is_connected
                             ));
@@ -778,7 +776,7 @@ impl QuicTransportImpl {
                             return Ok(task);
                         }
                         Err(e) => {
-                            self.logger.warn(&format!(
+                            self.logger.warn(format!(
                                 "Failed to connect to peer {} at {}: {}",
                                 peer_id, socket_addr, e
                             ));
@@ -791,7 +789,7 @@ impl QuicTransportImpl {
                     }
                 }
                 Err(e) => {
-                    self.logger.warn(&format!(
+                    self.logger.warn(format!(
                         "Failed to initiate connection to peer {} at {}: {}",
                         peer_id, socket_addr, e
                     ));
@@ -828,7 +826,7 @@ impl QuicTransportImpl {
                 }],
             };
             self.send_message(message).await?;
-            self.logger.info(&format!(
+            self.logger.info(format!(
                 "Sent NODE_INFO_UPDATE message to peer {}",
                 peer_id
             ));
@@ -856,7 +854,7 @@ impl QuicTransportImpl {
         let peer_id = PeerId::new(discovery_msg.public_key.clone());
 
         self.logger
-            .info(&format!("Starting handshake with peer {}", peer_id));
+            .info(format!("Starting handshake with peer {}", peer_id));
 
         // Check if we're connected to this peer
         if !self.connection_pool.is_peer_connected(&peer_id).await {
@@ -892,7 +890,7 @@ impl QuicTransportImpl {
         // Send the handshake message
         self.send_message(handshake_message).await?;
         self.logger
-            .info(&format!("Sent handshake message to peer {}", peer_id));
+            .info(format!("Sent handshake message to peer {}", peer_id));
 
         // The handshake response will be processed in process_incoming_message
         // and the peer_node_info will be sent through the channel there
@@ -908,7 +906,7 @@ impl QuicTransportImpl {
         self: &Arc<Self>,
         message: NetworkMessage,
     ) -> Result<(), NetworkError> {
-        self.logger.debug(&format!(
+        self.logger.debug(format!(
             "Processing message from {}, type: {}",
             message.source, message.message_type
         ));
@@ -918,7 +916,7 @@ impl QuicTransportImpl {
             || message.message_type == "NODE_INFO_HANDSHAKE_RESPONSE"
             || message.message_type == "NODE_INFO_UPDATE"
         {
-            self.logger.debug(&format!(
+            self.logger.debug(format!(
                 "Received message from {} with type: {}",
                 message.source, message.message_type
             ));
@@ -927,7 +925,7 @@ impl QuicTransportImpl {
             if let Some(payload) = message.payloads.first() {
                 match bincode::deserialize::<NodeInfo>(&payload.value_bytes) {
                     Ok(peer_node_info) => {
-                        self.logger.debug(&format!(
+                        self.logger.debug(format!(
                             "Received node info from {}: {:?}",
                             message.source, peer_node_info
                         ));
@@ -959,7 +957,7 @@ impl QuicTransportImpl {
 
                                 // Send the response
                                 self.send_message(response).await?;
-                                self.logger.debug(&format!(
+                                self.logger.debug(format!(
                                     "Sent handshake response to {}",
                                     message.source
                                 ));
@@ -979,7 +977,7 @@ impl QuicTransportImpl {
             }
             return Ok(());
         } else {
-            self.logger.debug(&format!(
+            self.logger.debug(format!(
                 "Received message from {} with type: {}",
                 message.source, message.message_type
             ));
@@ -1016,7 +1014,7 @@ impl QuicTransportImpl {
         let remote_addr = connection.remote_address();
 
         self.logger
-            .info(&format!("New incoming connection from {}", remote_addr));
+            .info(format!("New incoming connection from {}", remote_addr));
 
         // Create a temporary peer ID for this connection
         // In a real implementation, we would validate the peer ID from a handshake message
@@ -1070,7 +1068,7 @@ impl QuicTransportImpl {
                                 .receive_message(peer_id_clone.clone(), stream)
                                 .await
                             {
-                                logger.error(&format!(
+                                logger.error(format!(
                                     "Error receiving message from {}: {}",
                                     peer_id_clone, e
                                 ));
@@ -1078,13 +1076,13 @@ impl QuicTransportImpl {
                         }
                         Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                             // Connection closed by the peer, exit the loop
-                            logger.info(&format!("Connection closed by peer {}", peer_id_clone));
+                            logger.info(format!("Connection closed by peer {}", peer_id_clone));
                             break;
                         }
                         Err(e) => {
                             // Other connection error
                             logger
-                                .error(&format!("Connection error from {}: {}", peer_id_clone, e));
+                                .error(format!("Connection error from {}: {}", peer_id_clone, e));
                             break;
                         }
                     }
@@ -1107,11 +1105,11 @@ impl QuicTransportImpl {
         let mut len_buf = [0u8; 4];
 
         // Read bytes one by one since we can't use AsyncReadExt
-        for i in 0..4 {
+        for elem_ref in len_buf.iter_mut() {
             match stream.read_chunk(1, false).await {
                 Ok(Some(chunk)) => {
                     if !chunk.bytes.is_empty() {
-                        len_buf[i] = chunk.bytes[0];
+                        *elem_ref = chunk.bytes[0];
                     } else {
                         return Err(NetworkError::MessageError(
                             "Empty chunk received".to_string(),
@@ -1155,7 +1153,7 @@ impl QuicTransportImpl {
                 Ok(None) => break, // Stream closed
                 Err(e) => {
                     self.logger
-                        .error(&format!("Failed to read message from {}: {}", peer_id, e));
+                        .error(format!("Failed to read message from {}: {}", peer_id, e));
                     return Err(NetworkError::MessageError(format!(
                         "Failed to read message: {}",
                         e
@@ -1176,7 +1174,7 @@ impl QuicTransportImpl {
         let message: NetworkMessage = match bincode::deserialize(&data) {
             Ok(msg) => msg,
             Err(e) => {
-                self.logger.error(&format!(
+                self.logger.error(format!(
                     "Failed to deserialize message from {}: {}",
                     peer_id, e
                 ));
@@ -1189,7 +1187,7 @@ impl QuicTransportImpl {
 
         // Log the received message details for debugging
         if !message.payloads.is_empty() {
-            self.logger.debug(&format!(
+            self.logger.debug(format!(
                 "Received message from {} with path: {}",
                 peer_id, message.payloads[0].path
             ));
@@ -1239,7 +1237,7 @@ impl NetworkTransport for QuicTransport {
                 match self.inner.handshake_peer(discovery_msg).await {
                     Ok(()) => Ok(()),
                     Err(e) => {
-                        self.logger.error(&format!(
+                        self.logger.error(format!(
                             "Handshake failed after successful connection: {}",
                             e
                         ));

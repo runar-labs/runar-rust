@@ -27,6 +27,8 @@ use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscov
 use crate::network::transport::{
     NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, PeerId, QuicTransport,
 };
+
+pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Certificate and PrivateKey types are now imported via the cert_utils module
 use crate::config::LoggingConfig;
 use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
@@ -178,7 +180,7 @@ pub struct Node {
     /// Network transport for connecting to remote nodes
     pub(crate) network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
 
-    pub(crate) network_discovery_providers: Arc<RwLock<Option<Vec<Arc<dyn NodeDiscovery>>>>>,
+    pub(crate) network_discovery_providers: Arc<RwLock<Option<NodeDiscoveryList>>>,
 
     /// Load balancer for selecting remote handlers
     pub(crate) load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
