@@ -7,8 +7,8 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse::Parse, parse::ParseStream, parse_macro_input, Expr, FnArg, Ident, ItemFn, Lit, LitStr,
-    Meta, Pat, PatIdent, PatType, Result, Type,
+    parse::Parse, parse::ParseStream, parse_macro_input, Expr, ItemFn, Lit, LitStr,
+    Meta, Result,
 };
 
 // Define a struct to parse the macro attributes
@@ -60,7 +60,7 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     let vis = &input.vis;
 
     // Extract parameters from the function signature
-    let params = extract_parameters(&input);
+    let params = crate::utils::extract_parameters(&input);
 
     // Generate a unique method name for the subscription registration
     let register_method_name = format_ident!("register_subscription_{}", fn_ident);
@@ -156,22 +156,3 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Extract parameters from the function signature
-fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
-    let mut params = Vec::new();
-
-    for arg in &input.sig.inputs {
-        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
-            // Skip the self parameter and context parameter
-            if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
-                let ident_string = ident.to_string();
-                if ident_string != "self" && ident_string != "ctx" && !ident_string.ends_with("ctx")
-                {
-                    params.push((ident.clone(), (**ty).clone()));
-                }
-            }
-        }
-    }
-
-    params
-}

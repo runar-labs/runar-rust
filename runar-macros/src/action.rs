@@ -9,9 +9,9 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::parse::Parser;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, token::Comma, FnArg, Ident, ItemFn, Lit, Pat,
-    PatIdent, PatType, ReturnType, Type,
+    parse_macro_input, punctuated::Punctuated, token::Comma, FnArg, GenericArgument, Ident, ItemFn, Lit, Pat, PathArguments, ReturnType, Type,
 };
+
 
 /// Implementation of the action macro
 pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -62,7 +62,7 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     // Extract parameters from the function signature
-    let params = extract_parameters(&input);
+    let params = crate::utils::extract_parameters(&input);
 
     // Extract the return type information for proper handling
     let return_type_info = extract_return_type_info(&input.sig.output);
@@ -71,138 +71,313 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     let is_async = input.sig.asyncness.is_some();
 
     // Determine the identifier for the RequestContext parameter
-    let mut ctx_ident_opt: Option<Ident> = None;
+    let mut original_fn_ctx_ident_opt: Option<Ident> = None;
     for fn_arg in &input.sig.inputs {
         if let FnArg::Typed(pat_type) = fn_arg {
-            if let Type::Path(type_path) = &*pat_type.ty {
-                if type_path
-                    .path
-                    .segments
-                    .iter()
-                    .any(|segment| segment.ident == "RequestContext")
-                {
+            let type_to_check = match &*pat_type.ty {
+                Type::Reference(type_ref) => {
+                    // Check if it's an immutable reference before accessing elem
+                    if type_ref.mutability.is_none() {
+                        &*type_ref.elem
+                    } else {
+                        continue; // Skip mutable references for RequestContext
+                    }
+                }
+                direct_type => direct_type,
+            };
+
+            if let Type::Path(type_path) = type_to_check {
+                if get_path_last_segment_ident_string(type_path).as_deref() == Some("RequestContext") {
                     if let Pat::Ident(pat_ident) = &*pat_type.pat {
-                        ctx_ident_opt = Some(pat_ident.ident.clone());
-                        break;
+                        original_fn_ctx_ident_opt = Some(pat_ident.ident.clone());
+                        break; 
                     }
                 }
             }
         }
     }
-    let ctx_ident =
-        ctx_ident_opt.unwrap_or_else(|| Ident::new("ctx", proc_macro2::Span::call_site()));
+    // original_fn_ctx_ident_opt is now populated by the loop above, 
+    // the next line `original_fn_has_request_context_param` will use it.
+    let original_fn_has_request_context_param = original_fn_ctx_ident_opt.is_some();
+    // This ctx_ident is for the LifecycleContext in the generated register_action_... method
+    let lifecycle_ctx_ident = Ident::new("context", proc_macro2::Span::call_site());
+
+    // Generate schema for inputs
+    let mut input_properties_map_tokens = Vec::new();
+    let mut required_input_fields_tokens = Vec::new();
+    let mut has_input_payload = false;
+
+    for (param_ident, param_type) in params.iter() {
+        // Skip RequestContext and other non-payload parameters if any are identified
+        if let Type::Path(type_path) = param_type {
+            if get_path_last_segment_ident_string(&type_path).as_deref() == Some("RequestContext") {
+                continue;
+            }
+        }
+        has_input_payload = true;
+        let param_name_str = param_ident.to_string();
+        let (final_param_type_for_schema, is_option_for_schema_generation) =
+            if let Some(inner_ty) = get_option_inner_type(&param_type) { // Pass by reference
+                (inner_ty, true)
+            } else {
+                (param_type, false) // Ensure consistent return type (&Type, bool)
+            };
+
+        let field_schema_tokens = generate_field_schema_for_type(&param_name_str, final_param_type_for_schema, is_option_for_schema_generation, None);
+        input_properties_map_tokens.push(quote! {
+            properties_map.insert(#param_name_str.to_string(), Box::new(#field_schema_tokens));
+        });
+
+        if !is_option_for_schema_generation {
+            required_input_fields_tokens.push(quote!(#param_name_str.to_string()));
+        }
+    }
+
+    let input_schema_tokens = if has_input_payload {
+        quote! {{
+            let mut properties_map = ::std::collections::HashMap::new();
+            #(#input_properties_map_tokens)*
+            let required_fields = vec![#(#required_input_fields_tokens),*];
+            let final_required = if required_fields.is_empty() { None } else { Some(required_fields) };
+            Some(::runar_common::types::schemas::FieldSchema::object(
+                "input_payload", 
+                properties_map, 
+                final_required
+            ))
+        }}
+    } else {
+        quote!(None)
+    };
+
+    // Generate schema for output
+    let output_schema_tokens = if return_type_info.is_unit {
+        quote!(None)
+    } else {
+        let schema_gen_type = &return_type_info.actual_type;
+        let schema_is_nullable = return_type_info.actual_type_is_option; 
+        let generated_schema = generate_field_schema_for_type("output_payload", schema_gen_type, schema_is_nullable, None);
+        quote!(Some(#generated_schema))
+    };
 
     // Generate the register action method based on return type information
-    let register_action_method = generate_register_action_method(
-        &input.sig.ident,
-        &action_name,
-        &action_path,
-        &params,
-        &return_type_info.is_primitive,
-        &return_type_info.type_name,
-        &return_type_info.needs_registration,
-        is_async,
-        &ctx_ident, // Added ctx_ident, passing by reference
+    let generated_code = generate_register_action_method(
+        &input.sig.ident, 
+        &action_name, 
+        &action_path, 
+        &params, 
+        &return_type_info.is_primitive, 
+        &return_type_info.type_name, 
+        is_async, 
+        &lifecycle_ctx_ident, // Pass the ident for LifecycleContext
+        original_fn_has_request_context_param,
+        input_schema_tokens, 
+        output_schema_tokens,
     );
 
     // Combine the original function with the generated register method
     let expanded = quote! {
-
         #input
 
-        #register_action_method
+        #generated_code
     };
 
     expanded.into()
 }
 
 /// Extract information about the return type for proper handling.
-/// This function robustly supports all valid Rust types, including nested generics.
+// This function robustly supports all valid Rust types, including nested generics.
 fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
-    use syn::{GenericArgument, PathArguments, Type};
-    match return_type {
-        ReturnType::Default => ReturnTypeInfo {
-            type_name: "()".to_string(),
-            is_primitive: true,
-            needs_registration: false,
-        },
-        ReturnType::Type(_, ty) => {
-            // Helper: recursively extract the first type parameter of Result<T, E>
-            fn extract_result_ok_type(ty: &Type) -> Option<&Type> {
-                if let Type::Path(type_path) = ty {
-                    let seg = type_path.path.segments.last()?;
-                    if seg.ident == "Result" {
-                        if let PathArguments::AngleBracketed(ref ab) = seg.arguments {
-                            // Find the first type argument (the Ok type)
-                            for arg in &ab.args {
-                                if let GenericArgument::Type(ref inner_ty) = arg {
-                                    return Some(inner_ty);
-                                }
-                            }
-                        }
-                    }
-                }
-                None
+    let (actual_type, is_unit, actual_type_is_option, is_primitive, type_name) = match return_type {
+        ReturnType::Default => (syn::parse_quote! { () }, true, false, true, "unit".to_string()),
+        ReturnType::Type(_, original_ty) => {
+            let mut current_type = *original_ty.clone();
+            let mut outer_is_option = false;
+
+            // Check for outer Result<T, E>
+            if let Some(inner_ty_of_result) = get_result_inner_type(&current_type) {
+                // is_result = true; // This info is not directly used by schema or ArcValueType conversion logic anymore
+                current_type = inner_ty_of_result.clone();
             }
 
-            let inner_type_ast = if let Some(ok_ty) = extract_result_ok_type(ty) {
-                ok_ty
+            // Check for outer Option<T> (could be Option<Result<...>> or Option<T>)
+            if let Some(inner_ty_of_option) = get_option_inner_type(&current_type) {
+                outer_is_option = true;
+                current_type = inner_ty_of_option.clone();
+            }
+
+            // Now current_type is the innermost T
+            let type_name_str = if let syn::Type::Path(type_path) = &current_type {
+                get_path_last_segment_ident_string(type_path).unwrap_or_else(|| "unknown".to_string())
+            } else if let syn::Type::Tuple(tuple_type) = &current_type {
+                if tuple_type.elems.is_empty() {
+                    "unit".to_string()
+                } else {
+                    "tuple".to_string() // Or some other representation for non-unit tuples
+                }
             } else {
-                &**ty
+                // Handle other types like arrays, references, etc., or default to unknown
+                // For simplicity, using quote to stringify, but this might not be ideal for all cases.
+                quote!(#current_type).to_string().replace(" ", "") 
             };
 
-            let type_name = quote! { #inner_type_ast }.to_string();
-
-            // Determine if this is a primitive type
-            let is_primitive = type_name.contains("i32")
-                || type_name.contains("i64")
-                || type_name.contains("u32")
-                || type_name.contains("u64")
-                || type_name.contains("f32")
-                || type_name.contains("f64")
-                || type_name.contains("bool")
-                || type_name.contains("String")
-                || type_name.contains("&str")
-                || type_name.contains("()");
-
-            // Determine if this type needs registration with the serializer
-            let needs_registration =
-                !is_primitive && !type_name.contains("Vec") && !type_name.contains("HashMap");
-
-            ReturnTypeInfo {
-                type_name,
-                is_primitive,
-                needs_registration,
-            }
+            let is_primitive_val = matches!(type_name_str.as_str(), "String" | "str" | "i32" | "i64" | "f32" | "f64" | "bool" | "unit");
+            
+            (current_type, false, outer_is_option, is_primitive_val, type_name_str)
         }
+    };
+
+    ReturnTypeInfo {
+        is_primitive,
+        is_unit,
+        actual_type, 
+        actual_type_is_option, 
+        type_name, 
     }
 }
 
 /// Struct to hold information about the return type
+#[derive(Debug, Clone)]
 struct ReturnTypeInfo {
-    type_name: String,        // The name of the type (or inner type if Result)
-    is_primitive: bool,       // Whether it's a primitive type
-    needs_registration: bool, // Whether it needs registration with the serializer
+    is_primitive: bool,
+    is_unit: bool,
+    actual_type: Type, 
+    actual_type_is_option: bool, 
+    type_name: String, 
 }
 
-/// Extract parameters from the function signature
-fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
-    let mut params = Vec::new();
+// Helper to get the last segment of a TypePath as a String
+fn get_path_last_segment_ident_string(type_path: &syn::TypePath) -> Option<String> {
+    type_path.path.segments.last().map(|segment| segment.ident.to_string())
+}
 
-    for arg in &input.sig.inputs {
-        if let FnArg::Typed(PatType { pat, ty, .. }) = arg {
-            // Skip the context parameter
-            if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
-                let ident_string = ident.to_string();
-                if ident_string != "self" && ident_string != "ctx" && !ident_string.ends_with("ctx")
-                {
-                    params.push((ident.clone(), (**ty).clone()));
+// Helper to extract T from Option<T>
+fn get_option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(type_path) = ty {
+        if type_path.path.segments.len() == 1 && type_path.path.segments.first().unwrap().ident == "Option" {
+            if let PathArguments::AngleBracketed(params) = &type_path.path.segments.first().unwrap().arguments {
+                if let Some(syn::GenericArgument::Type(inner_ty)) = params.args.first() {
+                    return Some(inner_ty);
                 }
             }
         }
     }
+    None
+}
 
-    params
+// Helper to extract T from Result<T, E>
+fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(type_path) = ty {
+        if type_path.qself.is_none() && type_path.path.segments.len() == 1 {
+            let segment = &type_path.path.segments[0];
+            if segment.ident == "Result" {
+                if let syn::PathArguments::AngleBracketed(params) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = params.args.first() {
+                        return Some(inner_ty);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// Helper to extract T from Vec<T>
+fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(type_path) = ty {
+        if type_path.path.segments.len() == 1 && type_path.path.segments.first().unwrap().ident == "Vec" {
+            if let PathArguments::AngleBracketed(params) = &type_path.path.segments.first().unwrap().arguments {
+                if let Some(GenericArgument::Type(inner_ty)) = params.args.first() {
+                    return Some(&inner_ty); // Apply borrow as per E0308
+                }
+            }
+        }
+    }
+    None
+}
+
+fn generate_field_schema_for_type(field_name_str: &str, ty: &syn::Type, is_top_level_nullable: bool, description_opt: Option<&str>) -> TokenStream2 {
+    let name_literal = proc_macro2::Literal::string(field_name_str);
+    let description_literal_opt = description_opt.map(proc_macro2::Literal::string);
+
+    // Handle Option<T>: Generate schema for T, then set schema.nullable = Some(true).
+    if let Some(inner_ty_for_option) = get_option_inner_type(ty) {
+        // The schema name and description belong to the Option itself (conceptually).
+        // The inner type T is generated with its own name (which is the same outer name here)
+        // and its own nullability (is_top_level_nullable = false, unless T is Option<Option<U>>).
+        let item_schema_tokens = generate_field_schema_for_type(field_name_str, inner_ty_for_option, false, None);
+        
+        let mut desc_setter = quote! {};
+        if let Some(desc_lit) = description_literal_opt {
+            desc_setter = quote! { schema.description = Some(#desc_lit.to_string()); };
+        }
+
+        return quote! {{
+            let mut schema = #item_schema_tokens;
+            schema.name = #name_literal.to_string(); // Ensure outer name is used
+            schema.nullable = Some(true);
+            #desc_setter
+            schema
+        }};
+    }
+
+    let base_schema_constructor_call;
+    let mut additional_fields_setup = quote! {};
+
+    // Handle Vec<T>
+    if let Some(inner_ty_for_vec) = get_vec_inner_type(ty) {
+        // For Vec items, the name is often context-dependent (e.g., "item") or not explicitly named in the schema structure itself.
+        // The FieldSchema for the array will have the field_name_str.
+        // The items schema describes the type of elements in the array.
+        let items_schema_tokens = generate_field_schema_for_type("item", inner_ty_for_vec, false, None);
+        base_schema_constructor_call = quote! {
+            ::runar_common::types::schemas::FieldSchema::array(#name_literal, Box::new(#items_schema_tokens))
+        };
+    }
+    // Handle Path types (structs, primitives)
+    else if let syn::Type::Path(type_path) = ty {
+        let type_name_str = get_path_last_segment_ident_string(type_path)
+            .unwrap_or_else(|| "unknown_type".to_string());
+
+        match type_name_str.as_str() {
+            "String" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::string(#name_literal) },
+            "i32" | "isize" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::integer(#name_literal) },
+            "i64" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::long(#name_literal) },
+            "f32" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::float(#name_literal) },
+            "f64" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::double(#name_literal) },
+            "bool" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::boolean(#name_literal) },
+            // TODO: Add other specific types like Timestamp if they have constructors
+            _ => { // Default to Object for unknown structs or complex types
+                // For struct types, ideally, we would introspect fields here.
+                // For now, creating an empty properties map for generic objects.
+                let properties_map = quote! { ::std::collections::HashMap::new() };
+                base_schema_constructor_call = quote! {
+                    ::runar_common::types::schemas::FieldSchema::object(#name_literal, #properties_map, None)
+                };
+            }
+        };
+    }
+    // Fallback for other unknown types
+    else {
+        base_schema_constructor_call = quote! {
+            ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::Any)
+        };
+    }
+
+    // Set nullable and description for non-Option base types
+    additional_fields_setup.extend(quote!{
+        schema.nullable = Some(#is_top_level_nullable);
+    });
+    if let Some(desc_lit) = description_literal_opt {
+        additional_fields_setup.extend(quote!{
+            schema.description = Some(#desc_lit.to_string());
+        });
+    }
+
+    quote! {{
+        let mut schema = #base_schema_constructor_call;
+        #additional_fields_setup
+        schema
+    }}
 }
 
 /// Generate the register action method
@@ -211,12 +386,14 @@ fn generate_register_action_method(
     fn_ident: &Ident,
     action_name: &str,
     action_path: &str,
-    params: &[(Ident, Type)],
-    is_primitive: &bool,
-    type_name: &String,
-    needs_registration: &bool,
+    params: &[(Ident, Type)], 
+    is_primitive: &bool, 
+    type_name: &String, 
     is_async: bool,
-    ctx_ident: &Ident, // Added ctx_ident
+    _lifecycle_ctx_ident: &Ident, // Renamed as it's for the LifecycleContext, not the RequestContext for the handler
+    original_fn_has_request_context_param: bool,
+    input_schema_opt_tokens: TokenStream2, 
+    output_schema_opt_tokens: TokenStream2,
 ) -> TokenStream2 {
     // Create a boolean expression for checking if there are parameters
     let has_params = if params.is_empty() {
@@ -226,10 +403,20 @@ fn generate_register_action_method(
     };
 
     // Generate parameter extraction code
-    let param_extractions = generate_parameter_extractions(params, action_name, ctx_ident);
+    let param_extractions = generate_parameter_extractions(params, action_name);
 
     // Generate method call with extracted parameters
-    let method_call = generate_method_call(fn_ident, params, is_async);
+    let method_call_params_only = params.iter()
+        .filter(|(_,param_type)| 
+            match param_type {
+                Type::Path(tp) => get_path_last_segment_ident_string(&tp).as_deref() != Some("RequestContext"),
+                _ => true
+            }
+        )
+        .cloned()
+        .collect::<Vec<(Ident,Type)>>();
+
+    let method_call = generate_method_call(&fn_ident, &method_call_params_only, is_async, original_fn_has_request_context_param);
 
     // Generate the appropriate result handling based on the return type
     let result_handling = if type_name == "()" {
@@ -260,6 +447,9 @@ fn generate_register_action_method(
     // Generate a unique method name for the action registration
     let register_method_name = format_ident!("register_action_{}", fn_ident);
 
+    // The handler's RequestContext parameter is hardcoded to `ctx`
+    let handler_request_ctx_ident = format_ident!("ctx"); 
+
     quote! {
         async fn #register_method_name(&self, context: &runar_node::services::LifecycleContext) -> anyhow::Result<()> {
             context.logger.info(format!("Registering '{}' action", #action_name));
@@ -268,7 +458,7 @@ fn generate_register_action_method(
             let self_clone = self.clone();
 
             // Create the action handler as an Arc to match what the register_action expects
-            let handler = std::sync::Arc::new(move |params_opt: Option<runar_common::types::ArcValueType>, ctx: runar_node::services::RequestContext|
+            let handler = std::sync::Arc::new(move |params_opt: Option<runar_common::types::ArcValueType>, #handler_request_ctx_ident: runar_node::services::RequestContext|
                 -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<runar_common::types::ArcValueType, anyhow::Error>> + Send>> {
                 let inner_self = self_clone.clone();
 
@@ -279,7 +469,7 @@ fn generate_register_action_method(
                         None => {
                             // Check if method expects parameters
                             if #has_params {
-                                ctx.error("No parameters provided".to_string());
+                                #handler_request_ctx_ident.error("No parameters provided".to_string());
                                 return Err(anyhow!("No parameters provided"));
                             } else {
                                 // No parameters expected, so create an empty map
@@ -290,6 +480,7 @@ fn generate_register_action_method(
                         }
                     };
 
+                            // #param_extractions uses `ctx` internally, which should resolve to #handler_request_ctx_ident
                     #param_extractions
 
                     // Call the actual method with the extracted parameters
@@ -299,25 +490,28 @@ fn generate_register_action_method(
                         },
                         Err(err) => {
                             // Return an error response
-                            ctx.error(format!("Action '{}' failed: {}", #action_name, err));
+                            #handler_request_ctx_ident.error(format!("Action '{}' failed: {}", #action_name, err));
                             return Err(anyhow!(err.to_string()));
                         }
                     }
                 })
             });
 
-            // If this action returns a type that needs registration with the serializer,
-            // we would register it here
-            if #needs_registration {
-                context.logger.debug(format!("Type registration needed for action '{}' with type: {}", #action_name, #type_name));
-                // The actual registration logic would depend on the service's serializer API
-            }
+            // Construct ActionRegistrationOptions
+            let action_registration_options = ::runar_node::services::ActionRegistrationOptions {
+                description: Some(#action_name.to_string()), 
+                input_schema: #input_schema_opt_tokens, 
+                output_schema: #output_schema_opt_tokens, 
+            };
 
             // Register the action handler with the configured path
-            context.register_action(
-                #action_path.to_string(),
-                handler
-            ).await
+            context.register_action_with_options(
+                #action_path, // This is &str
+                handler.clone(),      // Pass the Arc'd handler closure
+                action_registration_options
+            ).await?;
+
+            Ok(())
         }
     }
 }
@@ -341,7 +535,6 @@ fn determine_common_type(params: &[(Ident, Type)]) -> Option<Type> {
 fn generate_parameter_extractions(
     params: &[(Ident, Type)],
     _fn_name_str: &str,
-    func_param_ctx_ident: &Ident,
 ) -> TokenStream2 {
     let mut extractions = TokenStream2::new();
 
@@ -358,7 +551,7 @@ fn generate_parameter_extractions(
             let #param_ident: #param_type = match params_value.as_type::<#param_type>() {
                 Ok(val) => val,
                 Err(err) => {
-                    #func_param_ctx_ident.error(format!("Failed to parse parameter for single-parameter action: {}", err));
+                    ctx.error(format!("Failed to parse parameter for single-parameter action: {}", err));
                     return Err(anyhow!(format!("Failed to parse parameter for single-parameter action: {}", err)));
                 }
             };
@@ -377,7 +570,7 @@ fn generate_parameter_extractions(
             let params_map_ref = match params_value.as_map_ref::<String, #common_type_token>() {
                 Ok(map_ref) => map_ref,
                 Err(err) => {
-                    #func_param_ctx_ident.error(format!(
+                    ctx.error(format!(
                         "Action parameters must be provided as a map of type Map<String, {}>, but received an incompatible type. Error: {}",
                         stringify!(#common_type_token),
                         err
@@ -415,8 +608,8 @@ fn generate_parameter_extractions(
                     let #param_ident: #param_type = match params_map_ref.get(#param_name_str) {
                         Some(val_ref) => val_ref.clone(),
                         None => {
-                            #func_param_ctx_ident.error(format!(
-                                "Required parameter '{}' (type '{}') not found in payload. Expected map to contain this key.",
+                            ctx.error(format!(
+                                "Required parameter '{}' (type '{}') not found in payload for homogeneous map.",
                                 #param_name_str,
                                 stringify!(#param_type)
                             ));
@@ -433,7 +626,7 @@ fn generate_parameter_extractions(
             let params_map_ref = match params_value.as_map_ref::<String, runar_common::types::ArcValueType>() {
                 Ok(map_ref) => map_ref,
                 Err(err) => {
-                    #func_param_ctx_ident.error(format!(
+                    ctx.error(format!(
                         "Action parameters must be provided as a map (for heterogeneous types, expecting Map<String, ArcValueType>), but received an incompatible type. Error: {}",
                         err
                     ));
@@ -462,8 +655,8 @@ fn generate_parameter_extractions(
                                     #param_ident = val_option_t;
                                 }
                                 Err(err) => {
-                                    #func_param_ctx_ident.error(format!("Failed to convert Option parameter '{}' (type '{}') from ArcValueType: {}", #param_name_str, stringify!(#param_type), err));
-                                    return Err(anyhow!(format!("Type conversion error for Option parameter '{}': {}", #param_name_str, err)));
+                                    ctx.error(format!("Failed to convert value for parameter '{}' to type '{}'. Error: {}", #param_name_str, stringify!(#param_type), err));
+                                    return Err(anyhow!(format!("Type conversion error for parameter '{}': {}", #param_name_str, err)));
                                 }
                             }
                         }
@@ -477,17 +670,12 @@ fn generate_parameter_extractions(
                     let #param_ident: #param_type = match params_map_ref.get(#param_name_str) {
                         Some(arc_value_for_param) => {
                             arc_value_for_param.clone().as_type::<#param_type>().map_err(|err| {
-                                #func_param_ctx_ident.error(format!(
-                                    "Failed to convert parameter '{}' (type '{}') from ArcValueType. Expected concrete type. Error: {}",
-                                    #param_name_str,
-                                    stringify!(#param_type),
-                                    err
-                                ));
+                                ctx.error(format!("Failed to convert value for parameter '{}' to type '{}'. Error: {}", #param_name_str, stringify!(#param_type), err));
                                 anyhow!(format!("Type conversion error for parameter '{}': {}", #param_name_str, err))
                             })?
                         }
                         None => {
-                            #func_param_ctx_ident.error(format!("Required parameter '{}' (type '{}') not found in payload", #param_name_str, stringify!(#param_type)));
+                            ctx.error(format!("Required parameter '{}' (type '{}') not found in payload", #param_name_str, stringify!(#param_type)));
                             return Err(anyhow!(format!("Missing required parameter '{}'", #param_name_str)));
                         }
                     };
@@ -505,13 +693,18 @@ fn generate_method_call(
     fn_ident: &Ident,
     params: &[(Ident, Type)],
     is_async: bool,
+    pass_request_context: bool,
 ) -> TokenStream2 {
     let param_idents = params.iter().map(|(ident, _)| {
         quote! { #ident }
     });
 
-    let method_call = quote! {
-        inner_self.#fn_ident(#(#param_idents,)* &ctx)
+    let call_args = quote! { #(#param_idents,)* };
+    let method_call = if pass_request_context {
+        // The `&ctx` here refers to the `ctx: RequestContext` parameter of the handler closure
+        quote! { inner_self.#fn_ident(#call_args &ctx) }
+    } else {
+        quote! { inner_self.#fn_ident(#call_args) }
     };
 
     if is_async {
