@@ -12,7 +12,6 @@ use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::{ArcValueType, EventMetadata, SerializerRegistry};
 use socket2;
 use std::collections::HashMap;
-use std::any::TypeId;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
@@ -33,6 +32,7 @@ pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Certificate and PrivateKey types are now imported via the cert_utils module
 use crate::config::LoggingConfig;
 use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
+
 use crate::routing::TopicPath;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
 use crate::services::registry_service::RegistryService;
@@ -43,11 +43,10 @@ use crate::services::service_registry::{ServiceEntry, ServiceRegistry};
 use crate::services::EventContext; // Explicit import for EventContext
 use crate::services::NodeDelegate;
 use crate::services::{
-    ActionHandler, /* EventContext, NodeDelegate, */ PublishOptions, RegistryDelegate,
-    RemoteLifecycleContext, RequestContext, SubscriptionOptions,
+    ActionHandler, /* EventContext, NodeDelegate, */ EventCallback, EventRegistrationOptions,
+    PublishOptions, RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
-use crate::AbstractService;
-use crate::ServiceState;
+use crate::{AbstractService, ServiceState};
 use runar_common::types::AsArcValueType;
 
 /// Node Configuration
@@ -1275,18 +1274,24 @@ impl Node {
 
             // Execute the handler and return result
             let mut response_av = handler(request_payload_av.clone(), context).await?;
-            if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
-                // If T is ArcValueType, we cast response_av (which is ArcValueType) to T.
-                // This requires a bit of indirection through Box<dyn Any>.
-                let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
-                if let Ok(val_t) = boxed_any.downcast::<T>() {
-                    return Ok(*val_t);
-                } else {
-                    return Err(anyhow!("BUG: Failed to downcast ArcValueType to T when TypeIds matched."));
-                }
-            } else {
-                return response_av.as_type::<T>();
-            }
+            //TODO: check why tghis was added.. I dont like this here. if this is necessary
+            //it shuol dbe done int he ArcValueType .as_type method..and ahdnel this scenarion.. this is not/
+            //reponsability oif the node
+            // if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
+            //     // If T is ArcValueType, we cast response_av (which is ArcValueType) to T.
+            //     // This requires a bit of indirection through Box<dyn Any>.
+            //     let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
+            //     if let Ok(val_t) = boxed_any.downcast::<T>() {
+            //         return Ok(*val_t);
+            //     } else {
+            //         return Err(anyhow!(
+            //             "BUG: Failed to downcast ArcValueType to T when TypeIds matched."
+            //         ));
+            //     }
+            // } else {
+            //     return response_av.as_type::<T>();
+            // }
+            return response_av.as_type::<T>();
         }
 
         // If no local handler found, look for remote handlers
@@ -1327,16 +1332,22 @@ impl Node {
 
             // Execute the selected handler
             let mut response_av = handler(request_payload_av.clone(), context).await?;
-            if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
-                let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
-                if let Ok(val_t) = boxed_any.downcast::<T>() {
-                    return Ok(*val_t);
-                } else {
-                    return Err(anyhow!("BUG: Failed to downcast ArcValueType to T when TypeIds matched."));
-                }
-            } else {
-                return response_av.as_type::<T>();
-            }
+            //TODO: check why tghis was added.. I dont like this here. if this is necessary
+            //it shuol dbe done int he ArcValueType .as_type method..and ahdnel this scenarion.. this is not/
+            //reponsability oif the node
+            // if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
+            //     let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
+            //     if let Ok(val_t) = boxed_any.downcast::<T>() {
+            //         return Ok(*val_t);
+            //     } else {
+            //         return Err(anyhow!(
+            //             "BUG: Failed to downcast ArcValueType to T when TypeIds matched."
+            //         ));
+            //     }
+            // } else {
+            //     return response_av.as_type::<T>();
+            // }
+            return response_av.as_type::<T>();
         }
 
         // No handler found
@@ -1776,65 +1787,52 @@ impl NodeDelegate for Node {
                 + Sync,
         >,
     ) -> Result<String> {
-        // Parse the topic string into a TopicPath
-        let topic_path = TopicPath::new(&topic, &self.network_id)
-            .map_err(|e| anyhow!("Invalid topic string for subscribe: {}", e))?;
-
-        let metadata = EventMetadata {
-            path: topic_path.as_str().to_string(),
-            description: "".to_string(),
-            data_schema: None,
-        };
-
-        let subcription = self
-            .service_registry
-            .register_local_event_subscription(&topic_path, callback.into(), Some(metadata))
-            .await?;
-
-        //if started... need to increment  -> registry_version
-        if self.running.load(Ordering::SeqCst) {
-            self.registry_version.fetch_add(1, Ordering::SeqCst);
-            self.notify_node_change().await?;
-        }
-
-        Ok(subcription)
+        // For the basic subscribe, create default metadata.
+        // The full topic path (including network_id) is handled by subscribe_with_options.
+        // Node::subscribe provides a simplified interface, using default registration options.
+        self.subscribe_with_options(topic, callback, EventRegistrationOptions::default())
+            .await
     }
 
     async fn subscribe_with_options(
         &self,
-        topic: String,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValueType>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
-        _options: SubscriptionOptions,
+        topic: String, // This is the service-relative path, e.g., "math_service/numbers"
+        callback: EventCallback, // Changed to use the type alias
+        options: EventRegistrationOptions, // Changed from SubscriptionOptions
     ) -> Result<String> {
-        // Parse the topic string into a TopicPath
+        // The `topic` parameter is the service-relative path (e.g., "service_name/event_name").
+        // This will be combined with `self.network_id` to form the full TopicPath for registry storage.
         let topic_path = TopicPath::new(&topic, &self.network_id)
-            .map_err(|e| anyhow!("Invalid topic string for subscribe_with_options: {}", e))?;
+            .map_err(|e| anyhow!(
+                "Invalid topic string for subscribe_with_options: {}. Topic: '{}', Network ID: '{}'", 
+                e, topic, self.network_id
+            ))?;
 
-        let metadata = EventMetadata {
-            path: topic_path.as_str().to_string(),
-            description: "".to_string(),
-            data_schema: None,
+        // Construct EventMetadata from EventRegistrationOptions.
+        // The `metadata.path` should be the service-relative path, which is the `topic` string itself.
+        let event_metadata = EventMetadata {
+            path: topic.clone(), // Service-relative path for metadata
+            description: options.description.unwrap_or_default(),
+            data_schema: options.data_schema,
         };
 
-        let subcription = self
+        self.logger.info(format!(
+            "Node: subscribe_with_options called for topic_path '{}', metadata.path '{}'",
+            topic_path.as_str(),
+            event_metadata.path
+        ));
+
+        let subscription_id = self
             .service_registry
-            .register_local_event_subscription(&topic_path, callback.into(), Some(metadata))
+            .register_local_event_subscription(&topic_path, callback.into(), Some(event_metadata))
             .await?;
 
-        //if started... need to increment  -> registry_version
         if self.running.load(Ordering::SeqCst) {
             self.registry_version.fetch_add(1, Ordering::SeqCst);
             self.notify_node_change().await?;
         }
 
-        Ok(subcription)
+        Ok(subscription_id)
     }
 
     async fn unsubscribe(&self, subscription_id: Option<&str>) -> Result<()> {

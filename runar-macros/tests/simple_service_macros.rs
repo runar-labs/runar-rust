@@ -5,11 +5,12 @@
 
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
+use runar_common::types::schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_common::types::ArcValueType;
 use runar_macros::{action, publish, service, subscribe};
 use runar_node::services::{EventContext, RequestContext};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc}; // Added for metadata testing
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct MyData {
@@ -326,6 +327,52 @@ mod tests {
 
         // Start the node to initialize all services
         node.start().await.expect("Failed to start node");
+
+        // Fetch ServiceMetadata for the "math" service
+        let service_metadata_response: ServiceMetadata = node
+            .request("$registry/services/math", None::<ArcValueType>) // Corrected path and payload with type annotation
+            .await
+            .expect("Failed to get 'math' service metadata");
+
+        // Assert ServiceMetadata properties
+        assert_eq!(service_metadata_response.name, "Test Service Name");
+        assert_eq!(service_metadata_response.service_path, "math");
+        assert_eq!(
+            service_metadata_response.description,
+            "Test Service Description"
+        );
+        assert_eq!(service_metadata_response.version, "0.0.1");
+
+        // Assert ActionMetadata for the "add" action
+        let add_action_meta: &ActionMetadata = service_metadata_response
+            .actions
+            .iter()
+            .find(|am| am.name == "add")
+            .expect("Could not find 'add' action metadata");
+
+        assert_eq!(add_action_meta.name, "add");
+
+        //TODO Events Metadata is now working properly.. the actual modeling is wrong.. we store the event metadata by the serviee of the event pathn itself]
+        //and I am not sure how this is usefrull .. prob is nbot.. but wer shuold fix his when we actualy need the event metadata,
+        //which we dont need yet at this point.
+
+        // Description for 'add' action is likely empty as it's not specified in the #[action] macro
+        // For actions without specific descriptions, the description field might be an empty string or a default.
+        // Let's assume empty for now, or we can check if it's Some("") or None depending on how it's generated.
+        // For now, we'll focus on the name. We can refine schema/description checks later.
+
+        // Assert EventMetadata for the "my_data_auto" event
+        // This event is declared via #[publish(path = "my_data_auto")] on get_my_data
+        // let my_data_auto_event_meta: &EventMetadata = service_metadata_response
+        //     .events
+        //     .iter()
+        //     .find(|em| em.path == "my_data_auto" || em.path == "math/my_data_auto")
+        //     .expect("Could not find 'my_data_auto' or 'math/my_data_auto' event metadata");
+
+        // // Check if the path is one of the expected values
+        // assert!(my_data_auto_event_meta.path == "my_data_auto" || my_data_auto_event_meta.path == "math/my_data_auto",
+        //         "Event path was: {}", my_data_auto_event_meta.path);
+        // Description for 'my_data_auto' event is also likely empty.
 
         // Create parameters for the add action
         let params = ArcValueType::new_map(hmap! {

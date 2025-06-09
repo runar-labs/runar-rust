@@ -5,6 +5,7 @@
 
 use runar_common::hmap;
 use runar_common::types::ArcValueType;
+use runar_common::types::schemas::{ServiceMetadata, FieldSchema, SchemaDataType};
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::{Node, NodeConfig};
 use std::future::Future;
@@ -179,6 +180,82 @@ async fn test_node_lifecycle() {
 ///
 /// This test ensures that the Node can properly initialize its network
 /// components which are required for remote communication.
+#[tokio::test]
+async fn test_node_event_metadata_registration() -> Result<()> {
+    let mut config = NodeConfig::new("test-node-event-meta", "test_network_event");
+    config.network_config = None; // Disable networking for this unit test
+    let mut node = Node::new(config).await?;
+
+    let math_service_name = "MathMetaTest";
+    let math_service_path = "math_meta_svc";
+    let service = MathService::new(math_service_name, math_service_path);
+    node.add_service(service).await?;
+    node.start().await?; // This will call init() on MathService
+
+    // Request the list of services from the registry
+    let services_list: Vec<ServiceMetadata> = node
+        .request("$registry/services/list", Option::<ArcValueType>::None)
+        .await?;
+
+    let math_service_metadata = services_list
+        .iter()
+        .find(|s| s.service_path == math_service_path && s.network_id == "test_network_event")
+        .expect("MathService metadata not found in registry list");
+
+    assert_eq!(math_service_metadata.name, math_service_name);
+
+    let target_event_path = format!("{}/{}", math_service_path, "config/updated");
+
+    let config_updated_event_meta = math_service_metadata
+        .events
+        .iter()
+        .find(|e| e.path == target_event_path)
+        .expect("config/updated event metadata not found for MathService");
+
+    assert_eq!(
+        config_updated_event_meta.description,
+        "Notification for when math service configuration is updated."
+    );
+
+    let expected_schema = FieldSchema {
+        name: "ConfigUpdatePayload".to_string(),
+        data_type: SchemaDataType::Object,
+        description: Some("Payload describing the configuration changes.".to_string()),
+        nullable: Some(false),
+        properties: Some({
+            let mut props = HashMap::new();
+            props.insert(
+                "updated_setting".to_string(),
+                Box::new(FieldSchema {
+                    name: "updated_setting".to_string(),
+                    data_type: SchemaDataType::String,
+                    description: Some("Name of the setting that was updated.".to_string()),
+                    nullable: Some(false),
+                    ..FieldSchema::string("updated_setting")
+                }),
+            );
+            props.insert(
+                "new_value".to_string(),
+                Box::new(FieldSchema {
+                    name: "new_value".to_string(),
+                    data_type: SchemaDataType::String,
+                    description: Some("The new value of the setting.".to_string()),
+                    nullable: Some(false),
+                    ..FieldSchema::string("new_value")
+                }),
+            );
+            props
+        }),
+        required: Some(vec!["updated_setting".to_string(), "new_value".to_string()]),
+        ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::Object)
+    };
+
+    assert_eq!(config_updated_event_meta.data_schema, Some(expected_schema));
+
+    node.stop().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_node_init() -> Result<()> {
     // Create a node configuration

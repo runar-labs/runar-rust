@@ -183,7 +183,11 @@ impl LifecycleContext {
     /// - Full topic with network ID: "network:service/topic" (used as is)
     /// - Topic with service: "service/topic" (current network ID added)
     /// - Simple topic: "topic" (current network ID and service path added)
-    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValueType>) -> Result<()> {
+    pub async fn publish(
+        &self,
+        topic: impl Into<String>,
+        data: Option<ArcValueType>,
+    ) -> Result<()> {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
@@ -276,6 +280,22 @@ impl LifecycleContext {
         // Register the action with the provided options
         delegate
             .register_action_handler(topic_path, handler, Some(metadata))
+            .await
+    }
+
+    /// Subscribe to an event with specific registration options.
+    ///
+    /// INTENTION: Allow a service to subscribe to an event topic and provide
+    /// detailed metadata about the event for discovery and documentation purposes.
+    pub async fn subscribe_with_options(
+        &self,
+        topic: impl Into<String>,
+        callback: EventCallback,
+        options: EventRegistrationOptions,
+    ) -> Result<String> {
+        let delegate = &self.node_delegate;
+        delegate
+            .subscribe_with_options(topic.into(), callback, options)
             .await
     }
 
@@ -515,7 +535,16 @@ pub struct PublishOptions {
 ///
 /// INTENTION: Provide a way to specify metadata about an action when registering it,
 /// reducing the need for services to define complete metadata upfront.
-#[derive(Debug, Clone, Default)]
+// #[derive(Debug, Clone, Default)] // This line was redundant and removed
+/// Options for registering an event subscription with metadata.
+#[derive(Clone, Debug, Default)]
+pub struct EventRegistrationOptions {
+    /// Description of what the event signifies.
+    pub description: Option<String>,
+    /// Schema for the event data, for validation and documentation.
+    pub data_schema: Option<FieldSchema>,
+}
+
 pub struct ActionRegistrationOptions {
     /// Description of what the action does
     pub description: Option<String>,
@@ -523,18 +552,6 @@ pub struct ActionRegistrationOptions {
     pub input_schema: Option<FieldSchema>,
     /// Return value schema for documentation
     pub output_schema: Option<FieldSchema>,
-}
-
-/// Options for registering an event
-///
-/// INTENTION: Provide a way to specify metadata about an event when registering it,
-/// reducing the need for services to define complete metadata upfront.
-#[derive(Debug, Clone, Default)]
-pub struct EventRegistrationOptions {
-    /// Description of what the event represents
-    pub description: Option<String>,
-    /// Schema of the event data
-    pub data_schema: Option<FieldSchema>,
 }
 
 /// Interface for handling service requests
@@ -709,7 +726,7 @@ pub trait NodeDelegate: Send + Sync {
                 + Send
                 + Sync,
         >,
-        options: SubscriptionOptions,
+        options: EventRegistrationOptions, // Changed from SubscriptionOptions
     ) -> Result<String>;
 
     /// Unsubscribe from a topic

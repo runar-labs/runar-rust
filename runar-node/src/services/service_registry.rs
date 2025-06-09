@@ -146,7 +146,7 @@ pub struct ServiceRegistry {
     /// Store both the handler and the original registration topic path for parameter extraction
     local_action_handlers: Arc<RwLock<PathTrie<LocalActionEntryValue>>>,
 
-    //reverse index where we store the events that a service listens to
+    //index to store the events that a service listens to
     local_events_by_service: Arc<RwLock<PathTrie<Vec<EventMetadata>>>>,
 
     /// Remote action handlers organized by path (using PathTrie instead of HashMap)
