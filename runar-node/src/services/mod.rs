@@ -81,6 +81,7 @@ pub type EventCallback = Box<
 /// INTENTION: Provide services with the context needed for lifecycle operations
 /// such as initialization and shutdown. Includes access to the node for
 /// registering action handlers, subscribing to events, and other operations.
+#[derive(Clone)]
 pub struct LifecycleContext {
     /// Network ID for the context
     pub network_id: String,
@@ -142,6 +143,61 @@ impl LifecycleContext {
     /// Helper method to log error level message
     pub fn error(&self, message: impl Into<String>) {
         self.logger.error(message);
+    }
+
+    /// Make a service request from the lifecycle context.
+    ///
+    /// INTENTION: Allow services during their lifecycle (e.g., init, shutdown)
+    /// to make requests to other services or their own actions.
+    ///
+    /// Handles different path formats:
+    /// - Full path with network ID: "network:service/action" (used as is)
+    /// - Path with service: "service/action" (current network ID added)
+    /// - Simple action: "action" (current network ID and service path added - calls own service)
+    pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
+    where
+        P: AsArcValueType + Send + Sync,
+        T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
+    {
+        let path_string = path.into();
+        let full_path = if path_string.contains(':') {
+            path_string
+        } else if path_string.contains('/') {
+            format!("{}:{}", self.network_id, path_string)
+        } else {
+            format!("{}:{}/{}", self.network_id, self.service_path, path_string)
+        };
+
+        self.logger.debug(format!(
+            "LifecycleContext making request to processed path: {}",
+            full_path
+        ));
+        self.node_delegate.request::<P, T>(full_path, payload).await
+    }
+
+    /// Publish an event from the lifecycle context.
+    ///
+    /// INTENTION: Allow services during their lifecycle to publish events.
+    ///
+    /// Handles different topic formats:
+    /// - Full topic with network ID: "network:service/topic" (used as is)
+    /// - Topic with service: "service/topic" (current network ID added)
+    /// - Simple topic: "topic" (current network ID and service path added)
+    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValueType>) -> Result<()> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            format!("{}:{}", self.network_id, topic_string)
+        } else {
+            format!("{}:{}/{}", self.network_id, self.service_path, topic_string)
+        };
+
+        self.logger.debug(format!(
+            "LifecycleContext publishing to processed topic: {}",
+            full_topic
+        ));
+        self.node_delegate.publish(full_topic, data).await
     }
 
     /// Register an action handler

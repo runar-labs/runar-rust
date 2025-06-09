@@ -13,7 +13,7 @@ pub trait AsArcValueType {
 
 pub mod erased_arc;
 pub mod schemas;
-mod value_type;
+pub mod value_type;
 mod vmap;
 
 // Export our types

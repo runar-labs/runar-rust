@@ -1,467 +1,547 @@
-use anyhow::Result;
-use runar_common::logging::{Component, Logger};
+// runar-gateway/tests/gateway_test.rs
+
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use axum::http::StatusCode as HttpStatus; // Renamed to avoid conflict if any from other crates
+use runar_common::types::schemas::{FieldSchema, SchemaDataType};
 use runar_common::types::ArcValueType;
-use runar_common::vmap; // Added for vmap!
-
-use runar_node::Node;
-
-use runar_node::{
-    config::{LogLevel, LoggingConfig},
-    NodeConfig,
-};
-
+use runar_gateway::GatwayService; // Ensure GatwayService is pub in runar-gateway/src/lib.rs
+use runar_node::services::ActionRegistrationOptions;
+use runar_node::services::{LifecycleContext, RequestContext};
+use runar_node::NodeConfig;
+use runar_node::{AbstractService, Node};
+use serde_json::{json, Value as JsonValue};
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
-use std::sync::Arc; // For downcasting
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
-// Assuming crud_sqlite.rs and sqlite.rs are part of the same crate (rust_services)
-use runar_services::crud_sqlite::{
-    CrudSqliteService, FindOneRequest, FindOneResponse, InsertOneRequest, InsertOneResponse,
-};
-use runar_services::sqlite::{
-    ColumnDefinition, DataType, Schema as SqliteSchema, SqliteConfig, SqliteService,
-    TableDefinition,
-};
+// --- Test Data Struct ---
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct MyTestData {
+    id: i32,
+    name: String,
+    active: bool,
+}
 
-const SQLITE_SERVICE_NAME: &str = "test_sqlite_for_crud";
-const SQLITE_SERVICE_PATH: &str = "internal_db";
-const CRUD_SERVICE_NAME: &str = "test_crud_service";
-const CRUD_SERVICE_PATH: &str = "crud_db";
+// --- Mock EchoService ---
+#[derive(Clone)]
+struct EchoService {
+    name: String,
+    path: String,
+    network_id: Option<String>,
+}
 
-async fn setup_node_with_services() -> Result<Node> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+impl EchoService {
+    fn new(name: &str, path: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            path: path.to_string(),
+            network_id: None,
+        }
+    }
+
+    async fn handle_ping(
+        &self,
+        _ctx: Arc<RequestContext>,
+    ) -> Result<ArcValueType> {
+        Ok(ArcValueType::new_primitive("pong".to_string()))
+    }
+
+    async fn handle_echo(
+        &self,
+        _ctx: RequestContext,
+        mut message_avt: ArcValueType, // Expects an ArcValueType that IS a string
+    ) -> Result<ArcValueType> {
+        let message_str = message_avt.as_type::<String>().map_err(|e| {
+            _ctx.logger.error(format!(
+                "Error extracting string from ArcValueType in handle_echo: {}",
+                e
+            ));
+            anyhow!("Parameter is not a valid string ArcValueType: {}", e)
+        })?;
+
+        // The test expects the exact message back
+        Ok(ArcValueType::new_primitive(message_str))
+    }
+
+    async fn handle_echo_map(
+        &self,
+        _ctx: RequestContext,
+        mut params: ArcValueType, // Expects an ArcValueType that IS a map
+    ) -> Result<ArcValueType> {
+        // The schema should enforce this. If it's not a map, this will error.
+        // We are just echoing. as_map_ref is used here to confirm it's a map.
+        params.as_map_ref::<String, ArcValueType>().map_err(|e| {
+            _ctx.logger.error(format!("handle_echo_map: param not a map: {}", e));
+            anyhow!("Parameter is not a valid map ArcValueType: {}", e)
+        })?;
+        Ok(params)
+    }
+
+    async fn handle_echo_list(
+        &self,
+        _ctx: RequestContext,
+        mut params: ArcValueType, // Expects an ArcValueType that IS a list
+    ) -> Result<ArcValueType> {
+        params.as_list_ref::<ArcValueType>().map_err(|e| {
+             _ctx.logger.error(format!("handle_echo_list: param not a list: {}", e));
+            anyhow!("Parameter is not a valid list ArcValueType: {}", e)
+        })?;
+        Ok(params)
+    }
+
+    async fn handle_echo_struct(
+        &self,
+        _ctx: RequestContext,
+        mut params: ArcValueType, // Expects an ArcValueType that IS a struct (represented as a map)
+    ) -> Result<ArcValueType> {
+        // The schema should enforce the structure. Here, we confirm it's a map.
+        // A more robust handler might deserialize to MyTestData and then re-serialize.
+        params.as_map_ref::<String, ArcValueType>().map_err(|e| {
+            _ctx.logger.error(format!("handle_echo_struct: param not a map for struct: {}", e));
+            anyhow!("Parameter is not a valid map ArcValueType for struct: {}", e)
+        })?;
+        Ok(params)
+    }
+}
+
+#[async_trait]
+impl AbstractService for EchoService {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
+    fn path(&self) -> &str {
+        &self.path
+    }
+    fn description(&self) -> &str {
+        "A simple service that echoes messages and pings."
+    }
+    fn network_id(&self) -> Option<String> {
+        self.network_id.clone()
+    }
+
+    async fn init(&self, context: LifecycleContext) -> Result<()> {
+        context.info(format!("Initializing EchoService '{}'", self.name()));
+
+        // --- Register "ping" action ---
+        let self_clone_ping = self.clone();
+        let ping_output_schema = FieldSchema {
+            name: "ping_response".to_string(),
+            data_type: SchemaDataType::String,
+            description: Some("A 'pong' response indicating the service is reachable.".to_string()),
+            nullable: Some(false),
+            required: Some(vec![]), // For a simple type, required is about its presence in a parent object, not applicable here directly.
+            ..FieldSchema::new("ping_response", SchemaDataType::String)  // Use default for others
+        };
+        let ping_options = ActionRegistrationOptions {
+            description: Some("Responds with 'pong'. Takes no input parameters.".to_string()),
+            input_schema: None,
+            output_schema: Some(ping_output_schema),
+        };
+        context
+            .register_action_with_options(
+                "ping".to_string(),
+                Arc::new(move |params, req_ctx| {
+                    let s = self_clone_ping.clone();
+                    Box::pin(async move {
+                        if params.is_some() {
+                            req_ctx.logger.warn("Ping action received unexpected parameters.");
+                        }
+                        s.handle_ping(req_ctx.into()).await
+                    })
+                }),
+                ping_options,
+            )
+            .await?;
+
+        // --- Register "echo" action ---
+        let self_clone_echo = self.clone();
+        let message_field_schema = Box::new(FieldSchema {
+            name: "message".to_string(),
+            data_type: SchemaDataType::String,
+            description: Some("The string message to be echoed by the service.".to_string()),
+            nullable: Some(false),
+            ..FieldSchema::new("message", SchemaDataType::String) // Use default for others
+        });
+
+        let mut echo_input_props = HashMap::new();
+        echo_input_props.insert("message".to_string(), message_field_schema);
+
+        let echo_input_schema = FieldSchema {
+            name: "echo_payload".to_string(),
+            data_type: SchemaDataType::Object,
+            description: Some(
+                "Payload for the echo action, expecting an object with a 'message' field."
+                    .to_string(),
+            ),
+            properties: Some(echo_input_props),
+            required: Some(vec!["message".to_string()]),
+            nullable: Some(false),
+            ..FieldSchema::new("echo_payload", SchemaDataType::Object) // Use default for others
+        };
+
+        let echo_output_schema = FieldSchema {
+            name: "echo_response".to_string(),
+            data_type: SchemaDataType::String,
+            description: Some("The original message, echoed back.".to_string()),
+            nullable: Some(false),
+            ..FieldSchema::new("echo_response", SchemaDataType::String) // Use default for others
+        };
+
+        let echo_options = ActionRegistrationOptions {
+            description: Some("Echoes back the provided 'message' string.".to_string()),
+            input_schema: Some(echo_input_schema),
+            output_schema: Some(echo_output_schema),
+        };
+
+        context
+            .register_action_with_options(
+                "echo".to_string(),
+                Arc::new(move |params, req_ctx| {
+                    let s = self_clone_echo.clone();
+                    Box::pin(async move {
+                        let mut params_map_avt =
+                            params.ok_or_else(|| anyhow!("Missing parameters for echo action"))?;
+                        let message_avt = params_map_avt
+                            .as_map_ref::<String, ArcValueType>()
+                            .map_err(|e| anyhow!("Echo params not a map: {}", e))?
+                            .get("message")
+                            .cloned()
+                            .ok_or_else(|| {
+                                anyhow!("'message' field not found in echo params map")
+                            })?;
+                        s.handle_echo(req_ctx, message_avt).await
+                    })
+                }),
+                echo_options,
+            )
+            .await?;
+
+        // --- Register "echo_map" action ---
+        let self_clone_echo_map = self.clone();
+        let map_io_schema = FieldSchema {
+            name: "map_payload".to_string(),
+            data_type: SchemaDataType::Object, // Allows any object structure if properties is None
+            description: Some("Payload for the echo_map action, expecting any JSON object.".to_string()),
+            nullable: Some(false),
+            properties: None, // Explicitly allow any properties
+            required: None,
+            items: None,
+            pattern: None,
+            enum_values: None,
+            minimum: None,
+            maximum: None,
+            exclusive_minimum: None,
+            exclusive_maximum: None,
+            min_length: None,
+            max_length: None,
+            min_items: None,
+            max_items: None,
+            example: None,
+            default_value: None,
+        };
+        let echo_map_options = ActionRegistrationOptions {
+            description: Some("Echoes back a JSON map.".to_string()),
+            input_schema: Some(map_io_schema.clone()),
+            output_schema: Some(map_io_schema.clone()),
+        };
+        context
+            .register_action_with_options(
+                "echo_map".to_string(),
+                Arc::new(move |params, req_ctx| {
+                    let s = self_clone_echo_map.clone();
+                    Box::pin(async move {
+                        let map_params = params.ok_or_else(|| anyhow!("Missing parameters for echo_map action"))?;
+                        s.handle_echo_map(req_ctx, map_params).await
+                    })
+                }),
+                echo_map_options,
+            )
+            .await?;
+
+        // --- Register "echo_list" action ---
+        let self_clone_echo_list = self.clone();
+        let list_item_schema = Box::new(FieldSchema {
+            name: "list_item".to_string(), 
+            data_type: SchemaDataType::Any, 
+            description: Some("An item in the list.".to_string()),
+            nullable: None,
+            default_value: None,
+            properties: None,
+            required: None,
+            items: None,
+            pattern: None,
+            enum_values: None,
+            minimum: None,
+            maximum: None,
+            exclusive_minimum: None,
+            exclusive_maximum: None,
+            min_length: None,
+            max_length: None,
+            min_items: None,
+            max_items: None,
+            example: None,
+        });
+        let list_io_schema = FieldSchema {
+            name: "list_payload".to_string(),
+            data_type: SchemaDataType::Array,
+            description: Some("Payload for the echo_list action, expecting any JSON array.".to_string()),
+            items: Some(list_item_schema),
+            nullable: Some(false),
+            default_value: None,
+            properties: None,
+            required: None,
+            pattern: None,
+            enum_values: None,
+            minimum: None,
+            maximum: None,
+            exclusive_minimum: None,
+            exclusive_maximum: None,
+            min_length: None,
+            max_length: None,
+            min_items: None,
+            max_items: None,
+            example: None,
+        };
+        let echo_list_options = ActionRegistrationOptions {
+            description: Some("Echoes back a JSON list.".to_string()),
+            input_schema: Some(list_io_schema.clone()),
+            output_schema: Some(list_io_schema.clone()),
+        };
+        context
+            .register_action_with_options(
+                "echo_list".to_string(),
+                Arc::new(move |params, req_ctx| {
+                    let s = self_clone_echo_list.clone();
+                    Box::pin(async move {
+                        let list_params = params.ok_or_else(|| anyhow!("Missing parameters for echo_list action"))?;
+                        s.handle_echo_list(req_ctx, list_params).await
+                    })
+                }),
+                echo_list_options,
+            )
+            .await?;
+
+        // --- Register "echo_struct" action ---
+        let self_clone_echo_struct = self.clone();
+        let mut struct_props = HashMap::new();
+        struct_props.insert("id".to_string(), Box::new(FieldSchema {
+            name: "id".to_string(),
+            data_type: SchemaDataType::Int32,
+            description: Some("Identifier for the test data".to_string()),
+            nullable: Some(false), // Assuming 'id' is required, thus not nullable
+            ..FieldSchema::new("id", SchemaDataType::Int32) // Fill with defaults
+        }));
+        struct_props.insert("name".to_string(), Box::new(FieldSchema {
+            name: "name".to_string(),
+            data_type: SchemaDataType::String,
+            description: Some("Name for the test data".to_string()),
+            nullable: Some(false), // Assuming 'name' is required
+            ..FieldSchema::new("name", SchemaDataType::String)
+        }));
+        struct_props.insert("active".to_string(), Box::new(FieldSchema {
+            name: "active".to_string(),
+            data_type: SchemaDataType::Boolean,
+            description: Some("Activity status for the test data".to_string()),
+            nullable: Some(false), // Assuming 'active' is required
+            ..FieldSchema::new("active", SchemaDataType::Boolean)
+        }));
+
+        let struct_io_schema = FieldSchema {
+            name: "struct_payload".to_string(),
+            data_type: SchemaDataType::Object,
+            description: Some("Payload for the echo_struct action, expecting MyTestData structure.".to_string()),
+            properties: Some(struct_props),
+            required: Some(vec!["id".to_string(), "name".to_string(), "active".to_string()]),
+            nullable: Some(false),
+            items: None,
+            pattern: None,
+            enum_values: None,
+            minimum: None,
+            maximum: None,
+            exclusive_minimum: None,
+            exclusive_maximum: None,
+            min_length: None,
+            max_length: None,
+            min_items: None,
+            max_items: None,
+            example: None,
+            default_value: None,
+        };
+        let echo_struct_options = ActionRegistrationOptions {
+            description: Some("Echoes back a MyTestData JSON struct.".to_string()),
+            input_schema: Some(struct_io_schema.clone()),
+            output_schema: Some(struct_io_schema.clone()),
+        };
+        context
+            .register_action_with_options(
+                "echo_struct".to_string(),
+                Arc::new(move |params, req_ctx| {
+                    let s = self_clone_echo_struct.clone();
+                    Box::pin(async move {
+                        let struct_params = params.ok_or_else(|| anyhow!("Missing parameters for echo_struct action"))?;
+                        s.handle_echo_struct(req_ctx, struct_params).await
+                    })
+                }),
+                echo_struct_options,
+            )
+            .await?;
+
+        context.info(format!(
+            "EchoService '{}' initialized with actions and schemas.",
+            self.name()
+        ));
+        Ok(())
+    }
+
+    async fn start(&self, context: LifecycleContext) -> Result<()> {
+        context.info(format!("EchoService '{}' started.", self.name()));
+        Ok(())
+    }
+
+    async fn stop(&self, context: LifecycleContext) -> Result<()> {
+        context.info(format!("EchoService '{}' stopped.", self.name()));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_gateway_routes() -> Result<()> {
+    // 1. Setup Node
+    let node_network_id = "test-network-gw";
+    let logging_config = runar_node::config::LoggingConfig::new()
+        .with_default_level(runar_node::config::LogLevel::Off);
     let node_config =
-        NodeConfig::new("crud-test-node", "test_network_crud").with_logging_config(logging_config);
+        NodeConfig::new("gateway-test-node", node_network_id).with_logging_config(logging_config);
     let mut node = Node::new(node_config).await?;
 
-    let _logger_arc = Arc::new(Logger::new_root(
-        Component::Custom("crud_sqlite_test"),
-        "test_node_crud",
-    ));
+    // 2. Setup and Add EchoService
+    let echo_service_name = "EchoServiceTest";
+    let echo_service_path = "echo-service";
+    let echo_service = EchoService::new(echo_service_name, echo_service_path);
+    node.add_service(echo_service).await?;
 
-    // Define the schema
-    let app_schema = Arc::new(SqliteSchema {
-        tables: vec![
-            TableDefinition {
-                name: "users".to_string(),
-                columns: vec![
-                    ColumnDefinition {
-                        name: "_id".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: true,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                    ColumnDefinition {
-                        name: "email".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                    ColumnDefinition {
-                        name: "age".to_string(),
-                        data_type: DataType::Integer,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                ],
-            },
-            TableDefinition {
-                name: "orders".to_string(),
-                columns: vec![
-                    ColumnDefinition {
-                        name: "_id".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: true,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "product_id".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                    ColumnDefinition {
-                        name: "quantity".to_string(),
-                        data_type: DataType::Integer,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                    ColumnDefinition {
-                        name: "total_price".to_string(),
-                        data_type: DataType::Real,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                ],
-            },
-            TableDefinition {
-                name: "products".to_string(),
-                columns: vec![
-                    ColumnDefinition {
-                        name: "_id".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: true,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                    ColumnDefinition {
-                        name: "price".to_string(),
-                        data_type: DataType::Real,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                    ColumnDefinition {
-                        name: "in_stock".to_string(),
-                        data_type: DataType::Boolean,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: false,
-                    },
-                ],
-            },
-        ],
-        indexes: vec![], // No indexes for now
-    });
+    // 4. Setup and Add GatwayService
+    let gateway_listen_addr: SocketAddr = "127.0.0.1:3001".parse()?;
+    let gateway_service =
+        GatwayService::new("TestGateway", "gateway").with_listen_addr(gateway_listen_addr.clone());
+    node.add_service(gateway_service).await?;
 
-    // Setup SqliteService (in-memory)
-    let sqlite_config = SqliteConfig {
-        db_path: ":memory:".to_string(),
-        schema: (*app_schema).clone(), // SqliteService takes ownership of the schema for table creation
-    };
-    let sqlite_service = SqliteService::new(
-        SQLITE_SERVICE_NAME.to_string(),
-        SQLITE_SERVICE_PATH.to_string(),
-        sqlite_config,
-    );
-    node.add_service(sqlite_service).await?;
-
-    // Setup CrudSqliteService
-    let crud_service = CrudSqliteService::new(
-        CRUD_SERVICE_NAME.to_string(),
-        CRUD_SERVICE_PATH.to_string(),
-        SQLITE_SERVICE_PATH.to_string(), // store_path should be the *path* of the sqlite service
-        (*app_schema).clone(),           // schema (SqliteSchemaDef, cloned from Arc)
-    );
-    node.add_service(crud_service).await?;
-
+    // 5. Start Node
     node.start().await?;
-    Ok(node)
-}
-
-#[tokio::test]
-async fn test_insert_one_and_find_one_basic() -> Result<()> {
-    let node = setup_node_with_services()
-        .await
-        .expect("Failed to setup node with services");
-
-    let collection_name = "users".to_string();
-
-    // 1. Insert a document (ID will be auto-generated)
-    let mut user_doc_arc_value_map = vmap! {
-        "name" => "Alice".to_string(),
-        "email" => "alice@example.com".to_string(),
-        "age" => 30i64
-    };
-    // Convert ArcValueType::Map back to HashMap for InsertOneRequest
-    let user_doc_auto_id_map: HashMap<String, ArcValueType> = user_doc_arc_value_map
-        .as_type::<HashMap<String, ArcValueType>>()
-        .expect("vmap! should produce a valid map");
-
-    let insert_req_auto = InsertOneRequest {
-        collection: collection_name.clone(),
-        document: user_doc_auto_id_map.clone(),
-    };
-    let arc_insert_req_auto = ArcValueType::from_struct(insert_req_auto);
-
-    let insert_resp_av: InsertOneResponse = node
-        .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
-            Some(arc_insert_req_auto),
-        )
-        .await?;
-
-    let insert_response_auto = insert_resp_av; // Made mutable
-    let generated_id = insert_response_auto.inserted_id.clone(); // inserted_id is already a String
-    assert!(!generated_id.is_empty(), "Generated ID should not be empty");
-    println!("Inserted document with auto-generated ID: {}", generated_id);
-
-    // 2. Find the inserted document by its generated ID
-    let mut filter_auto_id_map: HashMap<String, ArcValueType> = HashMap::new();
-    filter_auto_id_map.insert(
-        "_id".to_string(),
-        ArcValueType::new_primitive(generated_id.clone()),
-    );
-    let find_req_auto = FindOneRequest {
-        collection: collection_name.clone(),
-        filter: filter_auto_id_map,
-    };
-    let arc_find_req_auto = ArcValueType::from_struct(find_req_auto);
-
-    let find_resp_av: FindOneResponse = node
-        .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
-            Some(arc_find_req_auto),
-        )
-        .await?;
-    let find_response_auto = find_resp_av; // Made mutable
-
-    let found_doc_auto = find_response_auto
-        .document
-        .expect("Document with auto_id should be found");
-    let mut id_av = found_doc_auto.get("_id").unwrap().clone();
-    let id_str_arc = id_av.as_type_ref::<String>()?;
-    assert_eq!(*id_str_arc, generated_id);
-    let mut name_av = found_doc_auto.get("name").unwrap().clone();
-    let name_str_arc = name_av.as_type_ref::<String>()?;
-    assert_eq!(*name_str_arc, "Alice");
-    let mut email_av = found_doc_auto.get("email").unwrap().clone();
-    let email_str_arc = email_av.as_type_ref::<String>()?;
-    assert_eq!(*email_str_arc, "alice@example.com");
-    let mut age_av = found_doc_auto.get("age").unwrap().clone();
-    let age_val_arc = age_av.as_type_ref::<i64>()?;
-    assert_eq!(*age_val_arc, 30i64);
     println!(
-        "Successfully found document by auto-generated ID: {:?}",
-        found_doc_auto
+        "Node started, allowing time for GatwayService to initialize and Axum server to start..."
     );
+    sleep(Duration::from_millis(1000)).await; // Increased delay to ensure server is up
 
-    // 3. Insert a document with a predefined ID
-    let predefined_id = "user-bob-001".to_string();
-    let mut user_doc_pre_id_map: HashMap<String, ArcValueType> = HashMap::new();
-    user_doc_pre_id_map.insert(
-        "_id".to_string(),
-        ArcValueType::new_primitive(predefined_id.clone()),
+    let client = reqwest::Client::new();
+    let base_url = format!("http://{}", gateway_listen_addr);
+
+    // 6. Test GET endpoint (/echo-service/ping)
+    let ping_url = format!("{}/{}/ping", base_url, echo_service_path);
+    println!("Testing GET: {}", ping_url);
+    let resp_get = client.get(&ping_url).send().await?;
+    assert_eq!(
+        resp_get.status(),
+        HttpStatus::OK,
+        "Ping request failed. Status: {:?}, Body: {:?}",
+        resp_get.status(),
+        resp_get.text().await?
     );
-    user_doc_pre_id_map.insert(
-        "name".to_string(),
-        ArcValueType::new_primitive("Bob".to_string()),
+    let body_get: JsonValue = resp_get.json().await?;
+    assert_eq!(body_get, json!("pong"));
+    println!("GET /{}/ping successful.", echo_service_path);
+
+    // 7. Test POST endpoint (/echo-service/echo)
+    let echo_url = format!("{}/{}/echo", base_url, echo_service_path);
+    let payload = json!({ "message": "hello from gateway test" });
+    println!("Testing POST: {} with payload: {}", echo_url, payload);
+
+    let resp_post = client.post(&echo_url).json(&payload).send().await?;
+    assert_eq!(
+        resp_post.status(),
+        HttpStatus::OK,
+        "Echo request failed. Status: {:?}, Body: {:?}",
+        resp_post.status(),
+        resp_post.text().await?
     );
-    user_doc_pre_id_map.insert(
-        "email".to_string(),
-        ArcValueType::new_primitive("bob@example.com".to_string()),
-    );
-    // Note: "city" field removed as it's not in the 'users' schema
+    let body_post: JsonValue = resp_post.json().await?;
+    assert_eq!(body_post, json!("hello from gateway test"));
+    println!("POST /{}/echo successful.", echo_service_path);
 
-    let insert_req_pre = InsertOneRequest {
-        collection: collection_name.clone(),
-        document: user_doc_pre_id_map.clone(),
-    };
-    let arc_insert_req_pre = ArcValueType::from_struct(insert_req_pre);
-
-    let insert_resp_pre_av: InsertOneResponse = node
-        .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
-            Some(arc_insert_req_pre),
-        )
-        .await?;
-    let insert_response_pre = insert_resp_pre_av;
-    assert_eq!(insert_response_pre.inserted_id, predefined_id);
-    println!("Inserted document with predefined ID: {}", predefined_id);
-
-    // 4. Find the document with the predefined ID
-    let mut filter_pre_id_map: HashMap<String, ArcValueType> = HashMap::new();
-    filter_pre_id_map.insert(
-        "_id".to_string(),
-        ArcValueType::new_primitive(predefined_id.clone()),
-    );
-    let find_req_pre = FindOneRequest {
-        collection: collection_name.clone(),
-        filter: filter_pre_id_map,
-    };
-    let arc_find_req_pre = ArcValueType::from_struct(find_req_pre);
-
-    let find_resp_pre_av: FindOneResponse = node
-        .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
-            Some(arc_find_req_pre),
-        )
-        .await?;
-
-    let found_doc_pre = find_resp_pre_av
-        .document
-        .expect("Document with pre_id should be found");
-    let mut id_av_pre = found_doc_pre.get("_id").unwrap().clone();
-    let id_str_arc_pre = id_av_pre.as_type_ref::<String>()?;
-    assert_eq!(*id_str_arc_pre, predefined_id);
-    let mut name_av_pre = found_doc_pre.get("name").unwrap().clone();
-    let name_str_arc_pre = name_av_pre.as_type_ref::<String>()?;
-    assert_eq!(*name_str_arc_pre, "Bob");
-    let mut email_av_pre = found_doc_pre.get("email").unwrap().clone();
-    let email_str_arc_pre = email_av_pre.as_type_ref::<String>()?;
-    assert_eq!(*email_str_arc_pre, "bob@example.com");
+    // --- Test POST echo_map ---
+    let map_payload = json!({
+        "key1": "value1",
+        "key2": 123,
+        "nested": {
+            "n_key": true
+        }
+    });
+    let echo_map_url = format!("{}/{}/echo_map", base_url, echo_service_path);
     println!(
-        "Successfully found document by predefined ID: {:?}",
-        found_doc_pre
+        "Testing POST: {} with payload: {}",
+        echo_map_url,
+        map_payload
     );
-
-    // 5. Attempt to find a non-existent document
-    let non_existent_id = "user-does-not-exist-404".to_string();
-    let mut filter_non_existent_map: HashMap<String, ArcValueType> = HashMap::new();
-    filter_non_existent_map.insert(
-        "_id".to_string(),
-        ArcValueType::new_primitive(non_existent_id.clone()),
-    );
-    let find_req_non_existent = FindOneRequest {
-        collection: collection_name.clone(),
-        filter: filter_non_existent_map,
-    };
-    let arc_find_req_non_existent = ArcValueType::from_struct(find_req_non_existent);
-
-    let find_response_non_existent: FindOneResponse = node
-        .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
-            Some(arc_find_req_non_existent),
-        )
+    let response_map = client
+        .post(&echo_map_url)
+        .json(&map_payload)
+        .send()
         .await?;
+    assert_eq!(response_map.status(), HttpStatus::OK, "echo_map request failed. Status: {:?}, Body: {:?}", response_map.status(), response_map.text().await?);
+    let response_body_map: JsonValue = response_map.json().await?;
+    assert_eq!(response_body_map, map_payload);
+    println!("POST /{}/echo_map successful.", echo_service_path);
 
-    assert!(
-        find_response_non_existent.document.is_none(),
-        "Document with non_existent_id should not be found"
-    );
+    // --- Test POST echo_list ---
+    let list_payload = json!(["apple", "banana", json!({"fruit_type": "cherry"}), 100]);
+    let echo_list_url = format!("{}/{}/echo_list", base_url, echo_service_path);
     println!(
-        "Correctly found no document for non-existent ID: {}",
-        non_existent_id
+        "Testing POST: {} with payload: {}",
+        echo_list_url,
+        list_payload
     );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_insert_into_different_collections() -> Result<()> {
-    let node = setup_node_with_services()
-        .await
-        .expect("Failed to setup node with services");
-
-    // Insert into 'orders' collection
-    let mut order_doc_map: HashMap<String, ArcValueType> = HashMap::new();
-    order_doc_map.insert(
-        "product_id".to_string(),
-        ArcValueType::new_primitive("prod_123".to_string()),
-    );
-    order_doc_map.insert("quantity".to_string(), ArcValueType::new_primitive(2i64));
-    order_doc_map.insert(
-        "total_price".to_string(),
-        ArcValueType::new_primitive(50.99f64),
-    );
-
-    let insert_order_req = InsertOneRequest {
-        collection: "orders".to_string(),
-        document: order_doc_map.clone(),
-    };
-    let arc_insert_order_req = ArcValueType::from_struct(insert_order_req);
-    let order_resp_av: InsertOneResponse = node
-        .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
-            Some(arc_insert_order_req),
-        )
+    let response_list = client
+        .post(&echo_list_url)
+        .json(&list_payload)
+        .send()
         .await?;
-    let order_insert_resp = order_resp_av;
-    let order_id = order_insert_resp.inserted_id.clone();
-    println!("Inserted order with ID: {}", order_id);
+    assert_eq!(response_list.status(), HttpStatus::OK, "echo_list request failed. Status: {:?}, Body: {:?}", response_list.status(), response_list.text().await?);
+    let response_body_list: JsonValue = response_list.json().await?;
+    assert_eq!(response_body_list, list_payload);
+    println!("POST /{}/echo_list successful.", echo_service_path);
 
-    // Insert into 'products' collection
-    let mut product_doc_map: HashMap<String, ArcValueType> = HashMap::new();
-    product_doc_map.insert(
-        "name".to_string(),
-        ArcValueType::new_primitive("Super Widget".to_string()),
-    );
-    product_doc_map.insert("price".to_string(), ArcValueType::new_primitive(25.49f64));
-    product_doc_map.insert("in_stock".to_string(), ArcValueType::new_primitive(true));
-
-    let insert_product_req = InsertOneRequest {
-        collection: "products".to_string(),
-        document: product_doc_map.clone(),
+    // --- Test POST echo_struct ---
+    let struct_payload_data = MyTestData {
+        id: 1,
+        name: "Test Struct".to_string(),
+        active: true,
     };
-    let arc_insert_product_req = ArcValueType::from_struct(insert_product_req);
-    let product_resp_av: InsertOneResponse = node
-        .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
-            Some(arc_insert_product_req),
-        )
-        .await?;
-    let product_insert_resp = product_resp_av;
-
-    let product_id = product_insert_resp.inserted_id.clone();
-    println!("Inserted product with ID: {}", product_id);
-
-    // Find the order
-    let mut filter_order_map: HashMap<String, ArcValueType> = HashMap::new();
-    filter_order_map.insert(
-        "_id".to_string(),
-        ArcValueType::new_primitive(order_id.clone()),
+    let struct_payload_json = serde_json::to_value(&struct_payload_data)?;
+    let echo_struct_url = format!("{}/{}/echo_struct", base_url, echo_service_path);
+    println!(
+        "Testing POST: {} with payload: {}",
+        echo_struct_url,
+        struct_payload_json
     );
-    let find_order_req = FindOneRequest {
-        collection: "orders".to_string(),
-        filter: filter_order_map,
-    };
-    let arc_find_order_req = ArcValueType::from_struct(find_order_req);
-    let find_order_resp_av: FindOneResponse = node
-        .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
-            Some(arc_find_order_req),
-        )
+    let response_struct = client
+        .post(&echo_struct_url)
+        .json(&struct_payload_json)
+        .send()
         .await?;
-    let find_order_resp = find_order_resp_av;
-    let found_order = find_order_resp.document.expect("Order should be found");
-    let mut order_product_id_av = found_order.get("product_id").unwrap().clone();
-    let order_product_id_arc = order_product_id_av.as_type_ref::<String>()?;
-    assert_eq!(*order_product_id_arc, "prod_123");
-    let mut order_quantity_av = found_order.get("quantity").unwrap().clone();
-    let order_quantity_arc = order_quantity_av.as_type_ref::<i64>()?;
-    assert_eq!(*order_quantity_arc, 2i64);
-    let mut order_total_price_av = found_order.get("total_price").unwrap().clone();
-    let order_total_price_arc = order_total_price_av.as_type_ref::<f64>()?;
-    assert_eq!(*order_total_price_arc, 50.99f64);
+    assert_eq!(response_struct.status(), HttpStatus::OK, "echo_struct request failed. Status: {:?}, Body: {:?}", response_struct.status(), response_struct.text().await?);
+    let response_body_struct: MyTestData = response_struct.json().await?;
+    assert_eq!(response_body_struct, struct_payload_data);
+    println!("POST /{}/echo_struct successful.", echo_service_path);
 
-    // Find the product
-    let mut filter_product_map: HashMap<String, ArcValueType> = HashMap::new();
-    filter_product_map.insert(
-        "_id".to_string(),
-        ArcValueType::new_primitive(product_id.clone()),
-    );
-    let find_product_req = FindOneRequest {
-        collection: "products".to_string(),
-        filter: filter_product_map,
-    };
-    let arc_find_product_req = ArcValueType::from_struct(find_product_req);
-    let find_product_resp_av: FindOneResponse = node
-        .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
-            Some(arc_find_product_req),
-        )
-        .await?;
-    let find_product_resp = find_product_resp_av;
-    let found_product = find_product_resp.document.expect("Product should be found");
-    let mut product_name_av = found_product.get("name").unwrap().clone();
-    let product_name_arc = product_name_av.as_type_ref::<String>()?;
-    assert_eq!(*product_name_arc, "Super Widget");
-    let mut product_price_av = found_product.get("price").unwrap().clone();
-    let product_price_arc = product_price_av.as_type_ref::<f64>()?;
-    assert_eq!(*product_price_arc, 25.49f64);
-    let mut product_in_stock_av = found_product.get("in_stock").unwrap().clone();
-    let product_in_stock_arc = product_in_stock_av.as_type_ref::<bool>()?;
-    assert_eq!(*product_in_stock_arc, true);
+    // 8. Stop Node
+    node.stop().await?;
+    println!("Node stopped.");
 
     Ok(())
 }

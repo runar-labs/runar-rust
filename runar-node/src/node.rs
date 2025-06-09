@@ -12,6 +12,7 @@ use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::{ArcValueType, EventMetadata, SerializerRegistry};
 use socket2;
 use std::collections::HashMap;
+use std::any::TypeId;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
@@ -428,6 +429,7 @@ impl Node {
         if self.running.load(Ordering::SeqCst) {
             self.registry_version.fetch_add(1, Ordering::SeqCst);
             let _ = self.notify_node_change().await;
+            //TODO fire service added event -> $registry/service/added
         }
 
         Ok(())
@@ -1273,7 +1275,18 @@ impl Node {
 
             // Execute the handler and return result
             let mut response_av = handler(request_payload_av.clone(), context).await?;
-            return response_av.as_type::<T>();
+            if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
+                // If T is ArcValueType, we cast response_av (which is ArcValueType) to T.
+                // This requires a bit of indirection through Box<dyn Any>.
+                let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
+                if let Ok(val_t) = boxed_any.downcast::<T>() {
+                    return Ok(*val_t);
+                } else {
+                    return Err(anyhow!("BUG: Failed to downcast ArcValueType to T when TypeIds matched."));
+                }
+            } else {
+                return response_av.as_type::<T>();
+            }
         }
 
         // If no local handler found, look for remote handlers
@@ -1314,7 +1327,16 @@ impl Node {
 
             // Execute the selected handler
             let mut response_av = handler(request_payload_av.clone(), context).await?;
-            return response_av.as_type::<T>();
+            if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
+                let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
+                if let Ok(val_t) = boxed_any.downcast::<T>() {
+                    return Ok(*val_t);
+                } else {
+                    return Err(anyhow!("BUG: Failed to downcast ArcValueType to T when TypeIds matched."));
+                }
+            } else {
+                return response_av.as_type::<T>();
+            }
         }
 
         // No handler found

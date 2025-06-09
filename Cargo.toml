@@ -4,9 +4,9 @@ members = [
     "runar-macros",
     "runar-common",
     "runar-services",
-    # "rust-macros-tests",
     "rust-examples/micro_services_demo",
     "runar-keys",
+    "runar-gateway",
 ]
 resolver = "2"
 
