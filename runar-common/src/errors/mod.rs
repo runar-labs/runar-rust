@@ -6,14 +6,14 @@ pub use thiserror::Error;
 
 // Export common error utilities
 pub mod utils {
-    use crate::types::ArcValueType;
+    use crate::types::ArcValue;
 
     /// Convert an error to a string value
-    pub fn error_to_string_value(error: impl std::fmt::Display) -> ArcValueType {
+    pub fn error_to_string_value(error: impl std::fmt::Display) -> ArcValue {
         // Just use the error message as a string for simplicity
         let error_message = error.to_string();
 
         // Return as string value
-        ArcValueType::new_primitive(error_message)
+        ArcValue::new_primitive(error_message)
     }
 }

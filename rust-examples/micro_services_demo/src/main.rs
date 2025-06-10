@@ -1,5 +1,5 @@
 use anyhow::Result;
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::network::network_config::NetworkConfig;
 use runar_node::network::transport::quic_transport::QuicTransportOptions; // Added for QuicTransportOptions
@@ -77,17 +77,14 @@ async fn main() -> Result<()> {
     let mut user_params = HashMap::new();
     user_params.insert(
         "username".to_string(),
-        ArcValueType::new_primitive("test_user".to_string()),
+        ArcValue::new_primitive("test_user".to_string()),
     );
     user_params.insert(
         "email".to_string(),
-        ArcValueType::new_primitive("test@example.com".to_string()),
+        ArcValue::new_primitive("test@example.com".to_string()),
     );
     let created_user: Option<User> = node
-        .request(
-            "users/create_user",
-            Some(ArcValueType::new_map(user_params)),
-        )
+        .request("users/create_user", Some(ArcValue::new_map(user_params)))
         .await?;
     if let Some(user) = created_user {
         println!("UserService response: Created User: {:?}", user);
@@ -96,12 +93,12 @@ async fn main() -> Result<()> {
         let mut profile_params = HashMap::new();
         profile_params.insert(
             "user_id".to_string(),
-            ArcValueType::new_primitive(user.id.clone()),
+            ArcValue::new_primitive(user.id.clone()),
         );
         let user_profile: Option<Profile> = node
             .request(
                 "profiles/get_profile",
-                Some(ArcValueType::new_map(profile_params)),
+                Some(ArcValue::new_map(profile_params)),
             )
             .await?;
         if let Some(profile) = user_profile {
@@ -113,12 +110,12 @@ async fn main() -> Result<()> {
         // Assuming a dummy account_id for now, as create_account might return the Account struct
         account_params.insert(
             "account_id".to_string(),
-            ArcValueType::new_primitive("acc_123".to_string()),
+            ArcValue::new_primitive("acc_123".to_string()),
         );
         let balance: Option<f64> = node
             .request(
                 "accounts/get_account_balance",
-                Some(ArcValueType::new_map(account_params)),
+                Some(ArcValue::new_map(account_params)),
             )
             .await?;
         if let Some(bal) = balance {
@@ -129,18 +126,15 @@ async fn main() -> Result<()> {
         let mut order_params = HashMap::new();
         order_params.insert(
             "user_id".to_string(),
-            ArcValueType::new_primitive(user.id.clone()),
+            ArcValue::new_primitive(user.id.clone()),
         );
         order_params.insert(
             "product_id".to_string(),
-            ArcValueType::new_primitive("prod_789".to_string()),
+            ArcValue::new_primitive("prod_789".to_string()),
         );
-        order_params.insert("quantity".to_string(), ArcValueType::new_primitive(2u32));
+        order_params.insert("quantity".to_string(), ArcValue::new_primitive(2u32));
         let new_order: Option<Order> = node
-            .request(
-                "orders/create_order",
-                Some(ArcValueType::new_map(order_params)),
-            )
+            .request("orders/create_order", Some(ArcValue::new_map(order_params)))
             .await?;
         if let Some(order) = new_order {
             println!("OrderService response: Created Order: {:?}", order);

@@ -30,8 +30,8 @@ use crate::node::Node; // Added for concrete type Node
 use crate::routing::TopicPath;
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
-use runar_common::types::AsArcValueType;
-use runar_common::types::{ActionMetadata, ArcValueType, FieldSchema, SerializerRegistry};
+use runar_common::types::AsArcValue;
+use runar_common::types::{ActionMetadata, ArcValue, FieldSchema, SerializerRegistry};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
@@ -54,7 +54,7 @@ pub use crate::services::request_context::RequestContext;
 /// This provides a consistent interface for all action handlers and enables
 /// them to be stored, passed around, and invoked uniformly.
 pub type ActionHandler =
-    Arc<dyn Fn(Option<ArcValueType>, RequestContext) -> ServiceFuture + Send + Sync>;
+    Arc<dyn Fn(Option<ArcValue>, RequestContext) -> ServiceFuture + Send + Sync>;
 
 /// Type for action registration function
 pub type ActionRegistrar = Arc<
@@ -70,7 +70,7 @@ pub type ActionRegistrar = Arc<
 pub type EventCallback = Box<
     dyn Fn(
             Arc<EventContext>,
-            Option<ArcValueType>,
+            Option<ArcValue>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
@@ -88,7 +88,7 @@ pub struct LifecycleContext {
     /// Service path - identifies the service within the network
     pub service_path: String,
     /// Optional configuration data
-    pub config: Option<ArcValueType>,
+    pub config: Option<ArcValue>,
     /// Logger instance with service context
     pub logger: Arc<Logger>,
     /// Node delegate for node operations
@@ -120,7 +120,7 @@ impl LifecycleContext {
     /// Add configuration to a LifecycleContext
     ///
     /// Use builder-style methods instead of specialized constructors.
-    pub fn with_config(mut self, config: ArcValueType) -> Self {
+    pub fn with_config(mut self, config: ArcValue) -> Self {
         self.config = Some(config);
         self
     }
@@ -156,7 +156,7 @@ impl LifecycleContext {
     /// - Simple action: "action" (current network ID and service path added - calls own service)
     pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         let path_string = path.into();
@@ -186,7 +186,7 @@ impl LifecycleContext {
     pub async fn publish(
         &self,
         topic: impl Into<String>,
-        data: Option<ArcValueType>,
+        data: Option<ArcValue>,
     ) -> Result<()> {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
@@ -335,7 +335,7 @@ pub struct ServiceRequest {
     /// Topic path for the service and action
     pub topic_path: TopicPath,
     /// Data for the request
-    pub data: ArcValueType,
+    pub data: ArcValue,
     /// Request context
     pub context: Arc<RequestContext>,
 }
@@ -348,7 +348,7 @@ impl ServiceRequest {
     pub fn new(
         service_path: impl Into<String>,
         action_or_event: impl Into<String>,
-        data: ArcValueType,
+        data: ArcValue,
         context: Arc<RequestContext>,
     ) -> Self {
         // Create a path string combining service path and action
@@ -373,7 +373,7 @@ impl ServiceRequest {
     /// This is useful when the TopicPath has already been constructed and validated.
     pub fn new_with_topic_path(
         topic_path: TopicPath,
-        data: ArcValueType,
+        data: ArcValue,
         context: Arc<RequestContext>,
     ) -> Self {
         Self {
@@ -390,7 +390,7 @@ impl ServiceRequest {
     pub fn new_with_optional(
         service_path: impl Into<String>,
         action_or_event: impl Into<String>,
-        data: Option<ArcValueType>,
+        data: Option<ArcValue>,
         context: Arc<RequestContext>,
     ) -> Self {
         // Create a TopicPath from the service path and action
@@ -404,7 +404,7 @@ impl ServiceRequest {
 
         Self {
             topic_path,
-            data: data.unwrap_or_else(ArcValueType::null),
+            data: data.unwrap_or_else(ArcValue::null),
             context,
         }
     }
@@ -441,14 +441,14 @@ impl ServiceRequest {
 //     /// HTTP-like status code
 //     pub status: u32,
 //     /// Response data if any (immutable)
-//     pub data: Option<ArcValueType>,
+//     pub data: Option<ArcValue>,
 //     /// Error message if any (immutable)
 //     pub error: Option<String>,
 // }
 
 // impl ServiceResponse {
 //     /// Create a new successful response with the given data
-//     pub fn ok(data: ArcValueType) -> Self {
+//     pub fn ok(data: ArcValue) -> Self {
 //         Self {
 //             status: 200,
 //             data: Some(data),
@@ -568,10 +568,10 @@ pub struct ActionRegistrationOptions {
 #[async_trait::async_trait]
 pub trait NodeRequestHandler: Send + Sync {
     /// Process a service request
-    async fn request(&self, path: String, params: Option<ArcValueType>) -> Result<ArcValueType>;
+    async fn request(&self, path: String, params: Option<ArcValue>) -> Result<ArcValue>;
 
     /// Publish an event to a topic
-    async fn publish(&self, topic: String, data: Option<ArcValueType>) -> Result<()>;
+    async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()>;
 
     /// Subscribe to a topic
     ///
@@ -583,7 +583,7 @@ pub trait NodeRequestHandler: Send + Sync {
         callback: Box<
             dyn Fn(
                     Arc<EventContext>,
-                    ArcValueType,
+                    ArcValue,
                 ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
@@ -600,7 +600,7 @@ pub trait NodeRequestHandler: Send + Sync {
         callback: Box<
             dyn Fn(
                     Arc<EventContext>,
-                    ArcValueType,
+                    ArcValue,
                 ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
@@ -650,7 +650,7 @@ impl ArcContextLogging for Arc<RequestContext> {
 ///
 /// INTENTION: Provide a consistent return type for asynchronous service methods,
 /// simplifying method signatures and ensuring uniformity across the codebase.
-pub type ServiceFuture = Pin<Box<dyn Future<Output = Result<ArcValueType>> + Send>>;
+pub type ServiceFuture = Pin<Box<dyn Future<Output = Result<ArcValue>> + Send>>;
 
 /// Event Dispatcher trait
 ///
@@ -674,7 +674,7 @@ pub trait EventDispatcher: Send + Sync {
         &self,
         topic: &str,
         event: &str,
-        data: Option<ArcValueType>,
+        data: Option<ArcValue>,
         network_id: &str,
     ) -> Result<()>;
 }
@@ -694,11 +694,11 @@ pub trait NodeDelegate: Send + Sync {
     /// Process a service request
     async fn request<P, T>(&self, path: impl Into<String> + Send, payload: Option<P>) -> Result<T>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>;
 
     /// Simplified publish for common cases
-    async fn publish(&self, topic: String, data: Option<ArcValueType>) -> Result<()>;
+    async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()>;
 
     /// Subscribe to a topic
     async fn subscribe(
@@ -707,7 +707,7 @@ pub trait NodeDelegate: Send + Sync {
         callback: Box<
             dyn Fn(
                     Arc<EventContext>,
-                    Option<ArcValueType>,
+                    Option<ArcValue>,
                 ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
@@ -721,7 +721,7 @@ pub trait NodeDelegate: Send + Sync {
         callback: Box<
             dyn Fn(
                     Arc<EventContext>,
-                    Option<ArcValueType>,
+                    Option<ArcValue>,
                 ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
@@ -795,7 +795,7 @@ pub struct RemoteLifecycleContext {
     /// Service path - identifies the service within the network
     pub service_path: String,
     /// Optional configuration data
-    pub config: Option<ArcValueType>,
+    pub config: Option<ArcValue>,
     /// Logger instance with service context
     pub logger: Arc<Logger>,
     /// Registry delegate for registry operations
@@ -819,7 +819,7 @@ impl RemoteLifecycleContext {
     /// Add configuration to a RemoteLifecycleContext
     ///
     /// Use builder-style methods instead of specialized constructors.
-    pub fn with_config(mut self, config: ArcValueType) -> Self {
+    pub fn with_config(mut self, config: ArcValue) -> Self {
         self.config = Some(config);
         self
     }
@@ -892,9 +892,9 @@ impl RemoteLifecycleContext {
 /// Handler receives optional payload and context, returns a response
 pub type ServiceHandler = Box<
     dyn Fn(
-            Option<ArcValueType>,
+            Option<ArcValue>,
             Arc<RequestContext>,
-        ) -> Pin<Box<dyn Future<Output = Option<ArcValueType>> + Send>>
+        ) -> Pin<Box<dyn Future<Output = Option<ArcValue>> + Send>>
         + Send
         + Sync,
 >;

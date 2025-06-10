@@ -18,7 +18,7 @@ use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
 use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
-use runar_common::types::{ActionMetadata, ArcValueType, SerializerRegistry, ServiceMetadata};
+use runar_common::types::{ActionMetadata, ArcValue, SerializerRegistry, ServiceMetadata};
 
 /// Represents a service running on a remote node
 #[derive(Clone)]
@@ -49,7 +49,7 @@ pub struct RemoteService {
 
     /// Pending requests awaiting responses
     pending_requests:
-        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValueType>>>>>,
+        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
 
     /// Request timeout in milliseconds
     request_timeout_ms: u64,
@@ -71,7 +71,7 @@ pub struct RemoteServiceDependencies {
     pub serializer: Arc<RwLock<SerializerRegistry>>,
     pub local_node_id: PeerId, // ID of the local node
     pub pending_requests:
-        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValueType>>>>>,
+        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
     pub logger: Arc<Logger>,
 }
 
@@ -234,7 +234,7 @@ impl RemoteService {
                 let payload_vec: Vec<u8> = match if let Some(params) = params {
                     serializer.serialize_value(&params)
                 } else {
-                    serializer.serialize_value(&ArcValueType::null())
+                    serializer.serialize_value(&ArcValue::null())
                 } {
                     Ok(bytes) => bytes.to_vec(), // Convert Arc<[u8]> to Vec<u8>
                     Err(e) => return Err(anyhow::anyhow!("Serialization error: {}", e)),

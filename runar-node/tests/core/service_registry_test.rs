@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_node::routing::TopicPath;
 use runar_node::services::abstract_service::ServiceState;
 use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
@@ -38,7 +38,7 @@ fn create_test_handler(name: &str, expected_network_id: &str) -> ActionHandler {
                 return Err(anyhow::anyhow!("Network ID mismatch"));
             }
 
-            Ok(ArcValueType::new_primitive(name.to_string()))
+            Ok(ArcValue::new_primitive(name.to_string()))
         })
     })
 }
@@ -65,7 +65,7 @@ async fn test_subscribe_and_unsubscribe() {
         // Create a callback that would be invoked when an event is published
         let callback = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _: Option<ArcValueType>|
+                  _: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 let was_called = was_called_clone.clone();
                 Box::pin(async move {
@@ -120,7 +120,7 @@ async fn test_wildcard_subscriptions() {
         // Create a callback
         let callback = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _: Option<ArcValueType>|
+                  _: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 Box::pin(async move { Ok(()) })
             },
@@ -197,7 +197,7 @@ async fn test_register_and_get_action_handler() {
         let handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -250,21 +250,21 @@ async fn test_multiple_action_handlers() {
         let add_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Add handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
         let subtract_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Subtract handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
         let concat_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Concat handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -362,7 +362,7 @@ async fn test_action_handler_network_isolation() {
             .await
             .unwrap();
         let (handler1_retrieved, _) = result1; // Extract the handler from the tuple
-        handler1_retrieved(Some(ArcValueType::null()), request_ctx1)
+        handler1_retrieved(Some(ArcValue::null()), request_ctx1)
             .await
             .unwrap();
 
@@ -372,7 +372,7 @@ async fn test_action_handler_network_isolation() {
             .await
             .unwrap();
         let (handler2_retrieved, _) = result2; // Extract the handler from the tuple
-        handler2_retrieved(Some(ArcValueType::null()), request_ctx2)
+        handler2_retrieved(Some(ArcValue::null()), request_ctx2)
             .await
             .unwrap();
 
@@ -407,7 +407,7 @@ async fn test_action_handler_network_isolation() {
         // Even though the PathTrie bug is fixed, it's still good practice to validate network IDs
         // in handlers for defense in depth
         let handler1_with_wrong_ctx =
-            handler1(Some(ArcValueType::null()), wrong_network_context.clone()).await;
+            handler1(Some(ArcValue::null()), wrong_network_context.clone()).await;
         assert!(
             handler1_with_wrong_ctx.is_err(),
             "Handler should validate network ID"
@@ -449,7 +449,7 @@ async fn test_multiple_event_handlers() {
         // Create a first event handler to track events with "topic1"
         let handler1 = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _data: Option<ArcValueType>|
+                  _data: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 let received = received_topic1_clone.clone();
                 Box::pin(async move {
@@ -462,7 +462,7 @@ async fn test_multiple_event_handlers() {
         // Create a second event handler to track events with "topic2"
         let handler2 = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _data: Option<ArcValueType>|
+                  _data: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 let received = received_topic2_clone.clone();
                 Box::pin(async move {
@@ -550,7 +550,7 @@ async fn test_path_template_parameters() {
                     return Err(anyhow!("Missing service_path parameter"));
                 }
 
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -569,7 +569,7 @@ async fn test_path_template_parameters() {
                     return Err(anyhow!("Missing service_path parameter"));
                 }
 
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -597,7 +597,7 @@ async fn test_path_template_parameters() {
                     return Err(anyhow!("Missing parameters"));
                 }
 
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -687,7 +687,7 @@ async fn test_local_remote_action_handler_separation() {
         let local_handler: ActionHandler = Arc::new(|_params, _context| {
             Box::pin(async move {
                 println!("Local handler called");
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -748,7 +748,7 @@ async fn test_multiple_network_ids() {
         assert_eq!(network_id, "network1");
 
         Box::pin(async move {
-            Ok(ArcValueType::new_primitive(format!(
+            Ok(ArcValue::new_primitive(format!(
                 "Response from {}",
                 network_id
             )))
@@ -760,7 +760,7 @@ async fn test_multiple_network_ids() {
         assert_eq!(network_id, "network2");
 
         Box::pin(async move {
-            Ok(ArcValueType::new_primitive(format!(
+            Ok(ArcValue::new_primitive(format!(
                 "Response from {}",
                 network_id
             )))
@@ -783,7 +783,7 @@ async fn test_multiple_network_ids() {
         .await
         .unwrap();
     let (handler1, _) = result1;
-    handler1(Some(ArcValueType::null()), request_ctx1)
+    handler1(Some(ArcValue::null()), request_ctx1)
         .await
         .unwrap();
 
@@ -792,7 +792,7 @@ async fn test_multiple_network_ids() {
         .await
         .unwrap();
     let (handler2, _) = result2;
-    handler2(Some(ArcValueType::null()), request_ctx2)
+    handler2(Some(ArcValue::null()), request_ctx2)
         .await
         .unwrap();
 }
@@ -820,7 +820,7 @@ async fn test_get_actions_metadata() {
 
         // Create action handlers
         let add_handler: ActionHandler =
-            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValueType::null()) }));
+            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValue::null()) }));
         let add_metadata = ActionMetadata {
             name: add_action_path.as_str().to_string(),
             description: "Add action".to_string(),
@@ -829,7 +829,7 @@ async fn test_get_actions_metadata() {
         };
 
         let subtract_handler: ActionHandler =
-            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValueType::null()) }));
+            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValue::null()) }));
         let subtract_metadata = ActionMetadata {
             name: subtract_action_path.as_str().to_string(),
             description: "Subtract action".to_string(),
@@ -838,7 +838,7 @@ async fn test_get_actions_metadata() {
         };
 
         let multiply_handler: ActionHandler =
-            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValueType::null()) }));
+            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValue::null()) }));
         let multiply_metadata = ActionMetadata {
             name: multiply_action_path.as_str().to_string(),
             description: "Multiply action".to_string(),

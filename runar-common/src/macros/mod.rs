@@ -16,17 +16,17 @@ mod vmap_macros;
 // are automatically available at the crate root namespace
 // We don't need to re-export them specifically
 
-/// Create an ArcValueType::Map with key-value pairs
+/// Create an ArcValue::Map with key-value pairs
 ///
-/// This macro allows you to create an ArcValueType::Map with key-value pairs.
-/// The keys are converted to strings, and the values are converted to ArcValueType.
+/// This macro allows you to create an ArcValue::Map with key-value pairs.
+/// The keys are converted to strings, and the values are converted to ArcValue.
 ///
 /// ## Map Creation Usage:
 ///
 /// ```
 /// use runar_common::vmap;
-/// use runar_common::types::ArcValueType;
-/// // Create a new ArcValueType::Map:
+/// use runar_common::types::ArcValue;
+/// // Create a new ArcValue::Map:
 /// let params = vmap!("name" => "John", "age" => 30, "active" => true);
 /// ```
 ///
@@ -34,7 +34,7 @@ mod vmap_macros;
 ///
 /// ```
 /// use runar_common::vmap;
-/// use runar_common::types::ArcValueType;
+/// use runar_common::types::ArcValue;
 /// // Create an empty map
 /// let empty = vmap!{};
 /// ```
@@ -61,7 +61,7 @@ macro_rules! hmap {
     };
 }
 
-// Define and export the vjson macro (JSON to ArcValueType)
+// Define and export the vjson macro (JSON to ArcValue)
 #[macro_export]
 macro_rules! vjson {
     ($($json:tt)+) => {

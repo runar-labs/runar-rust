@@ -1,7 +1,7 @@
 //! VMap module for runar_common
 //! Provides a convenient wrapper for working with maps with string keys
 
-use crate::types::ArcValueType;
+use crate::types::ArcValue;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -72,14 +72,14 @@ impl<T> Default for VMap<T> {
         Self::new()
     }
 }
-// Extension methods for ArcValueType conversions
+// Extension methods for ArcValue conversions
 impl<T> VMap<T>
 where
     T: 'static + Clone + Send + Sync + fmt::Debug,
     HashMap<String, T>: 'static + Send + Sync,
 {
-    /// Convert VMap to an ArcValueType with Map category
-    pub fn to_arc_value_type(self) -> ArcValueType {
-        ArcValueType::from_map(self.inner)
+    /// Convert VMap to an ArcValue with Map category
+    pub fn to_arc_value_type(self) -> ArcValue {
+        ArcValue::from_map(self.inner)
     }
 }

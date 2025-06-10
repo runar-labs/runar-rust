@@ -4,18 +4,18 @@ mod tests {
 
     use anyhow::Result;
 
-    use runar_common::types::ArcValueType;
+    use runar_common::types::ArcValue;
     use runar_common::types::VMap;
 
     // Test implementation
-    fn create_test_vmap() -> VMap<ArcValueType> {
+    fn create_test_vmap() -> VMap<ArcValue> {
         let mut map = HashMap::new();
         map.insert(
             "key1".to_string(),
-            ArcValueType::new_primitive("value1".to_string()),
+            ArcValue::new_primitive("value1".to_string()),
         );
-        map.insert("key2".to_string(), ArcValueType::new_primitive(42.0));
-        map.insert("key3".to_string(), ArcValueType::new_primitive(true));
+        map.insert("key2".to_string(), ArcValue::new_primitive(42.0));
+        map.insert("key3".to_string(), ArcValue::new_primitive(true));
         VMap::from_hashmap(map)
     }
 

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_macros::{action, service};
 use runar_node::services::RequestContext;
 
@@ -25,13 +25,13 @@ impl AccountService {
         &self,
         account_id: String,
         _ctx: &RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         // Placeholder implementation
         println!(
             "AccountService: Called get_account_balance for account_id: {}",
             account_id
         );
-        Ok(ArcValueType::new_primitive(1234.56f64)) // Dummy balance
+        Ok(ArcValue::new_primitive(1234.56f64)) // Dummy balance
     }
 
     // Example of another action, e.g., to create an account

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_common::vmap; // Added for vmap!
 
 use runar_node::Node;
@@ -183,16 +183,16 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         "email" => "alice@example.com".to_string(),
         "age" => 30i64
     };
-    // Convert ArcValueType::Map back to HashMap for InsertOneRequest
-    let user_doc_auto_id_map: HashMap<String, ArcValueType> = user_doc_arc_value_map
-        .as_type::<HashMap<String, ArcValueType>>()
+    // Convert ArcValue::Map back to HashMap for InsertOneRequest
+    let user_doc_auto_id_map: HashMap<String, ArcValue> = user_doc_arc_value_map
+        .as_type::<HashMap<String, ArcValue>>()
         .expect("vmap! should produce a valid map");
 
     let insert_req_auto = InsertOneRequest {
         collection: collection_name.clone(),
         document: user_doc_auto_id_map.clone(),
     };
-    let arc_insert_req_auto = ArcValueType::from_struct(insert_req_auto);
+    let arc_insert_req_auto = ArcValue::from_struct(insert_req_auto);
 
     let insert_resp_av: InsertOneResponse = node
         .request(
@@ -207,16 +207,16 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
     println!("Inserted document with auto-generated ID: {}", generated_id);
 
     // 2. Find the inserted document by its generated ID
-    let mut filter_auto_id_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut filter_auto_id_map: HashMap<String, ArcValue> = HashMap::new();
     filter_auto_id_map.insert(
         "_id".to_string(),
-        ArcValueType::new_primitive(generated_id.clone()),
+        ArcValue::new_primitive(generated_id.clone()),
     );
     let find_req_auto = FindOneRequest {
         collection: collection_name.clone(),
         filter: filter_auto_id_map,
     };
-    let arc_find_req_auto = ArcValueType::from_struct(find_req_auto);
+    let arc_find_req_auto = ArcValue::from_struct(find_req_auto);
 
     let find_resp_av: FindOneResponse = node
         .request(
@@ -248,18 +248,18 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
 
     // 3. Insert a document with a predefined ID
     let predefined_id = "user-bob-001".to_string();
-    let mut user_doc_pre_id_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut user_doc_pre_id_map: HashMap<String, ArcValue> = HashMap::new();
     user_doc_pre_id_map.insert(
         "_id".to_string(),
-        ArcValueType::new_primitive(predefined_id.clone()),
+        ArcValue::new_primitive(predefined_id.clone()),
     );
     user_doc_pre_id_map.insert(
         "name".to_string(),
-        ArcValueType::new_primitive("Bob".to_string()),
+        ArcValue::new_primitive("Bob".to_string()),
     );
     user_doc_pre_id_map.insert(
         "email".to_string(),
-        ArcValueType::new_primitive("bob@example.com".to_string()),
+        ArcValue::new_primitive("bob@example.com".to_string()),
     );
     // Note: "city" field removed as it's not in the 'users' schema
 
@@ -267,7 +267,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         collection: collection_name.clone(),
         document: user_doc_pre_id_map.clone(),
     };
-    let arc_insert_req_pre = ArcValueType::from_struct(insert_req_pre);
+    let arc_insert_req_pre = ArcValue::from_struct(insert_req_pre);
 
     let insert_resp_pre_av: InsertOneResponse = node
         .request(
@@ -280,16 +280,16 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
     println!("Inserted document with predefined ID: {}", predefined_id);
 
     // 4. Find the document with the predefined ID
-    let mut filter_pre_id_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut filter_pre_id_map: HashMap<String, ArcValue> = HashMap::new();
     filter_pre_id_map.insert(
         "_id".to_string(),
-        ArcValueType::new_primitive(predefined_id.clone()),
+        ArcValue::new_primitive(predefined_id.clone()),
     );
     let find_req_pre = FindOneRequest {
         collection: collection_name.clone(),
         filter: filter_pre_id_map,
     };
-    let arc_find_req_pre = ArcValueType::from_struct(find_req_pre);
+    let arc_find_req_pre = ArcValue::from_struct(find_req_pre);
 
     let find_resp_pre_av: FindOneResponse = node
         .request(
@@ -317,16 +317,16 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
 
     // 5. Attempt to find a non-existent document
     let non_existent_id = "user-does-not-exist-404".to_string();
-    let mut filter_non_existent_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut filter_non_existent_map: HashMap<String, ArcValue> = HashMap::new();
     filter_non_existent_map.insert(
         "_id".to_string(),
-        ArcValueType::new_primitive(non_existent_id.clone()),
+        ArcValue::new_primitive(non_existent_id.clone()),
     );
     let find_req_non_existent = FindOneRequest {
         collection: collection_name.clone(),
         filter: filter_non_existent_map,
     };
-    let arc_find_req_non_existent = ArcValueType::from_struct(find_req_non_existent);
+    let arc_find_req_non_existent = ArcValue::from_struct(find_req_non_existent);
 
     let find_response_non_existent: FindOneResponse = node
         .request(
@@ -354,22 +354,22 @@ async fn test_insert_into_different_collections() -> Result<()> {
         .expect("Failed to setup node with services");
 
     // Insert into 'orders' collection
-    let mut order_doc_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut order_doc_map: HashMap<String, ArcValue> = HashMap::new();
     order_doc_map.insert(
         "product_id".to_string(),
-        ArcValueType::new_primitive("prod_123".to_string()),
+        ArcValue::new_primitive("prod_123".to_string()),
     );
-    order_doc_map.insert("quantity".to_string(), ArcValueType::new_primitive(2i64));
+    order_doc_map.insert("quantity".to_string(), ArcValue::new_primitive(2i64));
     order_doc_map.insert(
         "total_price".to_string(),
-        ArcValueType::new_primitive(50.99f64),
+        ArcValue::new_primitive(50.99f64),
     );
 
     let insert_order_req = InsertOneRequest {
         collection: "orders".to_string(),
         document: order_doc_map.clone(),
     };
-    let arc_insert_order_req = ArcValueType::from_struct(insert_order_req);
+    let arc_insert_order_req = ArcValue::from_struct(insert_order_req);
     let order_resp_av: InsertOneResponse = node
         .request(
             &format!("{}/insertOne", CRUD_SERVICE_PATH),
@@ -381,19 +381,19 @@ async fn test_insert_into_different_collections() -> Result<()> {
     println!("Inserted order with ID: {}", order_id);
 
     // Insert into 'products' collection
-    let mut product_doc_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut product_doc_map: HashMap<String, ArcValue> = HashMap::new();
     product_doc_map.insert(
         "name".to_string(),
-        ArcValueType::new_primitive("Super Widget".to_string()),
+        ArcValue::new_primitive("Super Widget".to_string()),
     );
-    product_doc_map.insert("price".to_string(), ArcValueType::new_primitive(25.49f64));
-    product_doc_map.insert("in_stock".to_string(), ArcValueType::new_primitive(true));
+    product_doc_map.insert("price".to_string(), ArcValue::new_primitive(25.49f64));
+    product_doc_map.insert("in_stock".to_string(), ArcValue::new_primitive(true));
 
     let insert_product_req = InsertOneRequest {
         collection: "products".to_string(),
         document: product_doc_map.clone(),
     };
-    let arc_insert_product_req = ArcValueType::from_struct(insert_product_req);
+    let arc_insert_product_req = ArcValue::from_struct(insert_product_req);
     let product_resp_av: InsertOneResponse = node
         .request(
             &format!("{}/insertOne", CRUD_SERVICE_PATH),
@@ -406,16 +406,16 @@ async fn test_insert_into_different_collections() -> Result<()> {
     println!("Inserted product with ID: {}", product_id);
 
     // Find the order
-    let mut filter_order_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut filter_order_map: HashMap<String, ArcValue> = HashMap::new();
     filter_order_map.insert(
         "_id".to_string(),
-        ArcValueType::new_primitive(order_id.clone()),
+        ArcValue::new_primitive(order_id.clone()),
     );
     let find_order_req = FindOneRequest {
         collection: "orders".to_string(),
         filter: filter_order_map,
     };
-    let arc_find_order_req = ArcValueType::from_struct(find_order_req);
+    let arc_find_order_req = ArcValue::from_struct(find_order_req);
     let find_order_resp_av: FindOneResponse = node
         .request(
             &format!("{}/findOne", CRUD_SERVICE_PATH),
@@ -435,16 +435,16 @@ async fn test_insert_into_different_collections() -> Result<()> {
     assert_eq!(*order_total_price_arc, 50.99f64);
 
     // Find the product
-    let mut filter_product_map: HashMap<String, ArcValueType> = HashMap::new();
+    let mut filter_product_map: HashMap<String, ArcValue> = HashMap::new();
     filter_product_map.insert(
         "_id".to_string(),
-        ArcValueType::new_primitive(product_id.clone()),
+        ArcValue::new_primitive(product_id.clone()),
     );
     let find_product_req = FindOneRequest {
         collection: "products".to_string(),
         filter: filter_product_map,
     };
-    let arc_find_product_req = ArcValueType::from_struct(find_product_req);
+    let arc_find_product_req = ArcValue::from_struct(find_product_req);
     let find_product_resp_av: FindOneResponse = node
         .request(
             &format!("{}/findOne", CRUD_SERVICE_PATH),

@@ -69,7 +69,7 @@ The `publish` and `subscribe` macros simplify event-based communication.
 ```rust
 // Subscribe to events
 #[subscribe("example_topic")]
-async fn on_example_topic(&mut self, context: &RequestContext, payload: ArcValueType) -> Result<()> {
+async fn on_example_topic(&mut self, context: &RequestContext, payload: ArcValue) -> Result<()> {
     // Handle event
     Ok(())
 }
@@ -89,7 +89,7 @@ Here's a complete example showing how to use the service and action macros toget
 
 ```rust
 use anyhow::Result;
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_macros::{action, service};
 use runar_node::services::{LifecycleContext, RequestContext, ServiceResponse};
 use std::sync::{Arc, Mutex};
@@ -187,9 +187,9 @@ mod tests {
         node.start().await.unwrap();
 
         // Make a request to the add action
-        let params = ArcValueType::new_array(vec![
-            ArcValueType::new_primitive(5.0f64),
-            ArcValueType::new_primitive(3.0f64),
+        let params = ArcValue::new_array(vec![
+            ArcValue::new_primitive(5.0f64),
+            ArcValue::new_primitive(3.0f64),
         ]);
 
         let response = timeout(
@@ -208,9 +208,9 @@ mod tests {
         );
 
         // Make a request to the multiply action (with custom name)
-        let params = ArcValueType::new_array(vec![
-            ArcValueType::new_primitive(5.0f64),
-            ArcValueType::new_primitive(3.0f64),
+        let params = ArcValue::new_array(vec![
+            ArcValue::new_primitive(5.0f64),
+            ArcValue::new_primitive(3.0f64),
         ]);
 
         let response = timeout(

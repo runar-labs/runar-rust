@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
-use runar_common::types::{ArcValueType, EventMetadata, SerializerRegistry};
+use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -47,7 +47,7 @@ use crate::services::{
     PublishOptions, RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
 use crate::{AbstractService, ServiceState};
-use runar_common::types::AsArcValueType;
+use runar_common::types::AsArcValue;
 
 /// Node Configuration
 ///
@@ -187,7 +187,7 @@ pub struct Node {
 
     /// Pending requests waiting for responses, keyed by correlation ID
     pub(crate) pending_requests:
-        Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValueType>>>>>,
+        Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
 
     pub serializer: Arc<RwLock<SerializerRegistry>>,
 
@@ -947,12 +947,12 @@ impl Node {
                 Err(e) => {
                     // Create a map for the error response
                     let mut error_map = HashMap::new();
-                    error_map.insert("error".to_string(), ArcValueType::new_primitive(true));
+                    error_map.insert("error".to_string(), ArcValue::new_primitive(true));
                     error_map.insert(
                         "message".to_string(),
-                        ArcValueType::new_primitive(e.to_string()),
+                        ArcValue::new_primitive(e.to_string()),
                     );
-                    let error_value = ArcValueType::from_map(error_map);
+                    let error_value = ArcValue::from_map(error_map);
 
                     // Serialize the error value
                     let serialized_error =
@@ -1062,9 +1062,9 @@ impl Node {
                     }
                 };
 
-                // Send the response (which is ArcValueType) through the oneshot channel
-                // payload_data is already ArcValueType. If the original response was 'None',
-                // serializer.deserialize_value should produce ArcValueType::null().
+                // Send the response (which is ArcValue) through the oneshot channel
+                // payload_data is already ArcValue. If the original response was 'None',
+                // serializer.deserialize_value should produce ArcValue::null().
                 match pending_request_sender.send(Ok(payload_data)) {
                     Ok(_) => self.logger.debug(format!(
                         "Successfully sent response for correlation ID: {}",
@@ -1174,8 +1174,8 @@ impl Node {
     pub async fn local_request(
         &self,
         path: impl Into<String>,
-        payload: Option<ArcValueType>,
-    ) -> Result<ArcValueType> {
+        payload: Option<ArcValue>,
+    ) -> Result<ArcValue> {
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
             Ok(tp) => tp,
@@ -1230,7 +1230,7 @@ impl Node {
     /// This is the central request routing mechanism for the Node.
     pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         let request_payload_av = payload.map(P::into_arc_value_type);
@@ -1275,17 +1275,17 @@ impl Node {
             // Execute the handler and return result
             let mut response_av = handler(request_payload_av.clone(), context).await?;
             //TODO: check why tghis was added.. I dont like this here. if this is necessary
-            //it shuol dbe done int he ArcValueType .as_type method..and ahdnel this scenarion.. this is not/
+            //it shuol dbe done int he ArcValue .as_type method..and ahdnel this scenarion.. this is not/
             //reponsability oif the node
-            // if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
-            //     // If T is ArcValueType, we cast response_av (which is ArcValueType) to T.
+            // if TypeId::of::<T>() == TypeId::of::<ArcValue>() {
+            //     // If T is ArcValue, we cast response_av (which is ArcValue) to T.
             //     // This requires a bit of indirection through Box<dyn Any>.
             //     let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
             //     if let Ok(val_t) = boxed_any.downcast::<T>() {
             //         return Ok(*val_t);
             //     } else {
             //         return Err(anyhow!(
-            //             "BUG: Failed to downcast ArcValueType to T when TypeIds matched."
+            //             "BUG: Failed to downcast ArcValue to T when TypeIds matched."
             //         ));
             //     }
             // } else {
@@ -1333,15 +1333,15 @@ impl Node {
             // Execute the selected handler
             let mut response_av = handler(request_payload_av.clone(), context).await?;
             //TODO: check why tghis was added.. I dont like this here. if this is necessary
-            //it shuol dbe done int he ArcValueType .as_type method..and ahdnel this scenarion.. this is not/
+            //it shuol dbe done int he ArcValue .as_type method..and ahdnel this scenarion.. this is not/
             //reponsability oif the node
-            // if TypeId::of::<T>() == TypeId::of::<ArcValueType>() {
+            // if TypeId::of::<T>() == TypeId::of::<ArcValue>() {
             //     let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
             //     if let Ok(val_t) = boxed_any.downcast::<T>() {
             //         return Ok(*val_t);
             //     } else {
             //         return Err(anyhow!(
-            //             "BUG: Failed to downcast ArcValueType to T when TypeIds matched."
+            //             "BUG: Failed to downcast ArcValue to T when TypeIds matched."
             //         ));
             //     }
             // } else {
@@ -1358,7 +1358,7 @@ impl Node {
     async fn publish_with_options(
         &self,
         topic: impl Into<String>,
-        data: Option<ArcValueType>,
+        data: Option<ArcValue>,
         options: PublishOptions,
     ) -> Result<()> {
         let topic_string = topic.into();
@@ -1756,14 +1756,14 @@ impl NodeDelegate for Node {
     async fn request<P, T>(&self, path: impl Into<String> + Send, payload: Option<P>) -> Result<T>
     // Changed from Result<Option<T>>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         // Delegate directly to our (now generic) inherent implementation.
         self.request(path, payload).await
     }
 
-    async fn publish(&self, topic: String, data: Option<ArcValueType>) -> Result<()> {
+    async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()> {
         // Create default options
         let options = PublishOptions {
             broadcast: true,
@@ -1781,7 +1781,7 @@ impl NodeDelegate for Node {
         callback: Box<
             dyn Fn(
                     Arc<EventContext>,
-                    Option<ArcValueType>,
+                    Option<ArcValue>,
                 ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,

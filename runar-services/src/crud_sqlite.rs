@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use runar_common::types::{ArcValueType, ValueCategory};
+use runar_common::types::{ArcValue, ValueCategory};
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
 use serde::{Deserialize, Serialize};
@@ -16,11 +16,11 @@ use crate::sqlite::{
 /// Represents a request to insert a single document into a collection.
 ///
 /// Intention: To provide a structured way to specify the collection and document for an insert operation.
-/// The document is represented as a map of field names to ArcValueType values.
+/// The document is represented as a map of field names to ArcValue values.
 #[derive(Debug, Serialize, Deserialize, Clone)] // Clone for potential re-use if request fails and retries
 pub struct InsertOneRequest {
     pub collection: String,
-    pub document: HashMap<String, ArcValueType>,
+    pub document: HashMap<String, ArcValue>,
 }
 
 /// Represents the response from an insert_one operation.
@@ -34,11 +34,11 @@ pub struct InsertOneResponse {
 /// Represents a request to find a single document in a collection.
 ///
 /// Intention: To specify the collection and filter criteria for a find operation.
-/// The filter is a map, typically `{"_id": ArcValueType::Text("some-uuid")}`.
+/// The filter is a map, typically `{"_id": ArcValue::Text("some-uuid")}`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FindOneRequest {
     pub collection: String,
-    pub filter: HashMap<String, ArcValueType>,
+    pub filter: HashMap<String, ArcValue>,
 }
 
 /// Represents the response from a find_one operation.
@@ -46,7 +46,7 @@ pub struct FindOneRequest {
 /// Intention: To return the found document (as a map), if any.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FindOneResponse {
-    pub document: Option<HashMap<String, ArcValueType>>,
+    pub document: Option<HashMap<String, ArcValue>>,
 }
 
 /// A service that provides a MongoDB-like CRUD API on top of an SqliteService.
@@ -94,9 +94,9 @@ impl CrudSqliteService {
     fn schema_aware_convert_row_values(
         &self,
         collection_name: &str,
-        mut row_map: HashMap<String, ArcValueType>,
+        mut row_map: HashMap<String, ArcValue>,
         context: &RequestContext, // For logging
-    ) -> Result<HashMap<String, ArcValueType>> {
+    ) -> Result<HashMap<String, ArcValue>> {
         let table_schema = self
             .schema
             .tables
@@ -120,12 +120,12 @@ impl CrudSqliteService {
                                     "Converting field '{}' (i64: {}) to bool: {} for collection '{}' based on schema",
                                     field_name, *int_val_ref, bool_val, collection_name
                                 ));
-                                *arc_value = ArcValueType::new_primitive(bool_val);
+                                *arc_value = ArcValue::new_primitive(bool_val);
                             } else if arc_value.as_type_ref::<bool>().is_ok() {
                                 // Already a bool, do nothing
                             } else {
                                 context.warn(format!(
-                                    "Field '{}' in collection '{}' is schema type Boolean, but ArcValueType is Primitive but not i64 or bool: {:?}. Leaving as is.",
+                                    "Field '{}' in collection '{}' is schema type Boolean, but ArcValue is Primitive but not i64 or bool: {:?}. Leaving as is.",
                                     field_name, collection_name, arc_value
                                 ));
                             }
@@ -135,7 +135,7 @@ impl CrudSqliteService {
                         }
                         _ => {
                             context.warn(format!(
-                                "Field '{}' in collection '{}' is schema type Boolean, but ArcValueType is not Primitive or Null: {:?}. Leaving as is.",
+                                "Field '{}' in collection '{}' is schema type Boolean, but ArcValue is not Primitive or Null: {:?}. Leaving as is.",
                                 field_name, collection_name, arc_value
                             ));
                         }
@@ -150,9 +150,9 @@ impl CrudSqliteService {
         format!("{}/{}", self.store_path, action)
     }
 
-    // Helper function to convert ArcValueType to SqliteValue
+    // Helper function to convert ArcValue to SqliteValue
     // This could potentially be moved to src/sqlite.rs if generally useful
-    fn arc_value_to_sqlite_value(av: &mut ArcValueType) -> Result<SqliteValue> {
+    fn arc_value_to_sqlite_value(av: &mut ArcValue) -> Result<SqliteValue> {
         match av.category {
             ValueCategory::Null => Ok(SqliteValue::Null),
             ValueCategory::Primitive => {
@@ -166,7 +166,7 @@ impl CrudSqliteService {
                     Ok(SqliteValue::Integer(if *b_val_arc { 1 } else { 0 })) // SQLite uses 0 and 1 for booleans
                 } else {
                     Err(anyhow!(
-                        "Unsupported primitive type '{}' within ArcValueType for SQLite conversion.",
+                        "Unsupported primitive type '{}' within ArcValue for SQLite conversion.",
                         av.value.as_ref().map_or_else(|| "[value was None, inconsistent for Primitive category]".to_string(), |v| v.type_name().to_string())
                     ))
                 }
@@ -176,7 +176,7 @@ impl CrudSqliteService {
                 Ok(SqliteValue::Blob(bytes_vec_arc.as_ref().clone()))
             }
             _ => Err(anyhow!(
-                "Unsupported ArcValueType category {:?} for direct SQLite conversion",
+                "Unsupported ArcValue category {:?} for direct SQLite conversion",
                 av.category
             )),
         }
@@ -185,8 +185,8 @@ impl CrudSqliteService {
     async fn handle_insert_one(
         self: Arc<Self>,
         context: RequestContext,
-        request_payload: Option<ArcValueType>,
-    ) -> Result<ArcValueType> {
+        request_payload: Option<ArcValue>,
+    ) -> Result<ArcValue> {
         context.debug(format!(
             "Handling insertOne request for CrudSqliteService '{}'",
             self.name
@@ -220,7 +220,7 @@ impl CrudSqliteService {
             Some(id_val) => id_val.clone(), // Use provided _id
             None => {
                 let new_id = Uuid::new_v4().to_string();
-                let new_id_av = ArcValueType::new_primitive(new_id);
+                let new_id_av = ArcValue::new_primitive(new_id);
                 doc_to_insert.insert(id_field_name.clone(), new_id_av.clone());
                 new_id_av
             }
@@ -326,7 +326,7 @@ impl CrudSqliteService {
         let action_path = self.sqlite_action_path("execute_query");
 
         let rows_affected: i64 = context
-            .request(action_path, Some(ArcValueType::from_struct(sql_query)))
+            .request(action_path, Some(ArcValue::from_struct(sql_query)))
             .await
             .expect("Failed to execute INSERT statement");
 
@@ -339,7 +339,7 @@ impl CrudSqliteService {
                     inserted_id, req.collection
                 ));
                 let response_struct = InsertOneResponse { inserted_id };
-                let final_response_av = ArcValueType::from_struct(response_struct);
+                let final_response_av = ArcValue::from_struct(response_struct);
                 Ok(final_response_av)
             }
             other_rows_affected => {
@@ -356,8 +356,8 @@ impl CrudSqliteService {
     async fn handle_find_one(
         self: Arc<Self>,
         context: RequestContext,
-        request_payload: Option<ArcValueType>,
-    ) -> Result<ArcValueType> {
+        request_payload: Option<ArcValue>,
+    ) -> Result<ArcValue> {
         context.debug(format!(
             "Handling findOne request for CrudSqliteService '{}'",
             self.name
@@ -436,9 +436,9 @@ impl CrudSqliteService {
         let action_path = self.sqlite_action_path("execute_query");
 
         // Construct the payload for SqliteService's 'execute_query' action
-        // The SqliteService expects an ArcValueType wrapping an SqlQuery struct.
+        // The SqliteService expects an ArcValue wrapping an SqlQuery struct.
         let sql_for_logging = _sql_query_struct.statement.clone(); // Clone for logging before move
-        let request_payload_for_sqlite = ArcValueType::from_struct(_sql_query_struct);
+        let request_payload_for_sqlite = ArcValue::from_struct(_sql_query_struct);
 
         context.debug(format!(
             "Sending request to SqliteService at '{}' with payload for SQL: {}",
@@ -446,7 +446,7 @@ impl CrudSqliteService {
         ));
 
         // Make the actual request to SqliteService
-        let mut rows: Vec<ArcValueType> = context
+        let mut rows: Vec<ArcValue> = context
             .request(action_path.clone(), Some(request_payload_for_sqlite))
             .await
             .with_context(|| {
@@ -458,12 +458,12 @@ impl CrudSqliteService {
 
         if !rows.is_empty() {
             // Found a document, take the first one
-            let mut document_arc_value_map = rows.remove(0); // Take ownership, this is ArcValueType(Map)
+            let mut document_arc_value_map = rows.remove(0); // Take ownership, this is ArcValue(Map)
             context.info(format!(
                 "Found document in collection '{}' with filter {:?}: {:?}",
                 req.collection, req.filter, document_arc_value_map
             ));
-            match document_arc_value_map.as_type::<HashMap<String, ArcValueType>>() {
+            match document_arc_value_map.as_type::<HashMap<String, ArcValue>>() {
                 Ok(map_data) => {
                     match self.schema_aware_convert_row_values(&req.collection, map_data, &context)
                     {
@@ -471,7 +471,7 @@ impl CrudSqliteService {
                             let response_struct = FindOneResponse {
                                 document: Some(converted_map_data),
                             };
-                            Ok(ArcValueType::from_struct(response_struct))
+                            Ok(ArcValue::from_struct(response_struct))
                         }
                         Err(e) => {
                             context.error(format!(
@@ -484,11 +484,11 @@ impl CrudSqliteService {
                 }
                 Err(e) => {
                     context.error(format!(
-                        "Failed to convert found document ArcValueType to map for FindOneResponse: {}. Doc AV: {:?}",
+                        "Failed to convert found document ArcValue to map for FindOneResponse: {}. Doc AV: {:?}",
                         e, document_arc_value_map
                     ));
                     Err(anyhow!(
-                        "Failed to convert document ArcValueType to map for FindOneResponse: {}",
+                        "Failed to convert document ArcValue to map for FindOneResponse: {}",
                         e
                     ))
                 }
@@ -500,7 +500,7 @@ impl CrudSqliteService {
                 req.collection, req.filter, sql_for_logging
             ));
             let response_struct = FindOneResponse { document: None };
-            Ok(ArcValueType::from_struct(response_struct))
+            Ok(ArcValue::from_struct(response_struct))
         }
     }
 }
@@ -536,7 +536,7 @@ impl AbstractService for CrudSqliteService {
         let service_arc = Arc::new(self.clone_arc_safe().await?);
         let service_arc_for_insert_capture = Arc::clone(&service_arc); // Clone original arc for this handler
         let insert_one_handler = Arc::new(
-            move |payload: Option<ArcValueType>, req_ctx: RequestContext| {
+            move |payload: Option<ArcValue>, req_ctx: RequestContext| {
                 // service_arc_for_insert_capture is moved into this closure
                 let service_for_async = Arc::clone(&service_arc_for_insert_capture); // Clone for the async block
                 Box::pin(async move { service_for_async.handle_insert_one(req_ctx, payload).await })
@@ -553,7 +553,7 @@ impl AbstractService for CrudSqliteService {
 
         let service_arc_for_find_one = Arc::clone(&service_arc); // Clone for the second handler
         let find_one_handler = Arc::new(
-            move |payload: Option<ArcValueType>, req_ctx: RequestContext| {
+            move |payload: Option<ArcValue>, req_ctx: RequestContext| {
                 // service_arc_for_find_one is moved into this closure
                 let service_for_async = Arc::clone(&service_arc_for_find_one); // Clone for the async block
                 Box::pin(async move { service_for_async.handle_find_one(req_ctx, payload).await })

@@ -31,7 +31,7 @@ use crate::services::abstract_service::{AbstractService, ServiceState};
 use crate::services::{ActionHandler, EventContext, RemoteService};
 use runar_common::logging::Logger;
 use runar_common::types::schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 
 /// Type definition for event callbacks
 ///
@@ -41,7 +41,7 @@ use runar_common::types::ArcValueType;
 pub type EventCallback = Arc<
     dyn Fn(
             Arc<EventContext>,
-            Option<ArcValueType>,
+            Option<ArcValue>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
@@ -54,7 +54,7 @@ pub type EventCallback = Arc<
 pub type EventHandler = Arc<
     dyn Fn(
             Arc<EventContext>,
-            Option<ArcValueType>,
+            Option<ArcValue>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
@@ -64,13 +64,13 @@ pub type EventHandler = Arc<
 use std::future::Future;
 
 /// Future returned by service operations
-pub type ServiceFuture = Pin<Box<dyn Future<Output = Result<ArcValueType>> + Send>>;
+pub type ServiceFuture = Pin<Box<dyn Future<Output = Result<ArcValue>> + Send>>;
 
 /// Type for event subscription callbacks
 pub type EventSubscriber = Arc<
     dyn Fn(
             Arc<EventContext>,
-            Option<ArcValueType>,
+            Option<ArcValue>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,

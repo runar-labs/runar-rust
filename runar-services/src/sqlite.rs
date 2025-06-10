@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
 use runar_common::types::erased_arc::ErasedArc;
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_common::types::ValueCategory;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
@@ -357,18 +357,18 @@ fn value_ref_to_value(value_ref: RusqliteValueRef<'_>) -> Value {
     }
 }
 
-// Helper to convert internal Value enum to ArcValueType for service responses.
-fn internal_value_to_arc_value(value: &Value) -> ArcValueType {
+// Helper to convert internal Value enum to ArcValue for service responses.
+fn internal_value_to_arc_value(value: &Value) -> ArcValue {
     match value {
-        Value::Null => ArcValueType::null(), // Changed to ArcValueType::null()
-        Value::Integer(i) => ArcValueType::new_primitive(*i),
-        Value::Real(f) => ArcValueType::new_primitive(*f),
-        Value::Text(s) => ArcValueType::new_primitive(s.clone()),
+        Value::Null => ArcValue::null(), // Changed to ArcValue::null()
+        Value::Integer(i) => ArcValue::new_primitive(*i),
+        Value::Real(f) => ArcValue::new_primitive(*f),
+        Value::Text(s) => ArcValue::new_primitive(s.clone()),
         Value::Blob(b) => {
-            // Ensure this matches how ArcValueType expects Bytes. ErasedArc is appropriate here.
-            ArcValueType::new(ErasedArc::from_value(b.clone()), ValueCategory::Bytes)
+            // Ensure this matches how ArcValue expects Bytes. ErasedArc is appropriate here.
+            ArcValue::new(ErasedArc::from_value(b.clone()), ValueCategory::Bytes)
         }
-        Value::Boolean(b) => ArcValueType::new_primitive(*b),
+        Value::Boolean(b) => ArcValue::new_primitive(*b),
     }
 }
 
@@ -687,11 +687,11 @@ impl AbstractService for SqliteService {
         let execute_query_handler = {
             let s_arc = service_arc.clone();
             Arc::new(
-                move |params_opt: Option<ArcValueType>, _req_ctx: RequestContext| {
+                move |params_opt: Option<ArcValue>, _req_ctx: RequestContext| {
                     let service_clone = s_arc.clone();
                     Box::pin(async move {
                         let mut query_arc_value = params_opt // Made mutable
-                            .ok_or_else(|| anyhow!("Missing payload for 'execute_query' action. Expected ArcValueType wrapping SqlQuery."))?;
+                            .ok_or_else(|| anyhow!("Missing payload for 'execute_query' action. Expected ArcValue wrapping SqlQuery."))?;
 
                         let sql_query_struct = query_arc_value.as_type::<SqlQuery>()
                             .map_err(|original_error_from_as_type| {
@@ -716,25 +716,25 @@ impl AbstractService for SqliteService {
                                 .await
                                 .map_err(|e: String| anyhow!(e))?;
 
-                            // Convert Vec<HashMap<String, Value>> to Vec<HashMap<String, ArcValueType>>
-                            let arc_results: Vec<HashMap<String, ArcValueType>> = internal_results
+                            // Convert Vec<HashMap<String, Value>> to Vec<HashMap<String, ArcValue>>
+                            let arc_results: Vec<HashMap<String, ArcValue>> = internal_results
                                 .into_iter()
                                 .map(|hmap| {
                                     hmap.into_iter()
                                         .map(|(k, v_internal)| {
                                             (k, internal_value_to_arc_value(&v_internal))
                                         })
-                                        .collect::<HashMap<String, ArcValueType>>()
+                                        .collect::<HashMap<String, ArcValue>>()
                                 })
                                 .collect();
 
-                            let result_list: Vec<ArcValueType> = arc_results
+                            let result_list: Vec<ArcValue> = arc_results
                                 .into_iter()
                                 .map(|hmap_arc| {
-                                    ArcValueType::new_map(hmap_arc.into_iter().collect())
+                                    ArcValue::new_map(hmap_arc.into_iter().collect())
                                 }) // VMap from HashMap
                                 .collect();
-                            Ok(ArcValueType::new_list(result_list))
+                            Ok(ArcValue::new_list(result_list))
                         } else {
                             let affected_rows: usize = service_clone
                                 .send_command(|reply_tx| SqliteWorkerCommand::Execute {
@@ -743,9 +743,9 @@ impl AbstractService for SqliteService {
                                 })
                                 .await
                                 .map_err(|e: String| anyhow!(e))?;
-                            Ok(ArcValueType::new_primitive(affected_rows as i64))
+                            Ok(ArcValue::new_primitive(affected_rows as i64))
                         }
-                    }) as ServiceFuture // ServiceFuture is Pin<Box<dyn Future<Output = Result<ArcValueType>> + Send>>
+                    }) as ServiceFuture // ServiceFuture is Pin<Box<dyn Future<Output = Result<ArcValue>> + Send>>
                 },
             )
         };

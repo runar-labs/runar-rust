@@ -10,14 +10,14 @@ fn test_vmap_basic() {
         "number" => 42,
         "float" => std::f64::consts::PI,
         "bool" => true,
-        "null" => runar_common::types::ArcValueType::null()
+        "null" => runar_common::types::ArcValue::null()
     };
 
     // Verify the map was created successfully
     assert_eq!(map.category, ValueCategory::Map);
 
     //get map from the vmap
-    // if let Ok(map_ref) = map.as_map_ref::<String, ArcValueType>() {
+    // if let Ok(map_ref) = map.as_map_ref::<String, ArcValue>() {
     //     //check all values
     //     assert_eq!(map_ref.get("string"), "value");
     //     assert_eq!(map_ref.get("number"), 42);
@@ -25,7 +25,7 @@ fn test_vmap_basic() {
     //     assert_eq!(map_ref.get("bool"), true);
     //     assert_eq!(
     //         map_ref.get("null"),
-    //         runar_common::types::ArcValueType::null()
+    //         runar_common::types::ArcValue::null()
     //     );
     // }
 }

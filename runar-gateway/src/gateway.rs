@@ -8,7 +8,7 @@ use axum::{
     Router,
 };
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_node::services::{EventContext, LifecycleContext};
 use runar_node::AbstractService;
 use serde_json::Value as JsonValue;
@@ -78,34 +78,34 @@ impl GatwayService {
         self
     }
 
-    // Helper function to convert JsonValue to ArcValueType
-    fn json_value_to_arc_value_type(json_val: JsonValue) -> ArcValueType {
+    // Helper function to convert JsonValue to ArcValue
+    fn json_value_to_arc_value_type(json_val: JsonValue) -> ArcValue {
         match json_val {
-            JsonValue::Null => ArcValueType::null(),
-            JsonValue::Bool(b) => ArcValueType::new_primitive(b),
+            JsonValue::Null => ArcValue::null(),
+            JsonValue::Bool(b) => ArcValue::new_primitive(b),
             JsonValue::Number(n) => {
                 if let Some(i) = n.as_i64() {
-                    ArcValueType::new_primitive(i)
+                    ArcValue::new_primitive(i)
                 } else if let Some(f) = n.as_f64() {
-                    ArcValueType::new_primitive(f)
+                    ArcValue::new_primitive(f)
                 } else {
-                    ArcValueType::new_primitive(n.to_string())
+                    ArcValue::new_primitive(n.to_string())
                 }
             }
-            JsonValue::String(s) => ArcValueType::new_primitive(s),
+            JsonValue::String(s) => ArcValue::new_primitive(s),
             JsonValue::Array(arr) => {
-                let values: Vec<ArcValueType> = arr
+                let values: Vec<ArcValue> = arr
                     .into_iter()
                     .map(GatwayService::json_value_to_arc_value_type) // Recursive call
                     .collect();
-                ArcValueType::new_list(values)
+                ArcValue::new_list(values)
             }
             JsonValue::Object(obj) => {
-                let map: HashMap<String, ArcValueType> = obj
+                let map: HashMap<String, ArcValue> = obj
                     .into_iter()
                     .map(|(k, v)| (k, GatwayService::json_value_to_arc_value_type(v))) // Recursive call
                     .collect();
-                ArcValueType::new_map(map)
+                ArcValue::new_map(map)
             }
         }
     }
@@ -128,20 +128,13 @@ impl GatwayService {
                 get(move |State(ctx): State<LifecycleContext>| async move {
                     let req_path = format!("{}/{}", service_path_clone, action_name_clone);
                     let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
-                    match ctx.request::<(), ArcValueType>(req_path, None).await {
-                        Ok(mut arc_value) => match arc_value.to_json_value() {
-                            Ok(json_value) => (StatusCode::OK, AxumJson(json_value)).into_response(),
-                            Err(e) => {
-                                ctx.error(format!("Error converting ArcValueType to JSON for GET request '{}': {}", req_path_for_json_err, e));
-                                (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    format!("JSON conversion error: {}", e),
-                                )
-                                    .into_response()
-                            }
-                        },
+                    match ctx.request::<(), serde_json::Value>(req_path, None).await {
+                        Ok(json_value) => (StatusCode::OK, AxumJson(json_value)).into_response(),
                         Err(e) => {
-                            ctx.error(format!("Error processing GET request for path '{}': {}", req_path_for_json_err, e));
+                            ctx.error(format!(
+                                "Error calling action: '{}': {}",
+                                req_path_for_json_err, e
+                            ));
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 format!("Service request error: {}", e),
@@ -163,25 +156,20 @@ impl GatwayService {
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                         match ctx
-                            .request::<ArcValueType, ArcValueType>(req_path, Some(arc_payload))
+                            .request::<ArcValue, serde_json::Value>(req_path, Some(arc_payload))
                             .await
                         {
-                            Ok(mut arc_value) => match arc_value.to_json_value() {
-                                Ok(json_value) => (StatusCode::OK, AxumJson(json_value)).into_response(),
-                                Err(e) => {
-                                    ctx.error(format!("Error converting ArcValueType to JSON for POST request '{}': {}", req_path_for_json_err, e));
-                                    (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        format!("JSON conversion error: {}", e),
-                                    )
-                                        .into_response()
-                                }
-                            },
+                            Ok(json_value) => {
+                                (StatusCode::OK, AxumJson(json_value)).into_response()
+                            }
                             Err(e) => {
-                                ctx.error(format!("Error processing POST request for path '{}': {}", req_path_for_json_err, e));
+                                ctx.error(format!(
+                                    "Error converting ArcValue to JSON for POST request '{}': {}",
+                                    req_path_for_json_err, e
+                                ));
                                 (
                                     StatusCode::INTERNAL_SERVER_ERROR,
-                                    format!("Service request error: {}", e),
+                                    format!("JSON conversion error: {}", e),
                                 )
                                     .into_response()
                             }
@@ -229,7 +217,7 @@ impl AbstractService for GatwayService {
             .subscribe(
                 "$registry/service/added",
                 Box::new(
-                    move |event_ctx: Arc<EventContext>, value: Option<ArcValueType>| {
+                    move |event_ctx: Arc<EventContext>, value: Option<ArcValue>| {
                         let service_name_clone = service_name.clone();
                         Box::pin(async move {
                             if let Some(val) = value {

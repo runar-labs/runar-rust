@@ -4,7 +4,7 @@
 // and delegates to the ServiceRegistry as needed.
 
 use runar_common::hmap;
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_common::types::schemas::{ServiceMetadata, FieldSchema, SchemaDataType};
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::{Node, NodeConfig};
@@ -122,7 +122,7 @@ async fn test_node_request() {
         node.start().await.unwrap();
 
         // Create parameters for the add operation using vmap! macro
-        let params = ArcValueType::new_map(hmap! {
+        let params = ArcValue::new_map(hmap! {
             "a" => 5.0,
             "b" => 3.0
         });
@@ -194,7 +194,7 @@ async fn test_node_event_metadata_registration() -> Result<()> {
 
     // Request the list of services from the registry
     let services_list: Vec<ServiceMetadata> = node
-        .request("$registry/services/list", Option::<ArcValueType>::None)
+        .request("$registry/services/list", Option::<ArcValue>::None)
         .await?;
 
     let math_service_metadata = services_list
@@ -301,11 +301,11 @@ async fn test_node_events() {
 
         // Create a handler function for subscription
         // Note: Using the full handler signature with Arc<EventContext> for the node API
-        let handler = move |_ctx: Arc<EventContext>, data: Option<ArcValueType>| {
+        let handler = move |_ctx: Arc<EventContext>, data: Option<ArcValue>| {
             println!("Received event data: {:?}", data);
 
             // Verify the data matches what we published
-            // For ArcValueType, extract the string value
+            // For ArcValue, extract the string value
             if let Ok(s) = data.expect("REASON").as_type::<String>() {
                 assert_eq!(s, "test data");
                 // Mark that the handler was called with correct data
@@ -322,7 +322,7 @@ async fn test_node_events() {
             .unwrap();
 
         // Publish an event to the topic
-        let data = ArcValueType::new_primitive("test data".to_string());
+        let data = ArcValue::new_primitive("test data".to_string());
         node.publish(topic, Some(data)).await.unwrap();
 
         // Small delay to allow async handler to execute

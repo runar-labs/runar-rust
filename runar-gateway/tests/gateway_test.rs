@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use axum::http::StatusCode as HttpStatus; // Renamed to avoid conflict if any from other crates
 use runar_common::types::schemas::{FieldSchema, SchemaDataType};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_gateway::GatwayService; // Ensure GatwayService is pub in runar-gateway/src/lib.rs
 use runar_node::services::ActionRegistrationOptions;
 use runar_node::services::{LifecycleContext, RequestContext};
@@ -49,31 +49,31 @@ impl EchoService {
     async fn handle_echo(
         &self,
         _ctx: RequestContext,
-        mut message_avt: ArcValueType, // Expects an ArcValueType that IS a string
-    ) -> Result<ArcValueType> {
+        mut message_avt: ArcValue, // Expects an ArcValue that IS a string
+    ) -> Result<ArcValue> {
         let message_str = message_avt.as_type::<String>().map_err(|e| {
             _ctx.logger.error(format!(
-                "Error extracting string from ArcValueType in handle_echo: {}",
+                "Error extracting string from ArcValue in handle_echo: {}",
                 e
             ));
-            anyhow!("Parameter is not a valid string ArcValueType: {}", e)
+            anyhow!("Parameter is not a valid string ArcValue: {}", e)
         })?;
 
         // The test expects the exact message back
-        Ok(ArcValueType::new_primitive(message_str))
+        Ok(ArcValue::new_primitive(message_str))
     }
 
     async fn handle_echo_map(
         &self,
         _ctx: RequestContext,
-        mut params: ArcValueType, // Expects an ArcValueType that IS a map
-    ) -> Result<ArcValueType> {
+        mut params: ArcValue, // Expects an ArcValue that IS a map
+    ) -> Result<ArcValue> {
         // The schema should enforce this. If it's not a map, this will error.
         // We are just echoing. as_map_ref is used here to confirm it's a map.
-        params.as_map_ref::<String, ArcValueType>().map_err(|e| {
+        params.as_map_ref::<String, ArcValue>().map_err(|e| {
             _ctx.logger
                 .error(format!("handle_echo_map: param not a map: {}", e));
-            anyhow!("Parameter is not a valid map ArcValueType: {}", e)
+            anyhow!("Parameter is not a valid map ArcValue: {}", e)
         })?;
         Ok(params)
     }
@@ -81,12 +81,12 @@ impl EchoService {
     async fn handle_echo_list(
         &self,
         _ctx: RequestContext,
-        mut params: ArcValueType, // Expects an ArcValueType that IS a list
-    ) -> Result<ArcValueType> {
-        params.as_list_ref::<ArcValueType>().map_err(|e| {
+        mut params: ArcValue, // Expects an ArcValue that IS a list
+    ) -> Result<ArcValue> {
+        params.as_list_ref::<ArcValue>().map_err(|e| {
             _ctx.logger
                 .error(format!("handle_echo_list: param not a list: {}", e));
-            anyhow!("Parameter is not a valid list ArcValueType: {}", e)
+            anyhow!("Parameter is not a valid list ArcValue: {}", e)
         })?;
         Ok(params)
     }
@@ -94,17 +94,17 @@ impl EchoService {
     async fn handle_echo_struct(
         &self,
         _ctx: RequestContext,
-        mut params: ArcValueType, // Expects an ArcValueType that IS a struct (represented as a map)
-    ) -> Result<ArcValueType> {
+        mut params: ArcValue, // Expects an ArcValue that IS a struct (represented as a map)
+    ) -> Result<ArcValue> {
         // The schema should enforce the structure. Here, we confirm it's a map.
         // A more robust handler might deserialize to MyTestData and then re-serialize.
-        params.as_map_ref::<String, ArcValueType>().map_err(|e| {
+        params.as_map_ref::<String, ArcValue>().map_err(|e| {
             _ctx.logger.error(format!(
                 "handle_echo_struct: param not a map for struct: {}",
                 e
             ));
             anyhow!(
-                "Parameter is not a valid map ArcValueType for struct: {}",
+                "Parameter is not a valid map ArcValue for struct: {}",
                 e
             )
         })?;
@@ -161,7 +161,7 @@ impl AbstractService for EchoService {
                         }
                         s.handle_ping(req_ctx.into())
                             .await
-                            .map(|s| ArcValueType::new_primitive(s))
+                            .map(|s| ArcValue::new_primitive(s))
                             .map_err(|e| anyhow!("Error in ping action: {}", e))
                     })
                 }),
@@ -218,7 +218,7 @@ impl AbstractService for EchoService {
                         let mut params_map_avt =
                             params.ok_or_else(|| anyhow!("Missing parameters for echo action"))?;
                         let message_avt = params_map_avt
-                            .as_map_ref::<String, ArcValueType>()
+                            .as_map_ref::<String, ArcValue>()
                             .map_err(|e| anyhow!("Echo params not a map: {}", e))?
                             .get("message")
                             .cloned()

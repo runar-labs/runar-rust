@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_node::routing::TopicPath;
 use runar_node::services::EventContext;
 use runar_node::ServiceRegistry;
@@ -305,7 +305,7 @@ mod service_registry_wildcard_tests {
         // Create a callback that increments the counter
         let counter_clone = counter.clone();
         let callback = Arc::new(
-            move |_ctx: Arc<EventContext>, _data: Option<ArcValueType>| {
+            move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
                 let counter = counter_clone.clone();
                 Box::pin(async move {
                     let mut lock = counter.lock().await;
@@ -351,7 +351,7 @@ mod service_registry_wildcard_tests {
         let topic6 = TopicPath::new("main:services/auth/login", "default").expect("Valid path");
 
         // Get handlers for each topic and call them
-        let data = ArcValueType::null();
+        let data = ArcValue::null();
 
         // Should match pattern1 (services/*/state)
         let handlers1 = registry.get_local_event_subscribers(&topic1).await;
@@ -427,7 +427,7 @@ mod service_registry_wildcard_tests {
 
         // Create a callback
         let callback = Arc::new(
-            move |_ctx: Arc<EventContext>, _data: Option<ArcValueType>| {
+            move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
                 Box::pin(async move { Ok(()) }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
             },
         );
@@ -467,7 +467,7 @@ mod service_registry_wildcard_tests {
         // Callback 1
         let counter1_clone = counter1.clone();
         let callback1 = Arc::new(
-            move |_ctx: Arc<EventContext>, _data: Option<ArcValueType>| {
+            move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
                 let counter = counter1_clone.clone();
                 Box::pin(async move {
                     let mut lock = counter.lock().await;
@@ -480,7 +480,7 @@ mod service_registry_wildcard_tests {
         // Callback 2
         let counter2_clone = counter2.clone();
         let callback2 = Arc::new(
-            move |_ctx: Arc<EventContext>, _data: Option<ArcValueType>| {
+            move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
                 let counter = counter2_clone.clone();
                 Box::pin(async move {
                     let mut lock = counter.lock().await;
@@ -501,7 +501,7 @@ mod service_registry_wildcard_tests {
 
         // Publish to a matching topic
         let topic = TopicPath::new("main:events/user/updated", "default").expect("Valid path");
-        let data = ArcValueType::null();
+        let data = ArcValue::null();
 
         // Get handlers and call them
         let handlers = registry.get_local_event_subscribers(&topic).await;

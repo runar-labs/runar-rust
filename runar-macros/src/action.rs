@@ -195,7 +195,7 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 
             // Check for outer Result<T, E>
             if let Some(inner_ty_of_result) = get_result_inner_type(&current_type) {
-                // is_result = true; // This info is not directly used by schema or ArcValueType conversion logic anymore
+                // is_result = true; // This info is not directly used by schema or ArcValue conversion logic anymore
                 current_type = inner_ty_of_result.clone();
             }
 
@@ -421,25 +421,25 @@ fn generate_register_action_method(
     // Generate the appropriate result handling based on the return type
     let result_handling = if type_name == "()" {
         quote! {
-            // For () return type, convert to ArcValueType::null()
-            Ok(runar_common::types::ArcValueType::null())
+            // For () return type, convert to ArcValue::null()
+            Ok(runar_common::types::ArcValue::null())
         }
-    } else if type_name == "ArcValueType" {
-        // Check if the result is already an ArcValueType
+    } else if type_name == "ArcValue" {
+        // Check if the result is already an ArcValue
         quote! {
-            // Result is already ArcValueType, pass it through directly
+            // Result is already ArcValue, pass it through directly
             Ok(result)
         }
     } else if *is_primitive {
         quote! {
-            // Convert the primitive result to ArcValueType
-            let value_type = runar_common::types::ArcValueType::new_primitive(result);
+            // Convert the primitive result to ArcValue
+            let value_type = runar_common::types::ArcValue::new_primitive(result);
             Ok(value_type)
         }
     } else {
         quote! {
-            // Convert the complex result to ArcValueType using from_struct
-            let value_type = runar_common::types::ArcValueType::from_struct(result);
+            // Convert the complex result to ArcValue using from_struct
+            let value_type = runar_common::types::ArcValue::from_struct(result);
             Ok(value_type)
         }
     };
@@ -458,8 +458,8 @@ fn generate_register_action_method(
             let self_clone = self.clone();
 
             // Create the action handler as an Arc to match what the register_action expects
-            let handler = std::sync::Arc::new(move |params_opt: Option<runar_common::types::ArcValueType>, #handler_request_ctx_ident: runar_node::services::RequestContext|
-                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<runar_common::types::ArcValueType, anyhow::Error>> + Send>> {
+            let handler = std::sync::Arc::new(move |params_opt: Option<runar_common::types::ArcValue>, #handler_request_ctx_ident: runar_node::services::RequestContext|
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<runar_common::types::ArcValue, anyhow::Error>> + Send>> {
                 let inner_self = self_clone.clone();
 
                 Box::pin(async move {
@@ -473,8 +473,8 @@ fn generate_register_action_method(
                                 return Err(anyhow!("No parameters provided"));
                             } else {
                                 // No parameters expected, so create an empty map
-                                runar_common::types::ArcValueType::new_map(
-                                    std::collections::HashMap::<String, runar_common::types::ArcValueType>::new()
+                                runar_common::types::ArcValue::new_map(
+                                    std::collections::HashMap::<String, runar_common::types::ArcValue>::new()
                                 )
                             }
                         }
@@ -544,7 +544,7 @@ fn generate_parameter_extractions(
     }
 
     // If there is only one parameter, deserialize the entire input into that type directly.
-    // params_value is an ArcValueType here.
+    // params_value is an ArcValue here.
     if params.len() == 1 {
         let (param_ident, param_type) = &params[0];
         extractions.extend(quote! {
@@ -560,7 +560,7 @@ fn generate_parameter_extractions(
     }
 
     // Multiple parameters (params.len() > 1)
-    // params_value is an ArcValueType. The caller ensures it's appropriately set up
+    // params_value is an ArcValue. The caller ensures it's appropriately set up
     // (e.g., an empty map representation if original payload was None but all params are Option).
     let common_type_opt = determine_common_type(params);
 
@@ -621,13 +621,13 @@ fn generate_parameter_extractions(
         }
     } else {
         // Heterogeneous case: Parameters have different types.
-        // Fallback to expecting Map<String, ArcValueType>.
+        // Fallback to expecting Map<String, ArcValue>.
         extractions.extend(quote! {
-            let params_map_ref = match params_value.as_map_ref::<String, runar_common::types::ArcValueType>() {
+            let params_map_ref = match params_value.as_map_ref::<String, runar_common::types::ArcValue>() {
                 Ok(map_ref) => map_ref,
                 Err(err) => {
                     ctx.error(format!(
-                        "Action parameters must be provided as a map (for heterogeneous types, expecting Map<String, ArcValueType>), but received an incompatible type. Error: {}",
+                        "Action parameters must be provided as a map (for heterogeneous types, expecting Map<String, ArcValue>), but received an incompatible type. Error: {}",
                         err
                     ));
                     return Err(anyhow!(format!(

@@ -1,8 +1,8 @@
 // runar_common/src/types/value_type.rs
 //
 // Canonical value type for all value representations in the system.
-// As of [2024-06]: ArcValueType is the only supported value type.
-// All previous ValueType usages must be migrated to ArcValueType.
+// As of [2024-06]: ArcValue is the only supported value type.
+// All previous ValueType usages must be migrated to ArcValue.
 // Architectural boundary: No other value type is permitted for serialization, API, or macro use.
 // See documentation in mod.rs and rust-docs/specs/ for rationale.
 
@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::erased_arc::ErasedArc;
 use crate::logging::Logger;
-use crate::types::AsArcValueType; // Added import for the trait
+use crate::types::AsArcValue; // Added import for the trait
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
@@ -349,8 +349,8 @@ impl SerializerRegistry {
         Ok((category, type_name, data_bytes))
     }
 
-    /// Deserialize bytes (owned Arc) to an ArcValueType
-    pub fn deserialize_value(&self, bytes_arc: Arc<[u8]>) -> Result<ArcValueType> {
+    /// Deserialize bytes (owned Arc) to an ArcValue
+    pub fn deserialize_value(&self, bytes_arc: Arc<[u8]>) -> Result<ArcValue> {
         if bytes_arc.is_empty() {
             return Err(anyhow!("Empty byte array"));
         }
@@ -361,7 +361,7 @@ impl SerializerRegistry {
 
         // For null, just return a null value
         if original_category == ValueCategory::Null {
-            return Ok(ArcValueType::null());
+            return Ok(ArcValue::null());
         }
 
         self.logger.debug(format!(
@@ -389,7 +389,7 @@ impl SerializerRegistry {
 
             // Store Arc<LazyDataWithOffset> in value, keeping original category
             let value = ErasedArc::from_value(lazy_data);
-            Ok(ArcValueType {
+            Ok(ArcValue {
                 category: original_category, // Keep original category (Map, Struct, etc.)
                 value: Some(value),
                 json_serializer_fn: None, // Default to None, specific constructors will populate
@@ -415,7 +415,7 @@ impl SerializerRegistry {
     }
 
     /// Serialize a value to bytes, returning an Arc<[u8]>
-    pub fn serialize_value(&self, value: &ArcValueType) -> Result<Arc<[u8]>> {
+    pub fn serialize_value(&self, value: &ArcValue) -> Result<Arc<[u8]>> {
         match value.value.as_ref() {
             Some(erased_arc_ref) => {
                 // value.value is Some(erased_arc_ref)
@@ -474,7 +474,7 @@ impl SerializerRegistry {
 
                     if value.category == ValueCategory::Null {
                         // Should ideally not be hit if erased_arc_ref is Some.
-                        // This implies an inconsistent ArcValueType state.
+                        // This implies an inconsistent ArcValue state.
                         return Ok(Arc::from(result_vec));
                     }
 
@@ -517,7 +517,7 @@ impl SerializerRegistry {
                 // EAGER NULL PATH
                 if value.category != ValueCategory::Null {
                     return Err(anyhow!(
-                        "Inconsistent state for serialization: ArcValueType.value is None but category is {:?}",
+                        "Inconsistent state for serialization: ArcValue.value is None but category is {:?}",
                         value.category
                     ));
                 }
@@ -534,7 +534,7 @@ impl SerializerRegistry {
 
 /// The canonical value type for the system, using type-erased Arcs.
 #[derive(Clone)]
-pub struct ArcValueType {
+pub struct ArcValue {
     /// The category of the contained value
     pub category: ValueCategory,
     /// The contained type-erased value
@@ -545,9 +545,9 @@ pub struct ArcValueType {
     json_serializer_fn: Option<JsonSerializationFn>,
 }
 
-impl fmt::Debug for ArcValueType {
+impl fmt::Debug for ArcValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ArcValueType")
+        f.debug_struct("ArcValue")
             .field("category", &self.category)
             .field("value", &self.value)
             .field(
@@ -562,7 +562,7 @@ impl fmt::Debug for ArcValueType {
     }
 }
 
-impl PartialEq for ArcValueType {
+impl PartialEq for ArcValue {
     fn eq(&self, other: &Self) -> bool {
         if self.category != other.category {
             return false;
@@ -575,52 +575,52 @@ impl PartialEq for ArcValueType {
     }
 }
 
-impl Eq for ArcValueType {}
+impl Eq for ArcValue {}
 
-impl AsArcValueType for ArcValueType {
-    fn into_arc_value_type(self) -> ArcValueType {
-        self // It already is an ArcValueType
+impl AsArcValue for ArcValue {
+    fn into_arc_value_type(self) -> ArcValue {
+        self // It already is an ArcValue
     }
 }
 
-impl AsArcValueType for bool {
-    fn into_arc_value_type(self) -> ArcValueType {
-        ArcValueType::new_primitive(self)
+impl AsArcValue for bool {
+    fn into_arc_value_type(self) -> ArcValue {
+        ArcValue::new_primitive(self)
     }
 }
 
-impl AsArcValueType for String {
-    fn into_arc_value_type(self) -> ArcValueType {
-        ArcValueType::new_primitive(self)
+impl AsArcValue for String {
+    fn into_arc_value_type(self) -> ArcValue {
+        ArcValue::new_primitive(self)
     }
 }
 
-impl AsArcValueType for &str {
-    fn into_arc_value_type(self) -> ArcValueType {
-        ArcValueType::new_primitive(self.to_string())
+impl AsArcValue for &str {
+    fn into_arc_value_type(self) -> ArcValue {
+        ArcValue::new_primitive(self.to_string())
     }
 }
 
-impl AsArcValueType for i32 {
-    fn into_arc_value_type(self) -> ArcValueType {
-        ArcValueType::new_primitive(self)
+impl AsArcValue for i32 {
+    fn into_arc_value_type(self) -> ArcValue {
+        ArcValue::new_primitive(self)
     }
 }
 
-impl AsArcValueType for i64 {
-    fn into_arc_value_type(self) -> ArcValueType {
-        ArcValueType::new_primitive(self)
+impl AsArcValue for i64 {
+    fn into_arc_value_type(self) -> ArcValue {
+        ArcValue::new_primitive(self)
     }
 }
 
-impl AsArcValueType for () {
-    fn into_arc_value_type(self) -> ArcValueType {
-        ArcValueType::null() // Represent unit type as null payload
+impl AsArcValue for () {
+    fn into_arc_value_type(self) -> ArcValue {
+        ArcValue::null() // Represent unit type as null payload
     }
 }
 
-impl ArcValueType {
-    /// Create a new ArcValueType
+impl ArcValue {
+    /// Create a new ArcValue
     pub fn new(value: ErasedArc, category: ValueCategory) -> Self {
         Self {
             category,
@@ -776,7 +776,7 @@ impl ArcValueType {
             Some(ea) => ea,
             None => {
                 return Err(anyhow!(
-                    "Cannot get type ref: ArcValueType's internal value is None (category: {:?})",
+                    "Cannot get type ref: ArcValue's internal value is None (category: {:?})",
                     self.category
                 ));
             }
@@ -881,7 +881,7 @@ impl ArcValueType {
             Some(ea) => ea,
             None => {
                 return Err(anyhow!(
-                    "Cannot get list ref: ArcValueType's internal value is None despite List category"
+                    "Cannot get list ref: ArcValue's internal value is None despite List category"
                 ));
             }
         };
@@ -1007,7 +1007,7 @@ impl ArcValueType {
                 )
             }
             None => Err(anyhow!(
-                "Cannot get map reference from a null ArcValueType (category: {:?})",
+                "Cannot get map reference from a null ArcValue (category: {:?})",
                 self.category
             )),
         }
@@ -1089,7 +1089,7 @@ impl ArcValueType {
                 }) // Return the result
             }
             None => Err(anyhow!(
-                "Cannot get struct reference from a null ArcValueType (category: {:?})",
+                "Cannot get struct reference from a null ArcValue (category: {:?})",
                 self.category
             )),
         }
@@ -1102,7 +1102,7 @@ impl ArcValueType {
                 return serializer(erased_arc);
             } else {
                 return Err(anyhow!(
-                    "Cannot serialize value: ArcValueType has a serializer but no value (category: {:?})",
+                    "Cannot serialize value: ArcValue has a serializer but no value (category: {:?})",
                     self.category
                 ));
             }
@@ -1112,7 +1112,7 @@ impl ArcValueType {
         match self.category {
             ValueCategory::Null => Ok(serde_json::Value::Null),
             ValueCategory::List => {
-                let list_arc = self.as_list_ref::<ArcValueType>()?;
+                let list_arc = self.as_list_ref::<ArcValue>()?;
                 let mut json_array = Vec::new();
                 for item_avt in list_arc.iter() {
                     let mut cloned_item = item_avt.clone();
@@ -1121,7 +1121,7 @@ impl ArcValueType {
                 Ok(serde_json::Value::Array(json_array))
             }
             ValueCategory::Map => {
-                let map_arc = self.as_map_ref::<String, ArcValueType>()?;
+                let map_arc = self.as_map_ref::<String, ArcValue>()?;
                 let mut json_map = serde_json::Map::new();
                 for (key, value_avt) in map_arc.iter() {
                     let mut cloned_value = value_avt.clone();
@@ -1146,10 +1146,10 @@ impl ArcValueType {
     }
 }
 
-struct ArcValueTypeVisitor;
+struct ArcValueVisitor;
 
-impl<'de> Visitor<'de> for ArcValueTypeVisitor {
-    type Value = ArcValueType;
+impl<'de> Visitor<'de> for ArcValueVisitor {
+    type Value = ArcValue;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("any valid JSON value")
@@ -1159,84 +1159,84 @@ impl<'de> Visitor<'de> for ArcValueTypeVisitor {
     where
         E: de::Error,
     {
-        Ok(ArcValueType::null())
+        Ok(ArcValue::null())
     }
 
     fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(ArcValueType::new_primitive(value))
+        Ok(ArcValue::new_primitive(value))
     }
 
     fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(ArcValueType::new_primitive(value))
+        Ok(ArcValue::new_primitive(value))
     }
 
     fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(ArcValueType::new_primitive(value))
+        Ok(ArcValue::new_primitive(value))
     }
 
     fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(ArcValueType::new_primitive(value))
+        Ok(ArcValue::new_primitive(value))
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(ArcValueType::new_primitive(value.to_string()))
+        Ok(ArcValue::new_primitive(value.to_string()))
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(ArcValueType::new_primitive(value))
+        Ok(ArcValue::new_primitive(value))
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
     where
         A: SeqAccess<'de>,
     {
-        let mut vec: Vec<ArcValueType> = Vec::new();
+        let mut vec: Vec<ArcValue> = Vec::new();
         while let Some(elem) = seq.next_element()? {
             vec.push(elem);
         }
-        Ok(ArcValueType::new_list(vec))
+        Ok(ArcValue::new_list(vec))
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
     where
         A: MapAccess<'de>,
     {
-        let mut result_map: HashMap<String, ArcValueType> = HashMap::new();
+        let mut result_map: HashMap<String, ArcValue> = HashMap::new();
         while let Some((key, value)) = map.next_entry()? {
             result_map.insert(key, value);
         }
-        Ok(ArcValueType::new_map(result_map))
+        Ok(ArcValue::new_map(result_map))
     }
 }
 
-impl<'de> Deserialize<'de> for ArcValueType {
+impl<'de> Deserialize<'de> for ArcValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(ArcValueTypeVisitor)
+        deserializer.deserialize_any(ArcValueVisitor)
     }
 }
 
-impl Serialize for ArcValueType {
+impl Serialize for ArcValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1246,7 +1246,7 @@ impl Serialize for ArcValueType {
             Ok(json_value) => json_value.serialize(serializer),
             Err(e) => {
                 // Fallback serialization for types that can't be easily converted to JSON by to_json_value
-                let mut state = serializer.serialize_struct("ArcValueTypeFallback", 2)?;
+                let mut state = serializer.serialize_struct("ArcValueFallback", 2)?;
                 state.serialize_field("category", &self.category)?;
                 state
                     .serialize_field("error", &format!("Failed to convert to full JSON: {}", e))?;
@@ -1256,7 +1256,7 @@ impl Serialize for ArcValueType {
     }
 }
 // Custom Display implementation
-impl fmt::Display for ArcValueType {
+impl fmt::Display for ArcValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.value {
             Some(actual_value) => {
@@ -1332,14 +1332,14 @@ impl fmt::Display for ArcValueType {
     }
 }
 
-impl<T> super::AsArcValueType for Option<T>
+impl<T> super::AsArcValue for Option<T>
 where
-    T: super::AsArcValueType,
+    T: super::AsArcValue,
 {
-    fn into_arc_value_type(self) -> ArcValueType {
+    fn into_arc_value_type(self) -> ArcValue {
         match self {
             Some(value) => value.into_arc_value_type(),
-            None => ArcValueType::null(),
+            None => ArcValue::null(),
         }
     }
 }

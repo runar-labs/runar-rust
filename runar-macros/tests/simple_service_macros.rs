@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
 use runar_common::types::schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_macros::{action, publish, service, subscribe};
 use runar_node::services::{EventContext, RequestContext};
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ struct User {
 
 // Define a simple math service
 pub struct TestService {
-    store: Arc<Mutex<HashMap<String, ArcValueType>>>,
+    store: Arc<Mutex<HashMap<String, ArcValue>>>,
 }
 
 // Implement Clone manually for TestMathService
@@ -58,7 +58,7 @@ impl Clone for TestService {
     version = "0.0.1"
 )]
 impl TestService {
-    fn new(path: impl Into<String>, store: Arc<Mutex<HashMap<String, ArcValueType>>>) -> Self {
+    fn new(path: impl Into<String>, store: Arc<Mutex<HashMap<String, ArcValue>>>) -> Self {
         let instance = Self {
             store: store.clone(),
         };
@@ -92,16 +92,16 @@ impl TestService {
         id_str: String,
         val_int: i32,
         _ctx: &RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         let data = PreWrappedStruct {
             id: id_str,
             value: val_int,
         };
-        // Manually wrap in ArcValueType, like in micro_services_demo
-        Ok(ArcValueType::from_struct(data))
+        // Manually wrap in ArcValue, like in micro_services_demo
+        Ok(ArcValue::from_struct(data))
     }
 
-    //the publish macro will do a ctx.publish("my_data_auto", ArcValueType::from_struct(action_result.clone())).await?;
+    //the publish macro will do a ctx.publish("my_data_auto", ArcValue::from_struct(action_result.clone())).await?;
     //it will publish the result of the action o the path (full or relative) same ruleas as action, subscribe macros in termos fo topic rules.,
     #[publish(path = "my_data_auto")]
     #[action(path = "my_data")]
@@ -112,7 +112,7 @@ impl TestService {
         let total_res: f64 = ctx
             .request(
                 "math/add",
-                Some(ArcValueType::new_map(HashMap::from([
+                Some(ArcValue::new_map(HashMap::from([
                     ("a".to_string(), 1000.0),
                     ("b".to_string(), 500.0),
                 ]))),
@@ -132,10 +132,10 @@ impl TestService {
         };
         ctx.publish(
             "my_data_changed",
-            Some(ArcValueType::from_struct(data.clone())),
+            Some(ArcValue::from_struct(data.clone())),
         )
         .await?;
-        ctx.publish("age_changed", Some(ArcValueType::new_primitive(25)))
+        ctx.publish("age_changed", Some(ArcValue::new_primitive(25)))
             .await?;
         Ok(data)
     }
@@ -153,11 +153,11 @@ impl TestService {
             let mut existing = existing.clone();
             let mut existing = existing.as_type::<Vec<MyData>>().unwrap();
             existing.push(data.clone());
-            lock.insert("my_data_auto".to_string(), ArcValueType::new_list(existing));
+            lock.insert("my_data_auto".to_string(), ArcValue::new_list(existing));
         } else {
             lock.insert(
                 "my_data_auto".to_string(),
-                ArcValueType::new_list(vec![data.clone()]),
+                ArcValue::new_list(vec![data.clone()]),
             );
         }
 
@@ -174,9 +174,9 @@ impl TestService {
             let mut existing = existing.clone();
             let mut existing = existing.as_type::<Vec<f64>>().unwrap();
             existing.push(total);
-            lock.insert("added".to_string(), ArcValueType::new_list(existing));
+            lock.insert("added".to_string(), ArcValue::new_list(existing));
         } else {
-            lock.insert("added".to_string(), ArcValueType::new_list(vec![total]));
+            lock.insert("added".to_string(), ArcValue::new_list(vec![total]));
         }
 
         Ok(())
@@ -194,12 +194,12 @@ impl TestService {
             existing.push(data.clone());
             lock.insert(
                 "my_data_changed".to_string(),
-                ArcValueType::new_list(existing),
+                ArcValue::new_list(existing),
             );
         } else {
             lock.insert(
                 "my_data_changed".to_string(),
-                ArcValueType::new_list(vec![data.clone()]),
+                ArcValue::new_list(vec![data.clone()]),
             );
         }
 
@@ -216,11 +216,11 @@ impl TestService {
             let mut existing = existing.clone();
             let mut existing = existing.as_type::<Vec<i32>>().unwrap();
             existing.push(new_age);
-            lock.insert("age_changed".to_string(), ArcValueType::new_list(existing));
+            lock.insert("age_changed".to_string(), ArcValue::new_list(existing));
         } else {
             lock.insert(
                 "age_changed".to_string(),
-                ArcValueType::new_list(vec![new_age]),
+                ArcValue::new_list(vec![new_age]),
             );
         }
 
@@ -330,7 +330,7 @@ mod tests {
 
         // Fetch ServiceMetadata for the "math" service
         let service_metadata_response: ServiceMetadata = node
-            .request("$registry/services/math", None::<ArcValueType>) // Corrected path and payload with type annotation
+            .request("$registry/services/math", None::<ArcValue>) // Corrected path and payload with type annotation
             .await
             .expect("Failed to get 'math' service metadata");
 
@@ -375,7 +375,7 @@ mod tests {
         // Description for 'my_data_auto' event is also likely empty.
 
         // Create parameters for the add action
-        let params = ArcValueType::new_map(hmap! {
+        let params = ArcValue::new_map(hmap! {
             "a" => 10.0,
             "b" => 5.0
         });
@@ -391,7 +391,7 @@ mod tests {
 
         // Make a request to the subtract action
         // Create parameters for the add action
-        let params = ArcValueType::new_map(hmap! {
+        let params = ArcValue::new_map(hmap! {
             "a" => 10.0,
             "b" => 5.0
         });
@@ -406,7 +406,7 @@ mod tests {
 
         // Make a request to the multiply action (with custom name)
         // Create parameters for the add action
-        let params = ArcValueType::new_map(hmap! {
+        let params = ArcValue::new_map(hmap! {
             "a" => 5.0,
             "b" => 3.0
         });
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(response, 15.0);
 
         // Make a request to the divide action with valid parameters
-        let params = ArcValueType::new_map(hmap! {
+        let params = ArcValue::new_map(hmap! {
             "a" => 6.0,
             "b" => 3.0
         });
@@ -435,7 +435,7 @@ mod tests {
 
         // Make a request to the divide action with invalid parameters (division by zero)
         // Create parameters for the add action
-        let params = ArcValueType::new_map(hmap! {
+        let params = ArcValue::new_map(hmap! {
             "a" => 6.0,
             "b" => 0.0
         });
@@ -449,7 +449,7 @@ mod tests {
             .contains("Division by zero"));
 
         // Make a request to the get_user action
-        let params = ArcValueType::new_primitive(42);
+        let params = ArcValue::new_primitive(42);
         let response: User = node
             .request("math/get_user", Some(params))
             .await
@@ -460,7 +460,7 @@ mod tests {
 
         // Make a request to the get_my_data action
         let response: MyData = node
-            .request("math/my_data", Some(ArcValueType::new_primitive(100)))
+            .request("math/my_data", Some(ArcValue::new_primitive(100)))
             .await
             .expect("Failed to call my_data action");
 
@@ -548,7 +548,7 @@ mod tests {
         }
         //make sure type were added properly to the serializer
         let serializer = node.serializer.read().await;
-        let arc_value = ArcValueType::from_struct(my_data.clone());
+        let arc_value = ArcValue::from_struct(my_data.clone());
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
@@ -567,7 +567,7 @@ mod tests {
             email: "john.doe@example.com".to_string(),
             age: 30,
         };
-        let arc_value = ArcValueType::from_struct(user.clone());
+        let arc_value = ArcValue::from_struct(user.clone());
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
@@ -582,7 +582,7 @@ mod tests {
         let mut temp_map = HashMap::new();
         temp_map.insert("key1".to_string(), "value1".to_string());
         let param: Vec<HashMap<String, String>> = vec![temp_map];
-        let arc_value = ArcValueType::new_list(param);
+        let arc_value = ArcValue::new_list(param);
         // complex_data
         let list_result: Vec<HashMap<String, String>> = node
             .request("math/complex_data", Some(arc_value))
@@ -596,14 +596,14 @@ mod tests {
         let pre_wrapped_params = HashMap::from([
             (
                 "id_str".to_string(),
-                ArcValueType::new_primitive("test_pre_wrap".to_string()),
+                ArcValue::new_primitive("test_pre_wrap".to_string()),
             ),
-            ("val_int".to_string(), ArcValueType::new_primitive(999i32)),
+            ("val_int".to_string(), ArcValue::new_primitive(999i32)),
         ]);
         let pre_wrapped_res: PreWrappedStruct = node
             .request(
                 "math/echo_pre_wrapped_struct",
-                Some(ArcValueType::new_map(pre_wrapped_params.clone())),
+                Some(ArcValue::new_map(pre_wrapped_params.clone())),
             )
             .await
             .expect("Failed to call echo_pre_wrapped_struct");
@@ -613,7 +613,7 @@ mod tests {
         let pre_wrapped_option_res: Option<PreWrappedStruct> = node
             .request(
                 "math/echo_pre_wrapped_struct",
-                Some(ArcValueType::new_map(pre_wrapped_params)),
+                Some(ArcValue::new_map(pre_wrapped_params)),
             )
             .await
             .expect("Failed to call echo_pre_wrapped_struct for Option result");
@@ -674,7 +674,7 @@ mod tests {
         }
         //make sure type were added properly to the serializer
         let serializer = node.serializer.read().await;
-        let arc_value = ArcValueType::from_struct(my_data.clone());
+        let arc_value = ArcValue::from_struct(my_data.clone());
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
@@ -693,7 +693,7 @@ mod tests {
             email: "john.doe@example.com".to_string(),
             age: 30,
         };
-        let arc_value = ArcValueType::from_struct(user.clone());
+        let arc_value = ArcValue::from_struct(user.clone());
         let bytes = serializer.serialize_value(&arc_value).unwrap();
 
         // Create an Arc<[u8]> directly from the Vec<u8>
@@ -708,7 +708,7 @@ mod tests {
         let mut temp_map = HashMap::new();
         temp_map.insert("key1".to_string(), "value1".to_string());
         let param: Vec<HashMap<String, String>> = vec![temp_map];
-        let arc_value = ArcValueType::new_list(param);
+        let arc_value = ArcValue::new_list(param);
         // complex_data
         let list_result: Vec<HashMap<String, String>> = node
             .request("math/complex_data", Some(arc_value))
