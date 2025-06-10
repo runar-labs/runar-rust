@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::{self, Visitor, MapAccess, SeqAccess};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::erased_arc::ErasedArc;
 use crate::logging::Logger;
@@ -31,6 +31,11 @@ pub(crate) type DeserializationFn =
     Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>;
 // Type alias for the inner part of the complex serialization function signature
 pub(crate) type SerializationFnInner = Box<dyn Fn(&dyn Any) -> Result<Vec<u8>> + Send + Sync>;
+
+// Type alias for the JSON serialization function
+// Takes an ErasedArc and attempts to serialize it to serde_json::Value
+pub(crate) type JsonSerializationFn =
+    Arc<dyn Fn(&ErasedArc) -> Result<serde_json::Value, anyhow::Error> + Send + Sync>;
 
 /// Wrapper struct for deserializer function that implements Debug
 #[derive(Clone)]
@@ -387,6 +392,7 @@ impl SerializerRegistry {
             Ok(ArcValueType {
                 category: original_category, // Keep original category (Map, Struct, etc.)
                 value: Some(value),
+                json_serializer_fn: None, // Default to None, specific constructors will populate
             })
         } else {
             Err(anyhow!(
@@ -526,16 +532,34 @@ impl SerializerRegistry {
     }
 }
 
-/// A type-erased value container with Arc preservation
-/// Note: This type is NOT serializable because it contains an ErasedArc field.
-/// Any attempt to serialize/deserialize ArcValueType will skip the value field.
-#[derive(Debug, Clone)]
+/// The canonical value type for the system, using type-erased Arcs.
+#[derive(Clone)]
 pub struct ArcValueType {
-    /// Categorizes the value for dispatch
+    /// The category of the contained value
     pub category: ValueCategory,
     /// The contained type-erased value
     /// Note: ErasedArc is type-erased and requires custom serde impl. Only registered types are supported.
     pub value: Option<ErasedArc>,
+    /// Optional function to directly serialize this value to serde_json::Value.
+    /// This is populated for types that implement serde::Serialize.
+    json_serializer_fn: Option<JsonSerializationFn>,
+}
+
+impl fmt::Debug for ArcValueType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArcValueType")
+            .field("category", &self.category)
+            .field("value", &self.value)
+            .field(
+                "json_serializer_fn",
+                &if self.json_serializer_fn.is_some() {
+                    "Some(<fn>)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
 }
 
 impl PartialEq for ArcValueType {
@@ -601,24 +625,93 @@ impl ArcValueType {
         Self {
             category,
             value: Some(value),
+            json_serializer_fn: None, // Default to None, specific constructors will populate
         }
     }
 
     /// Create a new primitive value
-    pub fn new_primitive<T: 'static + fmt::Debug + Send + Sync>(value: T) -> Self {
+    pub fn new_primitive<T>(value: T) -> Self
+    where
+        T: 'static + fmt::Debug + Send + Sync + Serialize,
+    {
         let arc = Arc::new(value);
+        let serializer_fn: Option<JsonSerializationFn> = Some(Arc::new(
+            move |erased_arc: &ErasedArc| -> Result<serde_json::Value, anyhow::Error> {
+                let typed_arc = erased_arc.as_arc::<T>().map_err(|e| {
+                    anyhow!(
+                        "Failed to downcast ErasedArc to Arc<{}> for JSON serialization: {}",
+                        std::any::type_name::<T>(),
+                        e
+                    )
+                })?;
+                serde_json::to_value(&*typed_arc).map_err(|e| {
+                    anyhow!(
+                        "Failed to serialize <{}> to JSON: {}",
+                        std::any::type_name::<T>(),
+                        e
+                    )
+                })
+            },
+        ));
+
         Self {
             category: ValueCategory::Primitive,
             value: Some(ErasedArc::new(arc)),
+            json_serializer_fn: serializer_fn,
         }
     }
 
     /// Create a new struct value
-    pub fn from_struct<T: 'static + fmt::Debug + Send + Sync>(value: T) -> Self {
+    pub fn from_struct<T>(value: T) -> Self
+    where
+        T: 'static + fmt::Debug + Send + Sync + Serialize,
+    {
         let arc = Arc::new(value);
+        let serializer_fn: Option<JsonSerializationFn> = Some(Arc::new(
+            move |erased_arc: &ErasedArc| -> Result<serde_json::Value, anyhow::Error> {
+                let typed_arc = erased_arc.as_arc::<T>().map_err(|e| {
+                    anyhow!(
+                        "Failed to downcast ErasedArc to Arc<{}> for JSON serialization: {}",
+                        std::any::type_name::<T>(),
+                        e
+                    )
+                })?;
+                serde_json::to_value(&*typed_arc).map_err(|e| {
+                    anyhow!(
+                        "Failed to serialize <{}> to JSON: {}",
+                        std::any::type_name::<T>(),
+                        e
+                    )
+                })
+            },
+        ));
+
         Self {
             category: ValueCategory::Struct,
             value: Some(ErasedArc::new(arc)),
+            json_serializer_fn: serializer_fn,
+        }
+    }
+
+    /// Create a new bytes value (Vec<u8>)
+    pub fn new_bytes(bytes: Vec<u8>) -> Self {
+        let arc_bytes = Arc::new(bytes);
+        let serializer_fn: Option<JsonSerializationFn> = Some(Arc::new(
+            move |erased_arc: &ErasedArc| -> Result<serde_json::Value, anyhow::Error> {
+                let typed_arc = erased_arc.as_arc::<Vec<u8>>().map_err(|e| {
+                    anyhow!(
+                        "Failed to downcast ErasedArc to Arc<Vec<u8>> for JSON serialization: {}",
+                        e
+                    )
+                })?;
+                Ok(serde_json::Value::String(STANDARD.encode(&**typed_arc)))
+            },
+        ));
+
+        Self {
+            category: ValueCategory::Bytes,
+            value: Some(ErasedArc::new(arc_bytes)),
+            json_serializer_fn: serializer_fn,
         }
     }
 
@@ -628,6 +721,7 @@ impl ArcValueType {
         Self {
             category: ValueCategory::List,
             value: Some(ErasedArc::new(arc)),
+            json_serializer_fn: None,
         }
     }
 
@@ -646,6 +740,7 @@ impl ArcValueType {
         Self {
             category: ValueCategory::Map,
             value: Some(ErasedArc::new(arc)),
+            json_serializer_fn: None,
         }
     }
 
@@ -663,6 +758,7 @@ impl ArcValueType {
         Self {
             category: ValueCategory::Null,
             value: None,
+            json_serializer_fn: None,
         }
     }
 
@@ -732,8 +828,40 @@ impl ArcValueType {
             current_erased_arc = ErasedArc::new(Arc::new(deserialized_value));
         }
 
+        self.value = Some(current_erased_arc.clone()); // Put the (potentially updated) ErasedArc back
+
+        // Check if T is serde_json::Value, using TypeId for robustness
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<serde_json::Value>() {
+            //if let Some(serializer) = &self.json_serializer_fn {
+            // let arc_of_json_value: std::sync::Arc<serde_json::Value> = std::sync::Arc::new(
+            //     serializer(&current_erased_arc).expect("Failed to serialize value to JSON"),
+            // );
+            let arc_of_json_value = Arc::new(
+                self.to_json_value()
+                    .expect("Failed to serialize value to JSON"),
+            );
+
+            // Cast Arc<serde_json::Value> to Arc<dyn Any + Send + Sync>.
+            // This upcast is safe because serde_json::Value is 'static + Send + Sync,
+            // and T is bounded by 'static + Send + Sync (assumed for as_type_ref).
+            let any_arc: std::sync::Arc<dyn std::any::Any + Send + Sync> = arc_of_json_value;
+
+            // Attempt to downcast to Arc<T>. This will succeed if T is indeed serde_json::Value.
+            match any_arc.downcast::<T>() {
+                Ok(arc_t) => return Ok(arc_t),
+                Err(_) => {
+                    // This case should be unreachable if the TypeId check is correct and T is 'static.
+                    // The type_name::<T>() is included for debugging the panic message.
+                    unreachable!(
+                        "Internal logic error: TypeId::of::<T>() ({}) matched TypeId::of::<serde_json::Value>(), but Arc::downcast failed.",
+                        std::any::type_name::<T>()
+                    );
+                }
+            }
+            // }
+        }
+
         let result = current_erased_arc.as_arc::<T>();
-        self.value = Some(current_erased_arc); // Put the (potentially updated) ErasedArc back
         result
     }
 
@@ -968,30 +1096,21 @@ impl ArcValueType {
     }
 
     pub fn to_json_value(&mut self) -> Result<serde_json::Value> {
+        // If a direct JSON serializer function is available, use it.
+        if let Some(serializer) = &self.json_serializer_fn {
+            if let Some(erased_arc) = &self.value {
+                return serializer(erased_arc);
+            } else {
+                return Err(anyhow!(
+                    "Cannot serialize value: ArcValueType has a serializer but no value (category: {:?})",
+                    self.category
+                ));
+            }
+        }
+
+        // Fallback logic for types without a direct serializer (e.g., composite types).
         match self.category {
             ValueCategory::Null => Ok(serde_json::Value::Null),
-            ValueCategory::Primitive => {
-                if self.value.is_none() {
-                    return Err(anyhow!("Primitive ArcValueType has no value"));
-                }
-                if let Ok(val_arc) = self.as_type_ref::<String>() {
-                    return serde_json::to_value(&*val_arc).map_err(|e| anyhow!("Failed to serialize String to JSON: {}", e));
-                }
-                if let Ok(val_arc) = self.as_type_ref::<i64>() {
-                    return serde_json::to_value(&*val_arc).map_err(|e| anyhow!("Failed to serialize i64 to JSON: {}", e));
-                }
-                if let Ok(val_arc) = self.as_type_ref::<u64>() {
-                    return serde_json::to_value(&*val_arc).map_err(|e| anyhow!("Failed to serialize u64 to JSON: {}", e));
-                }
-                if let Ok(val_arc) = self.as_type_ref::<f64>() {
-                    return serde_json::to_value(&*val_arc).map_err(|e| anyhow!("Failed to serialize f64 to JSON: {}", e));
-                }
-                if let Ok(val_arc) = self.as_type_ref::<bool>() {
-                    return serde_json::to_value(&*val_arc).map_err(|e| anyhow!("Failed to serialize bool to JSON: {}", e));
-                }
-                let type_name = self.value.as_ref().map_or_else(|| "Unknown".to_string(), |v| v.type_name().to_string());
-                Err(anyhow!("Unsupported primitive type for JSON serialization: {}", type_name))
-            }
             ValueCategory::List => {
                 let list_arc = self.as_list_ref::<ArcValueType>()?;
                 let mut json_array = Vec::new();
@@ -1010,18 +1129,18 @@ impl ArcValueType {
                 }
                 Ok(serde_json::Value::Object(json_map))
             }
-            ValueCategory::Struct => {
-                let type_name = self.value.as_ref().map_or_else(|| "N/A".to_string(), |v| v.type_name().to_string());
-                Err(anyhow!("Direct JSON serialization of Struct '{}' not yet supported without a registered JSON serializer.", type_name))
-            }
-            ValueCategory::Bytes => {
-                 if let Ok(val_arc) = self.as_type_ref::<Vec<u8>>() {
-                    // use base64; // Ensure this import is at the top of the module if not already present
-                    Ok(serde_json::Value::String(STANDARD.encode(&*val_arc)))
-                 } else {
-                    let type_name = self.value.as_ref().map_or_else(|| "Unknown".to_string(), |v| v.type_name().to_string());
-                    Err(anyhow!("Failed to get bytes for JSON serialization: {}", type_name))
-                 }
+            // Primitives, Structs, and Bytes should have a json_serializer_fn if they are serializable.
+            // If we reach here, it means they were constructed without one.
+            _ => {
+                let type_name = self
+                    .value
+                    .as_ref()
+                    .map_or_else(|| "N/A".to_string(), |v| v.type_name().to_string());
+                Err(anyhow!(
+                    "The type '{}' (category: {:?}) does not support JSON serialization.",
+                    type_name,
+                    self.category
+                ))
             }
         }
     }
@@ -1037,49 +1156,57 @@ impl<'de> Visitor<'de> for ArcValueTypeVisitor {
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
-    where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(ArcValueType::null())
     }
 
     fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
-    where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(ArcValueType::new_primitive(value))
     }
 
     fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-    where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(ArcValueType::new_primitive(value))
     }
 
     fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-    where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(ArcValueType::new_primitive(value))
     }
 
     fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-    where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(ArcValueType::new_primitive(value))
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(ArcValueType::new_primitive(value.to_string()))
     }
 
     fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-    where E: de::Error,
+    where
+        E: de::Error,
     {
         Ok(ArcValueType::new_primitive(value))
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-    where A: SeqAccess<'de>,
+    where
+        A: SeqAccess<'de>,
     {
         let mut vec: Vec<ArcValueType> = Vec::new();
         while let Some(elem) = seq.next_element()? {
@@ -1089,7 +1216,8 @@ impl<'de> Visitor<'de> for ArcValueTypeVisitor {
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-    where A: MapAccess<'de>,
+    where
+        A: MapAccess<'de>,
     {
         let mut result_map: HashMap<String, ArcValueType> = HashMap::new();
         while let Some((key, value)) = map.next_entry()? {
@@ -1101,7 +1229,8 @@ impl<'de> Visitor<'de> for ArcValueTypeVisitor {
 
 impl<'de> Deserialize<'de> for ArcValueType {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de>,
+    where
+        D: Deserializer<'de>,
     {
         deserializer.deserialize_any(ArcValueTypeVisitor)
     }
@@ -1109,7 +1238,8 @@ impl<'de> Deserialize<'de> for ArcValueType {
 
 impl Serialize for ArcValueType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer,
+    where
+        S: Serializer,
     {
         let mut owned_self = self.clone(); // Clone to satisfy to_json_value's &mut self
         match owned_self.to_json_value() {
@@ -1118,7 +1248,8 @@ impl Serialize for ArcValueType {
                 // Fallback serialization for types that can't be easily converted to JSON by to_json_value
                 let mut state = serializer.serialize_struct("ArcValueTypeFallback", 2)?;
                 state.serialize_field("category", &self.category)?;
-                state.serialize_field("error", &format!("Failed to convert to full JSON: {}", e))?;
+                state
+                    .serialize_field("error", &format!("Failed to convert to full JSON: {}", e))?;
                 state.end()
             }
         }

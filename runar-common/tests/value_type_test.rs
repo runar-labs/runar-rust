@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use runar_common::logging::{Component, Logger};
 use runar_common::types::{ArcValueType, SerializerRegistry};
 use serde::{Deserialize, Serialize};
+use serde_json::{self, json};
 
 // Create a test registry for use in tests
 fn create_test_registry() -> SerializerRegistry {
@@ -222,6 +224,67 @@ fn test_nested() -> Result<()> {
     // let mut key2_value = ref3.get("key2").unwrap().to_owned();
     // assert_eq!(key1_value.as_type::<String>()?, "value1");
     // assert_eq!(key2_value.as_type::<String>()?, "value2");
+
+    Ok(())
+}
+
+#[test]
+fn test_json_serialization_support() -> Result<()> {
+    // 1. Test direct serialization of a struct with `serde::Serialize`
+    let test_struct = TestStruct {
+        field1: "hello".to_string(),
+        field2: 123,
+    };
+    let mut avt_struct = ArcValueType::from_struct(test_struct.clone());
+    let json_from_struct = avt_struct.to_json_value()?;
+    assert_eq!(
+        json_from_struct,
+        json!({ "field1": "hello", "field2": 123 })
+    );
+
+    let json_from_struct = avt_struct.as_type::<serde_json::Value>()?;
+    assert_eq!(
+        json_from_struct,
+        json!({ "field1": "hello", "field2": 123 })
+    );
+
+    // 2. Test a primitive type
+    let mut avt_primitive = ArcValueType::new_primitive(42i64);
+    let json_from_primitive = avt_primitive.to_json_value()?;
+    assert_eq!(json_from_primitive, json!(42));
+
+    // 3. Test Bytes serialization (base64)
+    let bytes_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
+    let mut avt_bytes = ArcValueType::new_bytes(bytes_data.clone());
+    let json_from_bytes = avt_bytes.to_json_value()?;
+    assert_eq!(json_from_bytes, json!(STANDARD.encode(&bytes_data)));
+
+    // 4. Test a list of serializable types
+    let list_of_avt = vec![
+        ArcValueType::new_primitive(100i64),
+        ArcValueType::from_struct(test_struct.clone()),
+        ArcValueType::new_primitive(true),
+    ];
+    let mut avt_list = ArcValueType::new_list(list_of_avt);
+    let json_from_list = avt_list.to_json_value()?;
+    assert_eq!(
+        json_from_list,
+        json!([100, { "field1": "hello", "field2": 123 }, true])
+    );
+
+    // 5. Test a map of serializable types
+    let mut map_of_avt = HashMap::new();
+    map_of_avt.insert("num".to_string(), ArcValueType::new_primitive(99i64));
+    map_of_avt.insert("struct".to_string(), ArcValueType::from_struct(test_struct));
+    let mut avt_map = ArcValueType::new_map(map_of_avt);
+    let json_from_map = avt_map.to_json_value()?;
+    assert_eq!(
+        json_from_map,
+        json!({
+            "num": 99,
+            "struct": { "field1": "hello", "field2": 123 }
+        })
+    );
 
     Ok(())
 }

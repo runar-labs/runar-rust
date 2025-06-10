@@ -10,8 +10,8 @@ use runar_node::services::ActionRegistrationOptions;
 use runar_node::services::{LifecycleContext, RequestContext};
 use runar_node::NodeConfig;
 use runar_node::{AbstractService, Node};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -42,11 +42,8 @@ impl EchoService {
         }
     }
 
-    async fn handle_ping(
-        &self,
-        _ctx: Arc<RequestContext>,
-    ) -> Result<ArcValueType> {
-        Ok(ArcValueType::new_primitive("pong".to_string()))
+    async fn handle_ping(&self, _ctx: Arc<RequestContext>) -> Result<String> {
+        Ok("pong".to_string())
     }
 
     async fn handle_echo(
@@ -74,7 +71,8 @@ impl EchoService {
         // The schema should enforce this. If it's not a map, this will error.
         // We are just echoing. as_map_ref is used here to confirm it's a map.
         params.as_map_ref::<String, ArcValueType>().map_err(|e| {
-            _ctx.logger.error(format!("handle_echo_map: param not a map: {}", e));
+            _ctx.logger
+                .error(format!("handle_echo_map: param not a map: {}", e));
             anyhow!("Parameter is not a valid map ArcValueType: {}", e)
         })?;
         Ok(params)
@@ -86,7 +84,8 @@ impl EchoService {
         mut params: ArcValueType, // Expects an ArcValueType that IS a list
     ) -> Result<ArcValueType> {
         params.as_list_ref::<ArcValueType>().map_err(|e| {
-             _ctx.logger.error(format!("handle_echo_list: param not a list: {}", e));
+            _ctx.logger
+                .error(format!("handle_echo_list: param not a list: {}", e));
             anyhow!("Parameter is not a valid list ArcValueType: {}", e)
         })?;
         Ok(params)
@@ -100,8 +99,14 @@ impl EchoService {
         // The schema should enforce the structure. Here, we confirm it's a map.
         // A more robust handler might deserialize to MyTestData and then re-serialize.
         params.as_map_ref::<String, ArcValueType>().map_err(|e| {
-            _ctx.logger.error(format!("handle_echo_struct: param not a map for struct: {}", e));
-            anyhow!("Parameter is not a valid map ArcValueType for struct: {}", e)
+            _ctx.logger.error(format!(
+                "handle_echo_struct: param not a map for struct: {}",
+                e
+            ));
+            anyhow!(
+                "Parameter is not a valid map ArcValueType for struct: {}",
+                e
+            )
         })?;
         Ok(params)
     }
@@ -150,9 +155,14 @@ impl AbstractService for EchoService {
                     let s = self_clone_ping.clone();
                     Box::pin(async move {
                         if params.is_some() {
-                            req_ctx.logger.warn("Ping action received unexpected parameters.");
+                            req_ctx
+                                .logger
+                                .warn("Ping action received unexpected parameters.");
                         }
-                        s.handle_ping(req_ctx.into()).await
+                        s.handle_ping(req_ctx.into())
+                            .await
+                            .map(|s| ArcValueType::new_primitive(s))
+                            .map_err(|e| anyhow!("Error in ping action: {}", e))
                     })
                 }),
                 ping_options,
@@ -227,7 +237,9 @@ impl AbstractService for EchoService {
         let map_io_schema = FieldSchema {
             name: "map_payload".to_string(),
             data_type: SchemaDataType::Object, // Allows any object structure if properties is None
-            description: Some("Payload for the echo_map action, expecting any JSON object.".to_string()),
+            description: Some(
+                "Payload for the echo_map action, expecting any JSON object.".to_string(),
+            ),
             nullable: Some(false),
             properties: None, // Explicitly allow any properties
             required: None,
@@ -256,7 +268,8 @@ impl AbstractService for EchoService {
                 Arc::new(move |params, req_ctx| {
                     let s = self_clone_echo_map.clone();
                     Box::pin(async move {
-                        let map_params = params.ok_or_else(|| anyhow!("Missing parameters for echo_map action"))?;
+                        let map_params = params
+                            .ok_or_else(|| anyhow!("Missing parameters for echo_map action"))?;
                         s.handle_echo_map(req_ctx, map_params).await
                     })
                 }),
@@ -267,8 +280,8 @@ impl AbstractService for EchoService {
         // --- Register "echo_list" action ---
         let self_clone_echo_list = self.clone();
         let list_item_schema = Box::new(FieldSchema {
-            name: "list_item".to_string(), 
-            data_type: SchemaDataType::Any, 
+            name: "list_item".to_string(),
+            data_type: SchemaDataType::Any,
             description: Some("An item in the list.".to_string()),
             nullable: None,
             default_value: None,
@@ -290,7 +303,9 @@ impl AbstractService for EchoService {
         let list_io_schema = FieldSchema {
             name: "list_payload".to_string(),
             data_type: SchemaDataType::Array,
-            description: Some("Payload for the echo_list action, expecting any JSON array.".to_string()),
+            description: Some(
+                "Payload for the echo_list action, expecting any JSON array.".to_string(),
+            ),
             items: Some(list_item_schema),
             nullable: Some(false),
             default_value: None,
@@ -319,7 +334,8 @@ impl AbstractService for EchoService {
                 Arc::new(move |params, req_ctx| {
                     let s = self_clone_echo_list.clone();
                     Box::pin(async move {
-                        let list_params = params.ok_or_else(|| anyhow!("Missing parameters for echo_list action"))?;
+                        let list_params = params
+                            .ok_or_else(|| anyhow!("Missing parameters for echo_list action"))?;
                         s.handle_echo_list(req_ctx, list_params).await
                     })
                 }),
@@ -330,34 +346,49 @@ impl AbstractService for EchoService {
         // --- Register "echo_struct" action ---
         let self_clone_echo_struct = self.clone();
         let mut struct_props = HashMap::new();
-        struct_props.insert("id".to_string(), Box::new(FieldSchema {
-            name: "id".to_string(),
-            data_type: SchemaDataType::Int32,
-            description: Some("Identifier for the test data".to_string()),
-            nullable: Some(false), // Assuming 'id' is required, thus not nullable
-            ..FieldSchema::new("id", SchemaDataType::Int32) // Fill with defaults
-        }));
-        struct_props.insert("name".to_string(), Box::new(FieldSchema {
-            name: "name".to_string(),
-            data_type: SchemaDataType::String,
-            description: Some("Name for the test data".to_string()),
-            nullable: Some(false), // Assuming 'name' is required
-            ..FieldSchema::new("name", SchemaDataType::String)
-        }));
-        struct_props.insert("active".to_string(), Box::new(FieldSchema {
-            name: "active".to_string(),
-            data_type: SchemaDataType::Boolean,
-            description: Some("Activity status for the test data".to_string()),
-            nullable: Some(false), // Assuming 'active' is required
-            ..FieldSchema::new("active", SchemaDataType::Boolean)
-        }));
+        struct_props.insert(
+            "id".to_string(),
+            Box::new(FieldSchema {
+                name: "id".to_string(),
+                data_type: SchemaDataType::Int32,
+                description: Some("Identifier for the test data".to_string()),
+                nullable: Some(false), // Assuming 'id' is required, thus not nullable
+                ..FieldSchema::new("id", SchemaDataType::Int32)  // Fill with defaults
+            }),
+        );
+        struct_props.insert(
+            "name".to_string(),
+            Box::new(FieldSchema {
+                name: "name".to_string(),
+                data_type: SchemaDataType::String,
+                description: Some("Name for the test data".to_string()),
+                nullable: Some(false), // Assuming 'name' is required
+                ..FieldSchema::new("name", SchemaDataType::String)
+            }),
+        );
+        struct_props.insert(
+            "active".to_string(),
+            Box::new(FieldSchema {
+                name: "active".to_string(),
+                data_type: SchemaDataType::Boolean,
+                description: Some("Activity status for the test data".to_string()),
+                nullable: Some(false), // Assuming 'active' is required
+                ..FieldSchema::new("active", SchemaDataType::Boolean)
+            }),
+        );
 
         let struct_io_schema = FieldSchema {
             name: "struct_payload".to_string(),
             data_type: SchemaDataType::Object,
-            description: Some("Payload for the echo_struct action, expecting MyTestData structure.".to_string()),
+            description: Some(
+                "Payload for the echo_struct action, expecting MyTestData structure.".to_string(),
+            ),
             properties: Some(struct_props),
-            required: Some(vec!["id".to_string(), "name".to_string(), "active".to_string()]),
+            required: Some(vec![
+                "id".to_string(),
+                "name".to_string(),
+                "active".to_string(),
+            ]),
             nullable: Some(false),
             items: None,
             pattern: None,
@@ -384,7 +415,8 @@ impl AbstractService for EchoService {
                 Arc::new(move |params, req_ctx| {
                     let s = self_clone_echo_struct.clone();
                     Box::pin(async move {
-                        let struct_params = params.ok_or_else(|| anyhow!("Missing parameters for echo_struct action"))?;
+                        let struct_params = params
+                            .ok_or_else(|| anyhow!("Missing parameters for echo_struct action"))?;
                         s.handle_echo_struct(req_ctx, struct_params).await
                     })
                 }),
@@ -415,7 +447,7 @@ async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
     let node_network_id = "test-network-gw";
     let logging_config = runar_node::config::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Off);
+        .with_default_level(runar_node::config::LogLevel::Debug);
     let node_config =
         NodeConfig::new("gateway-test-node", node_network_id).with_logging_config(logging_config);
     let mut node = Node::new(node_config).await?;
@@ -485,15 +517,16 @@ async fn test_gateway_routes() -> Result<()> {
     let echo_map_url = format!("{}/{}/echo_map", base_url, echo_service_path);
     println!(
         "Testing POST: {} with payload: {}",
-        echo_map_url,
-        map_payload
+        echo_map_url, map_payload
     );
-    let response_map = client
-        .post(&echo_map_url)
-        .json(&map_payload)
-        .send()
-        .await?;
-    assert_eq!(response_map.status(), HttpStatus::OK, "echo_map request failed. Status: {:?}, Body: {:?}", response_map.status(), response_map.text().await?);
+    let response_map = client.post(&echo_map_url).json(&map_payload).send().await?;
+    assert_eq!(
+        response_map.status(),
+        HttpStatus::OK,
+        "echo_map request failed. Status: {:?}, Body: {:?}",
+        response_map.status(),
+        response_map.text().await?
+    );
     let response_body_map: JsonValue = response_map.json().await?;
     assert_eq!(response_body_map, map_payload);
     println!("POST /{}/echo_map successful.", echo_service_path);
@@ -503,15 +536,20 @@ async fn test_gateway_routes() -> Result<()> {
     let echo_list_url = format!("{}/{}/echo_list", base_url, echo_service_path);
     println!(
         "Testing POST: {} with payload: {}",
-        echo_list_url,
-        list_payload
+        echo_list_url, list_payload
     );
     let response_list = client
         .post(&echo_list_url)
         .json(&list_payload)
         .send()
         .await?;
-    assert_eq!(response_list.status(), HttpStatus::OK, "echo_list request failed. Status: {:?}, Body: {:?}", response_list.status(), response_list.text().await?);
+    assert_eq!(
+        response_list.status(),
+        HttpStatus::OK,
+        "echo_list request failed. Status: {:?}, Body: {:?}",
+        response_list.status(),
+        response_list.text().await?
+    );
     let response_body_list: JsonValue = response_list.json().await?;
     assert_eq!(response_body_list, list_payload);
     println!("POST /{}/echo_list successful.", echo_service_path);
@@ -526,15 +564,20 @@ async fn test_gateway_routes() -> Result<()> {
     let echo_struct_url = format!("{}/{}/echo_struct", base_url, echo_service_path);
     println!(
         "Testing POST: {} with payload: {}",
-        echo_struct_url,
-        struct_payload_json
+        echo_struct_url, struct_payload_json
     );
     let response_struct = client
         .post(&echo_struct_url)
         .json(&struct_payload_json)
         .send()
         .await?;
-    assert_eq!(response_struct.status(), HttpStatus::OK, "echo_struct request failed. Status: {:?}, Body: {:?}", response_struct.status(), response_struct.text().await?);
+    assert_eq!(
+        response_struct.status(),
+        HttpStatus::OK,
+        "echo_struct request failed. Status: {:?}, Body: {:?}",
+        response_struct.status(),
+        response_struct.text().await?
+    );
     let response_body_struct: MyTestData = response_struct.json().await?;
     assert_eq!(response_body_struct, struct_payload_data);
     println!("POST /{}/echo_struct successful.", echo_service_path);
