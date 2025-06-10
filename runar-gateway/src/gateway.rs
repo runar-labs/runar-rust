@@ -78,38 +78,6 @@ impl GatwayService {
         self
     }
 
-    // Helper function to convert JsonValue to ArcValue
-    fn json_value_to_arc_value_type(json_val: JsonValue) -> ArcValue {
-        match json_val {
-            JsonValue::Null => ArcValue::null(),
-            JsonValue::Bool(b) => ArcValue::new_primitive(b),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    ArcValue::new_primitive(i)
-                } else if let Some(f) = n.as_f64() {
-                    ArcValue::new_primitive(f)
-                } else {
-                    ArcValue::new_primitive(n.to_string())
-                }
-            }
-            JsonValue::String(s) => ArcValue::new_primitive(s),
-            JsonValue::Array(arr) => {
-                let values: Vec<ArcValue> = arr
-                    .into_iter()
-                    .map(GatwayService::json_value_to_arc_value_type) // Recursive call
-                    .collect();
-                ArcValue::new_list(values)
-            }
-            JsonValue::Object(obj) => {
-                let map: HashMap<String, ArcValue> = obj
-                    .into_iter()
-                    .map(|(k, v)| (k, GatwayService::json_value_to_arc_value_type(v))) // Recursive call
-                    .collect();
-                ArcValue::new_map(map)
-            }
-        }
-    }
-
     fn add_route_to_router(
         &self,
         router: Router<LifecycleContext>,
@@ -152,11 +120,11 @@ impl GatwayService {
                     move |State(ctx): State<LifecycleContext>,
                           AxumJson(payload): AxumJson<JsonValue>| async move {
                         let req_path = format!("{}/{}", service_path_clone, action_name_clone);
-                        let arc_payload = GatwayService::json_value_to_arc_value_type(payload);
+                        let request_arc_value = ArcValue::from_json(payload);
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                         match ctx
-                            .request::<ArcValue, serde_json::Value>(req_path, Some(arc_payload))
+                            .request::<ArcValue, serde_json::Value>(req_path, Some(request_arc_value))
                             .await
                         {
                             Ok(json_value) => {

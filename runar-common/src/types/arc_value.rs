@@ -19,6 +19,7 @@ use rustc_hash::FxHashMap;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value as JsonValue;
 
 use super::erased_arc::ErasedArc;
 use crate::logging::Logger;
@@ -620,6 +621,48 @@ impl AsArcValue for () {
 }
 
 impl ArcValue {
+    /// Creates an `ArcValue` from a `serde_json::Value`.
+    ///
+    /// This function recursively converts JSON values into their corresponding `ArcValue` representations.
+    /// - JSON null becomes `ArcValue::null()`.
+    /// - JSON booleans become `ArcValue::new_primitive(bool)`.
+    /// - JSON numbers become `ArcValue::new_primitive(i64)` or `ArcValue::new_primitive(f64)` if possible,
+    ///   otherwise `ArcValue::new_primitive(String)`.
+    /// - JSON strings become `ArcValue::new_primitive(String)`.
+    /// - JSON arrays become `ArcValue::new_list(Vec<ArcValue>)`.
+    /// - JSON objects become `ArcValue::new_map(HashMap<String, ArcValue>)`.
+    pub fn from_json(json_val: JsonValue) -> Self {
+        match json_val {
+            JsonValue::Null => ArcValue::null(),
+            JsonValue::Bool(b) => ArcValue::new_primitive(b),
+            JsonValue::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    ArcValue::new_primitive(i)
+                } else if let Some(f) = n.as_f64() {
+                    ArcValue::new_primitive(f)
+                } else {
+                    // Fallback to string representation for complex numbers not fitting i64/f64
+                    ArcValue::new_primitive(n.to_string())
+                }
+            }
+            JsonValue::String(s) => ArcValue::new_primitive(s),
+            JsonValue::Array(arr) => {
+                let values: Vec<ArcValue> = arr
+                    .into_iter()
+                    .map(ArcValue::from_json) // Recursive call to Self::from_json
+                    .collect();
+                ArcValue::new_list(values)
+            }
+            JsonValue::Object(obj) => {
+                let map: HashMap<String, ArcValue> = obj
+                    .into_iter()
+                    .map(|(k, v)| (k, ArcValue::from_json(v))) // Recursive call to Self::from_json
+                    .collect();
+                ArcValue::new_map(map)
+            }
+        }
+    }
+
     /// Create a new ArcValue
     pub fn new(value: ErasedArc, category: ValueCategory) -> Self {
         Self {
