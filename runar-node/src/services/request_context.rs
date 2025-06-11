@@ -17,12 +17,12 @@ use crate::services::NodeDelegate;
 use anyhow::Result;
 use runar_common::{
     logging::{Component, Logger, LoggingContext},
-    types::ArcValueType,   // Added ValueCategory for AsArcValueType for S
-    types::AsArcValueType, // Moved from this file
+    types::ArcValue,   // Added ValueCategory for AsArcValue for S
+    types::AsArcValue, // Moved from this file
 };
 use std::fmt::Debug;
 
-// AsArcValueType trait and implementations moved to runar_common::types
+// AsArcValue trait and implementations moved to runar_common::types
 // -----------------------------------------------------------------------------
 // -----------------------------------------------------------------------------
 
@@ -48,7 +48,7 @@ pub struct RequestContext {
     /// Complete topic path for this request (optional) - includes service path and action
     pub topic_path: TopicPath,
     /// Metadata for this request - additional contextual information
-    pub metadata: Option<ArcValueType>,
+    pub metadata: Option<ArcValue>,
     /// Logger for this context - pre-configured with the appropriate component and path
     pub logger: Arc<Logger>,
     /// Path parameters extracted from template matching
@@ -122,7 +122,7 @@ impl RequestContext {
     /// Add metadata to a RequestContext
     ///
     /// Use builder-style methods instead of specialized constructors.
-    pub fn with_metadata(mut self, metadata: ArcValueType) -> Self {
+    pub fn with_metadata(mut self, metadata: ArcValue) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -179,11 +179,7 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/topic" (used as is)
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
-    pub async fn publish(
-        &self,
-        topic: impl Into<String>,
-        data: Option<ArcValueType>,
-    ) -> Result<()> {
+    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
         let topic_string = topic.into();
 
         // Process the topic based on its format
@@ -220,7 +216,7 @@ impl RequestContext {
     /// - Simple action: "action" (both service path and network ID added - calls own service)
     pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         let path_string = path.into();

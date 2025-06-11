@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
-use runar_common::types::{ArcValueType, EventMetadata};
+use runar_common::types::{ArcValue, EventMetadata};
 use runar_node::routing::TopicPath;
 use runar_node::services::service_registry::ServiceRegistry;
 use runar_node::services::EventContext;
@@ -43,7 +43,7 @@ async fn test_get_events_metadata_by_subscriber() {
         // Create event callbacks
         let temperature_callback = Arc::new(
             |_ctx: Arc<EventContext>,
-             _: Option<ArcValueType>|
+             _: Option<ArcValue>|
              -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 Box::pin(async move {
                     // Do nothing for test
@@ -54,7 +54,7 @@ async fn test_get_events_metadata_by_subscriber() {
 
         let humidity_callback = Arc::new(
             |_ctx: Arc<EventContext>,
-             _: Option<ArcValueType>|
+             _: Option<ArcValue>|
              -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 Box::pin(async move {
                     // Do nothing for test
@@ -65,7 +65,7 @@ async fn test_get_events_metadata_by_subscriber() {
 
         let pressure_callback = Arc::new(
             |_ctx: Arc<EventContext>,
-             _: Option<ArcValueType>|
+             _: Option<ArcValue>|
              -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 Box::pin(async move {
                     // Do nothing for test

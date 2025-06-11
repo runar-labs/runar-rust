@@ -13,10 +13,13 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_node::routing::TopicPath;
-use runar_node::services::service_registry::ServiceRegistry;
+use runar_node::services::abstract_service::ServiceState;
+use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
 use runar_node::services::{ActionHandler, EventContext, RequestContext};
+
+use crate::fixtures::math_service::MathService;
 
 /// Create a test handler that validates its network ID
 fn create_test_handler(name: &str, expected_network_id: &str) -> ActionHandler {
@@ -35,7 +38,7 @@ fn create_test_handler(name: &str, expected_network_id: &str) -> ActionHandler {
                 return Err(anyhow::anyhow!("Network ID mismatch"));
             }
 
-            Ok(ArcValueType::new_primitive(name.to_string()))
+            Ok(ArcValue::new_primitive(name.to_string()))
         })
     })
 }
@@ -62,7 +65,7 @@ async fn test_subscribe_and_unsubscribe() {
         // Create a callback that would be invoked when an event is published
         let callback = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _: Option<ArcValueType>|
+                  _: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 let was_called = was_called_clone.clone();
                 Box::pin(async move {
@@ -117,7 +120,7 @@ async fn test_wildcard_subscriptions() {
         // Create a callback
         let callback = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _: Option<ArcValueType>|
+                  _: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 Box::pin(async move { Ok(()) })
             },
@@ -194,7 +197,7 @@ async fn test_register_and_get_action_handler() {
         let handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -247,21 +250,21 @@ async fn test_multiple_action_handlers() {
         let add_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Add handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
         let subtract_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Subtract handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
         let concat_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
                 println!("Concat handler called with params: {:?}", params);
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -359,7 +362,7 @@ async fn test_action_handler_network_isolation() {
             .await
             .unwrap();
         let (handler1_retrieved, _) = result1; // Extract the handler from the tuple
-        handler1_retrieved(Some(ArcValueType::null()), request_ctx1)
+        handler1_retrieved(Some(ArcValue::null()), request_ctx1)
             .await
             .unwrap();
 
@@ -369,7 +372,7 @@ async fn test_action_handler_network_isolation() {
             .await
             .unwrap();
         let (handler2_retrieved, _) = result2; // Extract the handler from the tuple
-        handler2_retrieved(Some(ArcValueType::null()), request_ctx2)
+        handler2_retrieved(Some(ArcValue::null()), request_ctx2)
             .await
             .unwrap();
 
@@ -404,7 +407,7 @@ async fn test_action_handler_network_isolation() {
         // Even though the PathTrie bug is fixed, it's still good practice to validate network IDs
         // in handlers for defense in depth
         let handler1_with_wrong_ctx =
-            handler1(Some(ArcValueType::null()), wrong_network_context.clone()).await;
+            handler1(Some(ArcValue::null()), wrong_network_context.clone()).await;
         assert!(
             handler1_with_wrong_ctx.is_err(),
             "Handler should validate network ID"
@@ -446,7 +449,7 @@ async fn test_multiple_event_handlers() {
         // Create a first event handler to track events with "topic1"
         let handler1 = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _data: Option<ArcValueType>|
+                  _data: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 let received = received_topic1_clone.clone();
                 Box::pin(async move {
@@ -459,7 +462,7 @@ async fn test_multiple_event_handlers() {
         // Create a second event handler to track events with "topic2"
         let handler2 = Arc::new(
             move |_ctx: Arc<EventContext>,
-                  _data: Option<ArcValueType>|
+                  _data: Option<ArcValue>|
                   -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 let received = received_topic2_clone.clone();
                 Box::pin(async move {
@@ -547,7 +550,7 @@ async fn test_path_template_parameters() {
                     return Err(anyhow!("Missing service_path parameter"));
                 }
 
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -566,7 +569,7 @@ async fn test_path_template_parameters() {
                     return Err(anyhow!("Missing service_path parameter"));
                 }
 
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -594,7 +597,7 @@ async fn test_path_template_parameters() {
                     return Err(anyhow!("Missing parameters"));
                 }
 
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -684,7 +687,7 @@ async fn test_local_remote_action_handler_separation() {
         let local_handler: ActionHandler = Arc::new(|_params, _context| {
             Box::pin(async move {
                 println!("Local handler called");
-                Ok(ArcValueType::null())
+                Ok(ArcValue::null())
             })
         });
 
@@ -745,7 +748,7 @@ async fn test_multiple_network_ids() {
         assert_eq!(network_id, "network1");
 
         Box::pin(async move {
-            Ok(ArcValueType::new_primitive(format!(
+            Ok(ArcValue::new_primitive(format!(
                 "Response from {}",
                 network_id
             )))
@@ -757,7 +760,7 @@ async fn test_multiple_network_ids() {
         assert_eq!(network_id, "network2");
 
         Box::pin(async move {
-            Ok(ArcValueType::new_primitive(format!(
+            Ok(ArcValue::new_primitive(format!(
                 "Response from {}",
                 network_id
             )))
@@ -780,7 +783,7 @@ async fn test_multiple_network_ids() {
         .await
         .unwrap();
     let (handler1, _) = result1;
-    handler1(Some(ArcValueType::null()), request_ctx1)
+    handler1(Some(ArcValue::null()), request_ctx1)
         .await
         .unwrap();
 
@@ -789,7 +792,7 @@ async fn test_multiple_network_ids() {
         .await
         .unwrap();
     let (handler2, _) = result2;
-    handler2(Some(ArcValueType::null()), request_ctx2)
+    handler2(Some(ArcValue::null()), request_ctx2)
         .await
         .unwrap();
 }
@@ -817,7 +820,7 @@ async fn test_get_actions_metadata() {
 
         // Create action handlers
         let add_handler: ActionHandler =
-            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValueType::null()) }));
+            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValue::null()) }));
         let add_metadata = ActionMetadata {
             name: add_action_path.as_str().to_string(),
             description: "Add action".to_string(),
@@ -826,7 +829,7 @@ async fn test_get_actions_metadata() {
         };
 
         let subtract_handler: ActionHandler =
-            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValueType::null()) }));
+            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValue::null()) }));
         let subtract_metadata = ActionMetadata {
             name: subtract_action_path.as_str().to_string(),
             description: "Subtract action".to_string(),
@@ -835,7 +838,7 @@ async fn test_get_actions_metadata() {
         };
 
         let multiply_handler: ActionHandler =
-            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValueType::null()) }));
+            Arc::new(|_params, _context| Box::pin(async move { Ok(ArcValue::null()) }));
         let multiply_metadata = ActionMetadata {
             name: multiply_action_path.as_str().to_string(),
             description: "Multiply action".to_string(),
@@ -915,6 +918,116 @@ async fn test_get_actions_metadata() {
                 );
             }
         }
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that verifies the get_local_services method correctly retrieves all registered services
+///
+/// INTENTION: This test validates that the registry can properly:
+/// - Register multiple services in different networks
+/// - Retrieve all registered services using get_local_services without a dummy path
+#[tokio::test]
+async fn test_get_local_services() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a service registry
+        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let registry = ServiceRegistry::new(logger.clone());
+
+        // Create services in different networks
+        let service1 = Arc::new(MathService::new("service1", "service1"));
+        let topic_path1 = TopicPath::new("service1", "service1").unwrap();
+        let service2 = Arc::new(MathService::new("service2", "network1"));
+        let topic_path2 = TopicPath::new("service2", "network1").unwrap();
+        let service3 = Arc::new(MathService::new("service3", "network2"));
+        let topic_path3 = TopicPath::new("service3", "network2").unwrap();
+
+        // Create ServiceEntry objects
+        let service_entry1 = Arc::new(ServiceEntry {
+            service: service1.clone(),
+            service_topic: topic_path1.clone(),
+            service_state: ServiceState::Stopped,
+            registration_time: 1000,
+            last_start_time: None,
+        });
+
+        let service_entry2 = Arc::new(ServiceEntry {
+            service: service2.clone(),
+            service_topic: topic_path2.clone(),
+            service_state: ServiceState::Stopped,
+            registration_time: 1001,
+            last_start_time: None,
+        });
+
+        let service_entry3 = Arc::new(ServiceEntry {
+            service: service3.clone(),
+            service_topic: topic_path3.clone(),
+            service_state: ServiceState::Stopped,
+            registration_time: 1002,
+            last_start_time: None,
+        });
+
+        // Register the services
+        registry
+            .register_local_service(service_entry1.clone())
+            .await
+            .unwrap();
+        registry
+            .register_local_service(service_entry2.clone())
+            .await
+            .unwrap();
+        registry
+            .register_local_service(service_entry3.clone())
+            .await
+            .unwrap();
+
+        // Get all local services
+        let services = registry.get_local_services().await;
+
+        // Verify that all services are retrieved
+        assert_eq!(
+            services.len(),
+            3,
+            "Expected all three services to be retrieved"
+        );
+
+        // Verify that each service is correctly retrieved
+        assert!(
+            services.contains_key(&topic_path1.clone()),
+            "Service 1 should be in the result"
+        );
+        assert!(
+            services.contains_key(&topic_path2.clone()),
+            "Service 2 should be in the result"
+        );
+        assert!(
+            services.contains_key(&topic_path3.clone()),
+            "Service 3 should be in the result"
+        );
+
+        // Verify that the service entries match
+        assert_eq!(
+            services[&topic_path1.clone()].service.path().to_string(),
+            service_entry1.service.path().to_string(),
+            "Service 1 entry should match"
+        );
+
+        assert_eq!(
+            services[&topic_path2.clone()].service.path().to_string(),
+            service_entry2.service.path().to_string(),
+            "Service 2 entry should match"
+        );
+
+        assert_eq!(
+            services[&topic_path3.clone()].service.path().to_string(),
+            service_entry3.service.path().to_string(),
+            "Service 3 entry should match"
+        );
     })
     .await
     {

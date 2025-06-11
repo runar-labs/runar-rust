@@ -9,10 +9,13 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use runar_common::types::ArcValueType;
+use runar_common::types::schemas::{FieldSchema, SchemaDataType};
+use runar_common::types::ArcValue;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use runar_node::services::abstract_service::AbstractService;
+use runar_node::services::EventRegistrationOptions;
 use runar_node::services::{LifecycleContext, RequestContext};
 
 /// A simple math service for testing
@@ -101,7 +104,7 @@ impl MathService {
         let result = a + b;
 
         let _ = ctx
-            .publish("math/added", Some(ArcValueType::new_primitive(result)))
+            .publish("math/added", Some(ArcValue::new_primitive(result)))
             .await;
 
         result
@@ -167,12 +170,12 @@ impl MathService {
     /// It uses the context for logging, extracts parameters, and returns appropriate responses.
     async fn handle_add(
         &self,
-        params: Option<ArcValueType>,
+        params: Option<ArcValue>,
         context: RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         context.info("Handling add operation request".to_string());
         let zero = 0.0;
-        let mut data = params.unwrap_or_else(ArcValueType::null);
+        let mut data = params.unwrap_or_else(ArcValue::null);
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
                 let a = *map.get("a").unwrap_or_else(|| {
@@ -192,18 +195,18 @@ impl MathService {
         };
         let result = self.add(a, b, &context).await;
         context.info(format!("Addition successful: {} + {} = {}", a, b, result));
-        Ok(ArcValueType::new_primitive(result))
+        Ok(ArcValue::new_primitive(result))
     }
 
     /// Handle the subtract operation
     async fn handle_subtract(
         &self,
-        params: Option<ArcValueType>,
+        params: Option<ArcValue>,
         context: RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         context.info("Handling subtract operation request".to_string());
         let zero = 0.0;
-        let mut data = params.unwrap_or_else(ArcValueType::null);
+        let mut data = params.unwrap_or_else(ArcValue::null);
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
                 let a = *map.get("a").unwrap_or_else(|| {
@@ -226,18 +229,18 @@ impl MathService {
             "Subtraction successful: {} - {} = {}",
             a, b, result
         ));
-        Ok(ArcValueType::new_primitive(result))
+        Ok(ArcValue::new_primitive(result))
     }
 
     /// Handle the multiply operation
     async fn handle_multiply(
         &self,
-        params: Option<ArcValueType>,
+        params: Option<ArcValue>,
         context: RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         context.info("Handling multiply operation request".to_string());
         let zero = 0.0;
-        let mut data = params.unwrap_or_else(ArcValueType::null);
+        let mut data = params.unwrap_or_else(ArcValue::null);
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
                 let a = *map.get("a").unwrap_or_else(|| {
@@ -260,17 +263,17 @@ impl MathService {
             "Multiplication successful: {} * {} = {}",
             a, b, result
         ));
-        Ok(ArcValueType::new_primitive(result))
+        Ok(ArcValue::new_primitive(result))
     }
 
     /// Handle the divide operation
     async fn handle_divide(
         &self,
-        params: Option<ArcValueType>,
+        params: Option<ArcValue>,
         context: RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         context.info("Handling divide operation request".to_string());
-        let mut data = params.unwrap_or_else(ArcValueType::null);
+        let mut data = params.unwrap_or_else(ArcValue::null);
         let zero = 0.0;
         let (a, b) = match data.as_map_ref::<String, f64>() {
             Ok(map) => {
@@ -292,7 +295,7 @@ impl MathService {
         match self.divide(a, b, &context) {
             Ok(result) => {
                 context.info(format!("Division successful: {} / {} = {}", a, b, result));
-                Ok(ArcValueType::new_primitive(result))
+                Ok(ArcValue::new_primitive(result))
             }
             Err(e) => {
                 context.error(format!("Division error: {}", e));
@@ -394,6 +397,63 @@ impl AbstractService for MathService {
                     let self_clone = owned_self.clone();
                     Box::pin(async move { self_clone.handle_divide(params, request_ctx).await })
                 }),
+            )
+            .await?;
+
+        // Subscribe to an event with specific metadata
+        let event_options = EventRegistrationOptions {
+            description: Some(
+                "Notification for when math service configuration is updated.".to_string(),
+            ),
+            data_schema: Some(FieldSchema {
+                name: "ConfigUpdatePayload".to_string(),
+                data_type: SchemaDataType::Object,
+                description: Some("Payload describing the configuration changes.".to_string()),
+                nullable: Some(false),
+                properties: Some({
+                    let mut props = HashMap::new();
+                    props.insert(
+                        "updated_setting".to_string(),
+                        Box::new(FieldSchema {
+                            name: "updated_setting".to_string(),
+                            data_type: SchemaDataType::String,
+                            description: Some("Name of the setting that was updated.".to_string()),
+                            nullable: Some(false),
+                            ..FieldSchema::string("updated_setting") // Base with defaults
+                        }),
+                    );
+                    props.insert(
+                        "new_value".to_string(),
+                        Box::new(FieldSchema {
+                            name: "new_value".to_string(),
+                            data_type: SchemaDataType::String,
+                            description: Some("The new value of the setting.".to_string()),
+                            nullable: Some(false),
+                            ..FieldSchema::string("new_value") // Base with defaults
+                        }),
+                    );
+                    props
+                }),
+                required: Some(vec!["updated_setting".to_string(), "new_value".to_string()]),
+                ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::Object) // Base with defaults
+            }),
+        };
+
+        // let service_arc_for_event = self.clone(); // Clone self for the event callback
+        context
+            .subscribe_with_options(
+                "config/updated", // Event name
+                Box::new(move |event_ctx, payload| {
+                    Box::pin(async move {
+                        event_ctx.info(format!(
+                            "MathService received 'config/updated' event with payload: {:?}",
+                            payload
+                        ));
+                        // In a real scenario, _service_clone could be used to update internal state
+                        Ok(())
+                    })
+                }),
+                event_options,
             )
             .await?;
 

@@ -15,14 +15,17 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0" # Added for crud_sqlite.rs
 uuid = { version = "1.8", features = ["v4", "serde"] } # Added for crud_sqlite.rs
 futures = "0.3"
-tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
-runar_common = { path = "../rust-common", features = ["abstract_service"] }
-runar_node = { path = "../rust-node" }
+tokio = { version = "1.37", features = ["sync", "rt", "macros", "rt-multi-thread"] }
+runar_common = { path = "../runar-common", features = ["abstract_service"] }
+runar_node = { path = "../runar-node" }
+axum = { version = "0.7", features = ["macros", "json"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 [dev-dependencies]
 tempfile = "3.10"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "test-util"] }
-runar_common = { path = "../rust-common", features = ["abstract_service"] }
-runar_macros = { path = "../rust-macros" }
+runar_common = { path = "../runar-common", features = ["abstract_service"] }
+runar_macros = { path = "../runar-macros" }
 serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 # These are required for integration tests in tests/rusqlite_examples.rs

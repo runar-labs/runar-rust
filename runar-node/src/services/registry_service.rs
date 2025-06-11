@@ -19,7 +19,7 @@ use crate::services::abstract_service::ServiceState;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::AbstractService;
 use runar_common::logging::Logger;
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 
 /// Registry Info Service - provides information about registered services without holding state
 pub struct RegistryService {
@@ -76,7 +76,7 @@ impl RegistryService {
                     let inner_self = self_clone.clone();
                     Box::pin(async move {
                         inner_self
-                            .handle_list_services(params.unwrap_or_else(ArcValueType::null), ctx)
+                            .handle_list_services(params.unwrap_or_else(ArcValue::null), ctx)
                             .await
                     })
                 }),
@@ -102,7 +102,7 @@ impl RegistryService {
                     let inner_self = self_clone.clone();
                     Box::pin(async move {
                         inner_self
-                            .handle_service_info(params.unwrap_or_else(ArcValueType::null), ctx)
+                            .handle_service_info(params.unwrap_or_else(ArcValue::null), ctx)
                             .await
                     })
                 }),
@@ -143,9 +143,9 @@ impl RegistryService {
     /// Handler for listing all services
     async fn handle_list_services(
         &self,
-        _params: ArcValueType,
+        _params: ArcValue,
         ctx: RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         ctx.logger.debug("Listing all services");
 
         // Get all service metadata directly
@@ -155,15 +155,15 @@ impl RegistryService {
         let metadata_vec: Vec<_> = service_metadata.values().cloned().collect();
 
         // Return the list of service metadata
-        Ok(ArcValueType::from_list(metadata_vec))
+        Ok(ArcValue::from_list(metadata_vec))
     }
 
     /// Handler for getting detailed information about a specific service
     async fn handle_service_info(
         &self,
-        _params: ArcValueType,
+        _params: ArcValue,
         ctx: RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         // Extract the service path from path parameters
         let actual_service_path = match self.extract_service_path(&ctx) {
             Ok(path) => path,
@@ -185,16 +185,16 @@ impl RegistryService {
             .get_service_metadata(&service_topic)
             .await
         {
-            Ok(ArcValueType::from_struct(service_metadata))
+            Ok(ArcValue::from_struct(service_metadata))
         } else {
             ctx.logger
                 .debug(format!("Service '{actual_service_path}' not found"));
-            Ok(ArcValueType::null())
+            Ok(ArcValue::null())
         }
     }
 
     /// Handler for getting just the state of a service
-    async fn handle_service_state(&self, ctx: RequestContext) -> Result<ArcValueType> {
+    async fn handle_service_state(&self, ctx: RequestContext) -> Result<ArcValue> {
         // Extract the service path from path parameters
         let service_path = match self.extract_service_path(&ctx) {
             Ok(path) => path,
@@ -214,12 +214,12 @@ impl RegistryService {
             .get_service_state(&service_topic)
             .await
         {
-            let state_info = ArcValueType::from_struct(service_state);
+            let state_info = ArcValue::from_struct(service_state);
             Ok(state_info)
         } else {
             ctx.logger
                 .debug(format!("Service '{service_path}' not found"));
-            Ok(ArcValueType::null())
+            Ok(ArcValue::null())
         }
     }
 }

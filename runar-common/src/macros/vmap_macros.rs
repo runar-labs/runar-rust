@@ -1,6 +1,6 @@
 //
-// This file contains macros for working with ArcValueType maps and raw HashMap operations.
-// As of [2024-06], ArcValueType is the only supported value type for all macros and value maps.
+// This file contains macros for working with ArcValue maps and raw HashMap operations.
+// As of [2024-06], ArcValue is the only supported value type for all macros and value maps.
 // All legacy ValueType logic has been removed. See rust-docs/specs/ for migration details.
 
 /// Create a HashMap with ValueType values
@@ -11,7 +11,7 @@
 ///
 /// ```
 /// use runar_common::vmap;
-/// use runar_common::types::ArcValueType;
+/// use runar_common::types::ArcValue;
 ///
 /// let map = vmap! {
 ///     "name" => "John Doe",
@@ -25,23 +25,23 @@
 ///
 /// ```ignore
 /// // Extract a value from a map with default
-/// let payload = ArcValueType::new_map(std::collections::HashMap::new());
+/// let payload = ArcValue::new_map(std::collections::HashMap::new());
 /// let data = vmap!(payload, "data" => String::new());
 ///
 /// // Extract a direct value with default
-/// let response = ArcValueType::new_primitive("test");
+/// let response = ArcValue::new_primitive("test");
 /// let value = vmap!(response, => "default");
 /// ```
-/// Create or extract from an ArcValueType map.
+/// Create or extract from an ArcValue map.
 #[macro_export]
 macro_rules! vmap {
     // Empty map
     {} => {
         {
             use std::collections::HashMap;
-            use $crate::types::ArcValueType;
-            let map: HashMap<String, ArcValueType> = HashMap::new();
-            ArcValueType::new_map(map)
+            use $crate::types::ArcValue;
+            let map: HashMap<String, ArcValue> = HashMap::new();
+            ArcValue::new_map(map)
         }
     };
 
@@ -49,12 +49,12 @@ macro_rules! vmap {
     { $($key:expr => $value:expr),* $(,)? } => {
         {
             use std::collections::HashMap;
-            use $crate::types::ArcValueType;
+            use $crate::types::ArcValue;
             let mut map = HashMap::new();
             $(
-                map.insert($key.to_string(), ArcValueType::new_primitive($value));
+                map.insert($key.to_string(), ArcValue::new_primitive($value));
             )*
-            ArcValueType::new_map(map)
+            ArcValue::new_map(map)
         }
     };
 
@@ -62,10 +62,10 @@ macro_rules! vmap {
     ($map:expr, $key:expr => $default:expr) => {
         {
             match &$map {
-                $crate::types::ArcValueType::Map(map_data) => {
+                $crate::types::ArcValue::Map(map_data) => {
                     match map_data.get($key) {
                         Some(value_type) => match value_type {
-                            $crate::types::ArcValueType::String(s) => {
+                            $crate::types::ArcValue::String(s) => {
                                 let default_type = std::any::type_name_of_val(&$default);
                                 if default_type.ends_with("&str") || default_type.ends_with("String") {
                                     s.clone()
@@ -73,7 +73,7 @@ macro_rules! vmap {
                                     $default
                                 }
                             },
-                            $crate::types::ArcValueType::Number(n) => {
+                            $crate::types::ArcValue::Number(n) => {
                                 let default_type = std::any::type_name_of_val(&$default);
                                 if default_type.ends_with("f64") {
                                     *n
@@ -89,7 +89,7 @@ macro_rules! vmap {
                                     $default
                                 }
                             },
-                            $crate::types::ArcValueType::Bool(b) => {
+                            $crate::types::ArcValue::Bool(b) => {
                                 let default_type = std::any::type_name_of_val(&$default);
                                 if default_type.ends_with("bool") {
                                     *b
@@ -112,7 +112,7 @@ macro_rules! vmap {
     // Extract a direct value with default
     ($value:expr, => $default:expr) => {
         match &$value {
-            $crate::types::ArcValueType::String(s) => s.clone(),
+            $crate::types::ArcValue::String(s) => s.clone(),
             $crate::types::ValueType::Number(n) => {
                 // Use type_name_of_val to detect default type
                 let default_type = std::any::type_name_of_val(&$default);
@@ -149,13 +149,13 @@ macro_rules! vmap {
     ($map:expr, $key:expr) => {
         {
             match &$map {
-                $crate::types::ArcValueType::Map(map_data) => {
+                $crate::types::ArcValue::Map(map_data) => {
                     match map_data.get($key) {
                         Some(value_type) => value_type.clone(),
-                        None => $crate::types::ArcValueType::null(),
+                        None => $crate::types::ArcValue::null(),
                     }
                 },
-                _ => $crate::types::ArcValueType::null(),
+                _ => $crate::types::ArcValue::null(),
             }
         }
     };

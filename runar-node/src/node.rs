@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
-use runar_common::types::{ArcValueType, EventMetadata, SerializerRegistry};
+use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -32,6 +32,7 @@ pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Certificate and PrivateKey types are now imported via the cert_utils module
 use crate::config::LoggingConfig;
 use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
+
 use crate::routing::TopicPath;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
 use crate::services::registry_service::RegistryService;
@@ -42,12 +43,11 @@ use crate::services::service_registry::{ServiceEntry, ServiceRegistry};
 use crate::services::EventContext; // Explicit import for EventContext
 use crate::services::NodeDelegate;
 use crate::services::{
-    ActionHandler, /* EventContext, NodeDelegate, */ PublishOptions, RegistryDelegate,
-    RemoteLifecycleContext, RequestContext, SubscriptionOptions,
+    ActionHandler, /* EventContext, NodeDelegate, */ EventCallback, EventRegistrationOptions,
+    PublishOptions, RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
-use crate::AbstractService;
-use crate::ServiceState;
-use runar_common::types::AsArcValueType;
+use crate::{AbstractService, ServiceState};
+use runar_common::types::AsArcValue;
 
 /// Node Configuration
 ///
@@ -186,8 +186,7 @@ pub struct Node {
     pub(crate) load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
 
     /// Pending requests waiting for responses, keyed by correlation ID
-    pub(crate) pending_requests:
-        Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValueType>>>>>,
+    pub(crate) pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
 
     pub serializer: Arc<RwLock<SerializerRegistry>>,
 
@@ -428,6 +427,7 @@ impl Node {
         if self.running.load(Ordering::SeqCst) {
             self.registry_version.fetch_add(1, Ordering::SeqCst);
             let _ = self.notify_node_change().await;
+            //TODO fire service added event -> $registry/service/added
         }
 
         Ok(())
@@ -946,12 +946,12 @@ impl Node {
                 Err(e) => {
                     // Create a map for the error response
                     let mut error_map = HashMap::new();
-                    error_map.insert("error".to_string(), ArcValueType::new_primitive(true));
+                    error_map.insert("error".to_string(), ArcValue::new_primitive(true));
                     error_map.insert(
                         "message".to_string(),
-                        ArcValueType::new_primitive(e.to_string()),
+                        ArcValue::new_primitive(e.to_string()),
                     );
-                    let error_value = ArcValueType::from_map(error_map);
+                    let error_value = ArcValue::from_map(error_map);
 
                     // Serialize the error value
                     let serialized_error =
@@ -1061,9 +1061,9 @@ impl Node {
                     }
                 };
 
-                // Send the response (which is ArcValueType) through the oneshot channel
-                // payload_data is already ArcValueType. If the original response was 'None',
-                // serializer.deserialize_value should produce ArcValueType::null().
+                // Send the response (which is ArcValue) through the oneshot channel
+                // payload_data is already ArcValue. If the original response was 'None',
+                // serializer.deserialize_value should produce ArcValue::null().
                 match pending_request_sender.send(Ok(payload_data)) {
                     Ok(_) => self.logger.debug(format!(
                         "Successfully sent response for correlation ID: {}",
@@ -1173,8 +1173,8 @@ impl Node {
     pub async fn local_request(
         &self,
         path: impl Into<String>,
-        payload: Option<ArcValueType>,
-    ) -> Result<ArcValueType> {
+        payload: Option<ArcValue>,
+    ) -> Result<ArcValue> {
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
             Ok(tp) => tp,
@@ -1229,7 +1229,7 @@ impl Node {
     /// This is the central request routing mechanism for the Node.
     pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         let request_payload_av = payload.map(P::into_arc_value_type);
@@ -1273,6 +1273,7 @@ impl Node {
 
             // Execute the handler and return result
             let mut response_av = handler(request_payload_av.clone(), context).await?;
+
             return response_av.as_type::<T>();
         }
 
@@ -1325,7 +1326,7 @@ impl Node {
     async fn publish_with_options(
         &self,
         topic: impl Into<String>,
-        data: Option<ArcValueType>,
+        data: Option<ArcValue>,
         options: PublishOptions,
     ) -> Result<()> {
         let topic_string = topic.into();
@@ -1723,14 +1724,14 @@ impl NodeDelegate for Node {
     async fn request<P, T>(&self, path: impl Into<String> + Send, payload: Option<P>) -> Result<T>
     // Changed from Result<Option<T>>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         // Delegate directly to our (now generic) inherent implementation.
         self.request(path, payload).await
     }
 
-    async fn publish(&self, topic: String, data: Option<ArcValueType>) -> Result<()> {
+    async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()> {
         // Create default options
         let options = PublishOptions {
             broadcast: true,
@@ -1748,71 +1749,58 @@ impl NodeDelegate for Node {
         callback: Box<
             dyn Fn(
                     Arc<EventContext>,
-                    Option<ArcValueType>,
+                    Option<ArcValue>,
                 ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
         >,
     ) -> Result<String> {
-        // Parse the topic string into a TopicPath
-        let topic_path = TopicPath::new(&topic, &self.network_id)
-            .map_err(|e| anyhow!("Invalid topic string for subscribe: {}", e))?;
-
-        let metadata = EventMetadata {
-            path: topic_path.as_str().to_string(),
-            description: "".to_string(),
-            data_schema: None,
-        };
-
-        let subcription = self
-            .service_registry
-            .register_local_event_subscription(&topic_path, callback.into(), Some(metadata))
-            .await?;
-
-        //if started... need to increment  -> registry_version
-        if self.running.load(Ordering::SeqCst) {
-            self.registry_version.fetch_add(1, Ordering::SeqCst);
-            self.notify_node_change().await?;
-        }
-
-        Ok(subcription)
+        // For the basic subscribe, create default metadata.
+        // The full topic path (including network_id) is handled by subscribe_with_options.
+        // Node::subscribe provides a simplified interface, using default registration options.
+        self.subscribe_with_options(topic, callback, EventRegistrationOptions::default())
+            .await
     }
 
     async fn subscribe_with_options(
         &self,
-        topic: String,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValueType>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
-        _options: SubscriptionOptions,
+        topic: String, // This is the service-relative path, e.g., "math_service/numbers"
+        callback: EventCallback, // Changed to use the type alias
+        options: EventRegistrationOptions, // Changed from SubscriptionOptions
     ) -> Result<String> {
-        // Parse the topic string into a TopicPath
+        // The `topic` parameter is the service-relative path (e.g., "service_name/event_name").
+        // This will be combined with `self.network_id` to form the full TopicPath for registry storage.
         let topic_path = TopicPath::new(&topic, &self.network_id)
-            .map_err(|e| anyhow!("Invalid topic string for subscribe_with_options: {}", e))?;
+            .map_err(|e| anyhow!(
+                "Invalid topic string for subscribe_with_options: {}. Topic: '{}', Network ID: '{}'", 
+                e, topic, self.network_id
+            ))?;
 
-        let metadata = EventMetadata {
-            path: topic_path.as_str().to_string(),
-            description: "".to_string(),
-            data_schema: None,
+        // Construct EventMetadata from EventRegistrationOptions.
+        // The `metadata.path` should be the service-relative path, which is the `topic` string itself.
+        let event_metadata = EventMetadata {
+            path: topic.clone(), // Service-relative path for metadata
+            description: options.description.unwrap_or_default(),
+            data_schema: options.data_schema,
         };
 
-        let subcription = self
+        self.logger.info(format!(
+            "Node: subscribe_with_options called for topic_path '{}', metadata.path '{}'",
+            topic_path.as_str(),
+            event_metadata.path
+        ));
+
+        let subscription_id = self
             .service_registry
-            .register_local_event_subscription(&topic_path, callback.into(), Some(metadata))
+            .register_local_event_subscription(&topic_path, callback.into(), Some(event_metadata))
             .await?;
 
-        //if started... need to increment  -> registry_version
         if self.running.load(Ordering::SeqCst) {
             self.registry_version.fetch_add(1, Ordering::SeqCst);
             self.notify_node_change().await?;
         }
 
-        Ok(subcription)
+        Ok(subscription_id)
     }
 
     async fn unsubscribe(&self, subscription_id: Option<&str>) -> Result<()> {

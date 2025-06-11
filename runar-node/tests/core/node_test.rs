@@ -4,7 +4,8 @@
 // and delegates to the ServiceRegistry as needed.
 
 use runar_common::hmap;
-use runar_common::types::ArcValueType;
+use runar_common::types::schemas::ServiceMetadata;
+use runar_common::types::ArcValue;
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::{Node, NodeConfig};
 use std::future::Future;
@@ -121,7 +122,7 @@ async fn test_node_request() {
         node.start().await.unwrap();
 
         // Create parameters for the add operation using vmap! macro
-        let params = ArcValueType::new_map(hmap! {
+        let params = ArcValue::new_map(hmap! {
             "a" => 5.0,
             "b" => 3.0
         });
@@ -180,6 +181,82 @@ async fn test_node_lifecycle() {
 /// This test ensures that the Node can properly initialize its network
 /// components which are required for remote communication.
 #[tokio::test]
+async fn test_node_event_metadata_registration() -> Result<()> {
+    let mut config = NodeConfig::new("test-node-event-meta", "test_network_event");
+    config.network_config = None; // Disable networking for this unit test
+    let mut node = Node::new(config).await?;
+
+    let math_service_name = "MathMetaTest";
+    let math_service_path = "math_meta_svc";
+    let service = MathService::new(math_service_name, math_service_path);
+    node.add_service(service).await?;
+    node.start().await?; // This will call init() on MathService
+
+    // Request the list of services from the registry
+    let services_list: Vec<ServiceMetadata> = node
+        .request("$registry/services/list", Option::<ArcValue>::None)
+        .await?;
+
+    let math_service_metadata = services_list
+        .iter()
+        .find(|s| s.service_path == math_service_path && s.network_id == "test_network_event")
+        .expect("MathService metadata not found in registry list");
+
+    assert_eq!(math_service_metadata.name, math_service_name);
+
+    // let target_event_path = format!("{}/{}", math_service_path, "config/updated");
+
+    // let config_updated_event_meta = math_service_metadata
+    //     .events
+    //     .iter()
+    //     .find(|e| e.path == target_event_path)
+    //     .expect("config/updated event metadata not found for MathService");
+
+    // assert_eq!(
+    //     config_updated_event_meta.description,
+    //     "Notification for when math service configuration is updated."
+    // );
+
+    // let expected_schema = FieldSchema {
+    //     name: "ConfigUpdatePayload".to_string(),
+    //     data_type: SchemaDataType::Object,
+    //     description: Some("Payload describing the configuration changes.".to_string()),
+    //     nullable: Some(false),
+    //     properties: Some({
+    //         let mut props = HashMap::new();
+    //         props.insert(
+    //             "updated_setting".to_string(),
+    //             Box::new(FieldSchema {
+    //                 name: "updated_setting".to_string(),
+    //                 data_type: SchemaDataType::String,
+    //                 description: Some("Name of the setting that was updated.".to_string()),
+    //                 nullable: Some(false),
+    //                 ..FieldSchema::string("updated_setting")
+    //             }),
+    //         );
+    //         props.insert(
+    //             "new_value".to_string(),
+    //             Box::new(FieldSchema {
+    //                 name: "new_value".to_string(),
+    //                 data_type: SchemaDataType::String,
+    //                 description: Some("The new value of the setting.".to_string()),
+    //                 nullable: Some(false),
+    //                 ..FieldSchema::string("new_value")
+    //             }),
+    //         );
+    //         props
+    //     }),
+    //     required: Some(vec!["updated_setting".to_string(), "new_value".to_string()]),
+    //     ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::Object)
+    // };
+
+    // assert_eq!(config_updated_event_meta.data_schema, Some(expected_schema));
+
+    node.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_node_init() -> Result<()> {
     // Create a node configuration
     let mut config = NodeConfig::new("test-node", "test-network");
@@ -224,11 +301,11 @@ async fn test_node_events() {
 
         // Create a handler function for subscription
         // Note: Using the full handler signature with Arc<EventContext> for the node API
-        let handler = move |_ctx: Arc<EventContext>, data: Option<ArcValueType>| {
+        let handler = move |_ctx: Arc<EventContext>, data: Option<ArcValue>| {
             println!("Received event data: {:?}", data);
 
             // Verify the data matches what we published
-            // For ArcValueType, extract the string value
+            // For ArcValue, extract the string value
             if let Ok(s) = data.expect("REASON").as_type::<String>() {
                 assert_eq!(s, "test data");
                 // Mark that the handler was called with correct data
@@ -245,7 +322,7 @@ async fn test_node_events() {
             .unwrap();
 
         // Publish an event to the topic
-        let data = ArcValueType::new_primitive("test data".to_string());
+        let data = ArcValue::new_primitive("test data".to_string());
         node.publish(topic, Some(data)).await.unwrap();
 
         // Small delay to allow async handler to execute

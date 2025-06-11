@@ -31,7 +31,7 @@ use crate::services::abstract_service::{AbstractService, ServiceState};
 use crate::services::{ActionHandler, EventContext, RemoteService};
 use runar_common::logging::Logger;
 use runar_common::types::schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 
 /// Type definition for event callbacks
 ///
@@ -39,10 +39,7 @@ use runar_common::types::ArcValueType;
 /// The callback takes an event context and payload and returns a future that
 /// resolves once the event has been processed.
 pub type EventCallback = Arc<
-    dyn Fn(
-            Arc<EventContext>,
-            Option<ArcValueType>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -52,10 +49,7 @@ pub type EventCallback = Arc<
 /// INTENTION: Provide a sharable type similar to ActionHandler that can be referenced
 /// by multiple subscribers and cloned as needed. This fixes lifetime issues by using Arc.
 pub type EventHandler = Arc<
-    dyn Fn(
-            Arc<EventContext>,
-            Option<ArcValueType>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -64,14 +58,11 @@ pub type EventHandler = Arc<
 use std::future::Future;
 
 /// Future returned by service operations
-pub type ServiceFuture = Pin<Box<dyn Future<Output = Result<ArcValueType>> + Send>>;
+pub type ServiceFuture = Pin<Box<dyn Future<Output = Result<ArcValue>> + Send>>;
 
 /// Type for event subscription callbacks
 pub type EventSubscriber = Arc<
-    dyn Fn(
-            Arc<EventContext>,
-            Option<ArcValueType>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -146,7 +137,7 @@ pub struct ServiceRegistry {
     /// Store both the handler and the original registration topic path for parameter extraction
     local_action_handlers: Arc<RwLock<PathTrie<LocalActionEntryValue>>>,
 
-    //reverse index where we store the events that a service listens to
+    //index to store the events that a service listens to
     local_events_by_service: Arc<RwLock<PathTrie<Vec<EventMetadata>>>>,
 
     /// Remote action handlers organized by path (using PathTrie instead of HashMap)

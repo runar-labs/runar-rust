@@ -1,7 +1,7 @@
 use anyhow::Result;
 use runar_common::hmap;
 use runar_common::logging::Logger;
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use runar_common::Component;
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::network::network_config::NetworkConfig;
@@ -101,7 +101,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Test calling math service1 (on node1) from node2
     logger.info("Testing remote action call from node2 to node1...");
-    let add_params = ArcValueType::new_map(hmap! {
+    let add_params = ArcValue::new_map(hmap! {
         "a" => 5.0,
         "b" => 3.0
     });
@@ -114,7 +114,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Test calling math service2 (on node2) from node1
     logger.info("Testing remote action call from node1 to node2...");
-    let multiply_params = ArcValueType::new_map(hmap! {
+    let multiply_params = ArcValue::new_map(hmap! {
         "a" => 4.0,
         "b" => 7.0
     });
@@ -138,7 +138,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Test calling math service3 (on node1) from node2
     logger.info("Testing remote action call from node2 to node1...");
-    let add_params = ArcValueType::new_map(hmap! {
+    let add_params = ArcValue::new_map(hmap! {
         "a" => 5.0,
         "b" => 3.0
     });

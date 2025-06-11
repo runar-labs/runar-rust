@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use runar_common::types::ArcValueType;
+use runar_common::types::ArcValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -56,9 +56,9 @@ impl PathParamsService {
     /// Handle the extract action - returns all path parameters
     async fn handle_extract(
         &self,
-        _params: Option<ArcValueType>,
+        _params: Option<ArcValue>,
         context: RequestContext,
-    ) -> Result<ArcValueType> {
+    ) -> Result<ArcValue> {
         // Log that we're handling the request
         context.info("Handling extract path parameters request".to_string());
 
@@ -69,7 +69,7 @@ impl PathParamsService {
         context.info(format!("Extracted parameters: {:?}", param_values));
 
         // Return the parameters
-        Ok(ArcValueType::from_map(param_values))
+        Ok(ArcValue::from_map(param_values))
     }
 }
 

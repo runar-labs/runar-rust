@@ -16,8 +16,8 @@ use crate::services::PublishOptions; // Restored
 use crate::NodeDelegate; // Keep one instance
 use anyhow::{anyhow, Result}; // Restored
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
-use runar_common::types::ArcValueType;
-use runar_common::types::AsArcValueType; // Corrected: Only AsArcValueType needed here
+use runar_common::types::ArcValue;
+use runar_common::types::AsArcValue; // Corrected: Only AsArcValue needed here
 use std::fmt;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -143,11 +143,7 @@ impl EventContext {
     /// - Full path with network ID: "network:service/topic" (used as is)
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
-    pub async fn publish(
-        &self,
-        topic: impl Into<String>,
-        data: Option<ArcValueType>,
-    ) -> Result<()> {
+    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
         if let Some(delegate) = &self.node_delegate {
             let topic_string = topic.into();
 
@@ -188,7 +184,7 @@ impl EventContext {
     /// - Simple action: "action" (both service path and network ID added - calls own service)
     pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
     where
-        P: AsArcValueType + Send + Sync,
+        P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         if let Some(delegate) = &self.node_delegate {

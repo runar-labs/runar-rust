@@ -7,11 +7,11 @@ use std::collections::HashMap;
 
 // use futures::lock::Mutex; // Unused import removed
 // use runar_common::ServiceInfo; // Unused import removed
-use runar_common::types::ArcValueType; // Removed ErasedArc and ValueCategory
-                                       // use runar_node::node::Node; // Unused import removed
-                                       // use std::sync::Arc; // Duplicate import removed
-                                       // use std::time::Duration; // Unused import removed
-                                       // use tempfile::tempdir; // Unused import removed
+use runar_common::types::ArcValue; // Removed ErasedArc and ValueCategory
+                                   // use runar_node::node::Node; // Unused import removed
+                                   // use std::sync::Arc; // Duplicate import removed
+                                   // use std::time::Duration; // Unused import removed
+                                   // use tempfile::tempdir; // Unused import removed
 use runar_services::sqlite::{
     ColumnDefinition, DataType, Params, Schema, SqlQuery, SqliteConfig, SqliteService,
     TableDefinition, Value,
@@ -107,7 +107,7 @@ mod tests {
             .with_value(Value::Integer(33));
         let insert_query =
             SqlQuery::new("INSERT INTO users (name, age) VALUES (?, ?)").with_params(insert_params);
-        let arc_insert_query = ArcValueType::from_struct(insert_query.clone());
+        let arc_insert_query = ArcValue::from_struct(insert_query.clone());
 
         let insert_response: i64 = node
             .request("users_db/execute_query", Some(arc_insert_query))
@@ -121,9 +121,9 @@ mod tests {
             Params::new().with_value(Value::Text("Test User From SqlQuery".to_string()));
         let select_query = SqlQuery::new("SELECT id, name, age FROM users WHERE name = ?")
             .with_params(select_params);
-        let arc_select_query = ArcValueType::from_struct(select_query.clone());
+        let arc_select_query = ArcValue::from_struct(select_query.clone());
 
-        let select_response: Vec<ArcValueType> = node
+        let select_response: Vec<ArcValue> = node
             .request("users_db/execute_query", Some(arc_select_query))
             .await
             .unwrap();
@@ -132,7 +132,7 @@ mod tests {
 
         let mut user_map_av = result_list[0].clone();
         let user_map = user_map_av
-            .as_map_ref::<String, ArcValueType>()
+            .as_map_ref::<String, ArcValue>()
             .expect("User data should be a map");
 
         let mut name_av = user_map
