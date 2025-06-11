@@ -715,13 +715,15 @@ mod tests {
         let payload = Some(ArcValue::from_json(json!({
             "message": "Hello, world!"
         })));
-        // let payload = Some(vmap!("message" => "Hello, world!"));
-        // // Test for pre-wrapped struct action
-        // let payload = Some(ArcValue::new_map(HashMap::from([(
-        //     "message".to_string(),
-        //     ArcValue::new_primitive("Hello, world!".to_string()),
-        // )])));
 
+        let result: String = node
+            .request("math/echo", payload)
+            .await
+            .expect("Failed to call echo action");
+
+        assert_eq!(result, "Hello, world!");
+
+        let payload = Some(ArcValue::new_primitive("Hello, world!".to_string()));
         let result: String = node
             .request("math/echo", payload)
             .await

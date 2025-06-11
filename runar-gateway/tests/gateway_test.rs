@@ -51,13 +51,13 @@ impl EchoService {
     #[action]
     async fn echo_map(
         &self,
-        params: HashMap<String, JsonValue>,
-    ) -> Result<HashMap<String, JsonValue>> {
+        params: HashMap<String, ArcValue>,
+    ) -> Result<HashMap<String, ArcValue>> {
         Ok(params)
     }
 
     #[action]
-    async fn echo_list(&self, params: Vec<JsonValue>) -> Result<Vec<JsonValue>> {
+    async fn echo_list(&self, params: Vec<ArcValue>) -> Result<Vec<ArcValue>> {
         Ok(params)
     }
 
@@ -131,85 +131,85 @@ async fn test_gateway_routes() -> Result<()> {
     assert_eq!(body_post, json!("hello from gateway test"));
     println!("POST /{}/echo successful.", echo_service_path);
 
-    // // --- Test POST echo_map ---
-    // let map_payload = json!({
-    //     "key1": "value1",
-    //     "key2": 123,
-    //     "nested": {
-    //         "n_key": true
-    //     }
-    // });
-    // let echo_map_url = format!("{}/{}/echo_map", base_url, echo_service_path);
-    // println!(
-    //     "Testing POST: {} with payload: {}",
-    //     echo_map_url, map_payload
-    // );
-    // let response_map = client.post(&echo_map_url).json(&map_payload).send().await?;
-    // assert_eq!(
-    //     response_map.status(),
-    //     HttpStatus::OK,
-    //     "echo_map request failed. Status: {:?}, Body: {:?}",
-    //     response_map.status(),
-    //     response_map.text().await?
-    // );
-    // let response_body_map: JsonValue = response_map.json().await?;
-    // assert_eq!(response_body_map, map_payload);
-    // println!("POST /{}/echo_map successful.", echo_service_path);
+    // --- Test POST echo_list ---
+    let list_payload = json!(["apple", "banana", json!({"fruit_type": "cherry"}), 100]);
+    let echo_list_url = format!("{}/{}/echo_list", base_url, echo_service_path);
+    println!(
+        "Testing POST: {} with payload: {}",
+        echo_list_url, list_payload
+    );
+    let response_list = client
+        .post(&echo_list_url)
+        .json(&list_payload)
+        .send()
+        .await?;
+    assert_eq!(
+        response_list.status(),
+        HttpStatus::OK,
+        "echo_list request failed. Status: {:?}, Body: {:?}",
+        response_list.status(),
+        response_list.text().await?
+    );
+    let response_body_list: JsonValue = response_list.json().await?;
+    assert_eq!(response_body_list, list_payload);
+    println!("POST /{}/echo_list successful.", echo_service_path);
 
-    // // --- Test POST echo_list ---
-    // let list_payload = json!(["apple", "banana", json!({"fruit_type": "cherry"}), 100]);
-    // let echo_list_url = format!("{}/{}/echo_list", base_url, echo_service_path);
-    // println!(
-    //     "Testing POST: {} with payload: {}",
-    //     echo_list_url, list_payload
-    // );
-    // let response_list = client
-    //     .post(&echo_list_url)
-    //     .json(&list_payload)
-    //     .send()
-    //     .await?;
-    // assert_eq!(
-    //     response_list.status(),
-    //     HttpStatus::OK,
-    //     "echo_list request failed. Status: {:?}, Body: {:?}",
-    //     response_list.status(),
-    //     response_list.text().await?
-    // );
-    // let response_body_list: JsonValue = response_list.json().await?;
-    // assert_eq!(response_body_list, list_payload);
-    // println!("POST /{}/echo_list successful.", echo_service_path);
+    // --- Test POST echo_map ---
+    let map_payload = json!({
+        "key1": "value1",
+        "key2": 123,
+        "nested": {
+            "n_key": true
+        }
+    });
+    let echo_map_url = format!("{}/{}/echo_map", base_url, echo_service_path);
+    println!(
+        "Testing POST: {} with payload: {}",
+        echo_map_url, map_payload
+    );
+    let response_map = client.post(&echo_map_url).json(&map_payload).send().await?;
+    assert_eq!(
+        response_map.status(),
+        HttpStatus::OK,
+        "echo_map request failed. Status: {:?}, Body: {:?}",
+        response_map.status(),
+        response_map.text().await?
+    );
+    let response_body_map: JsonValue = response_map.json().await?;
+    assert_eq!(response_body_map, map_payload);
+    println!("POST /{}/echo_map successful.", echo_service_path);
 
-    // // --- Test POST echo_struct ---
-    // let struct_payload_data = MyTestData {
-    //     id: 1,
-    //     name: "Test Struct".to_string(),
-    //     active: true,
-    // };
-    // let struct_payload_json = serde_json::to_value(&struct_payload_data)?;
-    // let echo_struct_url = format!("{}/{}/echo_struct", base_url, echo_service_path);
-    // println!(
-    //     "Testing POST: {} with payload: {}",
-    //     echo_struct_url, struct_payload_json
-    // );
-    // let response_struct = client
-    //     .post(&echo_struct_url)
-    //     .json(&struct_payload_json)
-    //     .send()
-    //     .await?;
-    // assert_eq!(
-    //     response_struct.status(),
-    //     HttpStatus::OK,
-    //     "echo_struct request failed. Status: {:?}, Body: {:?}",
-    //     response_struct.status(),
-    //     response_struct.text().await?
-    // );
-    // let response_body_struct: MyTestData = response_struct.json().await?;
-    // assert_eq!(response_body_struct, struct_payload_data);
-    // println!("POST /{}/echo_struct successful.", echo_service_path);
+    // --- Test POST echo_struct ---
+    let struct_payload_data = MyTestData {
+        id: 1,
+        name: "Test Struct".to_string(),
+        active: true,
+    };
+    let struct_payload_json = serde_json::to_value(&struct_payload_data)?;
+    let echo_struct_url = format!("{}/{}/echo_struct", base_url, echo_service_path);
+    println!(
+        "Testing POST: {} with payload: {}",
+        echo_struct_url, struct_payload_json
+    );
+    let response_struct = client
+        .post(&echo_struct_url)
+        .json(&struct_payload_json)
+        .send()
+        .await?;
+    assert_eq!(
+        response_struct.status(),
+        HttpStatus::OK,
+        "echo_struct request failed. Status: {:?}, Body: {:?}",
+        response_struct.status(),
+        response_struct.text().await?
+    );
+    let response_body_struct: MyTestData = response_struct.json().await?;
+    assert_eq!(response_body_struct, struct_payload_data);
+    println!("POST /{}/echo_struct successful.", echo_service_path);
 
-    // // 8. Stop Node
-    // node.stop().await?;
-    // println!("Node stopped.");
+    // 8. Stop Node
+    node.stop().await?;
+    println!("Node stopped.");
 
     Ok(())
 }
