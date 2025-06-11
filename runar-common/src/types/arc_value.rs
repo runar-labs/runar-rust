@@ -6,7 +6,7 @@
 // Architectural boundary: No other value type is permitted for serialization, API, or macro use.
 // See documentation in mod.rs and rust-docs/specs/ for rationale.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::clone::Clone;
 use std::cmp::{Eq, PartialEq};
 use std::collections::HashMap;
@@ -102,6 +102,7 @@ pub enum ValueCategory {
     Null,
     /// Raw bytes (used for Vec<u8>, not for lazy deserialization)
     Bytes,
+    Json,
 }
 
 /// Registry for type-specific serialization and deserialization handlers
@@ -321,6 +322,7 @@ impl SerializerRegistry {
             0x04 => ValueCategory::Struct,
             0x05 => ValueCategory::Null,
             0x06 => ValueCategory::Bytes,
+            0x07 => ValueCategory::Json,
             _ => return Err(anyhow!("Invalid category marker: {}", bytes[0])),
         };
 
@@ -438,6 +440,7 @@ impl SerializerRegistry {
                                 return Err(anyhow!("Cannot serialize lazy Null value"))
                             }
                             ValueCategory::Bytes => 0x06,
+                            ValueCategory::Json => 0x07,
                         };
                         result_vec.push(category_byte);
                         let type_bytes = lazy.type_name.as_bytes();
@@ -470,6 +473,7 @@ impl SerializerRegistry {
                         ValueCategory::Struct => 0x04,
                         ValueCategory::Null => 0x05, // Null category with Some(value) is odd, but let's follow old logic
                         ValueCategory::Bytes => 0x06,
+                        ValueCategory::Json => 0x07,
                     };
                     result_vec.push(category_byte);
 
@@ -501,6 +505,21 @@ impl SerializerRegistry {
                             } else {
                                 return Err(anyhow!(
                                     "Value has Bytes category but doesn't contain Arc<Vec<u8>> (actual: {})",
+                                    erased_arc_ref.type_name()
+                                ));
+                            }
+                        }
+                        ValueCategory::Json => {
+                            if let Ok(json_arc) = erased_arc_ref.as_arc::<serde_json::Value>() {
+                                serde_json::to_vec(&*json_arc).map_err(|e| {
+                                    anyhow!(
+                                        "Failed to serialize Json value to bytes: {}",
+                                        e
+                                    )
+                                })?
+                            } else {
+                                return Err(anyhow!(
+                                    "Value has Json category but doesn't contain Arc<serde_json::Value> (actual: {})",
                                     erased_arc_ref.type_name()
                                 ));
                             }
@@ -654,11 +673,8 @@ impl ArcValue {
                 ArcValue::new_list(values)
             }
             JsonValue::Object(obj) => {
-                let map: HashMap<String, ArcValue> = obj
-                    .into_iter()
-                    .map(|(k, v)| (k, ArcValue::from_json(v))) // Recursive call to Self::from_json
-                    .collect();
-                ArcValue::new_map(map)
+                // Store the raw JSON object lazily; conversion happens on demand
+                ArcValue::new_json(JsonValue::Object(obj))
             }
         }
     }
@@ -805,107 +821,28 @@ impl ArcValue {
         }
     }
 
+    /// Create a new JSON value
+    pub fn new_json(value: serde_json::Value) -> Self {
+        let arc = Arc::new(value.clone());
+        let serializer_fn: Option<JsonSerializationFn> = Some(Arc::new(
+            move |erased_arc: &ErasedArc| -> Result<serde_json::Value, anyhow::Error> {
+                let typed_arc = erased_arc.as_arc::<serde_json::Value>().map_err(|e| {
+                    anyhow!("Failed to downcast ErasedArc to Arc<serde_json::Value> for JSON serialization: {}", e)
+                })?;
+                Ok((*typed_arc).clone())
+            },
+        ));
+
+        Self {
+            category: ValueCategory::Json,
+            value: Some(ErasedArc::new(arc)),
+            json_serializer_fn: serializer_fn,
+        }
+    }
+
     /// Check if this value is null
     pub fn is_null(&self) -> bool {
         self.value.is_none() && self.category == ValueCategory::Null
-    }
-
-    /// Get value as a reference of the specified type
-    pub fn as_type_ref<T>(&mut self) -> Result<Arc<T>>
-    where
-        T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
-    {
-        let mut current_erased_arc = match self.value.take() {
-            Some(ea) => ea,
-            None => {
-                return Err(anyhow!(
-                    "Cannot get type ref: ArcValue's internal value is None (category: {:?})",
-                    self.category
-                ));
-            }
-        };
-
-        if current_erased_arc.is_lazy {
-            let type_name_clone: String;
-            let original_buffer_clone: Arc<[u8]>;
-            let start_offset_val: usize;
-            let end_offset_val: usize;
-
-            {
-                let lazy_data_arc = current_erased_arc.get_lazy_data().map_err(|e| {
-                    anyhow!(
-                        "Failed to get lazy data from ErasedArc despite is_lazy flag: {}",
-                        e
-                    )
-                })?;
-                type_name_clone = lazy_data_arc.type_name.clone();
-                original_buffer_clone = lazy_data_arc.original_buffer.clone();
-                start_offset_val = lazy_data_arc.start_offset;
-                end_offset_val = lazy_data_arc.end_offset;
-            }
-
-            // Perform type name check before deserialization
-            let expected_type_name = std::any::type_name::<T>();
-            if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
-                self.value = Some(current_erased_arc); // Put the original lazy value back
-                return Err(anyhow!(
-                    "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
-                    expected_type_name,
-                    type_name_clone
-                ));
-            }
-
-            let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
-            let deserialized_value: T = bincode::deserialize(data_slice).map_err(|e| {
-                // Note: Consider if current_erased_arc should be put back into self.value on deserialize error.
-                // Original code didn't, so maintaining that behavior for now.
-                anyhow!(
-                    "Failed to deserialize lazy struct data for type '{}' into {}: {}",
-                    type_name_clone,
-                    std::any::type_name::<T>(),
-                    e
-                )
-            })?;
-
-            // Replace internal lazy value with the eager one
-            current_erased_arc = ErasedArc::new(Arc::new(deserialized_value));
-        }
-
-        self.value = Some(current_erased_arc.clone()); // Put the (potentially updated) ErasedArc back
-
-        // Check if T is serde_json::Value, using TypeId for robustness
-        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<serde_json::Value>() {
-            //if let Some(serializer) = &self.json_serializer_fn {
-            // let arc_of_json_value: std::sync::Arc<serde_json::Value> = std::sync::Arc::new(
-            //     serializer(&current_erased_arc).expect("Failed to serialize value to JSON"),
-            // );
-            let arc_of_json_value = Arc::new(
-                self.to_json_value()
-                    .expect("Failed to serialize value to JSON"),
-            );
-
-            // Cast Arc<serde_json::Value> to Arc<dyn Any + Send + Sync>.
-            // This upcast is safe because serde_json::Value is 'static + Send + Sync,
-            // and T is bounded by 'static + Send + Sync (assumed for as_type_ref).
-            let any_arc: std::sync::Arc<dyn std::any::Any + Send + Sync> = arc_of_json_value;
-
-            // Attempt to downcast to Arc<T>. This will succeed if T is indeed serde_json::Value.
-            match any_arc.downcast::<T>() {
-                Ok(arc_t) => return Ok(arc_t),
-                Err(_) => {
-                    // This case should be unreachable if the TypeId check is correct and T is 'static.
-                    // The type_name::<T>() is included for debugging the panic message.
-                    unreachable!(
-                        "Internal logic error: TypeId::of::<T>() ({}) matched TypeId::of::<serde_json::Value>(), but Arc::downcast failed.",
-                        std::any::type_name::<T>()
-                    );
-                }
-            }
-            // }
-        }
-
-        let result = current_erased_arc.as_arc::<T>();
-        result
     }
 
     /// Get list as a reference of the specified element type
@@ -920,64 +857,59 @@ impl ArcValue {
             ));
         }
 
-        let mut current_erased_arc = match self.value.take() {
-            Some(ea) => ea,
-            None => {
-                return Err(anyhow!(
-                    "Cannot get list ref: ArcValue's internal value is None despite List category"
-                ));
+        match &mut self.value {
+            Some(ref mut actual_value) => {
+                if actual_value.is_lazy {
+                    let type_name_clone: String;
+                    let original_buffer_clone: Arc<[u8]>;
+                    let start_offset_val: usize;
+                    let end_offset_val: usize;
+
+                    {
+                        let lazy_data_arc = actual_value.get_lazy_data().map_err(|e| {
+                            anyhow!("Failed to get lazy data despite is_lazy flag: {}", e)
+                        })?;
+                        type_name_clone = lazy_data_arc.type_name.clone();
+                        original_buffer_clone = lazy_data_arc.original_buffer.clone();
+                        start_offset_val = lazy_data_arc.start_offset;
+                        end_offset_val = lazy_data_arc.end_offset;
+                    }
+
+                    let expected_list_type_name = std::any::type_name::<Vec<T>>();
+                    if !crate::types::erased_arc::compare_type_names(
+                        expected_list_type_name,
+                        &type_name_clone,
+                    ) {
+                        return Err(anyhow!(
+                            "Lazy list data type mismatch: expected compatible with Vec<{}> (is {}), but stored type is {}",
+                            std::any::type_name::<T>(),
+                            expected_list_type_name,
+                            type_name_clone
+                        ));
+                    }
+
+                    let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
+                    let deserialized_list: Vec<T> = bincode::deserialize(data_slice).map_err(|e| {
+                        anyhow!(
+                            "Failed to deserialize lazy list data for type '{}' into Vec<{}>: {}",
+                            type_name_clone,
+                            std::any::type_name::<T>(),
+                            e
+                        )
+                    })?;
+
+                    *actual_value = ErasedArc::new(Arc::new(deserialized_list));
+                }
+                actual_value.as_arc::<Vec<T>>().map_err(|e| {
+                    anyhow!("Failed to cast eager value to list: {}. Expected Vec<{}>, got {}. Category: {:?}", 
+                        e, std::any::type_name::<T>(), actual_value.type_name(), self.category)
+                })
             }
-        };
-
-        if current_erased_arc.is_lazy {
-            let type_name_clone: String;
-            let original_buffer_clone: Arc<[u8]>;
-            let start_offset_val: usize;
-            let end_offset_val: usize;
-
-            {
-                let lazy_data_arc = current_erased_arc.get_lazy_data().map_err(|e| {
-                    anyhow!(
-                        "Failed to get lazy data from ErasedArc for list despite is_lazy flag: {}",
-                        e
-                    )
-                })?;
-                type_name_clone = lazy_data_arc.type_name.clone();
-                original_buffer_clone = lazy_data_arc.original_buffer.clone();
-                start_offset_val = lazy_data_arc.start_offset;
-                end_offset_val = lazy_data_arc.end_offset;
-            }
-
-            let expected_list_type_name = std::any::type_name::<Vec<T>>();
-            if !crate::types::erased_arc::compare_type_names(
-                expected_list_type_name,
-                &type_name_clone,
-            ) {
-                self.value = Some(current_erased_arc); // Put the original lazy value back
-                return Err(anyhow!(
-                    "Lazy list data type mismatch: expected compatible with Vec<{}> (is {}), but stored type is {}",
-                    std::any::type_name::<T>(),
-                    expected_list_type_name,
-                    type_name_clone
-                ));
-            }
-
-            let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
-            let deserialized_list: Vec<T> = bincode::deserialize(data_slice).map_err(|e| {
-                anyhow!(
-                    "Failed to deserialize lazy list data for type '{}' into Vec<{}>: {}",
-                    type_name_clone,
-                    std::any::type_name::<T>(),
-                    e
-                )
-            })?;
-
-            current_erased_arc = ErasedArc::new(Arc::new(deserialized_list));
+            None => Err(anyhow!(
+                "Cannot get list reference from a null ArcValue (category: {:?})",
+                self.category
+            )),
         }
-
-        let result = current_erased_arc.as_arc::<Vec<T>>();
-        self.value = Some(current_erased_arc);
-        result
     }
 
     /// Get map as a reference of the specified key/value types.
@@ -994,7 +926,6 @@ impl ArcValue {
             + Send
             + Sync,
         V: 'static + Clone + Serialize + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
-        HashMap<K, V>: 'static + fmt::Debug + Send + Sync,
     {
         if self.category != ValueCategory::Map {
             return Err(anyhow!(
@@ -1044,10 +975,10 @@ impl ArcValue {
 
                     *actual_value = ErasedArc::new(Arc::new(deserialized_map));
                 }
-                actual_value.as_arc::<HashMap<K, V>>().map_err(|e|
+                actual_value.as_arc::<HashMap<K, V>>().map_err(|e| {
                     anyhow!("Failed to cast eager value to map: {}. Expected HashMap<{},{}>, got {}. Category: {:?}", 
                         e, std::any::type_name::<K>(), std::any::type_name::<V>(), actual_value.type_name(), self.category)
-                )
+                })
             }
             None => Err(anyhow!(
                 "Cannot get map reference from a null ArcValue (category: {:?})",
@@ -1061,23 +992,6 @@ impl ArcValue {
     where
         T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
     {
-        //check if the T is ArcValue
-        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<ArcValue>() {
-            let cloned_self = self.clone();
-            let boxed_any: Box<dyn std::any::Any> = Box::new(cloned_self);
-
-            match boxed_any.downcast::<T>() {
-                Ok(boxed_t) => return Ok(*boxed_t),
-                Err(_) => {
-                    // This case implies an internal inconsistency if TypeId matched.
-                    // Using std::any::type_name for better diagnostics.
-                    return Err(anyhow!(format!(
-                        "ArcValue.as_type: Downcast failed despite TypeId match. Target type: {}",
-                        std::any::type_name::<T>()
-                    )));
-                }
-            }
-        }
         let arc_ref = self.as_type_ref::<T>()?;
         Ok((*arc_ref).clone())
     }
@@ -1139,13 +1053,8 @@ impl ArcValue {
                 }
                 // Explicitly assign and return
                 actual_value.as_arc::<T>().map_err(|e| {
-                    anyhow!(
-                        "Failed to cast eager value to struct: {}. Expected {}, got {}. Category: {:?}",
-                        e,
-                        std::any::type_name::<T>(),
-                        actual_value.type_name(),
-                        self.category
-                    )
+                    anyhow!("Failed to cast eager value to struct: {}. Expected {}, got {}. Category: {:?}", 
+                        e, std::any::type_name::<T>(), actual_value.type_name(), self.category)
                 }) // Return the result
             }
             None => Err(anyhow!(
@@ -1240,7 +1149,15 @@ impl<'de> Visitor<'de> for ArcValueVisitor {
     where
         E: de::Error,
     {
-        Ok(ArcValue::new_primitive(value))
+        // Prefer signed 64-bit representation when the unsigned value fits into i64.
+        // This avoids downstream numeric type mismatches (e.g. expecting i64) when
+        // deserialising JSON numbers, while still preserving full range support for
+        // larger values by falling back to u64.
+        if value <= i64::MAX as u64 {
+            Ok(ArcValue::new_primitive(value as i64))
+        } else {
+            Ok(ArcValue::new_primitive(value))
+        }
     }
 
     fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
@@ -1315,7 +1232,174 @@ impl Serialize for ArcValue {
         }
     }
 }
-// Custom Display implementation
+
+impl ArcValue {
+    /// Get value as a reference of the specified type
+    pub fn as_type_ref<T>(&mut self) -> Result<Arc<T>>
+    where
+        T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
+    {
+        let mut current_erased_arc = match self.value.take() {
+            Some(ea) => ea,
+            None => {
+                return Err(anyhow!(
+                    "Cannot get type ref: ArcValue's internal value is None (category: {:?})",
+                    self.category
+                ));
+            }
+        };
+
+        if current_erased_arc.is_lazy {
+            let type_name_clone: String;
+            let original_buffer_clone: Arc<[u8]>;
+            let start_offset_val: usize;
+            let end_offset_val: usize;
+
+            {
+                let lazy_data_arc = current_erased_arc.get_lazy_data().map_err(|e| {
+                    anyhow!("Failed to get lazy data from ErasedArc despite is_lazy flag: {}", e)
+                })?;
+                type_name_clone = lazy_data_arc.type_name.clone();
+                original_buffer_clone = lazy_data_arc.original_buffer.clone();
+                start_offset_val = lazy_data_arc.start_offset;
+                end_offset_val = lazy_data_arc.end_offset;
+            }
+
+            // Perform type name check before deserialization
+            let expected_type_name = std::any::type_name::<T>();
+            if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
+                self.value = Some(current_erased_arc); // Put the original lazy value back
+                return Err(anyhow!(
+                    "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
+                    expected_type_name,
+                    type_name_clone
+                ));
+            }
+
+            let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
+            let deserialized_value: T = bincode::deserialize(data_slice).map_err(|e| {
+                // Note: Consider if current_erased_arc should be put back into self.value on deserialize error.
+                // Original code didn't, so maintaining that behavior for now.
+                anyhow!(
+                    "Failed to deserialize lazy struct data for type '{}' into {}: {}",
+                    type_name_clone,
+                    std::any::type_name::<T>(),
+                    e
+                )
+            })?;
+
+            // Replace internal lazy value with the eager one
+            current_erased_arc = ErasedArc::new(Arc::new(deserialized_value));
+        }
+
+        self.value = Some(current_erased_arc.clone()); // Put the (potentially updated) ErasedArc back
+
+        // Check if T is serde_json::Value, using TypeId for robustness
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<serde_json::Value>() {
+            //if let Some(serializer) = &self.json_serializer_fn {
+            // let arc_of_json_value: std::sync::Arc<serde_json::Value> = std::sync::Arc::new(
+            //     serializer(&current_erased_arc).expect("Failed to serialize value to JSON"),
+            // );
+            let arc_of_json_value = Arc::new(
+                self.to_json_value()
+                    .expect("Failed to serialize value to JSON"),
+            );
+
+            // Cast Arc<serde_json::Value> to Arc<dyn Any + Send + Sync>.
+            // This upcast is safe because serde_json::Value is 'static + Send + Sync,
+            // and T is bounded by 'static + Send + Sync (assumed for as_type_ref).
+            let any_arc: std::sync::Arc<dyn std::any::Any + Send + Sync> = arc_of_json_value;
+
+            // Attempt to downcast to Arc<T>. This will succeed if T is indeed serde_json::Value.
+            match any_arc.downcast::<T>() {
+                Ok(arc_t) => return Ok(arc_t),
+                Err(_) => {
+                    // This case should be unreachable if the TypeId check is correct and T is 'static.
+                    // The type_name::<T>() is included for debugging the panic message.
+                    unreachable!(
+                        "Internal logic error: TypeId::of::<T>() ({}) matched TypeId::of::<serde_json::Value>(), but Arc::downcast failed.",
+                        std::any::type_name::<T>()
+                    );
+                }
+            }
+            // }
+        }
+
+        if self.category == ValueCategory::Json {
+            // Lazy JSON conversion path
+            // Attempt to deserialize/convert JSON to requested type T
+            // Retrieve the stored JSON value
+            let json_arc = current_erased_arc
+                .as_arc::<serde_json::Value>()
+                .map_err(|e| anyhow!("Expected serde_json::Value in ArcValue::Json but found {}", e))?;
+            let json_clone = (*json_arc).clone();
+
+            // Special-case: if the requested type is serde_json::Value, return directly
+            if TypeId::of::<T>() == TypeId::of::<serde_json::Value>() {
+                // Put the erased arc back and return a clone
+                self.value = Some(current_erased_arc);
+                // SAFETY: the type ids are equal, so this cast is safe
+                let arc_json: Arc<T> = unsafe { std::mem::transmute::<Arc<serde_json::Value>, Arc<T>>(json_arc.clone()) };
+                return Ok(arc_json);
+            }
+
+            // Attempt generic serde_json conversion first
+            if let Ok(deser_t) = serde_json::from_value::<T>(json_clone.clone()) {
+                let arc_t = Arc::new(deser_t);
+
+                // Replace internal erased value with the newly materialised concrete value
+                self.value = Some(ErasedArc::new(arc_t.clone()));
+                // Update category heuristically
+                self.category = if json_clone.is_array() {
+                    ValueCategory::List
+                } else if json_clone.is_object() {
+                    // If the target type is HashMap<String, ArcValue> treat as Map, otherwise Struct
+                    if TypeId::of::<T>() == TypeId::of::<HashMap<String, ArcValue>>() {
+                        ValueCategory::Map
+                    } else {
+                        ValueCategory::Struct
+                    }
+                } else if json_clone.is_null() {
+                    ValueCategory::Null
+                } else {
+                    ValueCategory::Primitive
+                };
+
+                // SAFETY: deser_t was constructed as T
+                return Ok(unsafe { std::mem::transmute::<Arc<T>, Arc<T>>(arc_t) });
+            }
+
+            // Fallback: if T is HashMap<String, ArcValue> and json is object, build manually
+            if json_clone.is_object()
+                && TypeId::of::<T>() == TypeId::of::<HashMap<String, ArcValue>>()
+            {
+                if let serde_json::Value::Object(map_obj) = json_clone {
+                    let converted: HashMap<String, ArcValue> = map_obj
+                        .into_iter()
+                        .map(|(k, v)| (k, ArcValue::from_json(v)))
+                        .collect();
+                    let arc_hm = Arc::new(converted);
+                    self.value = Some(ErasedArc::new(arc_hm.clone()));
+                    self.category = ValueCategory::Map;
+                    // SAFETY: TypeId matches
+                    return Ok(unsafe {
+                        std::mem::transmute::<Arc<HashMap<String, ArcValue>>, Arc<T>>(arc_hm)
+                    });
+                }
+            }
+
+            // If none succeeded
+            return Err(anyhow!(
+                "Failed to lazily convert JSON ArcValue to requested type: {}",
+                std::any::type_name::<T>()
+            ));
+        }
+
+        let result = current_erased_arc.as_arc::<T>();
+        result
+    }
+}
+
 impl fmt::Display for ArcValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.value {
@@ -1375,6 +1459,13 @@ impl fmt::Display for ArcValue {
                                 write!(f, "Bytes(size: {} bytes)", bytes_arc.len())
                             } else {
                                 write!(f, "Bytes<Error Retrieving Size>")
+                            }
+                        }
+                        ValueCategory::Json => {
+                            if let Ok(json_arc) = actual_value.as_arc::<serde_json::Value>() {
+                                write!(f, "Json({})", json_arc)
+                            } else {
+                                write!(f, "Json<Error Retrieving Value>")
                             }
                         }
                     }

@@ -1,4 +1,5 @@
 use super::arc_value::{ArcValue, ValueCategory};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -56,11 +57,14 @@ fn test_from_json_array() {
 }
 
 #[test]
-fn test_from_json_object() {
+fn test_from_json_object_to_map() {
     let json_object = json!({ "key1": "value1", "key2": 123 });
     let mut arc_value = ArcValue::from_json(json_object);
-    assert_eq!(arc_value.category, ValueCategory::Map);
+    // Initially, JSON objects are represented lazily with category Json
+    assert_eq!(arc_value.category, ValueCategory::Json);
+    // Accessing as a HashMap triggers lazy conversion and updates the category to Map
     let map = arc_value.as_type::<HashMap<String, ArcValue>>().unwrap();
+    assert_eq!(arc_value.category, ValueCategory::Map);
     assert_eq!(map.len(), 2);
 
     let mut val1 = map.get("key1").unwrap().clone();
@@ -71,11 +75,46 @@ fn test_from_json_object() {
 
     let payload = json!({ "message": "hello from gateway test" });
     let mut arc_value = ArcValue::from_json(payload);
+    // Initially, JSON objects are represented lazily with category Json
+    assert_eq!(arc_value.category, ValueCategory::Json);
+    // Accessing as a HashMap triggers lazy conversion and updates the category to Map
     let map = arc_value.as_type::<HashMap<String, ArcValue>>().unwrap();
+    assert_eq!(arc_value.category, ValueCategory::Map);
     assert_eq!(map.len(), 1);
     let mut message = map.get("message").unwrap().clone();
     assert_eq!(
         message.as_type::<String>().unwrap(),
         "hello from gateway test".to_string()
     );
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+struct MyStruct {
+    id: i64,
+    name: String,
+    active: bool,
+}
+
+#[test]
+fn test_from_json_object_to_struct() {
+    let json_object = json!({ "id": 1, "name": "Test Struct", "active": true });
+    let mut arc_value = ArcValue::from_json(json_object);
+    assert_eq!(arc_value.category, ValueCategory::Json);
+    let obj: MyStruct = arc_value.as_type::<MyStruct>().unwrap();
+    assert_eq!(obj.id, 1);
+    assert_eq!(obj.name, "Test Struct");
+    assert_eq!(obj.active, true);
+}
+
+#[test]
+fn test_from_json_object_to_struct_list() {
+    let json_object = json!([ { "id": 1, "name": "Test Struct", "active": true } ]);
+    let mut arc_value = ArcValue::from_json(json_object);
+    assert_eq!(arc_value.category, ValueCategory::List);
+    let list: Vec<MyStruct> = arc_value.as_type::<Vec<MyStruct>>().unwrap();
+    assert_eq!(list.len(), 1);
+    let obj = list[0].clone();
+    assert_eq!(obj.id, 1);
+    assert_eq!(obj.name, "Test Struct");
+    assert_eq!(obj.active, true);
 }
