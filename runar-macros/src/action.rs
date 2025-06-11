@@ -553,7 +553,7 @@ fn generate_register_action_method(
                         }
                     };
 
-                            // #param_extractions uses `ctx` internally, which should resolve to #handler_request_ctx_ident
+                    // #param_extractions uses `ctx` internally, which should resolve to #handler_request_ctx_ident
                     #param_extractions
 
                     // Call the actual method with the extracted parameters
@@ -625,7 +625,6 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
                 // First try to extract from a map if the payload is a map
                 let mut params_value_clone = params_value.clone();
                 let map_result = params_value_clone.as_map_ref::<String, runar_common::types::ArcValue>();
-                
                 match map_result {
                     Ok(map_ref) => {
                         // If it's a map, try to get the parameter by name
@@ -634,8 +633,8 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
                                 Ok(val) => val,
                                 Err(map_err) => {
                                     ctx.error(format!(
-                                        "Failed to parse parameter '{}' from map: {}", 
-                                        #param_name_str, 
+                                        "Failed to parse parameter '{}' from map: {}",
+                                        #param_name_str,
                                         map_err
                                     ));
                                     return Err(anyhow!(
@@ -649,7 +648,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
                                 Ok(val) => val,
                                 Err(err) => {
                                     ctx.error(format!(
-                                        "Parameter '{}' not found in payload map and direct deserialization failed: {}", 
+                                        "Parameter '{}' not found in payload map and direct deserialization failed: {}",
                                         #param_name_str,
                                         err
                                     ));
