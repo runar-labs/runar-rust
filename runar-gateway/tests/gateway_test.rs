@@ -115,21 +115,21 @@ async fn test_gateway_routes() -> Result<()> {
     println!("GET /{}/ping successful.", echo_service_path);
 
     // 7. Test POST endpoint (/echo-service/echo)
-    // let echo_url = format!("{}/{}/echo", base_url, echo_service_path);
-    // let payload = json!({ "message": "hello from gateway test" });
-    // println!("Testing POST: {} with payload: {}", echo_url, payload);
+    let echo_url = format!("{}/{}/echo", base_url, echo_service_path);
+    let payload = json!({ "message": "hello from gateway test" });
+    println!("Testing POST: {} with payload: {}", echo_url, payload);
 
-    // let resp_post = client.post(&echo_url).json(&payload).send().await?;
-    // assert_eq!(
-    //     resp_post.status(),
-    //     HttpStatus::OK,
-    //     "Echo request failed. Status: {:?}, Body: {:?}",
-    //     resp_post.status(),
-    //     resp_post.text().await?
-    // );
-    // let body_post: JsonValue = resp_post.json().await?;
-    // assert_eq!(body_post, json!("hello from gateway test"));
-    // println!("POST /{}/echo successful.", echo_service_path);
+    let resp_post = client.post(&echo_url).json(&payload).send().await?;
+    assert_eq!(
+        resp_post.status(),
+        HttpStatus::OK,
+        "Echo request failed. Status: {:?}, Body: {:?}",
+        resp_post.status(),
+        resp_post.text().await?
+    );
+    let body_post: JsonValue = resp_post.json().await?;
+    assert_eq!(body_post, json!("hello from gateway test"));
+    println!("POST /{}/echo successful.", echo_service_path);
 
     // // --- Test POST echo_map ---
     // let map_payload = json!({

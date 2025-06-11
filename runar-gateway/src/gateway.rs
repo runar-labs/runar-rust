@@ -125,6 +125,11 @@ impl GatwayService {
                 post(
                     move |State(ctx): State<LifecycleContext>,
                           AxumJson(payload): AxumJson<JsonValue>| async move {
+                        ctx.debug(format!(
+                            "handling post request for action: {} with payload: {}",
+                            &action_name_clone, &payload
+                        ));
+
                         let req_path = format!("{}/{}", service_path_clone, action_name_clone);
                         let request_arc_value = ArcValue::from_json(payload);
 

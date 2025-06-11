@@ -613,16 +613,65 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
         return extractions;
     }
 
-    // If there is only one parameter, deserialize the entire input into that type directly.
-    // params_value is an ArcValue here.
+    // If there is only one parameter, try to extract it from the payload in two ways:
+    // 1. First try to extract the parameter from a map where the key is the parameter name
+    // 2. If that fails, try to deserialize the entire input directly into the parameter type
     if params.len() == 1 {
         let (param_ident, param_type) = &params[0];
+        let param_name_str = param_ident.to_string();
+        
         extractions.extend(quote! {
-            let #param_ident: #param_type = match params_value.as_type::<#param_type>() {
-                Ok(val) => val,
-                Err(err) => {
-                    ctx.error(format!("Failed to parse parameter for single-parameter action: {}", err));
-                    return Err(anyhow!(format!("Failed to parse parameter for single-parameter action: {}", err)));
+            let #param_ident: #param_type = {
+                // First try to extract from a map if the payload is a map
+                let mut params_value_clone = params_value.clone();
+                let map_result = params_value_clone.as_map_ref::<String, runar_common::types::ArcValue>();
+                
+                match map_result {
+                    Ok(map_ref) => {
+                        // If it's a map, try to get the parameter by name
+                        if let Some(value) = map_ref.get(#param_name_str) {
+                            match value.clone().as_type::<#param_type>() {
+                                Ok(val) => val,
+                                Err(map_err) => {
+                                    ctx.error(format!(
+                                        "Failed to parse parameter '{}' from map: {}", 
+                                        #param_name_str, 
+                                        map_err
+                                    ));
+                                    return Err(anyhow!(
+                                        format!("Failed to parse parameter '{}': {}", #param_name_str, map_err)
+                                    ));
+                                }
+                            }
+                        } else {
+                            // Parameter not found in map, try direct deserialization
+                            match params_value.as_type::<#param_type>() {
+                                Ok(val) => val,
+                                Err(err) => {
+                                    ctx.error(format!(
+                                        "Parameter '{}' not found in payload map and direct deserialization failed: {}", 
+                                        #param_name_str,
+                                        err
+                                    ));
+                                    return Err(anyhow!(
+                                        format!("Parameter '{}' not found in payload", #param_name_str)
+                                    ));
+                                }
+                            }
+                        }
+                    },
+                    Err(_) => {
+                        // If it's not a map, try direct deserialization
+                        match params_value.as_type::<#param_type>() {
+                            Ok(val) => val,
+                            Err(err) => {
+                                ctx.error(format!("Failed to parse parameter for single-parameter action: {}", err));
+                                return Err(anyhow!(
+                                    format!("Failed to parse parameter for single-parameter action: {}", err)
+                                ));
+                            }
+                        }
+                    }
                 }
             };
         });

@@ -87,12 +87,12 @@ impl TestService {
     }
 
     #[action]
-    async fn echo_pre_wrapped_struct(
-        &self,
-        id_str: String,
-        val_int: i32,
-        _ctx: &RequestContext,
-    ) -> Result<ArcValue> {
+    async fn echo(&self, message: String) -> Result<String> {
+        Ok(message)
+    }
+
+    #[action]
+    async fn echo_pre_wrapped_struct(&self, id_str: String, val_int: i32) -> Result<ArcValue> {
         let data = PreWrappedStruct {
             id: id_str,
             value: val_int,
@@ -130,11 +130,8 @@ impl TestService {
             vector_field: vec![1, 2, 3],
             map_field: HashMap::new(),
         };
-        ctx.publish(
-            "my_data_changed",
-            Some(ArcValue::from_struct(data.clone())),
-        )
-        .await?;
+        ctx.publish("my_data_changed", Some(ArcValue::from_struct(data.clone())))
+            .await?;
         ctx.publish("age_changed", Some(ArcValue::new_primitive(25)))
             .await?;
         Ok(data)
@@ -192,10 +189,7 @@ impl TestService {
             let mut existing = existing.clone();
             let mut existing = existing.as_type::<Vec<MyData>>().unwrap();
             existing.push(data.clone());
-            lock.insert(
-                "my_data_changed".to_string(),
-                ArcValue::new_list(existing),
-            );
+            lock.insert("my_data_changed".to_string(), ArcValue::new_list(existing));
         } else {
             lock.insert(
                 "my_data_changed".to_string(),
@@ -218,10 +212,7 @@ impl TestService {
             existing.push(new_age);
             lock.insert("age_changed".to_string(), ArcValue::new_list(existing));
         } else {
-            lock.insert(
-                "age_changed".to_string(),
-                ArcValue::new_list(vec![new_age]),
-            );
+            lock.insert("age_changed".to_string(), ArcValue::new_list(vec![new_age]));
         }
 
         Ok(())
@@ -302,8 +293,10 @@ mod tests {
     use runar_common::hmap;
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
+    use runar_node::vmap;
     use runar_node::Node;
     use runar_node::NodeConfig;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_math_service() {
@@ -352,7 +345,7 @@ mod tests {
 
         assert_eq!(add_action_meta.name, "add");
 
-        //TODO Events Metadata is now working properly.. the actual modeling is wrong.. we store the event metadata by the serviee of the event pathn itself]
+        //TODO Events Metadata is now working  .. BUT the actual modeling is wrong.. we store the event metadata by the serviee of the event pathn itself]
         //and I am not sure how this is usefrull .. prob is nbot.. but wer shuold fix his when we actualy need the event metadata,
         //which we dont need yet at this point.
 
@@ -717,5 +710,23 @@ mod tests {
 
         assert_eq!(list_result.len(), 1);
         assert_eq!(list_result[0].get("key1").unwrap(), "value1");
+
+        //test echo action
+        let payload = Some(ArcValue::from_json(json!({
+            "message": "Hello, world!"
+        })));
+        // let payload = Some(vmap!("message" => "Hello, world!"));
+        // // Test for pre-wrapped struct action
+        // let payload = Some(ArcValue::new_map(HashMap::from([(
+        //     "message".to_string(),
+        //     ArcValue::new_primitive("Hello, world!".to_string()),
+        // )])));
+
+        let result: String = node
+            .request("math/echo", payload)
+            .await
+            .expect("Failed to call echo action");
+
+        assert_eq!(result, "Hello, world!");
     }
 }

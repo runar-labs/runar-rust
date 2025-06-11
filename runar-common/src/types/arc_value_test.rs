@@ -68,4 +68,14 @@ fn test_from_json_object() {
 
     let mut val2 = map.get("key2").unwrap().clone();
     assert_eq!(val2.as_type::<i64>().unwrap(), 123);
+
+    let payload = json!({ "message": "hello from gateway test" });
+    let mut arc_value = ArcValue::from_json(payload);
+    let map = arc_value.as_type::<HashMap<String, ArcValue>>().unwrap();
+    assert_eq!(map.len(), 1);
+    let mut message = map.get("message").unwrap().clone();
+    assert_eq!(
+        message.as_type::<String>().unwrap(),
+        "hello from gateway test".to_string()
+    );
 }
