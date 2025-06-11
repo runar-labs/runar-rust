@@ -14,7 +14,9 @@ pub fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
             // Skip the self parameter and context parameter
             if let Pat::Ident(PatIdent { ident, .. }) = &**pat {
                 let ident_string = ident.to_string();
-                if ident_string != "self" && ident_string != "ctx" && !ident_string.ends_with("_ctx")
+                if ident_string != "self"
+                    && ident_string != "ctx"
+                    && !ident_string.ends_with("_ctx")
                 {
                     params.push((ident.clone(), (**ty).clone()));
                 }

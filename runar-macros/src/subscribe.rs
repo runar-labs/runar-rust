@@ -7,8 +7,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse::Parse, parse::ParseStream, parse_macro_input, Expr, ItemFn, Lit, LitStr,
-    Meta, Result,
+    parse::Parse, parse::ParseStream, parse_macro_input, Expr, ItemFn, Lit, LitStr, Meta, Result,
 };
 
 // Define a struct to parse the macro attributes
@@ -155,4 +154,3 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-

@@ -179,11 +179,7 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/topic" (used as is)
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
-    pub async fn publish(
-        &self,
-        topic: impl Into<String>,
-        data: Option<ArcValue>,
-    ) -> Result<()> {
+    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
         let topic_string = topic.into();
 
         // Process the topic based on its format

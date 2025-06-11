@@ -360,10 +360,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
         ArcValue::new_primitive("prod_123".to_string()),
     );
     order_doc_map.insert("quantity".to_string(), ArcValue::new_primitive(2i64));
-    order_doc_map.insert(
-        "total_price".to_string(),
-        ArcValue::new_primitive(50.99f64),
-    );
+    order_doc_map.insert("total_price".to_string(), ArcValue::new_primitive(50.99f64));
 
     let insert_order_req = InsertOneRequest {
         collection: "orders".to_string(),
@@ -407,10 +404,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
 
     // Find the order
     let mut filter_order_map: HashMap<String, ArcValue> = HashMap::new();
-    filter_order_map.insert(
-        "_id".to_string(),
-        ArcValue::new_primitive(order_id.clone()),
-    );
+    filter_order_map.insert("_id".to_string(), ArcValue::new_primitive(order_id.clone()));
     let find_order_req = FindOneRequest {
         collection: "orders".to_string(),
         filter: filter_order_map,

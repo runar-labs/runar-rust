@@ -317,7 +317,9 @@ fn test_multiple_struct_types_in_message() -> Result<()> {
     assert_eq!(deserialized_message.payloads[0].path, "users/data");
     assert_eq!(deserialized_message.payloads[1].path, "products/data");
 
-    println!("Multi-struct test passed: All data correctly serialized and deserialized using ArcValue");
+    println!(
+        "Multi-struct test passed: All data correctly serialized and deserialized using ArcValue"
+    );
     Ok(())
 }
 

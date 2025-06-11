@@ -68,10 +68,7 @@ pub type ActionRegistrar = Arc<
 >;
 
 pub type EventCallback = Box<
-    dyn Fn(
-            Arc<EventContext>,
-            Option<ArcValue>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -183,11 +180,7 @@ impl LifecycleContext {
     /// - Full topic with network ID: "network:service/topic" (used as is)
     /// - Topic with service: "service/topic" (current network ID added)
     /// - Simple topic: "topic" (current network ID and service path added)
-    pub async fn publish(
-        &self,
-        topic: impl Into<String>,
-        data: Option<ArcValue>,
-    ) -> Result<()> {
+    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
@@ -581,10 +574,7 @@ pub trait NodeRequestHandler: Send + Sync {
         &self,
         topic: String,
         callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    ArcValue,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+            dyn Fn(Arc<EventContext>, ArcValue) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
         >,
@@ -598,10 +588,7 @@ pub trait NodeRequestHandler: Send + Sync {
         &self,
         topic: String,
         callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    ArcValue,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+            dyn Fn(Arc<EventContext>, ArcValue) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
                 + Send
                 + Sync,
         >,

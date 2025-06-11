@@ -976,7 +976,10 @@ impl ArcValue {
 
                     // Perform type name check before deserialization
                     let expected_type_name = std::any::type_name::<HashMap<K, V>>();
-                    if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
+                    if !crate::types::erased_arc::compare_type_names(
+                        expected_type_name,
+                        &type_name_clone,
+                    ) {
                         self.value = Some(actual_value.clone()); // Put the original lazy value back
                         return Err(anyhow!(
                             "Lazy data type mismatch: expected compatible with {}, but stored type is {}",

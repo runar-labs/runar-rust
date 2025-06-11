@@ -48,8 +48,7 @@ pub struct RemoteService {
     local_node_id: PeerId,
 
     /// Pending requests awaiting responses
-    pending_requests:
-        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
+    pending_requests: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
 
     /// Request timeout in milliseconds
     request_timeout_ms: u64,

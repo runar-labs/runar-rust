@@ -619,7 +619,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
     if params.len() == 1 {
         let (param_ident, param_type) = &params[0];
         let param_name_str = param_ident.to_string();
-        
+
         extractions.extend(quote! {
             let #param_ident: #param_type = {
                 // First try to extract from a map if the payload is a map

@@ -730,9 +730,7 @@ impl AbstractService for SqliteService {
 
                             let result_list: Vec<ArcValue> = arc_results
                                 .into_iter()
-                                .map(|hmap_arc| {
-                                    ArcValue::new_map(hmap_arc.into_iter().collect())
-                                }) // VMap from HashMap
+                                .map(|hmap_arc| ArcValue::new_map(hmap_arc.into_iter().collect())) // VMap from HashMap
                                 .collect();
                             Ok(ArcValue::new_list(result_list))
                         } else {

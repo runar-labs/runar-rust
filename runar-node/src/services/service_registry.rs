@@ -39,10 +39,7 @@ use runar_common::types::ArcValue;
 /// The callback takes an event context and payload and returns a future that
 /// resolves once the event has been processed.
 pub type EventCallback = Arc<
-    dyn Fn(
-            Arc<EventContext>,
-            Option<ArcValue>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -52,10 +49,7 @@ pub type EventCallback = Arc<
 /// INTENTION: Provide a sharable type similar to ActionHandler that can be referenced
 /// by multiple subscribers and cloned as needed. This fixes lifetime issues by using Arc.
 pub type EventHandler = Arc<
-    dyn Fn(
-            Arc<EventContext>,
-            Option<ArcValue>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -68,10 +62,7 @@ pub type ServiceFuture = Pin<Box<dyn Future<Output = Result<ArcValue>> + Send>>;
 
 /// Type for event subscription callbacks
 pub type EventSubscriber = Arc<
-    dyn Fn(
-            Arc<EventContext>,
-            Option<ArcValue>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;

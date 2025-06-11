@@ -143,11 +143,7 @@ impl EventContext {
     /// - Full path with network ID: "network:service/topic" (used as is)
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
-    pub async fn publish(
-        &self,
-        topic: impl Into<String>,
-        data: Option<ArcValue>,
-    ) -> Result<()> {
+    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
         if let Some(delegate) = &self.node_delegate {
             let topic_string = topic.into();
 

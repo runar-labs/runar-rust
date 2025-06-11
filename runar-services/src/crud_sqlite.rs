@@ -167,7 +167,10 @@ impl CrudSqliteService {
                 } else {
                     Err(anyhow!(
                         "Unsupported primitive type '{}' within ArcValue for SQLite conversion.",
-                        av.value.as_ref().map_or_else(|| "[value was None, inconsistent for Primitive category]".to_string(), |v| v.type_name().to_string())
+                        av.value.as_ref().map_or_else(
+                            || "[value was None, inconsistent for Primitive category]".to_string(),
+                            |v| v.type_name().to_string()
+                        )
                     ))
                 }
             }
@@ -535,14 +538,13 @@ impl AbstractService for CrudSqliteService {
 
         let service_arc = Arc::new(self.clone_arc_safe().await?);
         let service_arc_for_insert_capture = Arc::clone(&service_arc); // Clone original arc for this handler
-        let insert_one_handler = Arc::new(
-            move |payload: Option<ArcValue>, req_ctx: RequestContext| {
+        let insert_one_handler =
+            Arc::new(move |payload: Option<ArcValue>, req_ctx: RequestContext| {
                 // service_arc_for_insert_capture is moved into this closure
                 let service_for_async = Arc::clone(&service_arc_for_insert_capture); // Clone for the async block
                 Box::pin(async move { service_for_async.handle_insert_one(req_ctx, payload).await })
                     as ServiceFuture
-            },
-        );
+            });
         context
             .register_action("insertOne", insert_one_handler)
             .await?;
@@ -552,14 +554,13 @@ impl AbstractService for CrudSqliteService {
         ));
 
         let service_arc_for_find_one = Arc::clone(&service_arc); // Clone for the second handler
-        let find_one_handler = Arc::new(
-            move |payload: Option<ArcValue>, req_ctx: RequestContext| {
+        let find_one_handler =
+            Arc::new(move |payload: Option<ArcValue>, req_ctx: RequestContext| {
                 // service_arc_for_find_one is moved into this closure
                 let service_for_async = Arc::clone(&service_arc_for_find_one); // Clone for the async block
                 Box::pin(async move { service_for_async.handle_find_one(req_ctx, payload).await })
                     as ServiceFuture
-            },
-        );
+            });
         context.register_action("findOne", find_one_handler).await?;
         context.info(format!(
             "Action 'findOne' registered for service '{}'",
