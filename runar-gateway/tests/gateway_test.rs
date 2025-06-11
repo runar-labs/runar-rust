@@ -1,18 +1,14 @@
-// runar-gateway/tests/gateway_test.rs
-
 use anyhow::{anyhow, Result};
 use axum::http::StatusCode as HttpStatus;
 use runar_common::types::ArcValue;
 use runar_gateway::GatwayService;
 use runar_macros::{action, service};
-use runar_node::services::{LifecycleContext, RequestContext};
 use runar_node::Node;
 use runar_node::NodeConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 // --- Test Data Struct ---
@@ -86,7 +82,7 @@ async fn test_gateway_routes() -> Result<()> {
     // 4. Setup and Add GatwayService
     let gateway_listen_addr: SocketAddr = "127.0.0.1:3001".parse()?;
     let gateway_service =
-        GatwayService::new("TestGateway", "gateway").with_listen_addr(gateway_listen_addr.clone());
+        GatwayService::new("TestGateway", "gateway").with_listen_addr(gateway_listen_addr);
     node.add_service(gateway_service).await?;
 
     // 5. Start Node

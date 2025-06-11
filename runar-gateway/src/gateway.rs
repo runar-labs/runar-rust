@@ -11,7 +11,7 @@ use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::ArcValue;
 use runar_node::services::{EventContext, LifecycleContext};
 use runar_node::AbstractService;
-use serde_json::{json, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex}; // Renamed to avoid conflict if any
 use tokio::sync::oneshot;
@@ -204,9 +204,7 @@ impl AbstractService for GatwayService {
                         Box::pin(async move {
                             if let Some(val) = value {
                                 event_ctx.info(format!(
-                                    "GatwayService '{}' received $registry/service/added event: {}",
-                                    service_name_clone,
-                                    format!("{:?}", val) // Safely display value
+                                    "GatwayService '{service_name_clone}' received $registry/service/added event: {val}",
                                 ));
                                 // TODO: Implement dynamic route updates if required
                             } else {

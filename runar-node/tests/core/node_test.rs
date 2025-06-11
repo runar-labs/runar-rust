@@ -4,7 +4,7 @@
 // and delegates to the ServiceRegistry as needed.
 
 use runar_common::hmap;
-use runar_common::types::schemas::{FieldSchema, SchemaDataType, ServiceMetadata};
+use runar_common::types::schemas::ServiceMetadata;
 use runar_common::types::ArcValue;
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::{Node, NodeConfig};

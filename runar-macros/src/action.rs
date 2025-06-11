@@ -112,14 +112,14 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     for (param_ident, param_type) in params.iter() {
         // Skip RequestContext and other non-payload parameters if any are identified
         if let Type::Path(type_path) = param_type {
-            if get_path_last_segment_ident_string(&type_path).as_deref() == Some("RequestContext") {
+            if get_path_last_segment_ident_string(type_path).as_deref() == Some("RequestContext") {
                 continue;
             }
         }
         has_input_payload = true;
         let param_name_str = param_ident.to_string();
         let (final_param_type_for_schema, is_option_for_schema_generation) =
-            if let Some(inner_ty) = get_option_inner_type(&param_type) {
+            if let Some(inner_ty) = get_option_inner_type(param_type) {
                 // Pass by reference
                 (inner_ty, true)
             } else {
@@ -328,7 +328,7 @@ fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
                 &type_path.path.segments.first().unwrap().arguments
             {
                 if let Some(GenericArgument::Type(inner_ty)) = params.args.first() {
-                    return Some(&inner_ty); // Apply borrow as per E0308
+                    return Some(inner_ty); // Apply borrow as per E0308
                 }
             }
         }
@@ -477,7 +477,7 @@ fn generate_register_action_method(
         .iter()
         .filter(|(_, param_type)| match param_type {
             Type::Path(tp) => {
-                get_path_last_segment_ident_string(&tp).as_deref() != Some("RequestContext")
+                get_path_last_segment_ident_string(tp).as_deref() != Some("RequestContext")
             }
             _ => true,
         })
@@ -485,7 +485,7 @@ fn generate_register_action_method(
         .collect::<Vec<(Ident, Type)>>();
 
     let method_call = generate_method_call(
-        &fn_ident,
+        fn_ident,
         &method_call_params_only,
         is_async,
         original_fn_has_request_context_param,

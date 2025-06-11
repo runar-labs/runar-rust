@@ -1390,8 +1390,7 @@ impl ArcValue {
                     self.value = Some(ErasedArc::new(arc_vec_t.clone()));
                     // Ensure category is List (should already be)
                     self.category = ValueCategory::List;
-                    // SAFETY: deser_vec is of type T
-                    return Ok(unsafe { std::mem::transmute::<Arc<T>, Arc<T>>(arc_vec_t) });
+                    return Ok(arc_vec_t);
                 }
             }
         }
@@ -1432,8 +1431,7 @@ impl ArcValue {
                     ValueCategory::Primitive
                 };
 
-                // SAFETY: deser_t was constructed as T
-                return Ok(unsafe { std::mem::transmute::<Arc<T>, Arc<T>>(arc_t) });
+                return Ok(arc_t);
             }
 
             // Fallback: if T is HashMap<String, ArcValue> and json is object, build manually
@@ -1462,8 +1460,7 @@ impl ArcValue {
             ));
         }
 
-        let result = current_erased_arc.as_arc::<T>();
-        result
+        current_erased_arc.as_arc::<T>()
     }
 }
 

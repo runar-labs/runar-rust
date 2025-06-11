@@ -14,7 +14,7 @@ fn test_from_json_null() {
 fn test_from_json_bool() {
     let json_bool = json!(true);
     let mut arc_value = ArcValue::from_json(json_bool);
-    assert_eq!(arc_value.as_type::<bool>().unwrap(), true);
+    assert!(arc_value.as_type::<bool>().unwrap());
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn test_from_json_array() {
     assert_eq!(val1.as_type::<String>().unwrap(), "test".to_string());
 
     let mut val2 = list[2].clone();
-    assert_eq!(val2.as_type::<bool>().unwrap(), true);
+    assert!(val2.as_type::<bool>().unwrap());
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn test_from_json_object_to_struct() {
     let obj: MyStruct = arc_value.as_type::<MyStruct>().unwrap();
     assert_eq!(obj.id, 1);
     assert_eq!(obj.name, "Test Struct");
-    assert_eq!(obj.active, true);
+    assert!(obj.active);
 }
 
 #[test]
@@ -116,5 +116,5 @@ fn test_from_json_object_to_struct_list() {
     let obj = list[0].clone();
     assert_eq!(obj.id, 1);
     assert_eq!(obj.name, "Test Struct");
-    assert_eq!(obj.active, true);
+    assert!(obj.active);
 }

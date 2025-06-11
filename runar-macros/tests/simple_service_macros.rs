@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
-use runar_common::types::schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::ArcValue;
 use runar_macros::{action, publish, service, subscribe};
 use runar_node::services::{EventContext, RequestContext};
@@ -293,7 +293,6 @@ mod tests {
     use runar_common::hmap;
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
-    use runar_node::vmap;
     use runar_node::Node;
     use runar_node::NodeConfig;
     use serde_json::json;
