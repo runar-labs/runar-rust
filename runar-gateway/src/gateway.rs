@@ -101,8 +101,7 @@ impl GatwayService {
                                 .to_json_value()
                                 .expect("Failed to convert ArcValue to JSON");
                             ctx.debug(format!("Response: {}", json_value));
-                            let json_value_2 = json!("pong");
-                            (StatusCode::OK, AxumJson(json_value_2)).into_response()
+                            (StatusCode::OK, AxumJson(json_value)).into_response()
                         }
                         Err(e) => {
                             ctx.error(format!(
