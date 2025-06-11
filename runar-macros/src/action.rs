@@ -9,9 +9,9 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::parse::Parser;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, token::Comma, FnArg, GenericArgument, Ident, ItemFn, Lit, Pat, PathArguments, ReturnType, Type,
+    parse_macro_input, punctuated::Punctuated, token::Comma, FnArg, GenericArgument, Ident, ItemFn,
+    Lit, Pat, PathArguments, ReturnType, Type,
 };
-
 
 /// Implementation of the action macro
 pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -87,16 +87,18 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             };
 
             if let Type::Path(type_path) = type_to_check {
-                if get_path_last_segment_ident_string(type_path).as_deref() == Some("RequestContext") {
+                if get_path_last_segment_ident_string(type_path).as_deref()
+                    == Some("RequestContext")
+                {
                     if let Pat::Ident(pat_ident) = &*pat_type.pat {
                         original_fn_ctx_ident_opt = Some(pat_ident.ident.clone());
-                        break; 
+                        break;
                     }
                 }
             }
         }
     }
-    // original_fn_ctx_ident_opt is now populated by the loop above, 
+    // original_fn_ctx_ident_opt is now populated by the loop above,
     // the next line `original_fn_has_request_context_param` will use it.
     let original_fn_has_request_context_param = original_fn_ctx_ident_opt.is_some();
     // This ctx_ident is for the LifecycleContext in the generated register_action_... method
@@ -117,13 +119,19 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         has_input_payload = true;
         let param_name_str = param_ident.to_string();
         let (final_param_type_for_schema, is_option_for_schema_generation) =
-            if let Some(inner_ty) = get_option_inner_type(&param_type) { // Pass by reference
+            if let Some(inner_ty) = get_option_inner_type(&param_type) {
+                // Pass by reference
                 (inner_ty, true)
             } else {
                 (param_type, false) // Ensure consistent return type (&Type, bool)
             };
 
-        let field_schema_tokens = generate_field_schema_for_type(&param_name_str, final_param_type_for_schema, is_option_for_schema_generation, None);
+        let field_schema_tokens = generate_field_schema_for_type(
+            &param_name_str,
+            final_param_type_for_schema,
+            is_option_for_schema_generation,
+            None,
+        );
         input_properties_map_tokens.push(quote! {
             properties_map.insert(#param_name_str.to_string(), Box::new(#field_schema_tokens));
         });
@@ -140,8 +148,8 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             let required_fields = vec![#(#required_input_fields_tokens),*];
             let final_required = if required_fields.is_empty() { None } else { Some(required_fields) };
             Some(::runar_common::types::schemas::FieldSchema::object(
-                "input_payload", 
-                properties_map, 
+                "input_payload",
+                properties_map,
                 final_required
             ))
         }}
@@ -154,23 +162,28 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!(None)
     } else {
         let schema_gen_type = &return_type_info.actual_type;
-        let schema_is_nullable = return_type_info.actual_type_is_option; 
-        let generated_schema = generate_field_schema_for_type("output_payload", schema_gen_type, schema_is_nullable, None);
+        let schema_is_nullable = return_type_info.actual_type_is_option;
+        let generated_schema = generate_field_schema_for_type(
+            "output_payload",
+            schema_gen_type,
+            schema_is_nullable,
+            None,
+        );
         quote!(Some(#generated_schema))
     };
 
     // Generate the register action method based on return type information
     let generated_code = generate_register_action_method(
-        &input.sig.ident, 
-        &action_name, 
-        &action_path, 
-        &params, 
-        &return_type_info.is_primitive, 
-        &return_type_info.type_name, 
-        is_async, 
+        &input.sig.ident,
+        &action_name,
+        &action_path,
+        &params,
+        &return_type_info.is_primitive,
+        &return_type_info.type_name,
+        is_async,
         &lifecycle_ctx_ident, // Pass the ident for LifecycleContext
         original_fn_has_request_context_param,
-        input_schema_tokens, 
+        input_schema_tokens,
         output_schema_tokens,
     );
 
@@ -188,7 +201,13 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 // This function robustly supports all valid Rust types, including nested generics.
 fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
     let (actual_type, is_unit, actual_type_is_option, is_primitive, type_name) = match return_type {
-        ReturnType::Default => (syn::parse_quote! { () }, true, false, true, "unit".to_string()),
+        ReturnType::Default => (
+            syn::parse_quote! { () },
+            true,
+            false,
+            true,
+            "unit".to_string(),
+        ),
         ReturnType::Type(_, original_ty) => {
             let mut current_type = *original_ty.clone();
             let mut outer_is_option = false;
@@ -207,7 +226,8 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 
             // Now current_type is the innermost T
             let type_name_str = if let syn::Type::Path(type_path) = &current_type {
-                get_path_last_segment_ident_string(type_path).unwrap_or_else(|| "unknown".to_string())
+                get_path_last_segment_ident_string(type_path)
+                    .unwrap_or_else(|| "unknown".to_string())
             } else if let syn::Type::Tuple(tuple_type) = &current_type {
                 if tuple_type.elems.is_empty() {
                     "unit".to_string()
@@ -217,21 +237,30 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
             } else {
                 // Handle other types like arrays, references, etc., or default to unknown
                 // For simplicity, using quote to stringify, but this might not be ideal for all cases.
-                quote!(#current_type).to_string().replace(" ", "") 
+                quote!(#current_type).to_string().replace(" ", "")
             };
 
-            let is_primitive_val = matches!(type_name_str.as_str(), "String" | "str" | "i32" | "i64" | "f32" | "f64" | "bool" | "unit");
-            
-            (current_type, false, outer_is_option, is_primitive_val, type_name_str)
+            let is_primitive_val = matches!(
+                type_name_str.as_str(),
+                "String" | "str" | "i32" | "i64" | "f32" | "f64" | "bool" | "unit"
+            );
+
+            (
+                current_type,
+                false,
+                outer_is_option,
+                is_primitive_val,
+                type_name_str,
+            )
         }
     };
 
     ReturnTypeInfo {
         is_primitive,
         is_unit,
-        actual_type, 
-        actual_type_is_option, 
-        type_name, 
+        actual_type,
+        actual_type_is_option,
+        type_name,
     }
 }
 
@@ -240,21 +269,29 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 struct ReturnTypeInfo {
     is_primitive: bool,
     is_unit: bool,
-    actual_type: Type, 
-    actual_type_is_option: bool, 
-    type_name: String, 
+    actual_type: Type,
+    actual_type_is_option: bool,
+    type_name: String,
 }
 
 // Helper to get the last segment of a TypePath as a String
 fn get_path_last_segment_ident_string(type_path: &syn::TypePath) -> Option<String> {
-    type_path.path.segments.last().map(|segment| segment.ident.to_string())
+    type_path
+        .path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
 }
 
 // Helper to extract T from Option<T>
 fn get_option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     if let syn::Type::Path(type_path) = ty {
-        if type_path.path.segments.len() == 1 && type_path.path.segments.first().unwrap().ident == "Option" {
-            if let PathArguments::AngleBracketed(params) = &type_path.path.segments.first().unwrap().arguments {
+        if type_path.path.segments.len() == 1
+            && type_path.path.segments.first().unwrap().ident == "Option"
+        {
+            if let PathArguments::AngleBracketed(params) =
+                &type_path.path.segments.first().unwrap().arguments
+            {
                 if let Some(syn::GenericArgument::Type(inner_ty)) = params.args.first() {
                     return Some(inner_ty);
                 }
@@ -284,8 +321,12 @@ fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
 // Helper to extract T from Vec<T>
 fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     if let syn::Type::Path(type_path) = ty {
-        if type_path.path.segments.len() == 1 && type_path.path.segments.first().unwrap().ident == "Vec" {
-            if let PathArguments::AngleBracketed(params) = &type_path.path.segments.first().unwrap().arguments {
+        if type_path.path.segments.len() == 1
+            && type_path.path.segments.first().unwrap().ident == "Vec"
+        {
+            if let PathArguments::AngleBracketed(params) =
+                &type_path.path.segments.first().unwrap().arguments
+            {
                 if let Some(GenericArgument::Type(inner_ty)) = params.args.first() {
                     return Some(&inner_ty); // Apply borrow as per E0308
                 }
@@ -295,7 +336,12 @@ fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     None
 }
 
-fn generate_field_schema_for_type(field_name_str: &str, ty: &syn::Type, is_top_level_nullable: bool, description_opt: Option<&str>) -> TokenStream2 {
+fn generate_field_schema_for_type(
+    field_name_str: &str,
+    ty: &syn::Type,
+    is_top_level_nullable: bool,
+    description_opt: Option<&str>,
+) -> TokenStream2 {
     let name_literal = proc_macro2::Literal::string(field_name_str);
     let description_literal_opt = description_opt.map(proc_macro2::Literal::string);
 
@@ -304,8 +350,9 @@ fn generate_field_schema_for_type(field_name_str: &str, ty: &syn::Type, is_top_l
         // The schema name and description belong to the Option itself (conceptually).
         // The inner type T is generated with its own name (which is the same outer name here)
         // and its own nullability (is_top_level_nullable = false, unless T is Option<Option<U>>).
-        let item_schema_tokens = generate_field_schema_for_type(field_name_str, inner_ty_for_option, false, None);
-        
+        let item_schema_tokens =
+            generate_field_schema_for_type(field_name_str, inner_ty_for_option, false, None);
+
         let mut desc_setter = quote! {};
         if let Some(desc_lit) = description_literal_opt {
             desc_setter = quote! { schema.description = Some(#desc_lit.to_string()); };
@@ -328,7 +375,8 @@ fn generate_field_schema_for_type(field_name_str: &str, ty: &syn::Type, is_top_l
         // For Vec items, the name is often context-dependent (e.g., "item") or not explicitly named in the schema structure itself.
         // The FieldSchema for the array will have the field_name_str.
         // The items schema describes the type of elements in the array.
-        let items_schema_tokens = generate_field_schema_for_type("item", inner_ty_for_vec, false, None);
+        let items_schema_tokens =
+            generate_field_schema_for_type("item", inner_ty_for_vec, false, None);
         base_schema_constructor_call = quote! {
             ::runar_common::types::schemas::FieldSchema::array(#name_literal, Box::new(#items_schema_tokens))
         };
@@ -339,14 +387,33 @@ fn generate_field_schema_for_type(field_name_str: &str, ty: &syn::Type, is_top_l
             .unwrap_or_else(|| "unknown_type".to_string());
 
         match type_name_str.as_str() {
-            "String" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::string(#name_literal) },
-            "i32" | "isize" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::integer(#name_literal) },
-            "i64" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::long(#name_literal) },
-            "f32" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::float(#name_literal) },
-            "f64" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::double(#name_literal) },
-            "bool" => base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::boolean(#name_literal) },
+            "String" => {
+                base_schema_constructor_call =
+                    quote! { ::runar_common::types::schemas::FieldSchema::string(#name_literal) }
+            }
+            "i32" | "isize" => {
+                base_schema_constructor_call =
+                    quote! { ::runar_common::types::schemas::FieldSchema::integer(#name_literal) }
+            }
+            "i64" => {
+                base_schema_constructor_call =
+                    quote! { ::runar_common::types::schemas::FieldSchema::long(#name_literal) }
+            }
+            "f32" => {
+                base_schema_constructor_call =
+                    quote! { ::runar_common::types::schemas::FieldSchema::float(#name_literal) }
+            }
+            "f64" => {
+                base_schema_constructor_call =
+                    quote! { ::runar_common::types::schemas::FieldSchema::double(#name_literal) }
+            }
+            "bool" => {
+                base_schema_constructor_call =
+                    quote! { ::runar_common::types::schemas::FieldSchema::boolean(#name_literal) }
+            }
             // TODO: Add other specific types like Timestamp if they have constructors
-            _ => { // Default to Object for unknown structs or complex types
+            _ => {
+                // Default to Object for unknown structs or complex types
                 // For struct types, ideally, we would introspect fields here.
                 // For now, creating an empty properties map for generic objects.
                 let properties_map = quote! { ::std::collections::HashMap::new() };
@@ -364,11 +431,11 @@ fn generate_field_schema_for_type(field_name_str: &str, ty: &syn::Type, is_top_l
     }
 
     // Set nullable and description for non-Option base types
-    additional_fields_setup.extend(quote!{
+    additional_fields_setup.extend(quote! {
         schema.nullable = Some(#is_top_level_nullable);
     });
     if let Some(desc_lit) = description_literal_opt {
-        additional_fields_setup.extend(quote!{
+        additional_fields_setup.extend(quote! {
             schema.description = Some(#desc_lit.to_string());
         });
     }
@@ -386,13 +453,13 @@ fn generate_register_action_method(
     fn_ident: &Ident,
     action_name: &str,
     action_path: &str,
-    params: &[(Ident, Type)], 
-    is_primitive: &bool, 
-    type_name: &String, 
+    params: &[(Ident, Type)],
+    is_primitive: &bool,
+    type_name: &String,
     is_async: bool,
     _lifecycle_ctx_ident: &Ident, // Renamed as it's for the LifecycleContext, not the RequestContext for the handler
     original_fn_has_request_context_param: bool,
-    input_schema_opt_tokens: TokenStream2, 
+    input_schema_opt_tokens: TokenStream2,
     output_schema_opt_tokens: TokenStream2,
 ) -> TokenStream2 {
     // Create a boolean expression for checking if there are parameters
@@ -406,17 +473,23 @@ fn generate_register_action_method(
     let param_extractions = generate_parameter_extractions(params, action_name);
 
     // Generate method call with extracted parameters
-    let method_call_params_only = params.iter()
-        .filter(|(_,param_type)| 
-            match param_type {
-                Type::Path(tp) => get_path_last_segment_ident_string(&tp).as_deref() != Some("RequestContext"),
-                _ => true
+    let method_call_params_only = params
+        .iter()
+        .filter(|(_, param_type)| match param_type {
+            Type::Path(tp) => {
+                get_path_last_segment_ident_string(&tp).as_deref() != Some("RequestContext")
             }
-        )
+            _ => true,
+        })
         .cloned()
-        .collect::<Vec<(Ident,Type)>>();
+        .collect::<Vec<(Ident, Type)>>();
 
-    let method_call = generate_method_call(&fn_ident, &method_call_params_only, is_async, original_fn_has_request_context_param);
+    let method_call = generate_method_call(
+        &fn_ident,
+        &method_call_params_only,
+        is_async,
+        original_fn_has_request_context_param,
+    );
 
     // Generate the appropriate result handling based on the return type
     let result_handling = if type_name == "()" {
@@ -448,7 +521,7 @@ fn generate_register_action_method(
     let register_method_name = format_ident!("register_action_{}", fn_ident);
 
     // The handler's RequestContext parameter is hardcoded to `ctx`
-    let handler_request_ctx_ident = format_ident!("ctx"); 
+    let handler_request_ctx_ident = format_ident!("ctx");
 
     quote! {
         async fn #register_method_name(&self, context: &runar_node::services::LifecycleContext) -> anyhow::Result<()> {
@@ -499,9 +572,9 @@ fn generate_register_action_method(
 
             // Construct ActionRegistrationOptions
             let action_registration_options = ::runar_node::services::ActionRegistrationOptions {
-                description: Some(#action_name.to_string()), 
-                input_schema: #input_schema_opt_tokens, 
-                output_schema: #output_schema_opt_tokens, 
+                description: Some(#action_name.to_string()),
+                input_schema: #input_schema_opt_tokens,
+                output_schema: #output_schema_opt_tokens,
             };
 
             // Register the action handler with the configured path
@@ -532,10 +605,7 @@ fn determine_common_type(params: &[(Ident, Type)]) -> Option<Type> {
 }
 
 /// Generate parameter extraction code
-fn generate_parameter_extractions(
-    params: &[(Ident, Type)],
-    _fn_name_str: &str,
-) -> TokenStream2 {
+fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) -> TokenStream2 {
     let mut extractions = TokenStream2::new();
 
     if params.is_empty() {

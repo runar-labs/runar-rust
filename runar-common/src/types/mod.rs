@@ -12,6 +12,8 @@ pub trait AsArcValue {
 }
 
 pub mod arc_value;
+#[cfg(test)]
+mod arc_value_test;
 pub mod erased_arc;
 pub mod schemas;
 mod vmap;

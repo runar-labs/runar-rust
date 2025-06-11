@@ -186,8 +186,7 @@ pub struct Node {
     pub(crate) load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
 
     /// Pending requests waiting for responses, keyed by correlation ID
-    pub(crate) pending_requests:
-        Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
+    pub(crate) pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
 
     pub serializer: Arc<RwLock<SerializerRegistry>>,
 
@@ -1274,23 +1273,7 @@ impl Node {
 
             // Execute the handler and return result
             let mut response_av = handler(request_payload_av.clone(), context).await?;
-            //TODO: check why tghis was added.. I dont like this here. if this is necessary
-            //it shuol dbe done int he ArcValue .as_type method..and ahdnel this scenarion.. this is not/
-            //reponsability oif the node
-            // if TypeId::of::<T>() == TypeId::of::<ArcValue>() {
-            //     // If T is ArcValue, we cast response_av (which is ArcValue) to T.
-            //     // This requires a bit of indirection through Box<dyn Any>.
-            //     let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
-            //     if let Ok(val_t) = boxed_any.downcast::<T>() {
-            //         return Ok(*val_t);
-            //     } else {
-            //         return Err(anyhow!(
-            //             "BUG: Failed to downcast ArcValue to T when TypeIds matched."
-            //         ));
-            //     }
-            // } else {
-            //     return response_av.as_type::<T>();
-            // }
+
             return response_av.as_type::<T>();
         }
 
@@ -1332,21 +1315,6 @@ impl Node {
 
             // Execute the selected handler
             let mut response_av = handler(request_payload_av.clone(), context).await?;
-            //TODO: check why tghis was added.. I dont like this here. if this is necessary
-            //it shuol dbe done int he ArcValue .as_type method..and ahdnel this scenarion.. this is not/
-            //reponsability oif the node
-            // if TypeId::of::<T>() == TypeId::of::<ArcValue>() {
-            //     let boxed_any: Box<dyn std::any::Any> = Box::new(response_av.clone());
-            //     if let Ok(val_t) = boxed_any.downcast::<T>() {
-            //         return Ok(*val_t);
-            //     } else {
-            //         return Err(anyhow!(
-            //             "BUG: Failed to downcast ArcValue to T when TypeIds matched."
-            //         ));
-            //     }
-            // } else {
-            //     return response_av.as_type::<T>();
-            // }
             return response_av.as_type::<T>();
         }
 

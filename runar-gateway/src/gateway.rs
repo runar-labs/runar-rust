@@ -11,8 +11,7 @@ use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::ArcValue;
 use runar_node::services::{EventContext, LifecycleContext};
 use runar_node::AbstractService;
-use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use serde_json::{json, Value as JsonValue};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex}; // Renamed to avoid conflict if any
 use tokio::sync::oneshot;
@@ -96,8 +95,15 @@ impl GatwayService {
                 get(move |State(ctx): State<LifecycleContext>| async move {
                     let req_path = format!("{}/{}", service_path_clone, action_name_clone);
                     let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
-                    match ctx.request::<(), serde_json::Value>(req_path, None).await {
-                        Ok(json_value) => (StatusCode::OK, AxumJson(json_value)).into_response(),
+                    match ctx.request::<(), ArcValue>(req_path, None).await {
+                        Ok(mut arc_value) => {
+                            let json_value = arc_value
+                                .to_json_value()
+                                .expect("Failed to convert ArcValue to JSON");
+                            ctx.debug(format!("Response: {}", json_value));
+                            let json_value_2 = json!("pong");
+                            (StatusCode::OK, AxumJson(json_value_2)).into_response()
+                        }
                         Err(e) => {
                             ctx.error(format!(
                                 "Error calling action: '{}': {}",
@@ -124,20 +130,24 @@ impl GatwayService {
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                         match ctx
-                            .request::<ArcValue, serde_json::Value>(req_path, Some(request_arc_value))
+                            .request::<ArcValue, serde_json::Value>(
+                                req_path,
+                                Some(request_arc_value),
+                            )
                             .await
                         {
                             Ok(json_value) => {
+                                ctx.debug(format!("Response: {}", json_value));
                                 (StatusCode::OK, AxumJson(json_value)).into_response()
                             }
                             Err(e) => {
                                 ctx.error(format!(
-                                    "Error converting ArcValue to JSON for POST request '{}': {}",
+                                    "Error calling action: '{}': {}",
                                     req_path_for_json_err, e
                                 ));
                                 (
                                     StatusCode::INTERNAL_SERVER_ERROR,
-                                    format!("JSON conversion error: {}", e),
+                                    format!("Service request error: {}", e),
                                 )
                                     .into_response()
                             }
@@ -238,6 +248,11 @@ impl AbstractService for GatwayService {
         {
             Ok(services) => {
                 for service_meta in services {
+                    if service_meta.service_path == self.path
+                        || service_meta.service_path == "$registry"
+                    {
+                        continue;
+                    }
                     context.info(format!(
                         "GatwayService '{}': Processing service '{}' (path: '{}') with {} actions",
                         self.name,

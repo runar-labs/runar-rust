@@ -1061,6 +1061,23 @@ impl ArcValue {
     where
         T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
     {
+        //check if the T is ArcValue
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<ArcValue>() {
+            let cloned_self = self.clone();
+            let boxed_any: Box<dyn std::any::Any> = Box::new(cloned_self);
+
+            match boxed_any.downcast::<T>() {
+                Ok(boxed_t) => return Ok(*boxed_t),
+                Err(_) => {
+                    // This case implies an internal inconsistency if TypeId matched.
+                    // Using std::any::type_name for better diagnostics.
+                    return Err(anyhow!(format!(
+                        "ArcValue.as_type: Downcast failed despite TypeId match. Target type: {}",
+                        std::any::type_name::<T>()
+                    )));
+                }
+            }
+        }
         let arc_ref = self.as_type_ref::<T>()?;
         Ok((*arc_ref).clone())
     }
