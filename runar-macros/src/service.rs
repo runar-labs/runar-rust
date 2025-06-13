@@ -5,8 +5,8 @@
 // handling action registration.
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use proc_macro2::Span;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::{HashMap, HashSet};
 use syn::{
@@ -311,8 +311,14 @@ fn generate_abstract_service_impl(
     let base_upper = struct_type.to_string().to_uppercase();
     let name_ident = Ident::new(&format!("SERVICE_NAME_{}", base_upper), Span::call_site());
     let path_ident = Ident::new(&format!("SERVICE_PATH_{}", base_upper), Span::call_site());
-    let desc_ident = Ident::new(&format!("SERVICE_DESCRIPTION_{}", base_upper), Span::call_site());
-    let ver_ident = Ident::new(&format!("SERVICE_VERSION_{}", base_upper), Span::call_site());
+    let desc_ident = Ident::new(
+        &format!("SERVICE_DESCRIPTION_{}", base_upper),
+        Span::call_site(),
+    );
+    let ver_ident = Ident::new(
+        &format!("SERVICE_VERSION_{}", base_upper),
+        Span::call_site(),
+    );
 
     quote! {
         #[async_trait::async_trait]

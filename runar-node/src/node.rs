@@ -1337,9 +1337,6 @@ impl Node {
             Err(e) => return Err(anyhow!("Invalid topic path: {}", e)),
         };
 
-        // Create the logger for this operation
-        let event_logger = self.logger.with_action_path(topic_path.action_path());
-
         // Publish to local subscribers
         let local_subscribers = self
             .service_registry

@@ -14,7 +14,7 @@ use crate::node::Node; // Added for concrete type
 use crate::routing::TopicPath;
 use crate::services::PublishOptions; // Restored
 use crate::NodeDelegate; // Keep one instance
-use anyhow::{anyhow, Result}; // Restored
+use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
 use runar_common::types::ArcValue;
 use runar_common::types::AsArcValue; // Corrected: Only AsArcValue needed here
@@ -91,7 +91,7 @@ impl EventContext {
         Self {
             topic_path: topic_path.clone(),
             logger: event_logger,
-            node_delegate: node_delegate,
+            node_delegate,
             delivery_options: None,
         }
     }
