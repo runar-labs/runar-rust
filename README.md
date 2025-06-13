@@ -15,6 +15,7 @@ Runar’s design combines battle-tested cryptography with an ergonomic API surfa
   * **Encrypted Storage** → blazing-fast SQLite with transparent encryption
 * **Mobile-first Embedding** – The core can be linked directly into iOS/Android apps, powering fully offline-capable P2P experiences.
 * **Zero-Ops Deployments** – Ship a single static binary; no external DB or message broker required.
+* **Zero-Copy Local Calls** – Services compiled into the same binary talk via plain in-memory function calls. No cloning, no serialization, identical performance to native Rust.
 
 ---
 
@@ -111,8 +112,34 @@ async fn main() -> Result<()> {
     println!("All good – stats recorded {count} value(s)");
     Ok(())
 }
-
 ```
+
+
+### Monolith → Microservices – Local-First, Network-Transparent
+
+Runar routes a request the fastest way possible, deciding at **runtime** whether it can stay in-process or must cross the network:
+
+* **Single binary (monolith)** – When all services are linked together, arguments are forwarded by reference; nothing is cloned or serialized.
+* **Separate binaries/containers (microservices)** – When you later split a service out, the *same* code keeps working. You only change the `NodeConfig` transport and let Runar handle encrypted serialization under the hood.
+
+This lets you start with a blazing-fast monolith and migrate to microservices gradually, as real-world traffic or organizational boundaries demand – no premature architecture decisions required.
+
+```rust
+// In tests or local tooling – everything lives in one process
+let mut node = Node::new(NodeConfig::in_memory()).await?;
+node.add_service(MathService).await?;
+let sum: f64 = node.request("math/add", Some(ArcValue::map(hmap!{"a"=>1.0,"b"=>2.0}))).await?;
+```
+
+Later, in production:
+
+```rust
+// math-service now runs remotely; only wiring changes
+let mut node = Node::new(NodeConfig::quic(...)).await?;
+let sum: f64 = node.request("math/add", None::<ArcValue>).await?;
+```
+
+Same service implementation, same API call – just a different deployment topology.
 
 ## Core Feature Matrix
 
