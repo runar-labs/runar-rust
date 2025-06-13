@@ -1,14 +1,14 @@
 # Runar ‑ Rust Backend Framework
 
-Runar is a lightweight, high-performance Rust framework for building **secure, modular, and developer-friendly** back-end services and peer-to-peer (P2P) applications.
+Runar is a lightweight, high-performance Rust framework for building **end-to-end encrypted, modular, and developer-friendly** back-end services. Due to its architecture it also makes it easy to build peer-to-peer (P2P) applications.
 
-Runar’s design combines battle-tested cryptography with an ergonomic API surface, enabling small teams to ship production-grade back-ends without dedicating a separate DevOps or security department.
+Runar’s design blends battle-tested cryptography with an ergonomic API surface and mobile-wallet key management, enabling small teams to ship production-grade back-ends without a dedicated DevOps or security department.
 
 ---
 
 ## Why Runar?
 
-* **Security from first principles** – All data is encrypted at rest and in transit using state-of-the-art algorithms.  Key material can be stored in user-controlled mobile wallets or hardware security modules (e.g. Ledger), following the same “self-custody” model that keeps crypto assets safe.
+* **End-to-End Encryption with Self-Custodied Keys** – Data stays encrypted from producer to consumer. Keys live in user-controlled mobile wallets or hardware (e.g. Ledger), and Runar automates exchange & rotation so developers get Signal-level security with almost zero extra code — and users enjoy password-less crypto they already trust.
 * **Great Developer UX** – Clean request/response APIs, a zero-boilerplate pub/sub system, and sensible defaults mean you can sketch an idea in minutes and iterate fast.
 * **Modular Architecture** – Enable only what you need.  First-party modules include:
   * **Web Gateway** → REST, GraphQL, and WebSocket endpoints out-of-the-box
@@ -113,7 +113,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
-
 
 ### Monolith → Microservices – Local-First, Network-Transparent
 
