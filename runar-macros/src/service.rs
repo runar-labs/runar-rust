@@ -7,7 +7,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 use syn::{
     parse_macro_input, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType, ReturnType,
@@ -286,7 +286,7 @@ fn generate_abstract_service_impl(
         .collect::<Vec<_>>();
 
     // Generate logging code for collected types
-    let type_collection_code = if sorted_types.len() == 0 {
+    let type_collection_code = if sorted_types.is_empty() {
         // No complex types collected – generate a simple debug log
         quote! {
             context.debug("No complex types to register for this service");
@@ -298,7 +298,7 @@ fn generate_abstract_service_impl(
     };
 
     // Generate debug line for the full list when registering types
-    let join_debug_code = if sorted_types.len() == 0 {
+    let join_debug_code = if sorted_types.is_empty() {
         quote! {
             context.debug("All types registered: []");
         }
