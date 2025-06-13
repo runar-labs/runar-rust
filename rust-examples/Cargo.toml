@@ -2,5 +2,6 @@
 resolver = "2"
 members = [
     "micro_services_demo",
+    "simple",
     # Add other example project directories here if they exist
 ]

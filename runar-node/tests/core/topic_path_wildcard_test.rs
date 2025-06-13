@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -142,6 +141,9 @@ mod topic_path_wildcard_tests {
 
     #[test]
     fn test_efficient_template_pattern_lookup() {
+        use runar_node::routing::TopicPath;
+        use std::collections::HashMap;
+
         // Create a HashMap to store handlers by path pattern
         let mut handlers = HashMap::new();
         let network_id = "main";
@@ -292,6 +294,7 @@ mod topic_path_wildcard_tests {
 #[cfg(test)]
 mod service_registry_wildcard_tests {
     use super::*;
+    use runar_node::{Node, NodeConfig};
 
     /// Test event handler for wildcard subscriptions
     #[tokio::test]
@@ -357,7 +360,8 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers1 {
             let context = Arc::new(EventContext::new(
                 &topic1,
-                Logger::new_root(Component::Service, "test"),
+                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -368,7 +372,8 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers2 {
             let context = Arc::new(EventContext::new(
                 &topic2,
-                Logger::new_root(Component::Service, "test"),
+                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -379,7 +384,8 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers3 {
             let context = Arc::new(EventContext::new(
                 &topic3,
-                Logger::new_root(Component::Service, "test"),
+                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -390,7 +396,8 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers4 {
             let context = Arc::new(EventContext::new(
                 &topic4,
-                Logger::new_root(Component::Service, "test"),
+                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -401,7 +408,8 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers5 {
             let context = Arc::new(EventContext::new(
                 &topic5,
-                Logger::new_root(Component::Service, "test"),
+                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -445,10 +453,6 @@ mod service_registry_wildcard_tests {
         // Publish again, should not receive the event
         let handlers_after = registry.get_local_event_subscribers(&topic).await;
         assert_eq!(handlers_after.len(), 0);
-
-        // Ensure the counter was incremented only once
-        // let final_count = *counter.lock().await; // Remove this line
-        // assert_eq!(final_count, 0); // Remove this line // Handler should not have been called after unsubscribe
 
         Ok(())
     }
@@ -502,7 +506,8 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers {
             let context = Arc::new(EventContext::new(
                 &topic,
-                Logger::new_root(Component::Service, "test"),
+                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
         }

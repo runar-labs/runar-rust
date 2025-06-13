@@ -14,7 +14,7 @@ use crate::node::Node; // Added for concrete type
 use crate::routing::TopicPath;
 use crate::services::PublishOptions; // Restored
 use crate::NodeDelegate; // Keep one instance
-use anyhow::{anyhow, Result}; // Restored
+use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
 use runar_common::types::ArcValue;
 use runar_common::types::AsArcValue; // Corrected: Only AsArcValue needed here
@@ -37,10 +37,10 @@ pub struct EventContext {
     pub topic_path: TopicPath,
 
     /// Logger instance specific to this context
-    pub logger: Logger,
+    pub logger: Arc<Logger>,
 
     /// Node delegate for making requests or publishing events
-    pub(crate) node_delegate: Option<Arc<Node>>,
+    pub(crate) node_delegate: Arc<Node>,
 
     /// Delivery options used when publishing this event
     pub delivery_options: Option<PublishOptions>,
@@ -51,7 +51,6 @@ impl fmt::Debug for EventContext {
         f.debug_struct("EventContext")
             .field("topic_path", &self.topic_path)
             .field("logger", &"<Logger>") // Avoid trying to Debug the Logger
-            .field("node_delegate", &self.node_delegate.is_some())
             .field("delivery_options", &self.delivery_options)
             .finish()
     }
@@ -79,12 +78,12 @@ impl EventContext {
     /// Create a new EventContext with the given topic path and logger
     ///
     /// This is the primary constructor that takes the minimum required parameters.
-    pub fn new(topic_path: &TopicPath, logger: Logger) -> Self {
+    pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, logger: Arc<Logger>) -> Self {
         // Add event path to logger if available from topic_path
         let event_path = topic_path.action_path();
         let event_logger = if !event_path.is_empty() {
             // If there's an event path, add it to the logger
-            logger.with_event_path(event_path)
+            Arc::new(logger.with_event_path(event_path))
         } else {
             logger
         };
@@ -92,7 +91,7 @@ impl EventContext {
         Self {
             topic_path: topic_path.clone(),
             logger: event_logger,
-            node_delegate: None,
+            node_delegate,
             delivery_options: None,
         }
     }
@@ -101,7 +100,7 @@ impl EventContext {
     ///
     /// Used to make service requests from within an event handler.
     pub fn with_node_delegate(mut self, delegate: Arc<Node>) -> Self {
-        self.node_delegate = Some(delegate);
+        self.node_delegate = delegate;
         self
     }
 
@@ -144,32 +143,28 @@ impl EventContext {
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
     pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
-        if let Some(delegate) = &self.node_delegate {
-            let topic_string = topic.into();
+        let topic_string = topic.into();
 
-            // Process the topic based on its format
-            let full_topic = if topic_string.contains(':') {
-                // Already has network ID, use as is
-                topic_string
-            } else if topic_string.contains('/') {
-                // Has service/topic but no network ID
-                format!("{}:{}", self.topic_path.network_id(), topic_string)
-            } else {
-                // Simple topic name - add service path and network ID
-                format!(
-                    "{}:{}/{}",
-                    self.topic_path.network_id(),
-                    self.topic_path.service_path(),
-                    topic_string
-                )
-            };
-
-            self.logger
-                .debug(format!("Publishing to processed topic: {full_topic}"));
-            delegate.publish(full_topic, data).await
+        // Process the topic based on its format
+        let full_topic = if topic_string.contains(':') {
+            // Already has network ID, use as is
+            topic_string
+        } else if topic_string.contains('/') {
+            // Has service/topic but no network ID
+            format!("{}:{}", self.topic_path.network_id(), topic_string)
         } else {
-            Err(anyhow!("No node delegate available in this context"))
-        }
+            // Simple topic name - add service path and network ID
+            format!(
+                "{}:{}/{}",
+                self.topic_path.network_id(),
+                self.topic_path.service_path(),
+                topic_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Publishing to processed topic: {full_topic}"));
+        self.node_delegate.publish(full_topic, data).await
     }
 
     /// Make a service request
@@ -187,35 +182,31 @@ impl EventContext {
         P: AsArcValue + Send + Sync,
         T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
-        if let Some(delegate) = &self.node_delegate {
-            let path_string = path.into();
+        let path_string = path.into();
 
-            // Process the path based on its format
-            let full_path = if path_string.contains(':') {
-                // Already has network ID, use as is
-                path_string
-            } else if path_string.contains('/') {
-                // Has service/action but no network ID
-                format!("{}:{}", self.topic_path.network_id(), path_string)
-            } else {
-                // Simple action name - add both service path and network ID
-                format!(
-                    "{}:{}/{}",
-                    self.topic_path.network_id(),
-                    self.topic_path.service_path(),
-                    path_string
-                )
-            };
-
-            self.logger
-                .debug(format!("Making request to processed path: {full_path}"));
-
-            // Call Node::request, specifying the generic types P and T.
-            // Node::request itself will handle deserialization to T.
-            delegate.request::<P, T>(full_path, payload).await
+        // Process the path based on its format
+        let full_path = if path_string.contains(':') {
+            // Already has network ID, use as is
+            path_string
+        } else if path_string.contains('/') {
+            // Has service/action but no network ID
+            format!("{}:{}", self.topic_path.network_id(), path_string)
         } else {
-            Err(anyhow!("No node delegate available in this context"))
-        }
+            // Simple action name - add both service path and network ID
+            format!(
+                "{}:{}/{}",
+                self.topic_path.network_id(),
+                self.topic_path.service_path(),
+                path_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Making request to processed path: {full_path}"));
+
+        // Call Node::request, specifying the generic types P and T.
+        // Node::request itself will handle deserialization to T.
+        self.node_delegate.request::<P, T>(full_path, payload).await
     }
 }
 
