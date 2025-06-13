@@ -1,129 +1,91 @@
-# Rust Monorepo
+# Runar ‑ Rust Backend Framework
 
-This is the main monorepo for Runar Labs Rust projects.
+Runar is a lightweight, high-performance Rust framework for building **secure, modular, and developer-friendly** back-end services and peer-to-peer (P2P) applications.
+
+Runar’s design combines battle-tested cryptography with an ergonomic API surface, enabling small teams to ship production-grade back-ends without dedicating a separate DevOps or security department.
+
+---
+
+## Why Runar?
+
+* **Security from first principles** – All data is encrypted at rest and in transit using state-of-the-art algorithms.  Key material can be stored in user-controlled mobile wallets or hardware security modules (e.g. Ledger), following the same “self-custody” model that keeps crypto assets safe.
+* **Great Developer UX** – Clean request/response APIs, a zero-boilerplate pub/sub system, and sensible defaults mean you can sketch an idea in minutes and iterate fast.
+* **Modular Architecture** – Enable only what you need.  First-party modules include:
+  * **Web Gateway** → REST, GraphQL, and WebSocket endpoints out-of-the-box
+  * **Encrypted Storage** → blazing-fast SQLite with transparent encryption
+* **Mobile-first Embedding** – The core can be linked directly into iOS/Android apps, powering fully offline-capable P2P experiences.
+* **Zero-Ops Deployments** – Ship a single static binary; no external DB or message broker required.
+
+---
+
+### Quick Example
+
+Runar’s declarative macros let you expose functionality with just a few lines of code:
+
+```rust
+use anyhow::Result;
+use runar_macros::{service, action};
+use runar_common::{hmap, types::ArcValue};
+
+pub struct MathService;
+
+#[service(path = "math")]
+impl MathService {
+    #[action]
+    async fn add(&self, a: f64, b: f64) -> Result<f64> {
+        Ok(a + b)
+    }
+}
+
+// Later, from another service or client:
+let params = ArcValue::new_map(hmap! {
+    "a" => 1.0,
+    "b" => 2.0
+});
+let sum: f64 = node.request("math/add", Some(params)).await?;
+assert_eq!(sum, 3.0);
+```
+
+## Core Feature Matrix
+
+| Feature | Status | Notes |
+| ------- | ------ | ----- |
+| Declarative service & action macros | ✅ | `runar-macros` crate (`service`, `action`, `publish`, `subscribe`) |
+| Event-driven pub/sub | ✅ | Built into `runar-node` with topic routing |
+| Typed zero-copy serializer (`ArcValue`) | ✅ | Binary & JSON conversion, runtime type registry |
+| Encrypted SQLite storage | ✅ | CRUD service in `runar-services::sqlite` |
+| HTTP REST gateway | ✅ | Axum-based, auto-exposes registered actions |
+| QUIC P2P transport & discovery | ✅ | Secure QUIC + multicast discovery in `runar-node::network` |
+| Key management & encryption | ✅ | HD wallets, token & AES helpers in `runar-keys` |
+| Configurable logging/tracing | ✅ | Structured logs via `runar-node::config` |
+| Mobile embeddings (FFI) | 🟡 | iOS/Android bindings work-in-progress |
+| Web UI dashboard | 🟡 | Experimental `node_webui` SPA |
+| GraphQL & WebSocket gateway | ⚪ | Planned extension of gateway service |
+
+> 🟡 Work-in-progress  |  ⚪ Planned
+
+---
+
+## Documentation
+
+Comprehensive guides live inside the repo under [`rust-docs/markdown/`](rust-docs/markdown/).
+Start with [`index.md`](rust-docs/markdown/index.md) to explore concepts, tutorials, and design rationale.
+
+---
+
+## Contributing
+
+We welcome early contributors who share our vision of **secure, self-hosted software**.
+
+1. Read the [architecture & guidelines](rust-docs/markdown/core/architecture.md).
+2. Discuss sizeable changes in a GitHub issue before opening a PR.
+3. Follow the *Documentation-First* workflow (update docs & tests **before** code).
+4. Ensure `cargo test` passes and `cargo fmt` shows no diff.
+
+Not sure where to start?  Check `rust-docs/markdown/development/` for good first issues and the current roadmap.
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Repository Structure
-
-This monorepo contains the following submodules:
-
-- `node_webui`: Node.js web UI components
-- `rust-apps`: Rust applications
-- `rust-common`: Common Rust libraries and utilities
-- `rust-docs`: Documentation for Rust projects
-- `rust-e2e-test`: End-to-end tests for Rust applications
-- `rust-examples`: Example Rust code and projects
-- `rust-macros`: Rust macros
-- `rust-node`: Rust-Node.js integration
-
-## Working with Git Submodules
-
-### Cloning the Repository
-
-To clone this repository along with all submodules, use:
-
-```bash
-git clone --recurse-submodules git@github.com:runar-labs/rust-mono.git
-```
-
-### If You've Already Cloned the Repository
-
-If you've already cloned the repository without the submodules, you can initialize and update them with:
-
-```bash
-git submodule update --init --recursive
-```
-
-### Updating Submodules
-
-To update all submodules to their latest commits:
-
-```bash
-git submodule update --recursive --remote
-```
-
-### Working with Individual Submodules
-
-To work with an individual submodule:
-
-1. Navigate to the submodule directory:
-   ```bash
-   cd <submodule-name>
-   ```
-
-2. The submodule is a complete git repository. You can make changes, commit, and push directly:
-   ```bash
-   git checkout main  # or any branch you want to work on
-   # make changes
-   git add .
-   git commit -m "Your commit message"
-   git push
-   ```
-
-3. After pushing changes in a submodule, go back to the root directory and update the reference:
-   ```bash
-   cd ..
-   git add <submodule-name>
-   git commit -m "Update submodule reference"
-   git push
-   ```
-
-### Adding a New Submodule
-
-To add a new submodule:
-
-```bash
-git submodule add git@github.com:runar-labs/new-repo-name.git
-git commit -m "Add new submodule"
-git push
-```
-
-
-Prompt Guidelines:
-GPT 4.1 Prompting Guide Notes
-Follow instructions literally. GPT-4.1 is trained to follow directions more precisely than previous models. Be explicit about what you want.
-
-Place instructions strategically. For long context, put critical instructions at both the beginning AND end of your prompt for best results.
-
-Use specific delimiters. Markdown headings, XML tags, and backticks help the model understand structure. JSON performs poorly for document collections.
-
-Induce planning with prompting. Ask the model to “think step by step” when solving complex problems to significantly improve accuracy.
-
-Design agentic workflows with clear reminders:
-“Keep going until the problem is completely resolved”
-
-“Use tools when uncertain instead of guessing”
-
-“Plan extensively before each action”
-
-Leverage the 1M token context window wisely. Performance stays strong up to the limit, but degrades when retrieving many items or reasoning across the entire context.
-
-Balance internal vs. external knowledge. For factual queries, instruct the model to “only use provided context” or “combine with basic knowledge” based on your needs.
-
-Format your prompts with clear sections:
-Role and Objective
-
-Instructions (with subcategories)
-
-Reasoning Steps
-
-Output Format
-
-Examples
-
-Final Instructions
-
-Guide information retrieval. When working with documents, ask the model to first analyze which ones are relevant before attempting to answer.
-
-Avoid rare prompt patterns. The model may struggle with extremely repetitive outputs or parallel tool calls. Test these cases carefully.
-
-Be direct with corrections. If model behavior is unexpected, a single clear sentence is usually enough to steer it in the right direction.
-
-Use specific frameworks for coding. For generating code changes, use the V4A diff format with context lines for maximum accuracy.
-
-Remember it’s not a reasoning model. GPT-4.1 doesn’t automatically provide an internal chain of thought, but you can explicitly request it to show its work.
-
-
+Runar is released under the MIT License – see the [LICENSE](LICENSE) file for details.
