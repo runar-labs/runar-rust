@@ -7,8 +7,6 @@ use runar_node::{
 };
 use std::sync::{Arc, Mutex};
 
-// ----- Math Service -----
-/// Simple arithmetic service publishing the result of additions.
 #[derive(Clone, Default)]
 pub struct MathService;
 
@@ -28,8 +26,6 @@ impl MathService {
     }
 }
 
-// ----- Stats Service -----
-/// Statistics collector service. Listens to math/added events and stores values.
 #[derive(Clone)]
 pub struct StatsService {
     values: Arc<Mutex<Vec<f64>>>,
