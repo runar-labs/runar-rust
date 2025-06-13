@@ -6,7 +6,8 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote};
+use proc_macro2::Span;
+use quote::{format_ident, quote, ToTokens};
 use std::collections::{HashMap, HashSet};
 use syn::{
     parse_macro_input, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, PatType, ReturnType,
@@ -31,7 +32,7 @@ pub fn service_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     let all_methods = collect_action_methods(&input);
 
     // Generate the service metadata
-    let service_metadata = generate_service_metadata();
+    let service_metadata = generate_service_metadata(&struct_type);
 
     // Generate the trait implementation for the AbstractService trait
     let service_impl = generate_abstract_service_impl(&struct_type, &all_methods, &service_attrs);
@@ -110,13 +111,19 @@ fn collect_action_methods(input: &ItemImpl) -> Vec<(Ident, &str, ImplItemFn)> {
 }
 
 /// Generate the service metadata static holder
-fn generate_service_metadata() -> TokenStream2 {
+fn generate_service_metadata(struct_type: &Ident) -> TokenStream2 {
+    let base = struct_type.to_string().to_uppercase();
+    let name_ident = Ident::new(&format!("SERVICE_NAME_{}", base), Span::call_site());
+    let path_ident = Ident::new(&format!("SERVICE_PATH_{}", base), Span::call_site());
+    let desc_ident = Ident::new(&format!("SERVICE_DESCRIPTION_{}", base), Span::call_site());
+    let ver_ident = Ident::new(&format!("SERVICE_VERSION_{}", base), Span::call_site());
+
     quote! {
-        // Static metadata holders
-        static SERVICE_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        static SERVICE_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        static SERVICE_DESCRIPTION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        static SERVICE_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        // Static metadata holders (unique per service)
+        static #name_ident: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        static #path_ident: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        static #desc_ident: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        static #ver_ident: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     }
 }
 
@@ -266,10 +273,10 @@ fn generate_abstract_service_impl(
     let mut sorted_types: Vec<_> = all_types.into_iter().collect();
     sorted_types.sort();
 
-    // Create a string literal with all the types
+    // Create a string representation of all types (one per line) for logging
     let types_str = sorted_types.join("\n");
 
-    // Create type identifiers for each type
+    // Create type identifiers for each type (used later for serializer registration)
     let type_idents = sorted_types
         .iter()
         .map(|t| {
@@ -278,39 +285,61 @@ fn generate_abstract_service_impl(
         })
         .collect::<Vec<_>>();
 
-    // Generate the code to log the types
-    let type_collection_code = quote! {
-        context.info(format!("Types used by service {}:\n    {}", stringify!(#struct_type), #types_str));
+    // Generate logging code for collected types
+    let type_collection_code = if sorted_types.len() == 0 {
+        // No complex types collected – generate a simple debug log
+        quote! {
+            context.debug("No complex types to register for this service");
+        }
+    } else {
+        quote! {
+            context.info(format!("Types used by service {}:\n    {}", stringify!(#struct_type), #types_str));
+        }
     };
+
+    // Generate debug line for the full list when registering types
+    let join_debug_code = if sorted_types.len() == 0 {
+        quote! {
+            context.debug("All types registered: []");
+        }
+    } else {
+        quote! {
+            context.debug(format!("All types registered: [{}]", [#(stringify!(#type_idents)),*].join(", ")));
+        }
+    };
+
+    let base_upper = struct_type.to_string().to_uppercase();
+    let name_ident = Ident::new(&format!("SERVICE_NAME_{}", base_upper), Span::call_site());
+    let path_ident = Ident::new(&format!("SERVICE_PATH_{}", base_upper), Span::call_site());
+    let desc_ident = Ident::new(&format!("SERVICE_DESCRIPTION_{}", base_upper), Span::call_site());
+    let ver_ident = Ident::new(&format!("SERVICE_VERSION_{}", base_upper), Span::call_site());
 
     quote! {
         #[async_trait::async_trait]
         impl runar_node::services::abstract_service::AbstractService  for #struct_type {
             fn name(&self) -> &str {
-                SERVICE_NAME.get_or_init(|| {
+                #name_ident.get_or_init(|| {
                     #name_value.to_string()
                 })
             }
 
             fn path(&self) -> &str {
-                SERVICE_PATH.get_or_init(|| {
+                #path_ident.get_or_init(|| {
                     #path_value.to_string()
                 })
             }
 
             fn description(&self) -> &str {
-                SERVICE_DESCRIPTION.get_or_init(|| {
+                #desc_ident.get_or_init(|| {
                     #description_value.to_string()
                 })
             }
 
             fn version(&self) -> &str {
-                SERVICE_VERSION.get_or_init(|| {
+                #ver_ident.get_or_init(|| {
                     #version_value.to_string()
                 })
             }
-
-
 
             fn network_id(&self) -> Option<String> {
                 None
@@ -342,22 +371,22 @@ fn generate_abstract_service_impl(
         impl #struct_type {
             /// Set the service name. Can only be set once per process (OnceLock).
             pub fn set_name(&self, value: &str) {
-                let _ = SERVICE_NAME.set(value.to_string());
+                let _ = #name_ident.set(value.to_string());
             }
 
             /// Set the service path. Can only be set once per process (OnceLock).
             pub fn set_path(&self, value: &str) {
-                let _ = SERVICE_PATH.set(value.to_string());
+                let _ = #path_ident.set(value.to_string());
             }
 
             /// Set the service description. Can only be set once per process (OnceLock).
             pub fn set_description(&self, value: &str) {
-                let _ = SERVICE_DESCRIPTION.set(value.to_string());
+                let _ = #desc_ident.set(value.to_string());
             }
 
             /// Set the service version. Can only be set once per process (OnceLock).
             pub fn set_version(&self, value: &str) {
-                let _ = SERVICE_VERSION.set(value.to_string());
+                let _ = #ver_ident.set(value.to_string());
             }
 
             // Helper method to register complex types with the serializer
@@ -373,7 +402,7 @@ fn generate_abstract_service_impl(
                     context.debug(format!("Registering type: {}", stringify!(#type_idents)));
                 })*
                 // Print all types being registered for macro transparency
-                context.debug(format!("All types registered: [{}]", [#(stringify!(#type_idents)),*].join(", ")));
+                #join_debug_code
                 #({
                     serializer.register::<#type_idents>()?;
                 })*

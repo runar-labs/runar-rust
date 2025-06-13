@@ -1136,7 +1136,8 @@ impl Node {
             // Create proper event context
             let event_context = Arc::new(EventContext::new(
                 &topic_path,
-                self.logger.clone().with_component(Component::Service),
+                Arc::new(self.clone()),
+                self.logger.clone(),
             ));
 
             // Get subscribers for this topic
@@ -1346,8 +1347,11 @@ impl Node {
             .await;
         for (_subscription_id, callback) in local_subscribers {
             // Create an event context for this subscriber
-            let event_context = Arc::new(EventContext::new(&topic_path, event_logger.clone()));
-
+            let event_context = Arc::new(EventContext::new(
+                &topic_path,
+                Arc::new(self.clone()),
+                self.logger.clone(),
+            ));
             // Execute the callback with correct arguments
             if let Err(e) = callback(event_context, data.clone()).await {
                 self.logger.error(format!(
