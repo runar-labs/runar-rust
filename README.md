@@ -155,6 +155,7 @@ Same service implementation, same API call – just a different deployment topol
 | Mobile embeddings (FFI) | 🟡 | iOS/Android bindings work-in-progress |
 | Web UI dashboard | 🟡 | Experimental `node_webui` SPA |
 | GraphQL & WebSocket gateway | ⚪ | Planned extension of gateway service |
+| Mobile App for Keys management | ⚪ | Planned |
 
 > 🟡 Work-in-progress  |  ⚪ Planned
 
