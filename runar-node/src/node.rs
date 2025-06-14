@@ -73,9 +73,6 @@ pub struct NodeConfig {
     pub request_timeout_ms: u64,
 }
 
-// LoggingConfig, ComponentKey, and LogLevel have been moved to config/logging_config.rs
-// NetworkConfig, TransportType, DiscoveryProviderConfig, and related types have been moved to network/network_config.rs
-
 impl NodeConfig {
     /// Create a new configuration with the specified node ID and network ID
     pub fn new(node_id: impl Into<String>, default_network_id: impl Into<String>) -> Self {
@@ -150,7 +147,8 @@ pub struct Node {
     /// notification after a 5s debounce window. This prevents unnecessary network traffic and ensures
     /// only the latest node state is broadcast. Internal use only; not exposed outside Node.
     debounce_notify_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    /// The network ID for this node
+
+    /// Default network id to be used when service are added without a network ID
     pub(crate) network_id: String,
 
     //network_ids that this node participates in.
@@ -195,71 +193,6 @@ pub struct Node {
 
 // Implementation for Node
 impl Node {
-    /// Set up a listener for peer node info updates from the transport
-    ///
-    /// INTENTION: Subscribe to peer node info updates from the transport and process them
-    /// by creating RemoteService instances for each capability.
-    async fn setup_peer_node_info_listener(&self) -> Result<()> {
-        // Get the transport
-        let transport = self.network_transport.read().await;
-        if let Some(transport) = transport.as_ref() {
-            // Subscribe to peer node info updates directly using the Transport trait
-            let mut receiver = transport.subscribe_to_peer_node_info().await;
-
-            // Clone what we need for the task
-            let node = self.clone();
-            let logger = self.logger.clone();
-
-            // Spawn a task to listen for peer node info updates
-            tokio::spawn(async move {
-                logger.info("Started peer node info listener");
-
-                loop {
-                    // The broadcast channel's recv() returns a Result, not an Option
-                    match receiver.recv().await {
-                        Ok(peer_node_info) => {
-                            logger.info(format!(
-                                "Received peer node info from {}",
-                                peer_node_info.peer_id
-                            ));
-
-                            // Process the peer node info
-                            if let Err(e) = node.process_remote_capabilities(peer_node_info).await {
-                                logger
-                                    .error(format!("Failed to process remote capabilities: {}", e));
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            logger.info("Peer node info channel closed");
-                            break;
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            logger.warn(format!(
-                                "Peer node info receiver lagged, skipped {} messages",
-                                skipped
-                            ));
-                            // Continue receiving messages
-                        }
-                    }
-                }
-
-                logger.info("Peer node info listener stopped");
-            });
-
-            self.logger.info("starting network transport layer...");
-            transport
-                .start()
-                .await
-                .map_err(|e| anyhow!("Failed to initialize transport: {}", e))?;
-
-            return Ok(());
-        }
-
-        // If we get here, we couldn't set up the listener
-        self.logger.warn("Could not set up peer node info listener");
-        Ok(())
-    }
-
     /// Create a new Node with the given configuration
     ///
     /// INTENTION: Initialize a new Node with the specified configuration, setting up
@@ -1716,6 +1649,71 @@ impl Node {
             }
         }
 
+        Ok(())
+    }
+
+    /// Set up a listener for peer node info updates from the transport
+    ///
+    /// INTENTION: Subscribe to peer node info updates from the transport and process them
+    /// by creating RemoteService instances for each capability.
+    async fn setup_peer_node_info_listener(&self) -> Result<()> {
+        // Get the transport
+        let transport = self.network_transport.read().await;
+        if let Some(transport) = transport.as_ref() {
+            // Subscribe to peer node info updates directly using the Transport trait
+            let mut receiver = transport.subscribe_to_peer_node_info().await;
+
+            // Clone what we need for the task
+            let node = self.clone();
+            let logger = self.logger.clone();
+
+            // Spawn a task to listen for peer node info updates
+            tokio::spawn(async move {
+                logger.info("Started peer node info listener");
+
+                loop {
+                    // The broadcast channel's recv() returns a Result, not an Option
+                    match receiver.recv().await {
+                        Ok(peer_node_info) => {
+                            logger.info(format!(
+                                "Received peer node info from {}",
+                                peer_node_info.peer_id
+                            ));
+
+                            // Process the peer node info
+                            if let Err(e) = node.process_remote_capabilities(peer_node_info).await {
+                                logger
+                                    .error(format!("Failed to process remote capabilities: {}", e));
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            logger.info("Peer node info channel closed");
+                            break;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            logger.warn(format!(
+                                "Peer node info receiver lagged, skipped {} messages",
+                                skipped
+                            ));
+                            // Continue receiving messages
+                        }
+                    }
+                }
+
+                logger.info("Peer node info listener stopped");
+            });
+
+            self.logger.info("starting network transport layer...");
+            transport
+                .start()
+                .await
+                .map_err(|e| anyhow!("Failed to initialize transport: {}", e))?;
+
+            return Ok(());
+        }
+
+        // If we get here, we couldn't set up the listener
+        self.logger.warn("Could not set up peer node info listener");
         Ok(())
     }
 }
