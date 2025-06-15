@@ -1,7 +1,5 @@
 # Runar Keys
 
-*Version 0.2 – **draft after first critique round***
-
 ---
 
 ## Glossary
