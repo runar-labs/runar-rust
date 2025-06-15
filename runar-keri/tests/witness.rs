@@ -9,7 +9,7 @@ use keri::event::sections::threshold::SignatureThreshold;
 use keri::event_message::event_msg_builder::EventMsgBuilder;
 use keri::event_message::signed_event_message::SignedEventMessage;
 use keri::event_message::EventTypeTag;
-use keri::prefix::{AttachedSignaturePrefix, IdentifierPrefix, Prefix};
+use keri::prefix::{AttachedSignaturePrefix, Prefix};
 use keri::signer::{CryptoBox, KeyManager};
 
 #[tokio::test]
@@ -22,8 +22,8 @@ async fn test_witness_management() -> Result<()> {
     let keri_core = RunarKeriCore::new(db_path.to_str().unwrap()).await?;
 
     // STEP 1: Create controlled CryptoBox instances for user and witness
-    let mut user_cryptobox = CryptoBox::new()?;
-    let mut witness_cryptobox = CryptoBox::new()?;
+    let user_cryptobox = CryptoBox::new()?;
+    let witness_cryptobox = CryptoBox::new()?;
 
     // STEP 2: Create user identity with controlled keys
     let user_current_pk = user_cryptobox.public_key()?;

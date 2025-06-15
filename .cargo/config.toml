@@ -1,0 +1,14 @@
+# This configuration allows us to run clippy on our code while ignoring warnings from dependencies
+[build]
+rustflags = [
+    "-A", "clippy::needless_lifetimes",
+    "-A", "clippy::non_canonical_partial_ord_impl",
+    "-A", "clippy::manual_repeat_n",
+    "-A", "clippy::empty_docs",
+    "-A", "clippy::comparison_chain",
+    "-A", "clippy::unnecessary_lazy_evaluations",
+    "-A", "elided_named_lifetimes",
+    "-A", "clippy::unnecessary_map_on_constructor",
+    "-A", "clippy::manual_try_fold",
+    "-A", "clippy::iter_overeager_cloned"
+]
