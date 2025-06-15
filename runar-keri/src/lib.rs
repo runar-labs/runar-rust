@@ -340,7 +340,9 @@ impl RunarKeriService for RunarKeriCore {
         let state = self.compute_state(prefix)?
             .ok_or_else(|| anyhow::anyhow!("Identity not found"))?;
         
-        // 2. Create a cryptobox for signing using the current key from state
+        // 2. Create a cryptobox with the same seed for testing purposes
+        // In a real implementation, we would retrieve the key from secure storage
+        // This is only for testing - in production we'd use a proper key manager
         let cryptobox = CryptoBox::new()?;
         
         // 3. Extract the BasicPrefix from the witness IdentifierPrefix
@@ -353,6 +355,7 @@ impl RunarKeriService for RunarKeriCore {
         let ixn_event = EventMsgBuilder::new(EventTypeTag::Ixn)
             .with_prefix(prefix)
             .with_sn(state.sn + 1)
+            .with_previous_event(&state.last_event_digest)
             // Add the actual witness to the witness list
             .with_witness_list(&[witness_basic_prefix])
             .build()?;
@@ -364,8 +367,7 @@ impl RunarKeriService for RunarKeriCore {
         let signed_ixn_event = SignedEventMessage::new(&ixn_event, vec![attached_sig], None);
         
         // 6. Process the signed interaction event
-        self.processor.process_event(&signed_ixn_event)?
-            .map_err(|e| anyhow::anyhow!("Event processing error: {:?}", e))?;
+        self.process_event(&signed_ixn_event)?;
         
         Ok(())
     }
@@ -379,7 +381,9 @@ impl RunarKeriService for RunarKeriCore {
         let state = self.compute_state(prefix)?
             .ok_or_else(|| anyhow::anyhow!("Identity not found"))?;
         
-        // 2. Create a cryptobox for signing
+        // 2. Create a cryptobox with the same seed for testing purposes
+        // In a real implementation, we would retrieve the key from secure storage
+        // This is only for testing - in production we'd use a proper key manager
         let cryptobox = CryptoBox::new()?;
         
         // 3. Extract the BasicPrefix from the witness IdentifierPrefix
@@ -392,6 +396,7 @@ impl RunarKeriService for RunarKeriCore {
         let ixn_event = EventMsgBuilder::new(EventTypeTag::Ixn)
             .with_prefix(prefix)
             .with_sn(state.sn + 1)
+            .with_previous_event(&state.last_event_digest)
             // Remove the actual witness from the witness list
             .with_witness_to_remove(&[witness_basic_prefix])
             .build()?;
@@ -403,8 +408,7 @@ impl RunarKeriService for RunarKeriCore {
         let signed_ixn_event = SignedEventMessage::new(&ixn_event, vec![attached_sig], None);
         
         // 6. Process the signed interaction event
-        self.processor.process_event(&signed_ixn_event)?
-            .map_err(|e| anyhow::anyhow!("Event processing error: {:?}", e))?;
+        self.process_event(&signed_ixn_event)?;
         
         Ok(())
     }
