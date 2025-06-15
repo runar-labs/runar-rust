@@ -27,8 +27,19 @@ pub struct AccessToken {
 }
 
 impl AccessToken {
-    pub fn new(peer_id: PeerId, network_id: NetworkId, expiration: Option<u64>, capabilities: Option<Vec<Capability>>, signer: &impl Signer<Signature>) -> Self {
-        let data = AccessTokenData { peer_id, network_id, expiration, capabilities };
+    pub fn new(
+        peer_id: PeerId,
+        network_id: NetworkId,
+        expiration: Option<u64>,
+        capabilities: Option<Vec<Capability>>,
+        signer: &impl Signer<Signature>,
+    ) -> Self {
+        let data = AccessTokenData {
+            peer_id,
+            network_id,
+            expiration,
+            capabilities,
+        };
         let signature = signer.sign(serde_json::to_string(&data).unwrap().as_bytes());
         Self { data, signature }
     }

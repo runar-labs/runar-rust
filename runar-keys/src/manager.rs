@@ -1,9 +1,9 @@
 //! In-memory KeyManager.
 
-use std::collections::HashMap;
-use crate::types::{NetworkKey, NodeKey, UserMasterKey};
-use crate::hd::{derive_network_key, derive_node_key};
 use crate::error::Result;
+use crate::hd::{derive_network_key, derive_node_key};
+use crate::types::{NetworkKey, NodeKey, UserMasterKey};
+use std::collections::HashMap;
 
 pub struct KeyManager {
     master: UserMasterKey,
@@ -13,7 +13,11 @@ pub struct KeyManager {
 
 impl KeyManager {
     pub fn new(master: UserMasterKey) -> Self {
-        Self { master, networks: HashMap::new(), nodes: HashMap::new() }
+        Self {
+            master,
+            networks: HashMap::new(),
+            nodes: HashMap::new(),
+        }
     }
 
     pub fn get_or_create_network(&mut self, index: u32) -> Result<&NetworkKey> {

@@ -57,6 +57,9 @@ impl From<SigningKey> for NodeKey {
 impl UserProfileKey {
     pub(crate) fn from_signing_key(k: SigningKey) -> Self {
         let peer_id = crate::types::PeerId::from_public_key(&k.verifying_key()).unwrap();
-        Self { keypair: k, peer_id }
+        Self {
+            keypair: k,
+            peer_id,
+        }
     }
 }

@@ -1,5 +1,5 @@
-use runar_keri::{RunarKeriCore, RunarKeriService};
 use keri::prefix::Prefix;
+use runar_keri::{RunarKeriCore, RunarKeriService};
 use tempfile::TempDir;
 
 #[tokio::test]

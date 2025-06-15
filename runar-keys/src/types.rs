@@ -4,7 +4,9 @@
 //! while hiding secret material behind safe abstractions.
 
 use crate::error::{KeyError, Result};
-use ed25519_dalek::{self as dalek, Signer, SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
+use ed25519_dalek::{
+    self as dalek, Signer, SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH,
+};
 use rand::{rngs::OsRng, RngCore};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -50,7 +52,9 @@ impl NetworkId {
     pub fn from_hex(hex_str: &str) -> Result<Self> {
         let bytes = hex::decode(hex_str)?;
         if bytes.len() != PUBLIC_KEY_LENGTH {
-            return Err(KeyError::SerializationError("Invalid NetworkId length".into()));
+            return Err(KeyError::SerializationError(
+                "Invalid NetworkId length".into(),
+            ));
         }
         let mut arr = [0u8; PUBLIC_KEY_LENGTH];
         arr.copy_from_slice(&bytes);
@@ -93,7 +97,10 @@ impl UserProfileKey {
     pub fn new_random() -> Self {
         let kp = SigningKey::generate(&mut OsRng);
         let peer_id = PeerId::from_public_key(&kp.verifying_key()).unwrap();
-        Self { keypair: kp, peer_id }
+        Self {
+            keypair: kp,
+            peer_id,
+        }
     }
 
     pub fn peer_id(&self) -> &PeerId {
@@ -156,7 +163,9 @@ pub struct NodeKey {
 
 impl NodeKey {
     pub fn new_random() -> Self {
-        Self { keypair: SigningKey::generate(&mut OsRng) }
+        Self {
+            keypair: SigningKey::generate(&mut OsRng),
+        }
     }
 
     pub fn sign(&self, msg: &[u8]) -> dalek::Signature {
@@ -186,7 +195,9 @@ impl SharedKey {
         Self { key, expires_at }
     }
 
-    pub fn key(&self) -> &[u8; 32] { &self.key }
+    pub fn key(&self) -> &[u8; 32] {
+        &self.key
+    }
 
     pub fn is_expired(&self) -> bool {
         match self.expires_at {

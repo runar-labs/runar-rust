@@ -1,17 +1,17 @@
 //! Runar Keys – public API facade
 
-pub mod error;
-pub mod types;
-pub mod hd;
-pub mod encryption;
 pub mod access_token;
+pub mod encryption;
+pub mod error;
+pub mod hd;
 pub mod manager;
+pub mod types;
 
 pub use error::{KeyError, Result};
 
 pub use types::{
-    current_unix_timestamp, NetworkId, NetworkKey, NodeKey, PeerId, SharedKey,
-    UserMasterKey, UserProfileKey,
+    current_unix_timestamp, NetworkId, NetworkKey, NodeKey, PeerId, SharedKey, UserMasterKey,
+    UserProfileKey,
 };
 
 pub use hd::{derive_network_key, derive_node_key, derive_profile_key};
