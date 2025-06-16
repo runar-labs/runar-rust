@@ -13,6 +13,8 @@ keri = { path = "../keriox", default-features = false, features = ["sled-db", "a
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+log = { workspace = true }
 sled = "0.34"
 tokio = { workspace = true, features = ["full"] }
 

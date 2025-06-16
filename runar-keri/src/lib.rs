@@ -11,22 +11,23 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::path::Path;
 use std::sync::Arc;
 
+// Import KERI dependencies
 use keri::{
     database::sled::SledEventDatabase,
     derivation::{basic::Basic, self_signing::SelfSigning},
     event::sections::threshold::SignatureThreshold,
-    event_message::EventTypeTag,
-    event_message::{event_msg_builder::EventMsgBuilder, signed_event_message::SignedEventMessage},
+    event_message::{
+        event_msg_builder::EventMsgBuilder, signed_event_message::SignedEventMessage, EventTypeTag,
+    },
     keys::PublicKey,
-    prefix::{AttachedSignaturePrefix, IdentifierPrefix},
+    prefix::{AttachedSignaturePrefix, BasicPrefix, IdentifierPrefix},
     processor::EventProcessor,
-    signer::CryptoBox,
-    signer::KeyManager,
+    signer::{CryptoBox, KeyManager},
     state::IdentifierState,
 };
-use std::path::Path;
 
 /// Service trait that encapsulates the high-level Runar operations we need from
 /// the KERI layer.  The separation by trait makes mocking and incremental
@@ -59,6 +60,7 @@ pub trait RunarKeriService {
         &mut self,
         prefix: &IdentifierPrefix,
         witness_prefix: &IdentifierPrefix,
+        signer: &mut CryptoBox,
     ) -> Result<()>;
 
     /// Remove a witness from an identity.
@@ -69,6 +71,7 @@ pub trait RunarKeriService {
         &mut self,
         prefix: &IdentifierPrefix,
         witness_prefix: &IdentifierPrefix,
+        signer: &mut CryptoBox,
     ) -> Result<()>;
 
     /// Verify a signed event message.
@@ -94,8 +97,11 @@ pub struct RunarKeriCore {
 
 impl RunarKeriCore {
     /// Instantiate the KERI core wrapper.  Accepts a database path where the
-    /// underlying [`keriox::database::sled::SledEventDatabase`] will live (to
-    /// be added in a future PR).
+    /// underlying [`keriox::database::sled::SledEventDatabase`] will live.
+    ///
+    /// This creates a new RunarKeriCore instance with a sled-backed database
+    /// for durable event storage and an EventProcessor for validation, signature
+    /// verification, and identifier state management.
     pub async fn new(db_path: &str) -> Result<Self> {
         // Initialise the sled-backed database. Sled will create the directory
         // if it does not yet exist.
@@ -105,13 +111,15 @@ impl RunarKeriCore {
         Ok(Self { processor, db })
     }
 
-    /// Process a signed event message directly
-    /// This is primarily used for testing
-    pub fn process_event(&self, event: &SignedEventMessage) -> Result<()> {
-        // Convert from keri::error::Error to anyhow::Error and discard the state
+    /// Process a signed event message directly and return the updated identifier state.
+    ///
+    /// This method processes a KERI event through the EventProcessor, which validates
+    /// the event, verifies signatures, and updates the identifier state accordingly.
+    /// It returns the updated state after processing.
+    pub fn process_event(&self, event: &SignedEventMessage) -> Result<Option<IdentifierState>> {
+        // Process the event and return the updated state
         self.processor
             .process_event(event)
-            .map(|_| ())
             .map_err(|e| anyhow::anyhow!("Event processing error: {:?}", e))
     }
 
@@ -133,7 +141,7 @@ impl RunarKeriCore {
         // Build inception event
         let icp_event = EventMsgBuilder::new(EventTypeTag::Icp)
             .with_keys(vec![current_key_prefix.clone()])
-            .with_next_keys(vec![next_key_prefix])
+            .with_next_keys(vec![next_key_prefix.clone()])
             .with_threshold(&SignatureThreshold::default())
             .with_next_threshold(&SignatureThreshold::default())
             .build()?;
@@ -187,10 +195,26 @@ impl RunarKeriCore {
             .map_err(|e: keri::error::Error| anyhow::anyhow!(e))
     }
 
+    /// Compute the current state of an identifier.
+    ///
+    /// This method retrieves the current state of an identifier from the event processor.
+    /// The state includes information such as the current key configuration, next key
+    /// commitment, witnesses, and sequence number.
     pub fn compute_state(&self, aid: &IdentifierPrefix) -> Result<Option<IdentifierState>> {
         self.processor
             .compute_state(aid)
             .map_err(|e: keri::error::Error| anyhow::anyhow!(e))
+    }
+
+    /// Get the witness list for an identifier.
+    ///
+    /// This method retrieves the current list of witnesses for an identifier.
+    /// Returns an empty vector if the identifier has no witnesses or doesn't exist.
+    pub fn get_witness_list(&self, aid: &IdentifierPrefix) -> Result<Vec<BasicPrefix>> {
+        match self.compute_state(aid)? {
+            Some(state) => Ok(state.witnesses),
+            None => Ok(vec![]),
+        }
     }
 }
 
@@ -292,7 +316,7 @@ impl RunarKeriService for RunarKeriCore {
             .with_next_keys(vec![new_next_key_prefix])
             // Use the same threshold as in the current state
             .with_threshold(&state.current.threshold)
-            .with_next_threshold(&SignatureThreshold::default())
+            .with_next_threshold(&state.current.threshold) // Keep same threshold
             .build()?;
 
         // Serialize the rotation event
@@ -324,84 +348,136 @@ impl RunarKeriService for RunarKeriCore {
         &mut self,
         prefix: &IdentifierPrefix,
         witness_prefix: &IdentifierPrefix,
+        signer: &mut CryptoBox,
     ) -> Result<()> {
         // 1. Get the current state of the identifier
         let state = self
             .compute_state(prefix)?
             .ok_or_else(|| anyhow::anyhow!("Identity not found"))?;
 
-        // 2. Create a cryptobox with the same seed for testing purposes
-        // In a real implementation, we would retrieve the key from secure storage
-        // This is only for testing - in production we'd use a proper key manager
-        let cryptobox = CryptoBox::new()?;
+        // 2. Verify that the signer key matches the current key in the state
+        let signer_key = signer.public_key()?;
+        let signer_key_prefix = Basic::Ed25519.derive(signer_key);
+        
+        if !state.current.public_keys.contains(&signer_key_prefix) {
+            return Err(anyhow::anyhow!("Signer key does not match current key in state"));
+        }
 
-        // 3. Extract the BasicPrefix from the witness IdentifierPrefix
+        // 3. Convert witness prefix to BasicPrefix for witness management  
         let witness_basic_prefix = match witness_prefix {
-            IdentifierPrefix::Basic(basic) => basic.clone(),
-            _ => return Err(anyhow::anyhow!("Witness prefix must be a BasicPrefix")),
+            IdentifierPrefix::Basic(bp) => bp.clone(),
+            _ => return Err(anyhow::anyhow!("Witness must be a basic prefix")),
         };
 
-        // 4. Build an interaction event to add the witness
-        let ixn_event = EventMsgBuilder::new(EventTypeTag::Ixn)
+        // 4. PROPER ROTATION: Use next keys as current keys and generate new next keys
+        // Get the next keys from cryptobox (these become the new current keys)
+        let new_current_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
+        
+        // Rotate the cryptobox to use the next keys as current
+        signer.rotate()?;
+        
+        // Generate new next keys for future rotations
+        let new_next_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
+
+        // 5. Create rotation event with proper key progression
+        let rotation_event = EventMsgBuilder::new(EventTypeTag::Rot)
             .with_prefix(prefix)
             .with_sn(state.sn + 1)
             .with_previous_event(&state.last_event_digest)
-            // Add the actual witness to the witness list
-            .with_witness_list(&[witness_basic_prefix])
+            .with_keys(new_current_keys) // Use next keys as current
+            .with_next_keys(new_next_keys) // Generate new next keys
+            .with_threshold(&state.current.threshold)
+            .with_next_threshold(&state.current.threshold) // Keep same threshold
+            .with_witness_to_add(&[witness_basic_prefix]) // Add the witness using graft
             .build()?;
 
-        // 5. Serialize and sign the interaction event
-        let serialized = ixn_event.serialize()?;
-        let sig = cryptobox.sign(&serialized)?;
-        let attached_sig = AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, sig, 0);
-        let signed_ixn_event = SignedEventMessage::new(&ixn_event, vec![attached_sig], None);
+        // 6. Serialize the rotation event
+        let serialized_event = rotation_event.serialize()?;
 
-        // 6. Process the signed interaction event
-        self.process_event(&signed_ixn_event)?;
+        // 7. Sign with the rotated key (now current in cryptobox)
+        let signature = signer.sign(&serialized_event)?;
 
-        Ok(())
+        let attached_signature =
+            AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, signature, 0);
+
+        let signed_event = SignedEventMessage::new(&rotation_event, vec![attached_signature], None);
+
+        // 8. Process the rotation event
+        let result = self.processor.process_event(&signed_event);
+        
+        match result {
+            Ok(Some(_new_state)) => Ok(()),
+            Ok(None) => Err(anyhow::anyhow!("Failed to process witness add event: no state returned").into()),
+            Err(e) => Err(e.into())
+        }
     }
 
     async fn remove_witness(
         &mut self,
         prefix: &IdentifierPrefix,
         witness_prefix: &IdentifierPrefix,
+        signer: &mut CryptoBox,
     ) -> Result<()> {
         // 1. Get the current state of the identifier
         let state = self
             .compute_state(prefix)?
             .ok_or_else(|| anyhow::anyhow!("Identity not found"))?;
 
-        // 2. Create a cryptobox with the same seed for testing purposes
-        // In a real implementation, we would retrieve the key from secure storage
-        // This is only for testing - in production we'd use a proper key manager
-        let cryptobox = CryptoBox::new()?;
+        // 2. Verify that the signer key matches the current key in the state
+        let signer_key = signer.public_key()?;
+        let signer_key_prefix = Basic::Ed25519.derive(signer_key);
+        
+        if !state.current.public_keys.contains(&signer_key_prefix) {
+            return Err(anyhow::anyhow!("Signer key does not match current key in state"));
+        }
 
-        // 3. Extract the BasicPrefix from the witness IdentifierPrefix
+        // 3. Convert witness prefix to BasicPrefix for witness management  
         let witness_basic_prefix = match witness_prefix {
-            IdentifierPrefix::Basic(basic) => basic.clone(),
-            _ => return Err(anyhow::anyhow!("Witness prefix must be a BasicPrefix")),
+            IdentifierPrefix::Basic(bp) => bp.clone(),
+            _ => return Err(anyhow::anyhow!("Witness must be a basic prefix")),
         };
 
-        // 4. Build an interaction event to remove the witness
-        let ixn_event = EventMsgBuilder::new(EventTypeTag::Ixn)
+        // 4. PROPER ROTATION: Use next keys as current keys and generate new next keys
+        // Get the next keys from cryptobox (these become the new current keys)
+        let new_current_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
+        
+        // Rotate the cryptobox to use the next keys as current
+        signer.rotate()?;
+        
+        // Generate new next keys for future rotations
+        let new_next_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
+
+        // 5. Create rotation event with proper key progression
+        let rotation_event = EventMsgBuilder::new(EventTypeTag::Rot)
             .with_prefix(prefix)
             .with_sn(state.sn + 1)
             .with_previous_event(&state.last_event_digest)
-            // Remove the actual witness from the witness list
-            .with_witness_to_remove(&[witness_basic_prefix])
+            .with_keys(new_current_keys) // Use next keys as current
+            .with_next_keys(new_next_keys) // Generate new next keys
+            .with_threshold(&state.current.threshold)
+            .with_next_threshold(&state.current.threshold) // Keep same threshold
+            .with_witness_to_remove(&[witness_basic_prefix]) // Remove the witness using prune
             .build()?;
 
-        // 5. Serialize and sign the interaction event
-        let serialized = ixn_event.serialize()?;
-        let sig = cryptobox.sign(&serialized)?;
-        let attached_sig = AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, sig, 0);
-        let signed_ixn_event = SignedEventMessage::new(&ixn_event, vec![attached_sig], None);
+        // 6. Serialize the rotation event
+        let serialized_event = rotation_event.serialize()?;
 
-        // 6. Process the signed interaction event
-        self.process_event(&signed_ixn_event)?;
+        // 7. Sign with the rotated key (now current in cryptobox)
+        let signature = signer.sign(&serialized_event)?;
 
-        Ok(())
+        let attached_signature =
+            AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, signature, 0);
+
+        let signed_event = SignedEventMessage::new(&rotation_event, vec![attached_signature], None);
+
+        // 8. Process the rotation event
+        let result = self.processor.process_event(&signed_event);
+        
+        match result {
+            Ok(Some(_new_state)) => Ok(()),
+            Ok(None) => Err(anyhow::anyhow!("Failed to process witness remove event: no state returned").into()),
+            Err(e) => Err(e.into())
+        }
     }
 
     async fn verify_event(&self, event: &SignedEventMessage) -> Result<bool> {
