@@ -150,7 +150,7 @@ Same service implementation, same API call – just a different deployment topol
 | Encrypted SQLite storage | ✅ | CRUD service in `runar-services::sqlite` |
 | HTTP REST gateway | ✅ | Axum-based, auto-exposes registered actions |
 | QUIC P2P transport & discovery | ✅ | Secure QUIC + multicast discovery in `runar-node::network` |
-| Key management & encryption | ✅ | HD wallets, token & AES helpers in `runar-keys` |
+| Key management & encryption |  🟡 | HD wallets, token & AES helpers in `runar-keys` |
 | Configurable logging/tracing | ✅ | Structured logs via `runar-node::config` |
 | Mobile embeddings (FFI) | 🟡 | iOS/Android bindings work-in-progress |
 | Web UI dashboard | 🟡 | Experimental `node_webui` SPA |
