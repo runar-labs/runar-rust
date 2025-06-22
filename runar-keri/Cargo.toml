@@ -18,5 +18,11 @@ log = { workspace = true }
 sled = "0.34"
 tokio = { workspace = true, features = ["full"] }
 
+# Secure storage dependencies
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+
 [dev-dependencies]
 tempfile = "3"

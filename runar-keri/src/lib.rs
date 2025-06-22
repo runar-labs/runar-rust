@@ -12,15 +12,15 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // Import KERI dependencies
 use keri::{
     database::sled::SledEventDatabase,
     derivation::{basic::Basic, self_signing::SelfSigning},
-    event::sections::threshold::SignatureThreshold,
+    event::sections::{threshold::SignatureThreshold, seal::{EventSeal, Seal}},
     event_message::{
-        event_msg_builder::EventMsgBuilder, signed_event_message::SignedEventMessage, EventTypeTag,
+        event_msg_builder::EventMsgBuilder, signed_event_message::SignedEventMessage, EventTypeTag
     },
     keys::PublicKey,
     prefix::{AttachedSignaturePrefix, BasicPrefix, IdentifierPrefix},
@@ -28,6 +28,10 @@ use keri::{
     signer::{CryptoBox, KeyManager},
     state::IdentifierState,
 };
+
+// Import secure storage module
+mod secure_storage;
+use secure_storage::SecureCryptoBoxStorage;
 
 /// Service trait that encapsulates the high-level Runar operations we need from
 /// the KERI layer.  The separation by trait makes mocking and incremental
@@ -93,6 +97,7 @@ pub struct RunarKeriCore {
     processor: EventProcessor,
     #[allow(dead_code)]
     db: Arc<SledEventDatabase>,
+    secure_storage: Mutex<SecureCryptoBoxStorage>,
 }
 
 impl RunarKeriCore {
@@ -103,12 +108,22 @@ impl RunarKeriCore {
     /// for durable event storage and an EventProcessor for validation, signature
     /// verification, and identifier state management.
     pub async fn new(db_path: &str) -> Result<Self> {
-        // Initialise the sled-backed database. Sled will create the directory
-        // if it does not yet exist.
+        // Create the underlying database and processor.  The database will be
+        // created at the specified path if it does not yet exist.
         let db = Arc::new(SledEventDatabase::new(Path::new(db_path))?);
         let processor = EventProcessor::new(db.clone());
+        
+        // Create secure storage in the same directory as the database
+        let storage_path = Path::new(db_path).parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("cryptobox_storage.json");
+        let secure_storage = SecureCryptoBoxStorage::new(storage_path);
 
-        Ok(Self { processor, db })
+        Ok(Self {
+            processor,
+            db,
+            secure_storage: Mutex::new(secure_storage),
+        })
     }
 
     /// Process a signed event message directly and return the updated identifier state.
@@ -136,7 +151,7 @@ impl RunarKeriCore {
 
         // Get the next public key for pre-rotation
         let next_pk = cryptobox.next_public_key()?;
-        let next_key_prefix = Basic::Ed25519.derive(next_pk);
+        let next_key_prefix = BasicPrefix::new(Basic::Ed25519, next_pk);
 
         // Build inception event
         let icp_event = EventMsgBuilder::new(EventTypeTag::Icp)
@@ -221,30 +236,32 @@ impl RunarKeriCore {
 #[async_trait]
 impl RunarKeriService for RunarKeriCore {
     async fn create_user_identity(&mut self) -> Result<IdentifierPrefix> {
-        // 1. Bootstrap a fresh signing context.
-        let cryptobox = CryptoBox::new()?;
-        let signing_pk: PublicKey = cryptobox.public_key()?;
-        let next_pk: PublicKey = cryptobox.next_public_key()?;
-
-        // 2. Build an inception (icp) event with our freshly-generated keys.
-        let event_msg = EventMsgBuilder::new(EventTypeTag::Icp)
-            .with_keys(vec![Basic::Ed25519.derive(signing_pk.clone())])
-            .with_next_keys(vec![Basic::Ed25519.derive(next_pk.clone())])
-            .with_threshold(&SignatureThreshold::default())
-            .with_next_threshold(&SignatureThreshold::default())
+        // Create a temporary cryptobox to get a user prefix for storage key derivation
+        let temp_cryptobox = CryptoBox::new()?;
+        let temp_user_prefix = IdentifierPrefix::Basic(Basic::Ed25519.derive(temp_cryptobox.public_key()?));
+        
+        // Get or create user cryptobox from secure storage
+        let user_cryptobox = self.secure_storage.lock().unwrap()
+            .get_or_create_cryptobox("user", &temp_user_prefix, "master_password")?;
+        
+        // Create inception event for user identity
+        let icp_event = EventMsgBuilder::new(EventTypeTag::Icp)
+            .with_keys(vec![Basic::Ed25519.derive(user_cryptobox.public_key()?)])
+            .with_next_keys(vec![Basic::Ed25519.derive(user_cryptobox.next_public_key()?)])
             .build()?;
 
-        // 3. Serialize and sign the event.
-        let serialized = event_msg.serialize()?;
-        let sig = cryptobox.sign(&serialized)?;
-        let attached_sig = AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, sig, 0);
-        let signed_event = SignedEventMessage::new(&event_msg, vec![attached_sig], None);
+        // Serialize and sign the event
+        let serialized_event = icp_event.serialize()?;
+        let signature = user_cryptobox.sign(&serialized_event)?;
+        let attached_signature = AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, signature, 0);
+        let signed_event = SignedEventMessage::new(&icp_event, vec![attached_signature], None);
 
-        // 4. Process the signed event – this stores it durably and computes state.
+        // Process the event
         self.processor.process_event(&signed_event)?;
 
-        // 5. Return the newly created AID / identifier prefix.
-        Ok(event_msg.event.get_prefix())
+        // Extract and return the identifier prefix
+        let user_prefix = signed_event.event_message.event.get_prefix();
+        Ok(user_prefix)
     }
 
     async fn create_node_identity(
@@ -252,40 +269,72 @@ impl RunarKeriService for RunarKeriCore {
         user_prefix: &IdentifierPrefix,
     ) -> Result<IdentifierPrefix> {
         // 1. Verify that the user identity exists and is valid
-        let _user_state = self
+        let user_state = self
             .compute_state(user_prefix)?
             .ok_or_else(|| anyhow::anyhow!("User identity not found"))?;
 
-        // 2. Create a new identity for the node
-        let cryptobox = CryptoBox::new()?;
-        let signing_pk: PublicKey = cryptobox.public_key()?;
-        let next_pk: PublicKey = cryptobox.next_public_key()?;
+        // 2. Create a new cryptobox for the node identity
+        let temp_node_cryptobox = CryptoBox::new()?;
+        let temp_node_prefix = IdentifierPrefix::Basic(Basic::Ed25519.derive(temp_node_cryptobox.public_key()?));
+        let node_cryptobox = self.secure_storage.lock().unwrap()
+            .get_or_create_cryptobox("node", &temp_node_prefix, "master_password")?;
+        let node_signing_pk: PublicKey = node_cryptobox.public_key()?;
+        let node_next_pk: PublicKey = node_cryptobox.next_public_key()?;
 
-        // 3. Build an inception event for the node identity
+        // 3. Build an inception event for the node identity with delegation
         let node_event_msg = EventMsgBuilder::new(EventTypeTag::Icp)
-            .with_keys(vec![Basic::Ed25519.derive(signing_pk.clone())])
-            .with_next_keys(vec![Basic::Ed25519.derive(next_pk.clone())])
+            .with_keys(vec![Basic::Ed25519.derive(node_signing_pk.clone())])
+            .with_next_keys(vec![Basic::Ed25519.derive(node_next_pk.clone())])
             .with_threshold(&SignatureThreshold::default())
             .with_next_threshold(&SignatureThreshold::default())
             // Add delegation seal from user identity
             .with_delegator(user_prefix)
             .build()?;
 
-        // 4. Serialize and sign the node inception event
-        let serialized = node_event_msg.serialize()?;
-        let sig = cryptobox.sign(&serialized)?;
-        let attached_sig = AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, sig, 0);
-        let signed_node_event = SignedEventMessage::new(&node_event_msg, vec![attached_sig], None);
+        // 4. Get the node identifier prefix before signing
+        let node_prefix = node_event_msg.event.content.prefix.clone();
 
-        // 5. Process the signed node event
+        // 5. Serialize and sign the node inception event
+        let node_serialized = node_event_msg.serialize()?;
+        let node_sig = node_cryptobox.sign(&node_serialized)?;
+        let node_attached_sig = AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, node_sig, 0);
+        let signed_node_event = SignedEventMessage::new(&node_event_msg, vec![node_attached_sig], None);
+
+        // 6. Create a new cryptobox for the user (in real implementation, this would be retrieved from secure storage)
+        // For now, we'll create a new one with the same keys as the user state
+        // In production, this would be the user's actual cryptobox from secure storage
+        let temp_user_cryptobox = CryptoBox::new()?;
+        let temp_user_prefix = IdentifierPrefix::Basic(Basic::Ed25519.derive(temp_user_cryptobox.public_key()?));
+        let user_cryptobox = self.secure_storage.lock().unwrap()
+            .get_or_create_cryptobox("user", &temp_user_prefix, "master_password")?;
+        
+        // 7. Create delegation event from user identity
+        // This is an interaction event that delegates authority to the node
+        let delegation_event = EventMsgBuilder::new(EventTypeTag::Ixn)
+            .with_prefix(user_prefix)
+            .with_sn(user_state.sn + 1)
+            .with_previous_event(&user_state.last_event_digest)
+            // Add the node's inception event as a delegation seal
+            .with_seal(vec![Seal::Event(EventSeal {
+                prefix: node_prefix.clone(),
+                sn: 0, // Inception event sequence number
+                event_digest: signed_node_event.event_message.get_digest(),
+            })])
+            .build()?;
+
+        // 8. Serialize and sign the delegation event with user's key
+        let delegation_serialized = delegation_event.serialize()?;
+        let delegation_sig = user_cryptobox.sign(&delegation_serialized)?;
+        let delegation_attached_sig = AttachedSignaturePrefix::new(SelfSigning::Ed25519Sha512, delegation_sig, 0);
+        let signed_delegation_event = SignedEventMessage::new(&delegation_event, vec![delegation_attached_sig], None);
+
+        // 9. Process the delegation event first (establishes the delegation)
+        self.processor.process_event(&signed_delegation_event)?;
+
+        // 10. Process the node inception event (now properly delegated)
         self.processor.process_event(&signed_node_event)?;
 
-        // 6. Create and process delegation event from user identity
-        // This would require access to the user's cryptobox, which we don't have here
-        // In a real implementation, we would need to handle this properly
-        // For now, we'll just return the node identity prefix
-
-        Ok(node_event_msg.event.get_prefix())
+        Ok(node_prefix)
     }
 
     async fn rotate_keys(&mut self, prefix: &IdentifierPrefix) -> Result<()> {
@@ -296,11 +345,14 @@ impl RunarKeriService for RunarKeriCore {
 
         // For testing purposes, we need to create a CryptoBox with the correct keys
         // In a real implementation, we would retrieve the existing keys from secure storage
-        let mut cryptobox = CryptoBox::new()?;
+        let temp_cryptobox = CryptoBox::new()?;
+        let temp_prefix = IdentifierPrefix::Basic(Basic::Ed25519.derive(temp_cryptobox.public_key()?));
+        let mut cryptobox = self.secure_storage.lock().unwrap()
+            .get_or_create_cryptobox("user", &temp_prefix, "master_password")?;
 
         // Generate new next keys for future rotations
         let new_next_pk = cryptobox.next_public_key()?;
-        let new_next_key_prefix = Basic::Ed25519.derive(new_next_pk);
+        let new_next_key_prefix = BasicPrefix::new(Basic::Ed25519, new_next_pk);
 
         // Get the previous event's digest to use as prev_event in rotation
         let prev_event_digest = state.last_event_digest.clone();
@@ -358,12 +410,14 @@ impl RunarKeriService for RunarKeriCore {
         // 2. Verify that the signer key matches the current key in the state
         let signer_key = signer.public_key()?;
         let signer_key_prefix = Basic::Ed25519.derive(signer_key);
-        
+
         if !state.current.public_keys.contains(&signer_key_prefix) {
-            return Err(anyhow::anyhow!("Signer key does not match current key in state"));
+            return Err(anyhow::anyhow!(
+                "Signer key does not match current key in state"
+            ));
         }
 
-        // 3. Convert witness prefix to BasicPrefix for witness management  
+        // 3. Convert witness prefix to BasicPrefix for witness management
         let witness_basic_prefix = match witness_prefix {
             IdentifierPrefix::Basic(bp) => bp.clone(),
             _ => return Err(anyhow::anyhow!("Witness must be a basic prefix")),
@@ -372,10 +426,10 @@ impl RunarKeriService for RunarKeriCore {
         // 4. PROPER ROTATION: Use next keys as current keys and generate new next keys
         // Get the next keys from cryptobox (these become the new current keys)
         let new_current_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
-        
+
         // Rotate the cryptobox to use the next keys as current
         signer.rotate()?;
-        
+
         // Generate new next keys for future rotations
         let new_next_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
 
@@ -404,11 +458,14 @@ impl RunarKeriService for RunarKeriCore {
 
         // 8. Process the rotation event
         let result = self.processor.process_event(&signed_event);
-        
+
         match result {
             Ok(Some(_new_state)) => Ok(()),
-            Ok(None) => Err(anyhow::anyhow!("Failed to process witness add event: no state returned").into()),
-            Err(e) => Err(e.into())
+            Ok(None) => Err(anyhow::anyhow!(
+                "Failed to process witness add event: no state returned"
+            )
+            .into()),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -426,12 +483,14 @@ impl RunarKeriService for RunarKeriCore {
         // 2. Verify that the signer key matches the current key in the state
         let signer_key = signer.public_key()?;
         let signer_key_prefix = Basic::Ed25519.derive(signer_key);
-        
+
         if !state.current.public_keys.contains(&signer_key_prefix) {
-            return Err(anyhow::anyhow!("Signer key does not match current key in state"));
+            return Err(anyhow::anyhow!(
+                "Signer key does not match current key in state"
+            ));
         }
 
-        // 3. Convert witness prefix to BasicPrefix for witness management  
+        // 3. Convert witness prefix to BasicPrefix for witness management
         let witness_basic_prefix = match witness_prefix {
             IdentifierPrefix::Basic(bp) => bp.clone(),
             _ => return Err(anyhow::anyhow!("Witness must be a basic prefix")),
@@ -440,10 +499,10 @@ impl RunarKeriService for RunarKeriCore {
         // 4. PROPER ROTATION: Use next keys as current keys and generate new next keys
         // Get the next keys from cryptobox (these become the new current keys)
         let new_current_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
-        
+
         // Rotate the cryptobox to use the next keys as current
         signer.rotate()?;
-        
+
         // Generate new next keys for future rotations
         let new_next_keys = vec![BasicPrefix::new(Basic::Ed25519, signer.next_public_key()?)];
 
@@ -472,11 +531,14 @@ impl RunarKeriService for RunarKeriCore {
 
         // 8. Process the rotation event
         let result = self.processor.process_event(&signed_event);
-        
+
         match result {
             Ok(Some(_new_state)) => Ok(()),
-            Ok(None) => Err(anyhow::anyhow!("Failed to process witness remove event: no state returned").into()),
-            Err(e) => Err(e.into())
+            Ok(None) => Err(anyhow::anyhow!(
+                "Failed to process witness remove event: no state returned"
+            )
+            .into()),
+            Err(e) => Err(e.into()),
         }
     }
 
