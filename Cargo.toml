@@ -7,7 +7,6 @@ members = [
     "rust-examples/micro_services_demo",
     "runar-keys",
     "runar-gateway",
-    "runar-keri",
     "rust-examples/simple",
 ]
 resolver = "2"

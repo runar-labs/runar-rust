@@ -1,2 +1,0 @@
-# Allow clippy warnings in dependencies
-allow-unwrap-in-tests = true
