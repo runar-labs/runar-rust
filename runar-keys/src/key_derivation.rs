@@ -1,7 +1,7 @@
 use crate::crypto::SigningKeyPair;
 use crate::error::Result;
 use ed25519_dalek::SigningKey;
-use rand::rngs::ThreadRng;
+
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 

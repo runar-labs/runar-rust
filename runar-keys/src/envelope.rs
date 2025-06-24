@@ -1,6 +1,10 @@
-use crate::crypto::{EncryptionKeyPair, SymmetricEncryption, NONCE_LENGTH, SYMMETRIC_KEY_LENGTH};
+use crate::crypto::{
+    EncryptionKeyPair, SymmetricEncryption, NONCE_LENGTH, SYMMETRIC_KEY_LENGTH,
+};
 use crate::error::{KeyError, Result};
 use serde::{Deserialize, Serialize};
+use std::convert::TryInto;
+use x25519_dalek::PublicKey as X25519PublicKey;
 
 /// Represents an encrypted key for a recipient
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -16,6 +20,8 @@ pub struct RecipientKey {
 /// Represents an encrypted envelope containing data and keys for recipients
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Envelope {
+    /// Ephemeral public key used for key agreement
+    pub ephemeral_public_key: Vec<u8>,
     /// Encrypted data
     pub encrypted_data: Vec<u8>,
     /// Nonce used for data encryption
@@ -27,39 +33,39 @@ pub struct Envelope {
 impl Envelope {
     /// Create a new envelope by encrypting data for multiple recipients
     pub fn new<T: AsRef<[u8]>>(data: T, recipients: &[&EncryptionKeyPair]) -> Result<Self> {
-        // Generate a fresh envelope key
+        // 1. Generate a master key for this envelope
         let envelope_key = SymmetricEncryption::generate_key();
 
-        // Encrypt the data with the envelope key
+        // 2. Encrypt the data with the envelope key
         let (encrypted_data, data_nonce) =
             SymmetricEncryption::encrypt(&envelope_key, data.as_ref())?;
 
-        // Encrypt the envelope key for each recipient
+        // 3. Generate an ephemeral key pair for this encryption session
+        let ephemeral_key = EncryptionKeyPair::generate();
+        let ephemeral_public_key_bytes = ephemeral_key.public_key().as_bytes().to_vec();
+
+        // 4. Encrypt the envelope key for each recipient
         let mut recipient_keys = Vec::with_capacity(recipients.len());
-
         for recipient_key in recipients {
-            //TODO fix this;.; we do not want shorcuts like this;.. we are after the full cmoplete and robust implementation.
-            //replace this simplified approach with a proper robust imnplementaion using X25519 key agreement
+            // Derive a shared secret using the ephemeral private key and recipient's public key
+            let shared_secret = ephemeral_key.derive_shared_secret(recipient_key.public_key());
 
-            // In a real implementation, this would use X25519 key agreement
-            // For now, we'll use our simplified approach
-            // Note: We're using a deterministic key derivation for testing purposes
-            // In a real implementation, this would use proper X25519 key agreement
-            let shared_secret = recipient_key.derive_shared_secret(&[0u8; 32])?;
+            // Use HKDF to derive a symmetric key from the shared secret
+            let symmetric_key = EncryptionKeyPair::generate_symmetric_key(&shared_secret)?;
 
-            // Encrypt the envelope key with the shared secret
-            // IMPORTANT: Save the nonce used for key encryption
+            // Encrypt the envelope key with the derived symmetric key
             let (encrypted_key, key_nonce) =
-                SymmetricEncryption::encrypt(&shared_secret, &envelope_key)?;
+                SymmetricEncryption::encrypt(&symmetric_key, &envelope_key)?;
 
             recipient_keys.push(RecipientKey {
-                recipient_public_key: recipient_key.public_key().to_vec(),
+                recipient_public_key: recipient_key.public_key().as_bytes().to_vec(),
                 encrypted_key,
                 key_nonce,
             });
         }
 
         Ok(Self {
+            ephemeral_public_key: ephemeral_public_key_bytes,
             encrypted_data,
             data_nonce,
             recipient_keys,
@@ -68,65 +74,46 @@ impl Envelope {
 
     /// Decrypt the envelope using a recipient's key
     pub fn decrypt(&self, recipient_key: &EncryptionKeyPair) -> Result<Vec<u8>> {
-        let recipient_public_key = recipient_key.public_key().to_vec();
-        // Find the encrypted key for this recipient
+        let recipient_public_key_bytes = recipient_key.public_key().as_bytes();
+
+        // 1. Find the encrypted key for this recipient
         let recipient_key_entry = self
             .recipient_keys
             .iter()
-            .find(|r| r.recipient_public_key == recipient_public_key)
+            .find(|r| r.recipient_public_key == recipient_public_key_bytes)
             .ok_or_else(|| {
                 KeyError::EnvelopeError(format!(
                     "No key found for recipient: {}",
-                    hex::encode(recipient_public_key)
+                    hex::encode(recipient_public_key_bytes)
                 ))
             })?;
 
-        // Derive the shared secret
-        // Using the same deterministic approach as in the encryption
-        let shared_secret = recipient_key.derive_shared_secret(&[0u8; 32])?;
+        // 2. Parse the ephemeral public key from the envelope
+        let ephemeral_public_key_bytes: [u8; 32] = self
+            .ephemeral_public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyError::InvalidKeyLength)?;
+        let ephemeral_public_key = X25519PublicKey::from(ephemeral_public_key_bytes);
 
-        // Decrypt the envelope key using the saved nonce
-        let envelope_key = SymmetricEncryption::decrypt(
-            &shared_secret,
+        // 3. Derive the shared secret using the recipient's private key and the ephemeral public key
+        let shared_secret = recipient_key.derive_shared_secret(&ephemeral_public_key);
+
+        // 4. Derive the symmetric key using HKDF
+        let symmetric_key = EncryptionKeyPair::generate_symmetric_key(&shared_secret)?;
+
+        // 5. Decrypt the envelope key
+        let envelope_key_vec = SymmetricEncryption::decrypt(
+            &symmetric_key,
             &recipient_key_entry.encrypted_key,
-            &recipient_key_entry.key_nonce, // Use the nonce that was saved during encryption
+            &recipient_key_entry.key_nonce,
         )?;
 
-        if envelope_key.len() != SYMMETRIC_KEY_LENGTH {
-            return Err(KeyError::EnvelopeError(
-                "Decrypted envelope key has invalid length".to_string(),
-            ));
-        }
+        let envelope_key: [u8; SYMMETRIC_KEY_LENGTH] = envelope_key_vec.try_into().map_err(|_| {
+            KeyError::EnvelopeError("Decrypted envelope key has invalid length".to_string())
+        })?;
 
-        let mut key_array = [0u8; SYMMETRIC_KEY_LENGTH];
-        key_array.copy_from_slice(&envelope_key);
-
-        // Decrypt the data with the envelope key
-        SymmetricEncryption::decrypt(&key_array, &self.encrypted_data, &self.data_nonce)
-    }
-
-    /// Add a new recipient to the envelope
-    pub fn add_recipient(
-        &mut self,
-        recipient_id: String,
-        recipient_key: &EncryptionKeyPair,
-        envelope_key: &[u8; SYMMETRIC_KEY_LENGTH],
-    ) -> Result<()> {
-        // Derive the shared secret
-        // Using the same deterministic approach as in the encryption
-        let shared_secret = recipient_key.derive_shared_secret(&[0u8; 32])?;
-
-        // Encrypt the envelope key with the shared secret
-        let (encrypted_key, key_nonce) =
-            SymmetricEncryption::encrypt(&shared_secret, envelope_key)?;
-
-        // Add the recipient key with the nonce
-        self.recipient_keys.push(RecipientKey {
-            recipient_public_key: recipient_key.public_key().to_vec(),
-            encrypted_key,
-            key_nonce,
-        });
-
-        Ok(())
+        // 6. Decrypt the data with the envelope key
+        SymmetricEncryption::decrypt(&envelope_key, &self.encrypted_data, &self.data_nonce)
     }
 }

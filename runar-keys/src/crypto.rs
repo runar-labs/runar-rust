@@ -1,12 +1,13 @@
 use crate::error::{KeyError, Result};
-use aes_gcm::aead::{Aead, Key, Nonce};
-use aes_gcm::{Aes256Gcm, KeyInit};
+use aead::{Aead, KeyInit};
+use chacha20poly1305::{ChaCha20Poly1305, Nonce}; // Note: Nonce is from aead, but often re-exported
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hex;
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 use rand::RngCore;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::convert::TryInto;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -99,148 +100,100 @@ impl SigningKeyPair {
     }
 }
 
-/// TODO fix this.. we are not after a HACK OR Simplicity.. we want a proper implementation. so lets use proper X25519 keys with libraries like x25519-dalek.
-/// also the node encryption keu is supposed to be SYMETRIC . it will never leave the node.
-/// Represents an encryption key pair (X25519)
-/// Note: For simplicity in this implementation, we're simulating X25519 using Ed25519 keys.
-/// In a production environment, you would use proper X25519 keys with libraries like x25519-dalek.
+/// Represents an encryption key pair (X25519 for ECDH)
 #[derive(Clone)]
 pub struct EncryptionKeyPair {
-    secret: [u8; 32],
-    public: [u8; 32],
+    secret: X25519StaticSecret,
+    public: X25519PublicKey,
 }
 
 impl EncryptionKeyPair {
-    /// Generate a new random encryption key pair
+    /// Generate a new random X25519 key pair for encryption.
     pub fn generate() -> Self {
-        let signing_key = SigningKey::generate(&mut OsRng);
-        let verifying_key = signing_key.verifying_key();
-        Self {
-            secret: signing_key.to_bytes(),
-            public: verifying_key.to_bytes(),
-        }
+        let secret = X25519StaticSecret::random_from_rng(OsRng);
+        let public = X25519PublicKey::from(&secret);
+        Self { secret, public }
     }
 
-    /// Create a new encryption key pair from a secret key
-    pub fn from_secret(secret_bytes: &[u8; 32]) -> Result<Self> {
-        // For now, we'll use the same Ed25519 keys for encryption
-        // In the future, we should use proper X25519 keys
-        let signing_key = SigningKey::from_bytes(secret_bytes);
-        let verifying_key = signing_key.verifying_key();
-
-        Ok(Self {
-            secret: *secret_bytes,
-            public: verifying_key.to_bytes(),
-        })
+    /// Create an X25519 key pair from a 32-byte secret.
+    pub fn from_secret(secret_bytes: &[u8; 32]) -> Self {
+        let secret = X25519StaticSecret::from(*secret_bytes);
+        let public = X25519PublicKey::from(&secret);
+        Self { secret, public }
     }
 
-    /// Create from a key pair
+    /// Convert an Ed25519 signing key pair to an X25519 key agreement key pair.
+    /// This is the standard method for deriving a Curve25519 key from an Ed25519 key.
     pub fn from_key_pair(key_pair: &SigningKeyPair) -> Self {
-        Self {
-            public: key_pair.public_key()[..32].try_into().unwrap(),
-            secret: [0u8; 32], // This is just a placeholder, in real implementation we would derive a proper encryption key
-        }
+        let secret = X25519StaticSecret::from(key_pair.signing_key().to_bytes());
+        let public = X25519PublicKey::from(&secret);
+        Self { secret, public }
     }
 
-    /// Get the public key
-    pub fn public_key(&self) -> &[u8; 32] {
+    /// Get the public key.
+    pub fn public_key(&self) -> &X25519PublicKey {
         &self.public
     }
 
-    /// Get the secret key as bytes
+    /// Get the secret key as bytes.
     pub fn secret_key_bytes(&self) -> [u8; 32] {
-        self.secret
+        self.secret.to_bytes()
     }
 
-    //TODO FIX this.. we DO NOT WANT SHORCUTS LIKE THIS.. we are after a real implementation
-    //replace this simplified approach with a proper robust imnplementaion using X25519 key agreement
-    /// Derive a shared secret from this key pair and another public key
-    ///
-    /// In a real implementation, this would use X25519 key agreement.
-    /// For this simplified version, we'll use a hash-based approach.
-    pub fn derive_shared_secret(&self, peer_public_key: &[u8]) -> Result<[u8; 32]> {
-        // In a real X25519 implementation, this would use x25519_dalek's diffie-hellman
-        // For this simplified version, we'll just hash together the two public keys
-        // to simulate a shared secret
-
-        let mut hasher = Sha256::new();
-        hasher.update(&self.secret);
-        hasher.update(peer_public_key);
-
-        let hash = hasher.finalize();
-        let shared_secret: [u8; 32] = hash.as_slice().try_into().map_err(|_| {
-            KeyError::CryptoError("Failed to convert hash to fixed array".to_string())
-        })?;
-
-        Ok(shared_secret)
+    /// Derive a shared secret using ECDH (X25519).
+    pub fn derive_shared_secret(&self, peer_public_key: &X25519PublicKey) -> [u8; 32] {
+        self.secret.diffie_hellman(peer_public_key).to_bytes()
     }
 
-    /// Generate a symmetric key from a shared secret
+    /// Generate a symmetric key from a shared secret using HKDF-SHA256.
+    /// This is a robust way to get a cryptographically strong key for symmetric encryption.
     pub fn generate_symmetric_key(shared_secret: &[u8]) -> Result<[u8; 32]> {
-        // Use HKDF to derive a symmetric key from the shared secret
-        let salt = b"runar-keys-symmetric-key";
-        let info = b"encryption";
-
-        let hkdf = Hkdf::<Sha256>::new(Some(salt), shared_secret);
-        let mut symmetric_key = [0u8; 32];
-        hkdf.expand(info, &mut symmetric_key)
-            .map_err(|e| KeyError::CryptoError(format!("Failed to derive symmetric key: {}", e)))?;
-
-        Ok(symmetric_key)
+        let hk = Hkdf::<Sha256>::new(None, shared_secret);
+        let mut okm = [0u8; 32]; // Output Key Material
+        hk.expand(&[], &mut okm)
+            .map_err(|e| KeyError::CryptoError(format!("HKDF expand failed: {}", e)))?;
+        Ok(okm)
     }
 }
 
-/// Symmetric encryption operations
+/// Symmetric encryption operations using ChaCha20-Poly1305
 pub struct SymmetricEncryption;
 
 impl SymmetricEncryption {
     /// Generate a random symmetric key
     pub fn generate_key() -> [u8; SYMMETRIC_KEY_LENGTH] {
         let mut key = [0u8; SYMMETRIC_KEY_LENGTH];
-        let mut rng = OsRng;
-        RngCore::fill_bytes(&mut rng, &mut key);
+        OsRng.fill_bytes(&mut key);
         key
     }
 
     /// Generate a random nonce
     pub fn generate_nonce() -> Result<[u8; NONCE_LENGTH]> {
         let mut nonce = [0u8; NONCE_LENGTH];
-        let mut rng = OsRng;
-        RngCore::fill_bytes(&mut rng, &mut nonce);
+        OsRng.fill_bytes(&mut nonce);
         Ok(nonce)
     }
 
-    /// Generate a random salt
-    pub fn generate_salt() -> Result<[u8; SALT_LENGTH]> {
-        let mut salt = [0u8; SALT_LENGTH];
-        let mut rng = OsRng;
-        RngCore::fill_bytes(&mut rng, &mut salt);
-        Ok(salt)
-    }
-
-    /// Encrypt data with a symmetric key
+    /// Encrypt data using a symmetric key with ChaCha20-Poly1305.
     pub fn encrypt(key: &[u8; 32], data: &[u8]) -> Result<(Vec<u8>, [u8; NONCE_LENGTH])> {
-        let mut nonce = [0u8; NONCE_LENGTH];
-        let mut rng = rand::thread_rng();
-        rng.fill_bytes(&mut nonce);
-
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+        let cipher = ChaCha20Poly1305::new(key.into());
+        let nonce_bytes = Self::generate_nonce()?;
+        let nonce = Nonce::from(nonce_bytes);
         let ciphertext = cipher
-            .encrypt(Nonce::<Aes256Gcm>::from_slice(&nonce), data)
-            .map_err(|e| KeyError::CryptoError(format!("Encryption failed: {}", e)))?;
-
-        Ok((ciphertext, nonce))
+            .encrypt(&nonce, data.as_ref())
+            .map_err(|e| KeyError::EncryptionError(e.to_string()))?;
+        Ok((ciphertext, nonce_bytes))
     }
 
-    /// Decrypt data using a symmetric key
+    /// Decrypt data using a symmetric key with ChaCha20-Poly1305.
     pub fn decrypt(
         key: &[u8; 32],
         ciphertext: &[u8],
         nonce: &[u8; NONCE_LENGTH],
     ) -> Result<Vec<u8>> {
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+        let cipher = ChaCha20Poly1305::new(key.into());
         let plaintext = cipher
-            .decrypt(Nonce::<Aes256Gcm>::from_slice(nonce), ciphertext)
+            .decrypt(Nonce::from_slice(nonce), ciphertext)
             .map_err(|e| KeyError::CryptoError(format!("Decryption failed: {}", e)))?;
 
         Ok(plaintext)

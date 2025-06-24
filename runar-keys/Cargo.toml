@@ -26,6 +26,11 @@ sha2 = "0.10" # For SHA-256 hashing
 rand = "0.8" # For random data generation
 hex = "0.4" # For hex encoding/decoding of keys/signatures
 
+# ECDH and Symmetric Encryption
+x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
+chacha20poly1305 = "0.10.1"
+aead = "0.5.2"
+
 # Symmetric encryption dependencies
 hkdf = "0.12" # For HKDF
 aes-gcm = "0.10" # For AES-GCM encryption

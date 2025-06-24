@@ -1,4 +1,4 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
+use crate::crypto::{Certificate, EncryptionKeyPair};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::manager::KeyManager;
@@ -22,8 +22,6 @@ pub struct NodeKeyManager {
     key_manager: KeyManager,
     /// Node identifier
     node_public_key: Vec<u8>,
-    /// latest setup token
-    setup_token: Option<SetupToken>,
     //TODO review and remove this... node can participate in a multiple networiks not just one
     // Network identifier (if part of a network)
     //network_id: Option<String>,
@@ -39,7 +37,7 @@ impl NodeKeyManager {
         Self {
             key_manager: key_manager,
             node_public_key: node_public_key,
-            setup_token: None,
+
         }
     }
 
@@ -50,7 +48,7 @@ impl NodeKeyManager {
         Self {
             key_manager: key_manager,
             node_public_key: node_public_key,
-            setup_token: None,
+
         }
     }
 
@@ -109,8 +107,7 @@ impl NodeKeyManager {
         if network_private_key.len() == 32 {
             private_key_array.copy_from_slice(&network_private_key);
 
-            let network_key_pair = EncryptionKeyPair::from_secret(&private_key_array)
-                .expect("Failed to parse network key");
+            let network_key_pair = EncryptionKeyPair::from_secret(&private_key_array);
 
             self.key_manager
                 .add_encryption_key(&key_id, network_key_pair);

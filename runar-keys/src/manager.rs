@@ -1,7 +1,7 @@
 use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
-use ed25519_dalek::{SigningKey, VerifyingKey};
+
 use std::collections::HashMap;
 
 /// Key manager that stores and manages cryptographic keys
@@ -58,18 +58,28 @@ impl KeyManager {
         Ok(self.signing_keys.get("user_root").unwrap())
     }
 
-    /// Generate a user profile key from the seed
+    /// Generate a user profile key from the seed, creating and storing both a signing and an encryption key pair.
     pub fn generate_user_profile_key(&mut self, profile_index: u32) -> Result<Vec<u8>> {
         let seed = self.seed.ok_or_else(|| {
             KeyError::InvalidOperation("No seed available for key derivation".to_string())
         })?;
 
+        // 1. Derive the signing key pair
         let signing_keypair = KeyDerivation::derive_user_profile_key(&seed, profile_index)?;
 
-        let key_id = format!("user_profile_{}", profile_index);
-        self.signing_keys
-            .insert(key_id.clone(), signing_keypair.clone());
+        // 2. Derive the corresponding encryption key pair from the signing key pair
+        let encryption_keypair = EncryptionKeyPair::from_key_pair(&signing_keypair);
 
+        // 3. Store both key pairs with distinct IDs
+        let signing_key_id = format!("user_profile_signing_{}", profile_index);
+        self.signing_keys
+            .insert(signing_key_id, signing_keypair.clone());
+
+        let encryption_key_id = format!("user_profile_encryption_{}", profile_index);
+        self.encryption_keys
+            .insert(encryption_key_id, encryption_keypair);
+
+        // 4. Return the public signing key
         Ok(signing_keypair.public_key().to_vec())
     }
 
@@ -121,7 +131,7 @@ impl KeyManager {
         self.encryption_keys
             .insert(key_id.clone(), encryption_keypair.clone());
 
-        Ok(encryption_keypair.public_key().to_vec())
+        Ok(encryption_keypair.public_key().as_bytes().to_vec())
     }
 
     // TODO how to secure this method so it only is available in the mobile build -

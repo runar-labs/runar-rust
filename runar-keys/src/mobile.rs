@@ -1,4 +1,4 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
+use crate::crypto::{Certificate, SigningKeyPair};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::manager::KeyManager;
@@ -105,12 +105,6 @@ impl MobileKeyManager {
     ) -> Result<Envelope> {
         // Get the network data key
         let network_key_id = format!("network_data_{}", hex::encode(network_public_key));
-
-        println!(
-            "encrypt_for_network_and_profile() Network key ID: {} profile index: {}",
-            network_key_id, profile_index
-        );
-
         let network_key = self
             .key_manager
             .get_encryption_key(&network_key_id)
@@ -118,27 +112,19 @@ impl MobileKeyManager {
                 KeyError::KeyNotFound(format!("Network key not found: {}", network_key_id))
             })?;
 
-        // Get the user profile key
-        let profile_key_id = format!("user_profile_{}", profile_index);
-        let profile_key = self
+        // Get the user profile encryption key, which is now stored correctly in the manager
+        let profile_encryption_key_id = format!("user_profile_encryption_{}", profile_index);
+        let profile_encryption_key = self
             .key_manager
-            .get_signing_key(&profile_key_id)
+            .get_encryption_key(&profile_encryption_key_id)
             .ok_or_else(|| {
-                KeyError::KeyNotFound(format!("Profile key not found: {}", profile_key_id))
+                KeyError::KeyNotFound(format!(
+                    "Profile encryption key not found: {}",
+                    profile_encryption_key_id
+                ))
             })?;
 
-        // TODO fix this we dont want shortcuts - we are after a real implementation
-        // fix -> when we create the profile siging key we will also crate the encryption key so it can be retrieve in the step above
-        // For simplicity, we're using the signing key as an encryption key
-        // In a real implementation, we would derive an encryption key from the profile key
-        let profile_encryption_key =
-            EncryptionKeyPair::from_secret(&profile_key.secret_key_bytes())?;
-
-        let recipients = vec![
-            //
-            network_key,
-            &profile_encryption_key,
-        ];
+        let recipients = vec![network_key, profile_encryption_key];
 
         Envelope::new(data, &recipients)
     }
@@ -149,24 +135,20 @@ impl MobileKeyManager {
         envelope: &Envelope,
         profile_index: u32,
     ) -> Result<Vec<u8>> {
-        // Get the user profile key
-        let profile_key_id = format!("user_profile_{}", profile_index);
-        let profile_key = self
+        // Get the user profile encryption key, which is now stored correctly in the manager
+        let profile_encryption_key_id = format!("user_profile_encryption_{}", profile_index);
+        let profile_encryption_key = self
             .key_manager
-            .get_signing_key(&profile_key_id)
+            .get_encryption_key(&profile_encryption_key_id)
             .ok_or_else(|| {
-                KeyError::KeyNotFound(format!("Profile key not found: {}", profile_key_id))
+                KeyError::KeyNotFound(format!(
+                    "Profile encryption key not found: {}",
+                    profile_encryption_key_id
+                ))
             })?;
 
-        //TODO fix this we dont want shortcuts - we are after a real implementation
-        //do 5he proper implemeation -> derive an encryption key from the profile key
-        // For simplicity, we're using the signing key as an encryption key
-        // In a real implementation, we would derive an encryption key from the profile key
-        let profile_encryption_key =
-            EncryptionKeyPair::from_secret(&profile_key.secret_key_bytes())?;
-
         // Decrypt the envelope
-        envelope.decrypt(&profile_encryption_key)
+        envelope.decrypt(profile_encryption_key)
     }
 
     /// Get the underlying key manager

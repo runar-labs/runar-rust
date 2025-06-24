@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 use crate::crypto::EncryptionKeyPair;
-use crate::error::Result;
+
 
 /// Represents a network configuration
 #[derive(Serialize, Deserialize, Clone, Debug)]
