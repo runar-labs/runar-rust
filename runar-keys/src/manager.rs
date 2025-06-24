@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use ed25519_dalek::{SigningKey, VerifyingKey};
-use crate::crypto::{SigningKeyPair, EncryptionKeyPair, Certificate};
-use crate::key_derivation::KeyDerivation;
+use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
 use crate::error::{KeyError, Result};
+use crate::key_derivation::KeyDerivation;
+use ed25519_dalek::{SigningKey, VerifyingKey};
+use std::collections::HashMap;
 
 /// Key manager that stores and manages cryptographic keys
 pub struct KeyManager {
@@ -46,73 +46,87 @@ impl KeyManager {
 
     /// Generate a user root key from the seed
     pub fn generate_user_root_key(&mut self) -> Result<&SigningKeyPair> {
-        let seed = self.seed.ok_or_else(|| KeyError::InvalidOperation(
-            "No seed available for key derivation".to_string()
-        ))?;
-        
-        let signing_keypair = KeyDerivation::derive_user_root_key(&seed)?;
-        
-        self.signing_keys.insert("user_root".to_string(), signing_keypair);
-        
+        let seed = self.seed.ok_or_else(|| {
+            KeyError::InvalidOperation("No seed available for key derivation".to_string())
+        })?;
+
+        let signing_keypair: SigningKeyPair = KeyDerivation::derive_user_root_key(&seed)?;
+
+        self.signing_keys
+            .insert("user_root".to_string(), signing_keypair);
+
         Ok(self.signing_keys.get("user_root").unwrap())
     }
 
     /// Generate a user profile key from the seed
     pub fn generate_user_profile_key(&mut self, profile_index: u32) -> Result<&SigningKeyPair> {
-        let seed = self.seed.ok_or_else(|| KeyError::InvalidOperation(
-            "No seed available for key derivation".to_string()
-        ))?;
-        
+        let seed = self.seed.ok_or_else(|| {
+            KeyError::InvalidOperation("No seed available for key derivation".to_string())
+        })?;
+
         let signing_keypair = KeyDerivation::derive_user_profile_key(&seed, profile_index)?;
-        
+
         let key_id = format!("user_profile_{}", profile_index);
         self.signing_keys.insert(key_id.clone(), signing_keypair);
-        
+
         Ok(self.signing_keys.get(&key_id).unwrap())
     }
 
     /// Generate a network CA key from the seed
-    pub fn generate_network_ca_key(&mut self, network_id: &str) -> Result<&SigningKeyPair> {
-        let seed = self.seed.ok_or_else(|| KeyError::InvalidOperation(
-            "No seed available for key derivation".to_string()
-        ))?;
-        
-        let signing_keypair = KeyDerivation::derive_network_ca_key(&seed, network_id)?;
-        
-        let key_id = format!("network_ca_{}", network_id);
-        self.signing_keys.insert(key_id.clone(), signing_keypair);
-        
-        Ok(self.signing_keys.get(&key_id).unwrap())
+    pub fn generate_user_ca_key(&mut self, user_public_key: &[u8]) -> Result<Vec<u8>> {
+        let seed = self.seed.ok_or_else(|| {
+            KeyError::InvalidOperation("No seed available for key derivation".to_string())
+        })?;
+
+        let signing_keypair = KeyDerivation::derive_user_ca_key(&seed, user_public_key)?;
+
+        let key_id = format!("user_ca_{}", hex::encode(user_public_key));
+        self.signing_keys
+            .insert(key_id.clone(), signing_keypair.clone());
+
+        Ok(signing_keypair.public_key().to_vec())
     }
 
     /// Generate a node TLS key pair
-    pub fn generate_node_tls_key(&mut self, node_id: &str) -> Result<&SigningKeyPair> {
+    pub fn generate_node_tls_key(&mut self) -> Result<Vec<u8>> {
         let signing_keypair = SigningKeyPair::generate();
-        
-        let key_id = format!("node_tls_{}", node_id);
-        self.signing_keys.insert(key_id.clone(), signing_keypair);
-        
-        Ok(self.signing_keys.get(&key_id).unwrap())
+        let key_id = format!("node_tls_{}", hex::encode(signing_keypair.public_key()));
+        self.signing_keys
+            .insert(key_id.clone(), signing_keypair.clone());
+
+        Ok(signing_keypair.public_key().to_vec())
     }
 
     /// Generate a node storage key pair
-    pub fn generate_node_storage_key(&mut self, node_id: &str) -> Result<&EncryptionKeyPair> {
+    pub fn generate_node_storage_key(&mut self, node_pk: &[u8]) -> Result<&EncryptionKeyPair> {
         let encryption_keypair = EncryptionKeyPair::generate();
-        
-        let key_id = format!("node_storage_{}", node_id);
-        self.encryption_keys.insert(key_id.clone(), encryption_keypair);
-        
+
+        let key_id = format!("node_storage_{}", hex::encode(node_pk));
+        self.encryption_keys
+            .insert(key_id.clone(), encryption_keypair);
+
         Ok(self.encryption_keys.get(&key_id).unwrap())
     }
 
     /// Generate a network data key pair
-    pub fn generate_network_data_key(&mut self, network_id: &str) -> Result<&EncryptionKeyPair> {
+    pub fn generate_network_data_key(&mut self, network_id: &str) -> Result<Vec<u8>> {
         let encryption_keypair = EncryptionKeyPair::generate();
-        
+
         let key_id = format!("network_data_{}", network_id);
-        self.encryption_keys.insert(key_id.clone(), encryption_keypair);
-        
-        Ok(self.encryption_keys.get(&key_id).unwrap())
+        self.encryption_keys
+            .insert(key_id.clone(), encryption_keypair.clone());
+
+        Ok(encryption_keypair.public_key().to_vec())
+    }
+
+    //TODO how to secure this method so it only is available in the mobile build - maybe as a feature flag
+    pub fn get_network_private_key(&self, network_id: &str) -> Result<Vec<u8>> {
+        let key_id = format!("network_data_{}", network_id);
+        let encryption_keypair = self.encryption_keys.get(&key_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("Encryption key not found: {}", key_id))
+        })?;
+
+        Ok(encryption_keypair.secret_key_bytes().to_vec())
     }
 
     /// Add a signing key pair
@@ -138,29 +152,33 @@ impl KeyManager {
     /// Sign a Certificate Signing Request (CSR)
     pub fn sign_csr(&mut self, csr_bytes: &[u8], ca_key_id: &str) -> Result<Certificate> {
         // Get CA key
-        let signing_key_pair = self.get_signing_key(ca_key_id)
+        let signing_key_pair = self
+            .get_signing_key(ca_key_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("CA key not found: {}", ca_key_id)))?;
-        
+
         // Sign CSR
         let certificate = signing_key_pair.sign_csr(csr_bytes)?;
-        
+
         // Store certificate
         self.add_certificate(certificate.clone());
-        
+
         Ok(certificate)
     }
 
     /// Create a certificate signing request (CSR)
     pub fn create_csr(&self, subject: &str, key_id: &str) -> Result<Vec<u8>> {
-        let signing_key = self.signing_keys.get(key_id)
+        let signing_key = self
+            .signing_keys
+            .get(key_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Signing key not found: {}", key_id)))?;
-        
-        Certificate::create_csr(subject, &signing_key.public_key_bytes())
+
+        Certificate::create_csr(subject, &signing_key.public_key())
     }
 
     /// Add a certificate
     pub fn add_certificate(&mut self, certificate: Certificate) {
-        self.certificates.insert(certificate.subject.clone(), certificate);
+        self.certificates
+            .insert(certificate.subject.clone(), certificate);
     }
 
     /// Get a certificate by subject
@@ -171,13 +189,16 @@ impl KeyManager {
     /// Verify a certificate's signature
     pub fn verify_certificate(&self, certificate: &Certificate) -> Result<()> {
         // Get issuer certificate
-        let issuer_cert = self.get_certificate(&certificate.issuer)
-            .ok_or_else(|| KeyError::CryptoError(format!("Certificate not found: {}", certificate.issuer)))?;
-        
+        let issuer_cert = self.get_certificate(&certificate.issuer).ok_or_else(|| {
+            KeyError::CryptoError(format!("Certificate not found: {}", certificate.issuer))
+        })?;
+
         // Verify certificate signature
         match certificate.verify(certificate.data.as_bytes(), &certificate.signature)? {
             true => Ok(()),
-            false => Err(KeyError::SignatureError("Certificate signature verification failed".to_string())),
+            false => Err(KeyError::SignatureError(
+                "Certificate signature verification failed".to_string(),
+            )),
         }
     }
 }

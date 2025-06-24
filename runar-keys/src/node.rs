@@ -1,18 +1,19 @@
-use crate::crypto::{SigningKeyPair, EncryptionKeyPair, Certificate};
-use crate::manager::KeyManager;
+use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
-use serde::{Serialize, Deserialize};
+use crate::manager::KeyManager;
+use serde::{Deserialize, Serialize};
 
 /// Represents a setup token for node initialization
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SetupToken {
+    pub token_id: String,
     /// Node identifier
-    pub node_id: String,
+    pub node_public_key: Vec<u8>,
     /// TLS certificate signing request
     pub tls_csr: Vec<u8>,
-    /// Storage key public key
-    pub storage_public_key: Vec<u8>,
+    //ttl
+    pub ttl: u64,
 }
 
 /// Node key manager
@@ -20,59 +21,72 @@ pub struct NodeKeyManager {
     /// The underlying key manager
     key_manager: KeyManager,
     /// Node identifier
-    node_id: String,
-    /// Network identifier (if part of a network)
-    network_id: Option<String>,
+    node_public_key: Vec<u8>,
+    /// latest setup token
+    setup_token: Option<SetupToken>,
+    //TODO review and remove this... node can participate in a multiple networiks not just one
+    // Network identifier (if part of a network)
+    //network_id: Option<String>,
 }
 
 impl NodeKeyManager {
     /// Create a new node key manager
-    pub fn new(node_id: &str) -> Self {
+    pub fn new() -> Self {
+        let mut key_manager = KeyManager::new();
+        let node_public_key = key_manager
+            .generate_node_tls_key()
+            .expect("Failed to generate node TLS key");
         Self {
-            key_manager: KeyManager::new(),
-            node_id: node_id.to_string(),
-            network_id: None,
+            key_manager: key_manager,
+            node_public_key: node_public_key,
+            setup_token: None,
+        }
+    }
+
+    pub fn new_with_key_manager(mut key_manager: KeyManager) -> Self {
+        let node_public_key = key_manager
+            .generate_node_tls_key()
+            .expect("Failed to generate node TLS key");
+        Self {
+            key_manager: key_manager,
+            node_public_key: node_public_key,
+            setup_token: None,
         }
     }
 
     /// Get the node ID
-    pub fn node_id(&self) -> &str {
-        &self.node_id
-    }
-
-    /// Set the network ID
-    pub fn set_network_id(&mut self, network_id: &str) {
-        self.network_id = Some(network_id.to_string());
-    }
-
-    /// Get the network ID
-    pub fn network_id(&self) -> Option<&str> {
-        self.network_id.as_deref()
+    pub fn node_public_key(&self) -> &Vec<u8> {
+        &self.node_public_key
     }
 
     /// Generate node TLS and storage keys and create a setup token
     pub fn generate_setup_token(&mut self) -> Result<SetupToken> {
         // Generate TLS key
-        let tls_key_id = format!("node_tls_{}", self.node_id);
-        let _tls_key = self.key_manager.generate_node_tls_key(&self.node_id)?;
-        
-        // Generate storage key
-        let _storage_key_id = format!("node_storage_{}", self.node_id);
-        
+        let tls_key_public_key = self.key_manager.generate_node_tls_key()?;
+        let node_pk_str = hex::encode(&tls_key_public_key);
+        let tls_key_id = format!("node_tls_{}", node_pk_str);
+
         // Create CSR for TLS key
-        let subject = format!("node:{}", self.node_id);
+        let subject = format!("node:{}", node_pk_str);
         let tls_csr = self.key_manager.create_csr(&subject, &tls_key_id)?;
-        
-        // Generate storage key after CSR creation to avoid borrow conflict
-        let storage_key = self.key_manager.generate_node_storage_key(&self.node_id)?;
-        
+
+        let _storage_key = self
+            .key_manager
+            .generate_node_storage_key(&tls_key_public_key)?;
+
+        //generate random UUID
+        let token_id = uuid::Uuid::new_v4();
+
         // Create setup token
         let token = SetupToken {
-            node_id: self.node_id.clone(),
+            token_id: token_id.to_string(),
+            node_public_key: tls_key_public_key,
             tls_csr,
-            storage_public_key: storage_key.public_key_bytes().to_vec(),
+            ttl: 120, //120 seconds
         };
-        
+
+        //store token to be used for TTL validation when receivig the token again
+
         Ok(token)
     }
 
@@ -80,29 +94,39 @@ impl NodeKeyManager {
     pub fn process_signed_certificate(&mut self, certificate: Certificate) -> Result<()> {
         // Store the certificate
         self.key_manager.add_certificate(certificate);
-        
+
         Ok(())
     }
 
     /// Store a network key
-    pub fn store_network_key(&mut self, network_id: &str, network_key: EncryptionKeyPair) -> Result<()> {
-        let key_id = format!("network_data_{}", network_id);
-        self.key_manager.add_encryption_key(&key_id, network_key);
-        self.network_id = Some(network_id.to_string());
-        
+    pub fn store_network_key(
+        &mut self,
+        network_public_key: &[u8],
+        network_private_key: &[u8; 32],
+    ) -> Result<()> {
+        let key_id = format!("network_data_{}", hex::encode(network_public_key));
+
+        let network_key_pair = EncryptionKeyPair::from_secret(network_private_key)
+            .expect("Failed to parse network key");
+
+        self.key_manager
+            .add_encryption_key(&key_id, network_key_pair);
+
         Ok(())
     }
 
     /// Decrypt data using the network key
     pub fn decrypt_with_network_key(&self, envelope: &Envelope) -> Result<Vec<u8>> {
-        let network_id = self.network_id.as_ref().ok_or_else(|| {
-            KeyError::InvalidOperation("Node is not part of a network".to_string())
-        })?;
-        
+        // let network_id = self.network_id.as_ref().ok_or_else(|| {
+        //     KeyError::InvalidOperation("Node is not part of a network".to_string())
+        // })?;
+
         let key_id = format!("network_data_{}", network_id);
-        let network_key = self.key_manager.get_encryption_key(&key_id)
+        let network_key = self
+            .key_manager
+            .get_encryption_key(&key_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {}", key_id)))?;
-        
+
         // The recipient ID must match exactly what was used in encrypt_for_network_and_profile
         envelope.decrypt(network_id, network_key)
     }
