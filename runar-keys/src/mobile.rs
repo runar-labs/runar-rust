@@ -1,4 +1,4 @@
-use crate::crypto::{Certificate, SigningKeyPair};
+use crate::crypto::{Certificate, PublicKey, SigningKeyPair};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
@@ -35,15 +35,17 @@ impl MobileKeyManager {
         self.key_manager.set_seed(seed);
     }
 
-    /// Generate the user root key
-    pub fn generate_user_root_key(&mut self) -> Result<&SigningKeyPair> {
-        let key_pair = self.key_manager.generate_user_root_key()?;
-        self.user_public_key = Some(key_pair.public_key().to_vec());
-        Ok(key_pair)
+    /// Generate the user root key and return only the public key
+    /// The private key remains securely stored in the key manager
+    pub fn generate_user_root_key(&mut self) -> Result<PublicKey> {
+        let public_key = self.key_manager.generate_user_root_key()?;
+        self.user_public_key = Some(public_key.bytes().to_vec());
+        Ok(public_key)
     }
 
     /// Generate a user CA key derived from the user's root key.
-    pub fn generate_user_ca_key(&mut self) -> Result<SigningKeyPair> {
+    /// Returns only the public key while storing the private key securely in the key manager.
+    pub fn generate_user_ca_key(&mut self) -> Result<PublicKey> {
         let seed = self.key_manager.get_seed().ok_or_else(|| {
             KeyError::InvalidOperation("Cannot generate user CA key without a seed".to_string())
         })?;
@@ -51,10 +53,12 @@ impl MobileKeyManager {
         let user_root_key = KeyDerivation::derive_user_root_key(seed)?;
         let ca_key = KeyDerivation::derive_user_ca_key(&user_root_key)?;
 
+        // Store the CA key in the key manager
         self.key_manager
             .add_signing_key("user_ca_key", ca_key.clone());
 
-        Ok(ca_key)
+        // Return only the public key
+        Ok(PublicKey::new(*ca_key.public_key()))
     }
 
     /// Generate a user profile key

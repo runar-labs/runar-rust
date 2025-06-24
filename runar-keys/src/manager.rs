@@ -1,4 +1,4 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
+use crate::crypto::{Certificate, EncryptionKeyPair, PublicKey, SigningKeyPair};
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
 use ed25519_dalek::VerifyingKey;
@@ -46,18 +46,25 @@ impl KeyManager {
         self.seed.as_ref()
     }
 
-    /// Generate a user root key from the seed
-    pub fn generate_user_root_key(&mut self) -> Result<&SigningKeyPair> {
+    /// Generate a user root key from the seed and return only the public key
+    /// The private key remains securely stored in the key manager
+    pub fn generate_user_root_key(&mut self) -> Result<PublicKey> {
         let seed = self.seed.ok_or_else(|| {
             KeyError::InvalidOperation("No seed available for key derivation".to_string())
         })?;
 
         let signing_keypair: SigningKeyPair = KeyDerivation::derive_user_root_key(&seed)?;
-
+        
+        // Store the signing key pair in the manager
         self.signing_keys
             .insert("user_root".to_string(), signing_keypair);
-
-        Ok(self.signing_keys.get("user_root").unwrap())
+        
+        // Get the public key from the stored key pair
+        let key_pair = self.signing_keys.get("user_root").unwrap();
+        let public_key_bytes = *key_pair.public_key();
+        
+        // Return only the public key
+        Ok(PublicKey::new(public_key_bytes))
     }
 
     /// Generate a user profile key from the seed, creating and storing both a signing and an encryption key pair.

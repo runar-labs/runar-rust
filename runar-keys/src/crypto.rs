@@ -24,6 +24,26 @@ pub const CHACHA20POLY1305_KEY_LENGTH: usize = 32;
 /// The length of a ChaCha20Poly1305 nonce in bytes
 pub const CHACHA20POLY1305_NONCE_LENGTH: usize = 12;
 
+/// Represents a public key that can be safely returned from key manager methods
+/// This follows the principle that manager methods should not expose private keys
+#[derive(Debug, Clone)]
+pub struct PublicKey {
+    /// The raw bytes of the public key
+    bytes: [u8; 32],
+}
+
+impl PublicKey {
+    /// Create a new PublicKey from raw bytes
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self { bytes }
+    }
+    
+    /// Get the raw bytes of the public key
+    pub fn bytes(&self) -> &[u8; 32] {
+        &self.bytes
+    }
+}
+
 /// Represents a key pair for signing
 #[derive(Clone)]
 pub struct SigningKeyPair {

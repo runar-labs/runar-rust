@@ -1,5 +1,6 @@
 use ed25519_dalek::VerifyingKey;
 use runar_keys::*;
+use runar_keys::crypto::PublicKey;
 use std::convert::TryInto;
 
 #[test]
@@ -28,29 +29,26 @@ fn test_key_generation_and_derivation() {
     let mut mobile = MobileKeyManager::new();
     mobile.generate_seed();
 
-    //TODO the manager methos should never return private keys. i should only return public keys
-    //which is what will be used in further calls and internaly the key manager will get the private key if ythere otherwise return an error
-    //the only exception is the network_private_key taht we need to send to the node.;. but all other metgoids here truning key pairs need to
-    //change to returno only the pubnlic key and the private key should be stored in the manager
-    let user_root_key = mobile
+    // Generate user root key - now returns only the public key
+    let user_root_public_key = mobile
         .generate_user_root_key()
         .expect("Failed to generate user root key");
     assert!(
-        user_root_key.public_key().len() > 0,
+        user_root_public_key.bytes().len() == 32,
         "User root key should have a valid public key"
     );
 
-    let user_public_key = user_root_key.public_key().to_vec();
+    let user_public_key = user_root_public_key.bytes().to_vec();
     println!("User public key: {}", hex::encode(&user_public_key));
 
-    // Create a user owned and managed CA
-    let user_ca_key = mobile
+    // Create a user owned and managed CA - now returns only the public key
+    let user_ca_public_key = mobile
         .generate_user_ca_key()
         .expect("Failed to generate user CA key");
-    assert_eq!(user_ca_key.public_key().len(), 32);
+    assert_eq!(user_ca_public_key.bytes().len(), 32);
     println!(
         "User CA public key: {}",
-        hex::encode(&user_ca_key.public_key())
+        hex::encode(user_ca_public_key.bytes())
     );
 
     //Node first time use - enter in setup mode
@@ -66,19 +64,24 @@ fn test_key_generation_and_derivation() {
     // Mobile scans a Node QR code which contains the setup token
 
     // 3 - (mobile side) - received the token and sign the CSR
-    let signed_cert = mobile
+    let cert = mobile
         .process_setup_token(&setup_token)
         .expect("Failed to process setup token");
+    println!(
+        "Certificate: {} -> {}",
+        cert.subject,
+        cert.issuer
+    );
     assert_eq!(
-        signed_cert.issuer,
-        format!("ca:{}", hex::encode(&user_ca_key.public_key())),
+        cert.issuer, 
+        format!("ca:{}", hex::encode(user_ca_public_key.bytes())),
         "Certificate should be issued by the network CA"
     );
 
     // mobile sends the certificate to the node (in a  secure way)
 
     // 4 - (node side) - received the signed CSR and generate the node membership certificate, stored encrypted and secure.
-    node.process_signed_certificate(signed_cert)
+    node.process_signed_certificate(cert)
         .expect("Failed to process signed certificate");
 
     // 5. Mobile receives the node certificate, validates it, and stores it
