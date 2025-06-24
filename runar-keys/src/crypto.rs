@@ -152,6 +152,8 @@ impl EncryptionKeyPair {
         self.secret
     }
 
+    //TODO FIX this.. we DO NOT WANT SHORCUTS LIKE THIS.. we are after a real implementation
+    //replace this simplified approach with a proper robust imnplementaion using X25519 key agreement
     /// Derive a shared secret from this key pair and another public key
     ///
     /// In a real implementation, this would use X25519 key agreement.
@@ -270,6 +272,9 @@ pub struct Certificate {
 impl Certificate {
     /// Parse a CSR from bytes
     pub fn parse_csr(csr_bytes: &[u8]) -> Result<CSR> {
+        //TODO FIX this.. we DO NOT WANT SHORCUTS LIKE THIS.. we are after a real implementation
+        //replace this simplified approach with a proper robust imnplementaion parsing the CSR properly
+
         // Extract subject and public key from CSR
         // In a real implementation, this would parse the CSR properly
         if csr_bytes.len() < 32 {
@@ -324,16 +329,8 @@ impl Certificate {
         // Sign the CSR data
         let signature = signing_key_pair.sign(csr_data.as_ref())?;
 
-        // In a real implementation, the issuer would be derived from the signing key
-        // For this test, we'll use the format expected by the test
-        let issuer = if csr.subject.starts_with("node:") {
-            // If signing a node certificate, use the format "ca:{network_id}"
-            // Extract network_id from the key ID that would be used
-            "ca:test_network".to_string()
-        } else {
-            // Default to using the public key
-            hex::encode(&signing_key_pair.public_key())
-        };
+        // The issuer is the CA that signed the certificate
+        let issuer = format!("ca:{}", hex::encode(signing_key_pair.public_key()));
 
         Ok(Certificate {
             subject: csr.subject,

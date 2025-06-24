@@ -102,33 +102,43 @@ impl NodeKeyManager {
     pub fn store_network_key(
         &mut self,
         network_public_key: &[u8],
-        network_private_key: &[u8; 32],
+        network_private_key: Vec<u8>,
     ) -> Result<()> {
         let key_id = format!("network_data_{}", hex::encode(network_public_key));
+        let mut private_key_array = [0u8; 32];
+        if network_private_key.len() == 32 {
+            private_key_array.copy_from_slice(&network_private_key);
 
-        let network_key_pair = EncryptionKeyPair::from_secret(network_private_key)
-            .expect("Failed to parse network key");
+            let network_key_pair = EncryptionKeyPair::from_secret(&private_key_array)
+                .expect("Failed to parse network key");
 
-        self.key_manager
-            .add_encryption_key(&key_id, network_key_pair);
+            self.key_manager
+                .add_encryption_key(&key_id, network_key_pair);
 
-        Ok(())
+            Ok(())
+        } else {
+            Err(KeyError::KeyNotFound(format!(
+                "Network private key is not 32 bytes long"
+            )))
+        }
     }
 
     /// Decrypt data using the network key
-    pub fn decrypt_with_network_key(&self, envelope: &Envelope) -> Result<Vec<u8>> {
-        // let network_id = self.network_id.as_ref().ok_or_else(|| {
-        //     KeyError::InvalidOperation("Node is not part of a network".to_string())
-        // })?;
-
-        let key_id = format!("network_data_{}", network_id);
-        let network_key = self
+    pub fn decrypt_with_network_key(
+        &self,
+        network_public_key: &[u8],
+        envelope: &Envelope,
+    ) -> Result<Vec<u8>> {
+        let network_key_id = format!("network_data_{}", hex::encode(network_public_key));
+        let network_encryption_key = self
             .key_manager
-            .get_encryption_key(&key_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {}", key_id)))?;
+            .get_encryption_key(&network_key_id)
+            .ok_or_else(|| {
+                KeyError::KeyNotFound(format!("Network key not found: {}", network_key_id))
+            })?;
 
         // The recipient ID must match exactly what was used in encrypt_for_network_and_profile
-        envelope.decrypt(network_id, network_key)
+        envelope.decrypt(network_encryption_key)
     }
 
     /// Get the underlying key manager

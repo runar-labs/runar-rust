@@ -33,18 +33,18 @@ fn test_key_generation_and_derivation() {
         "User root key should have a valid public key"
     );
 
-    let user_public_key = user_root_key.public_key();
-    println!("User public key: {}", hex::encode(user_public_key));
+    let user_public_key = user_root_key.public_key().to_vec();
+    println!("User public key: {}", hex::encode(&user_public_key));
 
     // Create a user owned and managed CA
     let user_ca_public_key = mobile
-        .generate_user_ca_key(user_public_key)
+        .generate_user_ca_key(&user_public_key)
         .expect("Failed to generate user CA key");
     assert!(
         user_ca_public_key.len() > 0,
         "User CA key should have a valid public key"
     );
-    println!("User CA public key: {}", hex::encode(user_ca_public_key));
+    println!("User CA public key: {}", hex::encode(&user_ca_public_key));
 
     //Node first time use - enter in setup mode
 
@@ -64,7 +64,7 @@ fn test_key_generation_and_derivation() {
         .expect("Failed to process setup token");
     assert_eq!(
         signed_cert.issuer,
-        format!("ca:{}", hex::encode(user_ca_public_key)),
+        format!("ca:{}", hex::encode(&user_ca_public_key)),
         "Certificate should be issued by the network CA"
     );
 
@@ -78,29 +78,27 @@ fn test_key_generation_and_derivation() {
     // ALL FUTURE COMMS ARE SECURED AND ECNRYPTED USING THESE NEW CREDENTIALS.
 
     // 5 - (mobile side) -  user created a network with a given name - generate a network key
-    let network_id = "network_X";
     let network_public_key = mobile
-        .generate_network_data_key(network_id)
+        .generate_network_data_key()
         .expect("Failed to generate network data key");
 
-    // In a real implementation, the network key would be encrypted and sent over the network
-    // For this test, we'll directly share it with the node
+    // network key is sent to the node. over secure and ecnrypted channel
     let network_private_key = mobile
-        .get_network_private_key(network_id)
+        .get_network_private_key(&network_public_key)
         .expect("Failed to get network private key");
 
     // 6 - (node side) - received the network key and store it encrypted and secure.
-    node.store_network_key(&network_public_key, &network_private_key)
+    node.store_network_key(&network_public_key, network_private_key)
         .expect("Failed to store network key");
 
-    // at this point the node is ready to process data of the network_X
+    // at this point the node is ready to process requests, events and data of the network_X
 
-    // 7 - (mobile side) - GENERATE A USER profile key.
-    let (profile_key, profile_index) = mobile
+    // 7 - (mobile side) - User creates a profile key
+    let (profile_public_key, profile_index) = mobile
         .generate_user_profile_key()
         .expect("Failed to generate user profile key");
     assert!(
-        profile_key.public_key_bytes().len() > 0,
+        profile_public_key.len() > 0,
         "User profile key should have a valid public key"
     );
 
@@ -109,13 +107,13 @@ fn test_key_generation_and_derivation() {
     //     so only the user or apps running in the network can decrypt it.
     let test_data = b"This is a test message that should be encrypted and decrypted";
     let envelope = mobile
-        .encrypt_for_network_and_profile(test_data, network_id, profile_index)
+        .encrypt_for_network_and_profile(test_data, &network_public_key, profile_index)
         .expect("Failed to encrypt data");
 
     // 9 - (node side) - received the encrypted data and decrypts it using the
     //     network key. (the node does not have the user profile key - so it needs a shared secreted)
     let decrypted_by_node = node
-        .decrypt_with_network_key(&envelope)
+        .decrypt_with_network_key(&network_public_key, &envelope)
         .expect("Node failed to decrypt data");
     assert_eq!(
         decrypted_by_node, test_data,

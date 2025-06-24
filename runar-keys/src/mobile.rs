@@ -47,12 +47,12 @@ impl MobileKeyManager {
     }
 
     /// Generate a user profile key
-    pub fn generate_user_profile_key(&mut self) -> Result<(&SigningKeyPair, u32)> {
+    pub fn generate_user_profile_key(&mut self) -> Result<(Vec<u8>, u32)> {
         let profile_index = self.profile_counter;
         self.profile_counter += 1;
 
-        let key = self.key_manager.generate_user_profile_key(profile_index)?;
-        Ok((key, profile_index))
+        let public_key = self.key_manager.generate_user_profile_key(profile_index)?;
+        Ok((public_key, profile_index))
     }
 
     /// Process a node setup token
@@ -86,23 +86,31 @@ impl MobileKeyManager {
     }
 
     /// Generate a network data key
-    pub fn generate_network_data_key(&mut self, network_id: &str) -> Result<Vec<u8>> {
-        self.key_manager.generate_network_data_key(network_id)
+    pub fn generate_network_data_key(&mut self) -> Result<Vec<u8>> {
+        self.key_manager.generate_network_data_key()
     }
 
-    pub fn get_network_private_key(&self, network_id: &str) -> Result<Vec<u8>> {
-        self.key_manager.get_network_private_key(network_id)
+    pub fn get_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+        self.key_manager.get_network_private_key(network_public_key)
     }
 
+    // TODO change thios to receive the profile public key instead of the index..
+    // the Key manager will maintain a map of profile public keys to indexes
     /// Encrypt data for a network and user profile
     pub fn encrypt_for_network_and_profile(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_public_key: &[u8],
         profile_index: u32,
     ) -> Result<Envelope> {
         // Get the network data key
-        let network_key_id = format!("network_data_{}", network_id);
+        let network_key_id = format!("network_data_{}", hex::encode(network_public_key));
+
+        println!(
+            "encrypt_for_network_and_profile() Network key ID: {} profile index: {}",
+            network_key_id, profile_index
+        );
+
         let network_key = self
             .key_manager
             .get_encryption_key(&network_key_id)
@@ -119,21 +127,17 @@ impl MobileKeyManager {
                 KeyError::KeyNotFound(format!("Profile key not found: {}", profile_key_id))
             })?;
 
+        // TODO fix this we dont want shortcuts - we are after a real implementation
+        // fix -> when we create the profile siging key we will also crate the encryption key so it can be retrieve in the step above
         // For simplicity, we're using the signing key as an encryption key
         // In a real implementation, we would derive an encryption key from the profile key
         let profile_encryption_key =
             EncryptionKeyPair::from_secret(&profile_key.secret_key_bytes())?;
 
-        // Create the envelope with consistent recipient IDs
-        // IMPORTANT: The network_id recipient must match exactly what's used in decrypt_with_network_key
         let recipients = vec![
-            // Use the exact network_id as the recipient ID for the node to decrypt
-            (network_id.to_string(), network_key),
-            // Use a profile-specific ID for the profile key
-            (
-                format!("profile:{}", profile_index),
-                &profile_encryption_key,
-            ),
+            //
+            network_key,
+            &profile_encryption_key,
         ];
 
         Envelope::new(data, &recipients)
@@ -154,16 +158,15 @@ impl MobileKeyManager {
                 KeyError::KeyNotFound(format!("Profile key not found: {}", profile_key_id))
             })?;
 
+        //TODO fix this we dont want shortcuts - we are after a real implementation
+        //do 5he proper implemeation -> derive an encryption key from the profile key
         // For simplicity, we're using the signing key as an encryption key
         // In a real implementation, we would derive an encryption key from the profile key
         let profile_encryption_key =
             EncryptionKeyPair::from_secret(&profile_key.secret_key_bytes())?;
 
         // Decrypt the envelope
-        envelope.decrypt(
-            &format!("profile:{}", profile_index),
-            &profile_encryption_key,
-        )
+        envelope.decrypt(&profile_encryption_key)
     }
 
     /// Get the underlying key manager

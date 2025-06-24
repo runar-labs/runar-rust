@@ -59,7 +59,7 @@ impl KeyManager {
     }
 
     /// Generate a user profile key from the seed
-    pub fn generate_user_profile_key(&mut self, profile_index: u32) -> Result<&SigningKeyPair> {
+    pub fn generate_user_profile_key(&mut self, profile_index: u32) -> Result<Vec<u8>> {
         let seed = self.seed.ok_or_else(|| {
             KeyError::InvalidOperation("No seed available for key derivation".to_string())
         })?;
@@ -67,9 +67,10 @@ impl KeyManager {
         let signing_keypair = KeyDerivation::derive_user_profile_key(&seed, profile_index)?;
 
         let key_id = format!("user_profile_{}", profile_index);
-        self.signing_keys.insert(key_id.clone(), signing_keypair);
+        self.signing_keys
+            .insert(key_id.clone(), signing_keypair.clone());
 
-        Ok(self.signing_keys.get(&key_id).unwrap())
+        Ok(signing_keypair.public_key().to_vec())
     }
 
     /// Generate a network CA key from the seed
@@ -109,19 +110,24 @@ impl KeyManager {
     }
 
     /// Generate a network data key pair
-    pub fn generate_network_data_key(&mut self, network_id: &str) -> Result<Vec<u8>> {
+    pub fn generate_network_data_key(&mut self) -> Result<Vec<u8>> {
         let encryption_keypair = EncryptionKeyPair::generate();
 
-        let key_id = format!("network_data_{}", network_id);
+        let key_id = format!(
+            "network_data_{}",
+            hex::encode(encryption_keypair.public_key())
+        );
+
         self.encryption_keys
             .insert(key_id.clone(), encryption_keypair.clone());
 
         Ok(encryption_keypair.public_key().to_vec())
     }
 
-    //TODO how to secure this method so it only is available in the mobile build - maybe as a feature flag
-    pub fn get_network_private_key(&self, network_id: &str) -> Result<Vec<u8>> {
-        let key_id = format!("network_data_{}", network_id);
+    // TODO how to secure this method so it only is available in the mobile build -
+    // maybe as a feature flag
+    pub fn get_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+        let key_id = format!("network_data_{}", hex::encode(network_public_key));
         let encryption_keypair = self.encryption_keys.get(&key_id).ok_or_else(|| {
             KeyError::KeyNotFound(format!("Encryption key not found: {}", key_id))
         })?;
@@ -165,6 +171,7 @@ impl KeyManager {
         Ok(certificate)
     }
 
+    //TODO verify if this is correct.. the verificatio of the certificate
     /// Create a certificate signing request (CSR)
     pub fn create_csr(&self, subject: &str, key_id: &str) -> Result<Vec<u8>> {
         let signing_key = self
@@ -188,11 +195,6 @@ impl KeyManager {
 
     /// Verify a certificate's signature
     pub fn verify_certificate(&self, certificate: &Certificate) -> Result<()> {
-        // Get issuer certificate
-        let issuer_cert = self.get_certificate(&certificate.issuer).ok_or_else(|| {
-            KeyError::CryptoError(format!("Certificate not found: {}", certificate.issuer))
-        })?;
-
         // Verify certificate signature
         match certificate.verify(certificate.data.as_bytes(), &certificate.signature)? {
             true => Ok(()),
