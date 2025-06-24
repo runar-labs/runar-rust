@@ -158,6 +158,22 @@ impl KeyManager {
     pub fn get_encryption_key(&self, key_id: &str) -> Option<&EncryptionKeyPair> {
         self.encryption_keys.get(key_id)
     }
+    
+    /// Generate a new encryption key pair and store it with the given ID
+    /// Returns the public key bytes
+    pub fn generate_encryption_key(&mut self, key_id: &str) -> Result<Vec<u8>> {
+        let encryption_keypair = EncryptionKeyPair::new();
+        let public_key = encryption_keypair.public_key().to_vec();
+        
+        self.encryption_keys.insert(key_id.to_string(), encryption_keypair);
+        
+        Ok(public_key)
+    }
+    
+    /// Store an encryption key pair with the given ID
+    pub fn store_encryption_key(&mut self, key_id: &str, key_pair: EncryptionKeyPair) {
+        self.encryption_keys.insert(key_id.to_string(), key_pair);
+    }
 
     /// Sign a Certificate Signing Request (CSR)
     pub fn sign_csr(&mut self, csr_bytes: &[u8], ca_key_id: &str) -> Result<Certificate> {

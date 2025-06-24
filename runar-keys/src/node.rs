@@ -10,11 +10,13 @@ use std::convert::TryInto;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SetupToken {
     pub token_id: String,
-    /// Node identifier
+    /// Node identifier (TLS public key)
     pub node_public_key: Vec<u8>,
+    /// Node encryption public key for secure communication
+    pub node_encryption_public_key: Vec<u8>,
     /// TLS certificate signing request
     pub tls_csr: Vec<u8>,
-    //ttl
+    /// Time to live in seconds
     pub ttl: u64,
 }
 
@@ -36,11 +38,25 @@ impl NodeKeyManager {
         let node_public_key = key_manager
             .generate_node_tls_key()
             .expect("Failed to generate node TLS key");
+        
+        // Generate an encryption key pair for the node
+        key_manager
+            .generate_encryption_key("node_encryption")
+            .expect("Failed to generate node encryption key");
+        
         Self {
             key_manager: key_manager,
             node_public_key: node_public_key,
-
         }
+    }
+
+    /// Get the node's encryption public key for secure communication
+    pub fn get_encryption_public_key(&self) -> Result<Vec<u8>> {
+        let encryption_key = self.key_manager
+            .get_encryption_key("node_encryption")
+            .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
+        
+        Ok(encryption_key.public_key().to_vec())
     }
 
     pub fn new_with_key_manager(mut key_manager: KeyManager) -> Self {
@@ -62,32 +78,49 @@ impl NodeKeyManager {
     /// Generate a setup token using the existing node TLS key
     pub fn generate_setup_token(&mut self) -> Result<SetupToken> {
         // Use the existing node public key that was generated during initialization
-        let node_pk_str = hex::encode(&self.node_public_key);
-        let tls_key_id = format!("node_tls_{}", node_pk_str);
-
-        // Create CSR for TLS key
-        let subject = format!("node:{}", node_pk_str);
+        let node_public_key = self.node_public_key.clone();
+        let subject = format!("node:{}", hex::encode(&node_public_key));
+        
+        // Create CSR for the node TLS key
+        let tls_key_id = format!("node_tls_{}", hex::encode(&node_public_key));
         let tls_csr = self.key_manager.create_csr(&subject, &tls_key_id)?;
-
-        // Generate storage key if needed
-        let _storage_key = self
-            .key_manager
-            .generate_node_storage_key(&self.node_public_key)?;
-
-        // Generate random UUID
-        let token_id = uuid::Uuid::new_v4();
-
-        // Create setup token
-        let token = SetupToken {
-            token_id: token_id.to_string(),
-            node_public_key: self.node_public_key.clone(),
-            tls_csr,
-            ttl: 120, // 120 seconds
+        
+        // Ensure node has an encryption key pair for secure communication
+        let node_encryption_public_key = if let Some(key) = self.key_manager.get_encryption_key("node_encryption") {
+            key.public_key().to_vec()
+        } else {
+            // Generate a new encryption key pair if one doesn't exist
+            self.key_manager.generate_encryption_key("node_encryption")?
         };
 
-        // Store token to be used for TTL validation when receiving the token again
+        // Create a setup token
+        let token = SetupToken {
+            token_id: uuid::Uuid::new_v4().to_string(),
+            node_public_key,
+            node_encryption_public_key,
+            tls_csr,
+            ttl: 3600, // 1 hour
+        };
 
         Ok(token)
+    }
+
+    /// Decrypt an encrypted certificate envelope
+    /// 
+    /// This method decrypts a certificate that was encrypted specifically for this node.
+    pub fn decrypt_certificate_envelope(&self, envelope: &Envelope) -> Result<Certificate> {
+        // Get the node's encryption key pair
+        let node_encryption_key = self.key_manager.get_encryption_key("node_encryption")
+            .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
+        
+        // Decrypt the envelope
+        let decrypted_bytes = envelope.decrypt(node_encryption_key)?;
+        
+        // Deserialize the certificate using bincode for binary deserialization
+        let certificate: Certificate = bincode::deserialize(&decrypted_bytes)
+            .map_err(|e| KeyError::SerializationError(e.to_string()))?;
+        
+        Ok(certificate)
     }
 
     /// Process a signed certificate from mobile
@@ -133,6 +166,18 @@ impl NodeKeyManager {
         self.key_manager_mut().store_certificate(certificate)?;
         
         Ok(())
+    }
+
+    /// Process an encrypted certificate envelope from mobile
+    /// 
+    /// This method decrypts the envelope, extracts the certificate, validates it,
+    /// and stores it if valid.
+    pub fn process_encrypted_certificate(&mut self, envelope: &Envelope) -> Result<()> {
+        // Decrypt the envelope to get the certificate
+        let certificate = self.decrypt_certificate_envelope(envelope)?;
+        
+        // Process the decrypted certificate
+        self.process_signed_certificate(certificate)
     }
 
     /// Store a network key

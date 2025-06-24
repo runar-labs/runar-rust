@@ -6,7 +6,7 @@ use hex;
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
 use rand::RngCore;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::convert::TryInto;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,17 +109,40 @@ pub struct EncryptionKeyPair {
 impl EncryptionKeyPair {
     /// Generate a new encryption key pair
     pub fn new() -> Self {
-        let secret_key = X25519StaticSecret::random_from_rng(OsRng);
+        let secret_key = X25519StaticSecret::random_from_rng(rand::rngs::OsRng);
         let public_key = X25519PublicKey::from(&secret_key);
         Self { secret_key, public_key }
     }
 
     /// Create an encryption key pair from a secret key
     pub fn from_secret(secret: &[u8]) -> Self {
-        let secret_key_bytes: [u8; 32] = secret[..32].try_into().unwrap();
-        let secret_key = X25519StaticSecret::from(secret_key_bytes);
+        let secret_bytes: [u8; 32] = secret[..32].try_into().unwrap();
+        let secret_key = X25519StaticSecret::from(secret_bytes);
         let public_key = X25519PublicKey::from(&secret_key);
         Self { secret_key, public_key }
+    }
+
+    /// Create an encryption key pair from just a public key
+    /// 
+    /// This can only be used for encryption, not decryption, since the private key is zeroed.
+    /// Useful when you need to encrypt data for a recipient whose public key you know.
+    pub fn from_public_key(public_key_bytes: &[u8]) -> Result<Self> {
+        if public_key_bytes.len() != 32 {
+            return Err(KeyError::InvalidKeyFormat("Public key must be 32 bytes".to_string()));
+        }
+        
+        // Create a zeroed secret key - this key pair can only be used for encryption
+        let secret_key = X25519StaticSecret::from([0u8; 32]);
+        
+        // Convert the provided bytes to an X25519PublicKey
+        let mut public_key_array = [0u8; 32];
+        public_key_array.copy_from_slice(&public_key_bytes[..32]);
+        let public_key = X25519PublicKey::from(public_key_array);
+        
+        Ok(Self {
+            secret_key,
+            public_key,
+        })
     }
 
     /// Get the public key
@@ -189,12 +212,12 @@ pub struct CSR {
 }
 
 /// Certificate related operations
-#[derive(Serialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Certificate {
     pub subject: String,
     pub issuer: String,
     pub public_key: Vec<u8>,
-    #[serde(skip_serializing)]
+    #[serde(default)]
     pub signature: Vec<u8>,
     pub valid_from: u64,
     pub valid_until: u64,
@@ -202,7 +225,17 @@ pub struct Certificate {
 
 impl Certificate {
     fn get_signed_data(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self).map_err(|e| KeyError::SerializationError(e.to_string()))
+        // Create a temporary struct with the same data but empty signature
+        // This ensures consistent serialization for both signing and verification
+        let data_to_sign = (
+            &self.subject,
+            &self.issuer,
+            &self.public_key,
+            &self.valid_from,
+            &self.valid_until
+        );
+        
+        bincode::serialize(&data_to_sign).map_err(|e| KeyError::SerializationError(e.to_string()))
     }
 
     /// Parse a CSR from bytes

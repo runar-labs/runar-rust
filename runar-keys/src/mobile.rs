@@ -1,4 +1,4 @@
-use crate::crypto::{Certificate, PublicKey, SigningKeyPair};
+use crate::crypto::{Certificate, EncryptionKeyPair, PublicKey, SigningKeyPair};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
@@ -71,9 +71,41 @@ impl MobileKeyManager {
     }
 
     /// Process a node setup token by signing the CSR with the User CA key.
+    /// 
+    /// This method also stores the node's encryption public key for secure communication.
     pub fn process_setup_token(&mut self, token: &SetupToken) -> Result<Certificate> {
-        // Sign the CSR from the token with the User CA key.
+        // Store the node's encryption public key for future secure communication
+        let node_id = hex::encode(&token.node_public_key);
+        let key_id = format!("node_encryption_{}", node_id);
+        
+        // Store the encryption key in the key manager
+        // We're only storing the public key since we only need it for encryption
+        let encryption_key = EncryptionKeyPair::from_public_key(&token.node_encryption_public_key)?;
+        self.key_manager.store_encryption_key(&key_id, encryption_key);
+        
+        // Sign the CSR from the token with the User CA key
         self.key_manager.sign_csr(&token.tls_csr, "user_ca_key")
+    }
+
+    /// Encrypt a certificate for secure transmission to a node
+    /// 
+    /// This creates an envelope that can only be decrypted by the node with the given node_id.
+    /// The node_id should be the hex-encoded node public key from the setup token.
+    pub fn encrypt_certificate_for_node(&self, certificate: &Certificate, node_id: &str) -> Result<Envelope> {
+        // Get the node's encryption key from storage
+        let key_id = format!("node_encryption_{}", node_id);
+        let encryption_key = self.key_manager.get_encryption_key(&key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Node encryption key not found for {}", node_id)))?;
+        
+        // Serialize the certificate to bytes using bincode for binary serialization
+        let cert_bytes = bincode::serialize(certificate)
+            .map_err(|e| KeyError::SerializationError(e.to_string()))?;
+        
+        // Create an envelope with the certificate as payload, encrypted for the node
+        let envelope = Envelope::new(&cert_bytes, &[encryption_key])
+            .map_err(|e| KeyError::EncryptionError(e.to_string()))?;
+            
+        Ok(envelope)
     }
 
     /// Generate a network data key

@@ -34,6 +34,7 @@ aead = "0.5.2"
 # Symmetric encryption dependencies
 hkdf = "0.12" # For HKDF
 aes-gcm = "0.10" # For AES-GCM encryption
+serde_json = "1.0" # For JSON serialization/deserialization
 
 [dev-dependencies]
 tempfile = "3.10"
