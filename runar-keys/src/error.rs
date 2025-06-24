@@ -47,6 +47,27 @@ pub enum KeyError {
 
     #[error("Serialization error: {0}")]
     SerializationError(String),
+
+    #[error("Invalid key format: {0}")]
+    InvalidKeyFormat(String),
+}
+
+impl From<ed25519_dalek::ed25519::Error> for KeyError {
+    fn from(err: ed25519_dalek::ed25519::Error) -> Self {
+        KeyError::CryptoError(err.to_string())
+    }
+}
+
+impl From<std::array::TryFromSliceError> for KeyError {
+    fn from(err: std::array::TryFromSliceError) -> Self {
+        KeyError::InvalidKeyFormat(err.to_string())
+    }
+}
+
+impl From<hkdf::InvalidLength> for KeyError {
+    fn from(err: hkdf::InvalidLength) -> Self {
+        KeyError::CryptoError(format!("HKDF error: {}", err))
+    }
 }
 
 /// Result type for runar-keys operations

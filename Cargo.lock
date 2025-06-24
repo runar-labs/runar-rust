@@ -2007,6 +2007,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "async-trait",
+ "bincode",
  "chacha20poly1305",
  "ed25519-dalek",
  "ed25519-hd-key",

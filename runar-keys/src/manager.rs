@@ -1,6 +1,8 @@
 use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
+use ed25519_dalek::VerifyingKey;
+use std::convert::TryInto;
 
 use std::collections::HashMap;
 
@@ -68,7 +70,7 @@ impl KeyManager {
         let signing_keypair = KeyDerivation::derive_user_profile_key(&seed, profile_index)?;
 
         // 2. Derive the corresponding encryption key pair from the signing key pair
-        let encryption_keypair = EncryptionKeyPair::from_key_pair(&signing_keypair);
+        let encryption_keypair = EncryptionKeyPair::from_secret(signing_keypair.secret_key_bytes());
 
         // 3. Store both key pairs with distinct IDs
         let signing_key_id = format!("user_profile_signing_{}", profile_index);
@@ -83,24 +85,9 @@ impl KeyManager {
         Ok(signing_keypair.public_key().to_vec())
     }
 
-    /// Generate a network CA key from the seed
-    pub fn generate_user_ca_key(&mut self, user_public_key: &[u8]) -> Result<Vec<u8>> {
-        let seed = self.seed.ok_or_else(|| {
-            KeyError::InvalidOperation("No seed available for key derivation".to_string())
-        })?;
-
-        let signing_keypair = KeyDerivation::derive_user_ca_key(&seed, user_public_key)?;
-
-        let key_id = format!("user_ca_{}", hex::encode(user_public_key));
-        self.signing_keys
-            .insert(key_id.clone(), signing_keypair.clone());
-
-        Ok(signing_keypair.public_key().to_vec())
-    }
-
     /// Generate a node TLS key pair
     pub fn generate_node_tls_key(&mut self) -> Result<Vec<u8>> {
-        let signing_keypair = SigningKeyPair::generate();
+        let signing_keypair = SigningKeyPair::new();
         let key_id = format!("node_tls_{}", hex::encode(signing_keypair.public_key()));
         self.signing_keys
             .insert(key_id.clone(), signing_keypair.clone());
@@ -110,7 +97,7 @@ impl KeyManager {
 
     /// Generate a node storage key pair
     pub fn generate_node_storage_key(&mut self, node_pk: &[u8]) -> Result<&EncryptionKeyPair> {
-        let encryption_keypair = EncryptionKeyPair::generate();
+        let encryption_keypair = EncryptionKeyPair::new();
 
         let key_id = format!("node_storage_{}", hex::encode(node_pk));
         self.encryption_keys
@@ -121,7 +108,7 @@ impl KeyManager {
 
     /// Generate a network data key pair
     pub fn generate_network_data_key(&mut self) -> Result<Vec<u8>> {
-        let encryption_keypair = EncryptionKeyPair::generate();
+        let encryption_keypair = EncryptionKeyPair::new();
 
         let key_id = format!(
             "network_data_{}",
@@ -131,7 +118,7 @@ impl KeyManager {
         self.encryption_keys
             .insert(key_id.clone(), encryption_keypair.clone());
 
-        Ok(encryption_keypair.public_key().as_bytes().to_vec())
+        Ok(encryption_keypair.public_key().to_vec())
     }
 
     // TODO how to secure this method so it only is available in the mobile build -
@@ -142,10 +129,10 @@ impl KeyManager {
             KeyError::KeyNotFound(format!("Encryption key not found: {}", key_id))
         })?;
 
-        Ok(encryption_keypair.secret_key_bytes().to_vec())
+        Ok(encryption_keypair.secret_key().to_vec())
     }
 
-    /// Add a signing key pair
+    /// Add a signing key to the key manager
     pub fn add_signing_key(&mut self, key_id: &str, key_pair: SigningKeyPair) {
         self.signing_keys.insert(key_id.to_string(), key_pair);
     }
@@ -175,8 +162,8 @@ impl KeyManager {
         // Sign CSR
         let certificate = signing_key_pair.sign_csr(csr_bytes)?;
 
-        // Store certificate
-        self.add_certificate(certificate.clone());
+        // Store certificate after validation
+        self.add_certificate(certificate.clone(), ca_key_id)?;
 
         Ok(certificate)
     }
@@ -189,13 +176,36 @@ impl KeyManager {
             .get(key_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Signing key not found: {}", key_id)))?;
 
-        Certificate::create_csr(subject, &signing_key.public_key())
+        // Pass the public key bytes to the CSR creation function
+        Certificate::create_csr(subject, signing_key.public_key())
     }
 
-    /// Add a certificate
-    pub fn add_certificate(&mut self, certificate: Certificate) {
+    /// Add a certificate after validating it against the specified CA.
+    pub fn add_certificate(&mut self, certificate: Certificate, ca_key_id: &str) -> Result<()> {
+        let ca_key = self.get_signing_key(ca_key_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("CA key not found for validation: {}", ca_key_id))
+        })?;
+
+        let ca_public_key_bytes = ca_key.public_key();
+        let ca_verifying_key = VerifyingKey::from_bytes(ca_public_key_bytes)?;
+
+        certificate.validate(&ca_verifying_key)?;
+
         self.certificates
             .insert(certificate.subject.clone(), certificate);
+
+        Ok(())
+    }
+    
+    /// Store a pre-validated certificate without further validation.
+    /// This should only be used when the certificate has already been validated
+    /// through other means, such as direct validation using the CA public key.
+    pub fn store_certificate(&mut self, certificate: Certificate) -> Result<()> {
+        // Store the certificate directly without validation
+        self.certificates
+            .insert(certificate.subject.clone(), certificate);
+        
+        Ok(())
     }
 
     /// Get a certificate by subject
@@ -203,14 +213,5 @@ impl KeyManager {
         self.certificates.get(subject)
     }
 
-    /// Verify a certificate's signature
-    pub fn verify_certificate(&self, certificate: &Certificate) -> Result<()> {
-        // Verify certificate signature
-        match certificate.verify(certificate.data.as_bytes(), &certificate.signature)? {
-            true => Ok(()),
-            false => Err(KeyError::SignatureError(
-                "Certificate signature verification failed".to_string(),
-            )),
-        }
-    }
+
 }

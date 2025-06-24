@@ -7,8 +7,8 @@
 | Term / Key | Scope & Owner | Algorithm (recommended) | Stored Where | Rotation Cadence |
 |------------|--------------|-------------------------|--------------|------------------|
 | **User Root Key** | User-wide, master of trust | `Ed25519` (signing) + `X25519` (encryption) via SLIP-0010 path `m/0'` | Mobile wallet / Ledger | Rare; user-initiated |
-| **Network CA Key** | Per network, signs node membership certs | `Ed25519` | Mobile wallet | On CA compromise |
-| **Node TLS Key** | Per node, generated *on node* | `Ed25519` CSR signed by Network CA | Node | Annual or on compromise |
+| **User CA Key** | Per user, signs node membership certs | `Ed25519` | Mobile wallet | On CA compromise |
+| **Node TLS Key** | Per node, generated *on node* | `Ed25519` CSR signed by User CA | Node | Annual or on compromise |
 | **Node Storage Key** | Per node, generated *on node* | XChaCha20-Poly1305 file key wrapped by node X25519 | Node | Quarterly or on compromise |
 | **User Profile Key** | Per profile ID | `X25519` pair derived via SLIP-0010 `m/44'/1'/profile_index'` | Mobile wallet | Rare |
 | **Envelope Key** | Per object/file, ephemeral | Random 256-bit symmetric | Stored with ciphertext header | New for every object |

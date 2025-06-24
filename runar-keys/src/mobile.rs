@@ -1,6 +1,7 @@
 use crate::crypto::{Certificate, SigningKeyPair};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
+use crate::key_derivation::KeyDerivation;
 use crate::manager::KeyManager;
 use crate::node::SetupToken;
 
@@ -41,9 +42,19 @@ impl MobileKeyManager {
         Ok(key_pair)
     }
 
-    /// Generate a user CA key
-    pub fn generate_user_ca_key(&mut self, user_public_key: &[u8]) -> Result<Vec<u8>> {
-        self.key_manager.generate_user_ca_key(user_public_key)
+    /// Generate a user CA key derived from the user's root key.
+    pub fn generate_user_ca_key(&mut self) -> Result<SigningKeyPair> {
+        let seed = self.key_manager.get_seed().ok_or_else(|| {
+            KeyError::InvalidOperation("Cannot generate user CA key without a seed".to_string())
+        })?;
+
+        let user_root_key = KeyDerivation::derive_user_root_key(seed)?;
+        let ca_key = KeyDerivation::derive_user_ca_key(&user_root_key)?;
+
+        self.key_manager
+            .add_signing_key("user_ca_key", ca_key.clone());
+
+        Ok(ca_key)
     }
 
     /// Generate a user profile key
@@ -55,34 +66,10 @@ impl MobileKeyManager {
         Ok((public_key, profile_index))
     }
 
-    /// Process a node setup token
+    /// Process a node setup token by signing the CSR with the User CA key.
     pub fn process_setup_token(&mut self, token: &SetupToken) -> Result<Certificate> {
-        // Get the User CA key
-        let ca_key_id = format!(
-            "user_ca_{}",
-            hex::encode(
-                self.user_public_key
-                    .as_ref()
-                    .expect("User public key not found")
-            )
-        );
-        let ca_key = self
-            .key_manager
-            .get_signing_key(&ca_key_id)
-            .ok_or_else(|| {
-                KeyError::KeyNotFound(format!("User CA key not found: {}", ca_key_id))
-            })?;
-
-        // Parse CSR from setup token
-        let csr_bytes = &token.tls_csr;
-
-        // Sign CSR with CA key
-        let certificate = ca_key.sign_csr(csr_bytes)?;
-
-        // Store the certificate
-        self.key_manager.add_certificate(certificate.clone());
-
-        Ok(certificate)
+        // Sign the CSR from the token with the User CA key.
+        self.key_manager.sign_csr(&token.tls_csr, "user_ca_key")
     }
 
     /// Generate a network data key

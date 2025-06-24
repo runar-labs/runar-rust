@@ -1,4 +1,6 @@
+use ed25519_dalek::VerifyingKey;
 use runar_keys::*;
+use std::convert::TryInto;
 
 #[test]
 fn test_key_generation_and_derivation() {
@@ -25,6 +27,11 @@ fn test_key_generation_and_derivation() {
     // 1 - (mobile side) - generate user master key
     let mut mobile = MobileKeyManager::new();
     mobile.generate_seed();
+
+    //TODO the manager methos should never return private keys. i should only return public keys
+    //which is what will be used in further calls and internaly the key manager will get the private key if ythere otherwise return an error
+    //the only exception is the network_private_key taht we need to send to the node.;. but all other metgoids here truning key pairs need to
+    //change to returno only the pubnlic key and the private key should be stored in the manager
     let user_root_key = mobile
         .generate_user_root_key()
         .expect("Failed to generate user root key");
@@ -37,14 +44,14 @@ fn test_key_generation_and_derivation() {
     println!("User public key: {}", hex::encode(&user_public_key));
 
     // Create a user owned and managed CA
-    let user_ca_public_key = mobile
-        .generate_user_ca_key(&user_public_key)
+    let user_ca_key = mobile
+        .generate_user_ca_key()
         .expect("Failed to generate user CA key");
-    assert!(
-        user_ca_public_key.len() > 0,
-        "User CA key should have a valid public key"
+    assert_eq!(user_ca_key.public_key().len(), 32);
+    println!(
+        "User CA public key: {}",
+        hex::encode(&user_ca_key.public_key())
     );
-    println!("User CA public key: {}", hex::encode(&user_ca_public_key));
 
     //Node first time use - enter in setup mode
 
@@ -64,7 +71,7 @@ fn test_key_generation_and_derivation() {
         .expect("Failed to process setup token");
     assert_eq!(
         signed_cert.issuer,
-        format!("ca:{}", hex::encode(&user_ca_public_key)),
+        format!("ca:{}", hex::encode(&user_ca_key.public_key())),
         "Certificate should be issued by the network CA"
     );
 
@@ -73,6 +80,24 @@ fn test_key_generation_and_derivation() {
     // 4 - (node side) - received the signed CSR and generate the node membership certificate, stored encrypted and secure.
     node.process_signed_certificate(signed_cert)
         .expect("Failed to process signed certificate");
+
+    // 5. Mobile receives the node certificate, validates it, and stores it
+    let node_certificate_from_node = node
+        .get_node_certificate()
+        .expect("Failed to get node certificate");
+
+    // *** ADDED: Validate the certificate against the CA public key ***
+    let ca_key = mobile.key_manager().get_signing_key("user_ca_key").unwrap();
+    let ca_verifying_key =
+        VerifyingKey::from_bytes(ca_key.public_key().try_into().unwrap()).unwrap();
+    assert!(node_certificate_from_node
+        .validate(&ca_verifying_key)
+        .is_ok());
+
+    mobile
+        .key_manager_mut()
+        .add_certificate(node_certificate_from_node.clone(), "user_ca_key")
+        .expect("Failed to add certificate");
 
     // FROM THIS POINT THE NODE AND MOBILE WILL RE-CONNECT USING THE NEW CERTIFICATES AND
     // ALL FUTURE COMMS ARE SECURED AND ECNRYPTED USING THESE NEW CREDENTIALS.
