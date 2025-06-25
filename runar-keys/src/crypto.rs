@@ -481,10 +481,82 @@ impl Certificate {
     }
 }
 
-#[cfg(test)]
+/// Represents a symmetric key for encryption
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SymmetricKey {
+    key: [u8; CHACHA20POLY1305_KEY_LENGTH],
+}
+
+impl SymmetricKey {
+    /// Generate a new symmetric key
+    pub fn new() -> Self {
+        let mut key = [0u8; CHACHA20POLY1305_KEY_LENGTH];
+        OsRng.fill_bytes(&mut key);
+        Self { key }
+    }
+
+    /// Create a symmetric key from bytes
+    pub fn from_bytes(key_bytes: &[u8]) -> Result<Self> {
+        if key_bytes.len() != CHACHA20POLY1305_KEY_LENGTH {
+            return Err(KeyError::InvalidKeyFormat(
+                "Invalid symmetric key length".to_string(),
+            ));
+        }
+        let mut key = [0u8; CHACHA20POLY1305_KEY_LENGTH];
+        key.copy_from_slice(key_bytes);
+        Ok(Self { key })
+    }
+
+    /// Encrypt data using ChaCha20Poly1305
+    pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let cipher = ChaCha20Poly1305::new_from_slice(&self.key)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))?;
+        let mut nonce_bytes = [0u8; CHACHA20POLY1305_NONCE_LENGTH];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, data)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))?;
+
+        // Prepend nonce to ciphertext
+        let mut result = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&ciphertext);
+
+        Ok(result)
+    }
+
+    /// Decrypt data using ChaCha20Poly1305
+    pub fn decrypt(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
+        if encrypted_data.len() < CHACHA20POLY1305_NONCE_LENGTH {
+            return Err(KeyError::InvalidKeyFormat(
+                "Encrypted data is too short to contain a nonce".to_string(),
+            ));
+        }
+
+        let (nonce_bytes, ciphertext) =
+            encrypted_data.split_at(CHACHA20POLY1305_NONCE_LENGTH);
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&self.key)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))?;
+
+        let decrypted_data = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))?;
+
+        Ok(decrypted_data)
+    }
+}
+
 mod tests {
-    use super::*;
+    use crate::{Certificate, KeyError, SigningKeyPair};
     use ed25519_dalek::VerifyingKey;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    
+
 
     #[test]
     fn test_certificate_serialization_consistency() {

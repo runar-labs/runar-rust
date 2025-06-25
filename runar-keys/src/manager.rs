@@ -1,4 +1,6 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey, SigningKeyPair};
+use crate::crypto::{
+    Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey, SigningKeyPair, SymmetricKey,
+};
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
 use ed25519_dalek::VerifyingKey;
@@ -16,6 +18,8 @@ pub struct KeyManagerData {
     pub signing_keys: HashMap<String, SigningKeyPair>,
     /// Encryption key pairs by ID
     pub encryption_keys: HashMap<String, EncryptionKeyPair>,
+    /// Symmetric keys by ID
+    pub symmetric_keys: HashMap<String, SymmetricKey>,
     /// Certificates by subject
     pub certificates: HashMap<String, Certificate>,
 }
@@ -27,6 +31,8 @@ pub struct KeyManager {
     signing_keys: HashMap<String, SigningKeyPair>,
     /// Encryption key pairs by ID
     encryption_keys: HashMap<String, EncryptionKeyPair>,
+    /// Symmetric keys by ID
+    symmetric_keys: HashMap<String, SymmetricKey>,
     /// Certificates by subject
     certificates: HashMap<String, Certificate>,
 }
@@ -38,6 +44,7 @@ impl KeyManager {
             seed: None,
             signing_keys: HashMap::new(),
             encryption_keys: HashMap::new(),
+            symmetric_keys: HashMap::new(),
             certificates: HashMap::new(),
         }
     }
@@ -143,7 +150,11 @@ impl KeyManager {
 
     /// Create a network key message containing both public and private keys
     /// This is more secure than exposing the private key directly
-    pub fn create_network_key_message(&self, network_public_key: &[u8], network_name: &str) -> Result<NetworkKeyMessage> {
+    pub fn create_network_key_message(
+        &self,
+        network_public_key: &[u8],
+        network_name: &str,
+    ) -> Result<NetworkKeyMessage> {
         let key_id = format!("network_data_{}", hex::encode(network_public_key));
         let encryption_keypair = self.encryption_keys.get(&key_id).ok_or_else(|| {
             KeyError::KeyNotFound(format!("Encryption key not found: {}", key_id))
@@ -174,6 +185,35 @@ impl KeyManager {
     /// Get an encryption key pair by ID
     pub fn get_encryption_key(&self, key_id: &str) -> Option<&EncryptionKeyPair> {
         self.encryption_keys.get(key_id)
+    }
+
+    /// Generate a new symmetric encryption key and store it with the given ID.
+    /// This key is intended for encrypting data at rest (e.g., files) and will not leave the key manager.
+    pub fn generate_symmetric_key(&mut self, key_id: &str) -> Result<()> {
+        let symmetric_key = crate::crypto::SymmetricKey::new();
+        self.symmetric_keys
+            .insert(key_id.to_string(), symmetric_key);
+        Ok(())
+    }
+
+    /// Encrypt data using a stored symmetric key.
+    pub fn encrypt_with_symmetric_key(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
+        let key = self.symmetric_keys.get(key_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id))
+        })?;
+        key.encrypt(data)
+    }
+
+    /// Decrypt data using a stored symmetric key.
+    pub fn decrypt_with_symmetric_key(
+        &self,
+        key_id: &str,
+        encrypted_data: &[u8],
+    ) -> Result<Vec<u8>> {
+        let key = self.symmetric_keys.get(key_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id))
+        })?;
+        key.decrypt(encrypted_data)
     }
 
     /// Generate a new encryption key pair and store it with the given ID
@@ -209,7 +249,6 @@ impl KeyManager {
         Ok(certificate)
     }
 
-    //TODO verify if this is correct.. the verificatio of the certificate
     /// Create a certificate signing request (CSR)
     pub fn create_csr(&self, subject: &str, key_id: &str) -> Result<Vec<u8>> {
         let signing_key = self
@@ -237,15 +276,15 @@ impl KeyManager {
 
         Ok(())
     }
-    
+
     /// Store a pre-validated certificate directly without re-validating it.
-    /// 
+    ///
     /// This should only be used when the certificate has already been validated
     /// with the appropriate CA key.
     pub fn store_validated_certificate(&mut self, certificate: Certificate) -> Result<()> {
         self.certificates
             .insert(certificate.subject.clone(), certificate);
-            
+
         Ok(())
     }
 
@@ -253,7 +292,7 @@ impl KeyManager {
     pub fn get_certificate(&self, subject: &str) -> Option<&Certificate> {
         self.certificates.get(subject)
     }
-    
+
     /// Export all keys and certificates for persistence
     /// This allows saving the key manager state to secure storage
     pub fn export_keys(&self) -> KeyManagerData {
@@ -261,16 +300,18 @@ impl KeyManager {
             seed: self.seed,
             signing_keys: self.signing_keys.clone(),
             encryption_keys: self.encryption_keys.clone(),
+            symmetric_keys: self.symmetric_keys.clone(),
             certificates: self.certificates.clone(),
         }
     }
-    
+
     /// Import keys and certificates from persistence
     /// This allows restoring the key manager state from secure storage
     pub fn import_keys(&mut self, data: KeyManagerData) {
         self.seed = data.seed;
         self.signing_keys = data.signing_keys;
         self.encryption_keys = data.encryption_keys;
+        self.symmetric_keys = data.symmetric_keys;
         self.certificates = data.certificates;
     }
 }

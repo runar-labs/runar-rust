@@ -36,7 +36,8 @@
 3. A node can unwrap an Envelope Key only if it both:  
    a) holds a valid network-membership certificate signed by the Network CA, **and**  
    b) successfully uses the Network Data Key to decrypt the Envelope header.
-4. Node Storage Keys protect the physical filesystem (configs, databases); they are **not** used for Envelope decryption. This separation lets the same encrypted record replicate across multiple nodes in the same network.
+4. Node Storage Keys protect the physical filesystem (configs, databases); they are **not** used for Envelope decryption. 
+This make sure that data stored by the node cannot be read  by any other node in the network or process. 
 
 ---
 

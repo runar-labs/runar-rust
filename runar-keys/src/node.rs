@@ -50,6 +50,11 @@ impl NodeKeyManager {
             .generate_encryption_key("node_encryption")
             .expect("Failed to generate node encryption key");
 
+        // Generate a symmetric key for local file/data encryption
+        key_manager
+            .generate_symmetric_key("node_storage")
+            .expect("Failed to generate node storage key");
+
         Self {
             key_manager: key_manager,
             node_public_key: node_public_key,
@@ -64,16 +69,6 @@ impl NodeKeyManager {
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
 
         Ok(encryption_key.public_key().to_vec())
-    }
-
-    pub fn new_with_key_manager(mut key_manager: KeyManager) -> Self {
-        let node_public_key = key_manager
-            .generate_node_tls_key()
-            .expect("Failed to generate node TLS key");
-        Self {
-            key_manager: key_manager,
-            node_public_key: node_public_key,
-        }
     }
 
     /// Get the node ID
@@ -152,14 +147,14 @@ impl NodeKeyManager {
             .as_slice()
             .try_into()
             .map_err(|_| KeyError::CryptoError("Invalid CA public key length".to_string()))?;
-        
+
         // Create the verifying key directly from the bytes
         let ca_verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&ca_public_key_array)
             .map_err(|e| KeyError::CryptoError(e.to_string()))?;
 
         // Validate the certificate using the provided CA public key
         certificate.validate(&ca_verifying_key)?;
-        
+
         // Store the certificate directly in the key manager
         // We've already validated it with the CA public key, so we can just store it
         self.key_manager.store_validated_certificate(certificate)?;
@@ -168,47 +163,55 @@ impl NodeKeyManager {
     }
 
     /// Process a network keys message from a mobile device
-    /// 
+    ///
     /// This decrypts the envelope containing the network keys and stores them securely
     pub fn process_network_keys_message(&mut self, envelope: &Envelope) -> Result<()> {
         // Get the node's encryption key for decryption
-        let node_encryption_key = self.key_manager.get_encryption_key("node_encryption")
+        let node_encryption_key = self
+            .key_manager
+            .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
-        
+
         // Decrypt the envelope to get the network key message
         let decrypted_bytes = envelope.decrypt(node_encryption_key)?;
-        
+
         // Deserialize the network key message
         let network_key_message: NetworkKeyMessage = bincode::deserialize(&decrypted_bytes)
             .map_err(|e| KeyError::SerializationError(e.to_string()))?;
-        
+
         // Store the network private key
         let network_private_key = network_key_message.private_key.clone();
-        
+
         // Also store the network key as an encryption key for future use
-        let _network_encryption_key_id = format!("network_encryption_{}", hex::encode(&network_key_message.public_key));
+        let _network_encryption_key_id = format!(
+            "network_encryption_{}",
+            hex::encode(&network_key_message.public_key)
+        );
         // Create an encryption key pair from the network key (if needed)
         // This is commented out for now as we're using the existing store_network_key method
         // let encryption_key_pair = EncryptionKeyPair::from_bytes(&network_private_key)?;
         // self.key_manager.add_encryption_key(&network_encryption_key_id, encryption_key_pair);
-        
+
         // Store the network key using the existing method
         self.store_network_key(&network_key_message.public_key, network_private_key)?;
-        
+
         // Store the network name
         // For now, we'll just log it (implementation depends on requirements)
-        println!("Received network name: {}", network_key_message.network_name);
-        
+        println!(
+            "Received network name: {}",
+            network_key_message.network_name
+        );
+
         Ok(())
     }
-    
+
     /// Export the node key manager state for persistence
     pub fn export_state(&self) -> NodeKeyManagerData {
         NodeKeyManagerData {
             key_manager_data: self.key_manager.export_keys(),
         }
     }
-    
+
     /// Import the node key manager state from persistence
     pub fn import_state(&mut self, data: NodeKeyManagerData) {
         self.key_manager.import_keys(data.key_manager_data);
@@ -273,5 +276,17 @@ impl NodeKeyManager {
         self.key_manager
             .get_certificate(&subject)
             .ok_or_else(|| KeyError::KeyNotFound("Node certificate not found".to_string()))
+    }
+
+    /// Encrypt data using the node's symmetric storage key.
+    pub fn encrypt_data(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.key_manager
+            .encrypt_with_symmetric_key("node_storage", data)
+    }
+
+    /// Decrypt data using the node's symmetric storage key.
+    pub fn decrypt_data(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
+        self.key_manager
+            .decrypt_with_symmetric_key("node_storage", encrypted_data)
     }
 }

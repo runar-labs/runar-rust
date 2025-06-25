@@ -167,6 +167,28 @@ fn test_e2e_keys_generation_and_exchange() {
         "Mobile should be able to decrypt the data"
     );
 
+    let file_data_1 = b"This is some secret file content that should be encrypted on the node.";
+
+    let encrypted_file_1 = node
+        .encrypt_data(file_data_1)
+        .expect("Node failed to encrypt data");
+    println!("Encrypted data (hex): {}", hex::encode(&encrypted_file_1));
+    assert_ne!(file_data_1, &encrypted_file_1[..]); // Ensure it's not plaintext
+
+    let decrypted_file_1 = node
+        .decrypt_data(&encrypted_file_1)
+        .expect("Node failed to decrypt data");
+    println!(
+        "Decrypted data: {:?}",
+        std::str::from_utf8(&decrypted_file_1).unwrap()
+    );
+
+    assert_eq!(
+        file_data_1,
+        &decrypted_file_1[..],
+        "Decrypted data should match original"
+    );
+
     // Now let's simulate when mobile and node already have keys stored in secure storage.
     // Step 1: Export the current state of the key managers
     let mobile_state = mobile.export_state();
@@ -215,5 +237,50 @@ fn test_e2e_keys_generation_and_exchange() {
     assert_eq!(
         decrypted_by_mobile_2, test_data_2,
         "Hydrated mobile should be able to decrypt the data"
+    );
+
+    // --- Test Node Symmetric Encryption for File Storage ---
+    println!("\n--- Testing Node Symmetric Encryption ---");
+
+    //check encrupted data before hydration
+    let decrypted_file_1 = node
+        .decrypt_data(&encrypted_file_1)
+        .expect("Node failed to decrypt data");
+    println!(
+        "Decrypted data: {:?}",
+        std::str::from_utf8(&decrypted_file_1).unwrap()
+    );
+
+    assert_eq!(
+        file_data_1,
+        &decrypted_file_1[..],
+        "Decrypted data should match original"
+    );
+
+    // 1. Encrypt and decrypt data with the original node instance
+    let file_data_2 = b"This is some secret file content that should be encrypted on the node.";
+    println!(
+        "Original data: {:?}",
+        std::str::from_utf8(file_data_2).unwrap()
+    );
+
+    let encrypted_file_2 = node
+        .encrypt_data(file_data_2)
+        .expect("Node failed to encrypt data");
+    println!("Encrypted data (hex): {}", hex::encode(&encrypted_file_2));
+    assert_ne!(file_data_2, &encrypted_file_2[..]); // Ensure it's not plaintext
+
+    let decrypted_file_2 = node
+        .decrypt_data(&encrypted_file_2)
+        .expect("Node failed to decrypt data");
+    println!(
+        "Decrypted data: {:?}",
+        std::str::from_utf8(&decrypted_file_2).unwrap()
+    );
+
+    assert_eq!(
+        file_data_2,
+        &decrypted_file_2[..],
+        "Decrypted data should match original"
     );
 }
