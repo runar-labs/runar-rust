@@ -82,6 +82,7 @@ pub struct SqliteWorker {
     connection: Connection,
     receiver: mpsc::Receiver<SqliteWorkerCommand>,
     logger: Arc<Logger>, // Added logger
+    ready_tx: Option<oneshot::Sender<()>>, // To signal when worker is ready
 }
 
 impl SqliteWorker {
@@ -89,6 +90,7 @@ impl SqliteWorker {
         db_path: String,
         receiver: mpsc::Receiver<SqliteWorkerCommand>,
         logger: Arc<Logger>,
+        ready_tx: oneshot::Sender<()>, // Add ready channel sender
     ) -> Result<Self, String> {
         let connection = Connection::open(db_path.clone()).map_err(|e| {
             let err_msg = format!("Failed to open SQLite connection to '{}': {}", db_path, e);
@@ -104,12 +106,21 @@ impl SqliteWorker {
             connection,
             receiver,
             logger,
+            ready_tx: Some(ready_tx),
         })
     }
 
     // Main loop for the worker thread
     pub async fn run(mut self) {
-        self.logger.info("SqliteWorker started.");
+        // Signal that the worker is ready
+        if let Some(tx) = self.ready_tx.take() {
+            if tx.send(()).is_err() {
+                self.logger
+                    .error("Failed to send ready signal; receiver was dropped.");
+                return; // Early exit if we can't signal readiness
+            }
+        }
+        self.logger.info("SqliteWorker started processing loop.");
         while let Some(command) = self.receiver.recv().await {
             match command {
                 SqliteWorkerCommand::ApplySchema { schema, reply_to } => {
@@ -763,11 +774,11 @@ impl AbstractService for SqliteService {
             self.name
         ));
 
-        let (tx, rx) = mpsc::channel(32); // Channel for worker commands
+        let (tx, rx) = mpsc::channel(32);
+        let (ready_tx, ready_rx) = oneshot::channel(); // Channel for ready signal
 
-        // Store the sender part in self.worker_tx
+        // Store the command sender in self.worker_tx
         {
-            // Scope for the write lock
             let mut worker_tx_guard = self
                 .worker_tx
                 .write()
@@ -777,7 +788,7 @@ impl AbstractService for SqliteService {
 
         let db_path_clone = self.config.db_path.clone();
         let schema_clone = self.config.schema.clone();
-        let logger_clone_for_thread = context.logger.clone(); // Use logger from LifecycleContext
+        let logger_clone_for_thread = context.logger.clone();
 
         thread::spawn(move || {
             let worker_runtime = tokio::runtime::Builder::new_current_thread()
@@ -786,14 +797,19 @@ impl AbstractService for SqliteService {
                 .expect("Failed to create Tokio runtime for SqliteWorker");
 
             worker_runtime.block_on(async move {
-                match SqliteWorker::new(db_path_clone, rx, logger_clone_for_thread.clone()) {
-                    // Pass cloned logger
+                match SqliteWorker::new(
+                    db_path_clone,
+                    rx,
+                    logger_clone_for_thread.clone(),
+                    ready_tx, // Pass the ready signal sender
+                ) {
                     Ok(worker) => {
-                        logger_clone_for_thread.info("SqliteWorker thread started.");
-                        worker.run().await; // run is async
+                        logger_clone_for_thread.info("SqliteWorker thread starting run loop.");
+                        worker.run().await;
                         logger_clone_for_thread.info("SqliteWorker thread finished.");
                     }
                     Err(e) => {
+                        // If new fails, ready_tx is dropped, and the await below will fail.
                         logger_clone_for_thread.error(format!(
                             "Failed to initialize SqliteWorker in thread: {}",
                             e
@@ -803,8 +819,13 @@ impl AbstractService for SqliteService {
             });
         });
 
-        // Apply schema using the now-started worker
-        // The apply_schema method uses send_command, which now correctly handles the RwLock
+        // Wait for the worker to signal that it's ready
+        ready_rx
+            .await
+            .map_err(|e| anyhow!("SqliteWorker failed to start: {}", e))?;
+        context.debug("SqliteWorker has signaled it is ready.");
+
+        // Now that the worker is confirmed to be running, apply the schema
         self.apply_schema(schema_clone, &context).await?;
 
         context.info(format!(
