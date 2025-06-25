@@ -136,7 +136,7 @@ fn test_e2e_keys_generation_and_exchange() {
         .generate_user_profile_key()
         .expect("Failed to generate user profile key");
     assert!(
-        profile_public_key.len() > 0,
+        !profile_public_key.is_empty(),
         "User profile key should have a valid public key"
     );
 

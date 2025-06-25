@@ -65,7 +65,7 @@ impl MobileKeyManager {
         let public_key = self.key_manager.generate_user_root_key()?;
         self.user_public_key = Some(public_key.bytes().to_vec());
         self.profile_key_to_index
-            .insert(hex::encode(&public_key.bytes()), 0);
+            .insert(hex::encode(public_key.bytes()), 0);
         Ok(public_key)
     }
 
@@ -252,7 +252,7 @@ impl MobileKeyManager {
             .profile_key_to_index
             .get(&profile_key_hex)
             .ok_or_else(|| {
-                KeyError::KeyNotFound(format!("Profile index not found for public key"))
+                KeyError::KeyNotFound("Profile index not found for public key".to_string())
             })?;
 
         // Get the profile encryption key
@@ -285,7 +285,7 @@ impl MobileKeyManager {
             .profile_key_to_index
             .get(&profile_key_hex)
             .ok_or_else(|| {
-                KeyError::KeyNotFound(format!("Profile index not found for public key"))
+                KeyError::KeyNotFound("Profile index not found for public key".to_string())
             })?;
 
         // Get the profile encryption key

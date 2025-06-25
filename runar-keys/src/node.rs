@@ -241,9 +241,9 @@ impl NodeKeyManager {
 
             Ok(())
         } else {
-            Err(KeyError::KeyNotFound(format!(
-                "Network private key is not 32 bytes long"
-            )))
+            Err(KeyError::KeyNotFound(
+                "Network private key is not 32 bytes long".to_string(),
+            ))
         }
     }
 
