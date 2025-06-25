@@ -1,4 +1,4 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, SigningKeyPair};
+use crate::crypto::{Certificate, EncryptionKeyPair, NodeMessage};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::manager::KeyManager;
@@ -38,12 +38,12 @@ impl NodeKeyManager {
         let node_public_key = key_manager
             .generate_node_tls_key()
             .expect("Failed to generate node TLS key");
-        
+
         // Generate an encryption key pair for the node
         key_manager
             .generate_encryption_key("node_encryption")
             .expect("Failed to generate node encryption key");
-        
+
         Self {
             key_manager: key_manager,
             node_public_key: node_public_key,
@@ -52,10 +52,11 @@ impl NodeKeyManager {
 
     /// Get the node's encryption public key for secure communication
     pub fn get_encryption_public_key(&self) -> Result<Vec<u8>> {
-        let encryption_key = self.key_manager
+        let encryption_key = self
+            .key_manager
             .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
-        
+
         Ok(encryption_key.public_key().to_vec())
     }
 
@@ -66,7 +67,6 @@ impl NodeKeyManager {
         Self {
             key_manager: key_manager,
             node_public_key: node_public_key,
-
         }
     }
 
@@ -80,18 +80,20 @@ impl NodeKeyManager {
         // Use the existing node public key that was generated during initialization
         let node_public_key = self.node_public_key.clone();
         let subject = format!("node:{}", hex::encode(&node_public_key));
-        
+
         // Create CSR for the node TLS key
         let tls_key_id = format!("node_tls_{}", hex::encode(&node_public_key));
         let tls_csr = self.key_manager.create_csr(&subject, &tls_key_id)?;
-        
+
         // Ensure node has an encryption key pair for secure communication
-        let node_encryption_public_key = if let Some(key) = self.key_manager.get_encryption_key("node_encryption") {
-            key.public_key().to_vec()
-        } else {
-            // Generate a new encryption key pair if one doesn't exist
-            self.key_manager.generate_encryption_key("node_encryption")?
-        };
+        let node_encryption_public_key =
+            if let Some(key) = self.key_manager.get_encryption_key("node_encryption") {
+                key.public_key().to_vec()
+            } else {
+                // Generate a new encryption key pair if one doesn't exist
+                self.key_manager
+                    .generate_encryption_key("node_encryption")?
+            };
 
         // Create a setup token
         let token = SetupToken {
@@ -105,79 +107,57 @@ impl NodeKeyManager {
         Ok(token)
     }
 
-    /// Decrypt an encrypted certificate envelope
-    /// 
-    /// This method decrypts a certificate that was encrypted specifically for this node.
-    pub fn decrypt_certificate_envelope(&self, envelope: &Envelope) -> Result<Certificate> {
+    /// Decrypt an encrypted envelope containing a NodeMessage
+    ///
+    /// This method decrypts a NodeMessage that was encrypted specifically for this node.
+    /// The NodeMessage contains both the certificate and the CA public key needed to verify it.
+    pub fn decrypt_node_message(&self, envelope: &Envelope) -> Result<NodeMessage> {
         // Get the node's encryption key pair
-        let node_encryption_key = self.key_manager.get_encryption_key("node_encryption")
+        let node_encryption_key = self
+            .key_manager
+            .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
-        
+
         // Decrypt the envelope
         let decrypted_bytes = envelope.decrypt(node_encryption_key)?;
-        
-        // Deserialize the certificate using bincode for binary deserialization
-        let certificate: Certificate = bincode::deserialize(&decrypted_bytes)
+
+        // Deserialize the NodeMessage using bincode for binary deserialization
+        let node_message: NodeMessage = bincode::deserialize(&decrypted_bytes)
             .map_err(|e| KeyError::SerializationError(e.to_string()))?;
-        
-        Ok(certificate)
+
+        Ok(node_message)
     }
 
-    /// Process a signed certificate from mobile
-    pub fn process_signed_certificate(&mut self, certificate: Certificate) -> Result<()> {
-        // Extract the CA public key from the issuer field
-        // The issuer field should have format "ca:{public_key_hex}"
-        if !certificate.issuer.starts_with("ca:") {
-            return Err(KeyError::InvalidKeyFormat(
-                "Certificate issuer does not start with 'ca:'".to_string(),
-            ));
-        }
-        
-        // Verify that the certificate subject matches the expected format
-        // The subject should be "node:{node_public_key_hex}"
-        let expected_subject = format!("node:{}", hex::encode(self.node_public_key()));
-        if certificate.subject != expected_subject {
-            return Err(KeyError::InvalidKeyFormat(
-                format!("Certificate subject '{}' does not match expected '{}'", 
-                       certificate.subject, expected_subject)
-            ));
-        }
-        
-        // Extract the public key hex from the issuer
-        let ca_pubkey_hex = &certificate.issuer[3..]; // Skip the "ca:" prefix
-        
-        // Decode the public key
-        let ca_pubkey_bytes = hex::decode(ca_pubkey_hex)
-            .map_err(|_| KeyError::InvalidKeyFormat("Invalid CA public key format".to_string()))?;
-        
-        // Validate the certificate directly using the extracted public key
-        // Convert the byte slice to a fixed-size array for VerifyingKey::from_bytes
-        let ca_pubkey_array: [u8; 32] = ca_pubkey_bytes[..32].try_into()
-            .map_err(|_| KeyError::InvalidKeyFormat("CA public key is not 32 bytes".to_string()))?;
-            
-        let ca_verifying_key = VerifyingKey::from_bytes(&ca_pubkey_array)
-            .map_err(|_| KeyError::InvalidKeyFormat("Invalid CA public key".to_string()))?;
-        
-        // Validate the certificate using the extracted verifying key
+    /// Process an encrypted envelope containing a NodeMessage from mobile
+    ///
+    /// This method decrypts the envelope, extracts the NodeMessage (containing certificate and CA public key),
+    /// validates the certificate using the provided CA public key, and stores it if valid.
+    pub fn process_mobile_message(&mut self, envelope: &Envelope) -> Result<()> {
+        // Try to decrypt as a NodeMessage first (preferred approach)
+        let node_message = self.decrypt_node_message(envelope)?;
+
+        // Extract certificate and CA public key from the NodeMessage
+        let certificate = node_message.certificate;
+        let ca_public_key = node_message.ca_public_key;
+
+        // Create a VerifyingKey from the CA public key for validation
+        // Convert Vec<u8> to [u8; 32] for ed25519_dalek::VerifyingKey::from_bytes
+        let ca_public_key_array: [u8; 32] = ca_public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| KeyError::CryptoError("Invalid CA public key length".to_string()))?;
+
+        let ca_verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&ca_public_key_array)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))?;
+
+        // Validate the certificate using the provided CA public key
         certificate.validate(&ca_verifying_key)?;
-        
-        // Store the certificate using the new store_certificate method
-        // that doesn't attempt to re-validate it
-        self.key_manager_mut().store_certificate(certificate)?;
-        
-        Ok(())
-    }
 
-    /// Process an encrypted certificate envelope from mobile
-    /// 
-    /// This method decrypts the envelope, extracts the certificate, validates it,
-    /// and stores it if valid.
-    pub fn process_encrypted_certificate(&mut self, envelope: &Envelope) -> Result<()> {
-        // Decrypt the envelope to get the certificate
-        let certificate = self.decrypt_certificate_envelope(envelope)?;
-        
-        // Process the decrypted certificate
-        self.process_signed_certificate(certificate)
+        // Store the validated certificate
+        self.key_manager
+            .store_certificate_directly(certificate.clone())?;
+
+        return Ok(());
     }
 
     /// Store a network key

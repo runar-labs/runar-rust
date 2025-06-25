@@ -1,5 +1,4 @@
 use ed25519_dalek::VerifyingKey;
-use runar_keys::crypto::PublicKey;
 use runar_keys::*;
 use std::convert::TryInto;
 
@@ -29,7 +28,7 @@ fn test_key_generation_and_derivation() {
     let user_public_key = user_root_public_key.bytes().to_vec();
     println!("User public key: {}", hex::encode(&user_public_key));
 
-    // Create a user owned and managed CA - now returns only the public key
+    // Create a user owned and managed CA
     let user_ca_public_key = mobile
         .generate_user_ca_key()
         .expect("Failed to generate user CA key");
@@ -39,7 +38,7 @@ fn test_key_generation_and_derivation() {
         hex::encode(user_ca_public_key.bytes())
     );
 
-    //Node first time use - enter in setup mode
+    // Node first time use - enter in setup mode
 
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
     //     and generate a setup handshake token which contains the CSR request and the node public key
@@ -49,11 +48,24 @@ fn test_key_generation_and_derivation() {
         .generate_setup_token()
         .expect("Failed to generate setup token");
 
+    //lets serialize the setup token
+    let setup_token_bytes =
+        bincode::serialize(&setup_token).expect("Failed to serialize setup token");
+    let setup_token_str = hex::encode(setup_token_bytes);
+    println!("Setup token string: {}", setup_token_str);
+
     // Mobile scans a Node QR code which contains the setup token
+    // setup_token_str represents the QR code
+
+    // lets deserialize the setup token
+    let setup_token_bytes_mobile =
+        hex::decode(setup_token_str).expect("Failed to decode setup token");
+    let setup_token_mobile =
+        bincode::deserialize(&setup_token_bytes_mobile).expect("Failed to deserialize setup token");
 
     // 3 - (mobile side) - received the token and sign the CSR
     let cert = mobile
-        .process_setup_token(&setup_token)
+        .process_setup_token(&setup_token_mobile)
         .expect("Failed to process setup token");
     println!("Certificate: {} -> {}", cert.subject, cert.issuer);
     assert_eq!(
@@ -64,39 +76,31 @@ fn test_key_generation_and_derivation() {
 
     // Extract the node ID from the setup token
     // In a real-world scenario, the mobile device would have received this in the setup token
-    let node_id = hex::encode(&setup_token.node_public_key);
-    
-    // Mobile encrypts the certificate for secure transmission to the node
-    // This ensures only the target node can decrypt the certificate
-    let encrypted_cert = mobile
-        .encrypt_certificate_for_node(&cert, &node_id)
-        .expect("Failed to encrypt certificate");
-    println!("Certificate encrypted successfully for secure transmission");
-    
-    // In a real-world scenario, the encrypted envelope would be transmitted over a network
+    let node_id = hex::encode(&setup_token_mobile.node_public_key);
+
+    // Mobile encrypts a message containing both the certificate and CA public key for secure transmission to the node
+    // This ensures only the target node can decrypt the message and has the CA key needed for verification
+    let encrypted_node_msg = mobile
+        .encrypt_message_for_node(&cert, &node_id)
+        .expect("Failed to encrypt message");
+    println!("Certificate and CA key encrypted successfully for secure transmission");
+
+    // The encrypted envelope then is transmitted over a network
     // Here we're simulating that by directly passing the envelope to the node
-    
-    // 4 - (node side) - received the encrypted certificate, decrypts it, validates it, and stores it
-    node.process_encrypted_certificate(&encrypted_cert)
+
+    //  serialize envelope for transmission
+    let serialized_node_msg =
+        bincode::serialize(&encrypted_node_msg).expect("Failed to serialize envelope");
+
+    // Node side - received the encrypted message
+
+    //  deserialize envelope
+    let deserialized_node_msg =
+        bincode::deserialize(&serialized_node_msg).expect("Failed to deserialize envelope");
+
+    // 4 - (node side) - received the encrypted message, decrypts it, validates the certificate using the CA key, and stores it
+    node.process_mobile_message(&deserialized_node_msg)
         .expect("Failed to process encrypted certificate");
-
-    // 5. Mobile receives the node certificate, validates it, and stores it
-    let node_certificate_from_node = node
-        .get_node_certificate()
-        .expect("Failed to get node certificate");
-
-    // *** ADDED: Validate the certificate against the CA public key ***
-    let ca_key = mobile.key_manager().get_signing_key("user_ca_key").unwrap();
-    let ca_verifying_key =
-        VerifyingKey::from_bytes(ca_key.public_key().try_into().unwrap()).unwrap();
-    assert!(node_certificate_from_node
-        .validate(&ca_verifying_key)
-        .is_ok());
-
-    mobile
-        .key_manager_mut()
-        .add_certificate(node_certificate_from_node.clone(), "user_ca_key")
-        .expect("Failed to add certificate");
 
     // FROM THIS POINT THE NODE AND MOBILE WILL RE-CONNECT USING THE NEW CERTIFICATES AND
     // ALL FUTURE COMMS ARE SECURED AND ECNRYPTED USING THESE NEW CREDENTIALS.

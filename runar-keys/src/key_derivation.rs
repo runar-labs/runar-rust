@@ -1,6 +1,6 @@
 use crate::crypto::SigningKeyPair;
 use crate::error::Result;
-use ed25519_dalek::SigningKey;
+// SigningKey is imported via the SigningKeyPair struct
 
 use rand::RngCore;
 use hkdf::Hkdf;

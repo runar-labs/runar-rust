@@ -211,7 +211,16 @@ pub struct CSR {
     pub public_key: Vec<u8>,
 }
 
-/// Certificate related operations
+/// Message sent from mobile to node containing certificate and CA public key
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeMessage {
+    /// The certificate being sent to the node
+    pub certificate: Certificate,
+    /// The CA public key needed to verify the certificate
+    pub ca_public_key: Vec<u8>,
+}
+
+/// Certificate for authentication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Certificate {
     pub subject: String,

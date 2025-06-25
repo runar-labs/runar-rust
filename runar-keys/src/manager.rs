@@ -2,7 +2,6 @@ use crate::crypto::{Certificate, EncryptionKeyPair, PublicKey, SigningKeyPair};
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
 use ed25519_dalek::VerifyingKey;
-use std::convert::TryInto;
 
 use std::collections::HashMap;
 
@@ -54,15 +53,15 @@ impl KeyManager {
         })?;
 
         let signing_keypair: SigningKeyPair = KeyDerivation::derive_user_root_key(&seed)?;
-        
+
         // Store the signing key pair in the manager
         self.signing_keys
             .insert("user_root".to_string(), signing_keypair);
-        
+
         // Get the public key from the stored key pair
         let key_pair = self.signing_keys.get("user_root").unwrap();
         let public_key_bytes = *key_pair.public_key();
-        
+
         // Return only the public key
         Ok(PublicKey::new(public_key_bytes))
     }
@@ -158,18 +157,19 @@ impl KeyManager {
     pub fn get_encryption_key(&self, key_id: &str) -> Option<&EncryptionKeyPair> {
         self.encryption_keys.get(key_id)
     }
-    
+
     /// Generate a new encryption key pair and store it with the given ID
     /// Returns the public key bytes
     pub fn generate_encryption_key(&mut self, key_id: &str) -> Result<Vec<u8>> {
         let encryption_keypair = EncryptionKeyPair::new();
         let public_key = encryption_keypair.public_key().to_vec();
-        
-        self.encryption_keys.insert(key_id.to_string(), encryption_keypair);
-        
+
+        self.encryption_keys
+            .insert(key_id.to_string(), encryption_keypair);
+
         Ok(public_key)
     }
-    
+
     /// Store an encryption key pair with the given ID
     pub fn store_encryption_key(&mut self, key_id: &str, key_pair: EncryptionKeyPair) {
         self.encryption_keys.insert(key_id.to_string(), key_pair);
@@ -219,22 +219,26 @@ impl KeyManager {
 
         Ok(())
     }
-    
+
     /// Store a pre-validated certificate without further validation.
     /// This should only be used when the certificate has already been validated
     /// through other means, such as direct validation using the CA public key.
-    pub fn store_certificate(&mut self, certificate: Certificate) -> Result<()> {
+    pub fn store_certificate_without_validation(&mut self, certificate: Certificate) -> Result<()> {
         // Store the certificate directly without validation
         self.certificates
             .insert(certificate.subject.clone(), certificate);
-        
+
         Ok(())
+    }
+
+    /// Store a certificate that has been directly validated.
+    /// This is an alias for store_certificate_without_validation for better semantic clarity.
+    pub fn store_certificate_directly(&mut self, certificate: Certificate) -> Result<()> {
+        self.store_certificate_without_validation(certificate)
     }
 
     /// Get a certificate by subject
     pub fn get_certificate(&self, subject: &str) -> Option<&Certificate> {
         self.certificates.get(subject)
     }
-
-
 }
