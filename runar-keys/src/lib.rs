@@ -1,28 +1,18 @@
-pub mod encryption;
+pub mod crypto;
+pub mod envelope;
 pub mod error;
-pub mod hd;
+pub mod key_derivation;
 pub mod manager;
-pub mod token;
-pub mod types;
+pub mod mobile;
+pub mod network;
+pub mod node;
 
-pub use crate::encryption::{decrypt_data, derive_symmetric_key_from_node_key, encrypt_data};
-pub use error::KeyError;
-pub use hd::{
-    derive_network_key, derive_node_key_from_master_key, derive_quic_key_from_network_key,
-};
-pub use manager::KeyManager;
-pub use token::{AccessToken, Capability};
-pub use types::{
-    current_unix_timestamp, NetworkId, NetworkKey, NodeKey, PeerId, QuicKey, UserMasterKey,
-};
-
-pub type Result<T> = std::result::Result<T, KeyError>;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
+// Re-export main components for easier access
+pub use crypto::*;
+pub use envelope::*;
+pub use error::*;
+pub use key_derivation::*;
+pub use manager::*;
+pub use mobile::*;
+pub use network::*;
+pub use node::*;

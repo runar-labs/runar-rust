@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, RwLock};
 use std::thread;
-use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
+use tokio::sync::{mpsc, oneshot};
 
 // Schema definition structs
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,15 +88,34 @@ pub struct SqliteWorker {
 impl SqliteWorker {
     pub fn new(
         db_path: String,
+        symmetric_key: Option<Vec<u8>>, // Direct symmetric key bytes for encryption
         receiver: mpsc::Receiver<SqliteWorkerCommand>,
         logger: Arc<Logger>,
-        ready_tx: oneshot::Sender<()>, // Add ready channel sender
+        ready_tx: oneshot::Sender<()>, // Ready channel sender
     ) -> Result<Self, String> {
         let connection = Connection::open(db_path.clone()).map_err(|e| {
             let err_msg = format!("Failed to open SQLite connection to '{}': {}", db_path, e);
             logger.error(&err_msg);
             err_msg
         })?;
+
+        // If a symmetric key is provided, use it for encryption
+        if let Some(key_bytes) = symmetric_key {
+            // Convert the key bytes to a hex string for SQLCipher
+            // SQLCipher expects the key as a hex string when using raw keys
+            let hex_key = format!("x'{}'", hex::encode(&key_bytes));
+
+            // Set the raw key using PRAGMA
+            connection
+                .pragma_update(None, "key", &hex_key)
+                .map_err(|e| {
+                    let err_msg = format!("Failed to set database key: {}", e);
+                    logger.error(&err_msg);
+                    err_msg
+                })?;
+            logger.debug("Database key set successfully using provided symmetric key.");
+        }
+
         // TODO: Apply any pragmas or initial setup to the connection here if needed
         // E.g., conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
         logger.debug(
@@ -260,7 +279,7 @@ fn execute_internal(
 
     match rusqlite_params_results {
         Ok(rusqlite_params) => {
-            let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
+            let params_for_iter: Vec<&(dyn ToSql + Send + Sync)> =
                 rusqlite_params.iter().map(|b| b.as_ref()).collect();
             logger.debug(format!("Executing SQL: {} with params: {:?}", sql, params));
             conn.execute(sql, params_from_iter(params_for_iter))
@@ -297,7 +316,7 @@ fn query_internal(
         }
     };
 
-    let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
+    let params_for_iter: Vec<&(dyn ToSql + Send + Sync)> =
         rusqlite_params.iter().map(|b| b.as_ref()).collect();
 
     logger.debug(format!(
@@ -325,7 +344,7 @@ fn query_internal(
             for (i, name) in column_names.iter().enumerate() {
                 map.insert(name.clone(), value_ref_to_value(row.get_ref_unwrap(i)));
             }
-            Ok(map) // Ok for rusqlite::Result for this row
+            Ok(map) // Ok for rusqlcipher::Result for this row
         })
         .map_err(|e| {
             let err_msg = format!("Error executing query '{}': {}", sql, e);
@@ -354,7 +373,7 @@ fn value_to_to_sql(val: &Value) -> Result<Box<dyn ToSql + Send + Sync>, String> 
     }
 }
 
-// Helper to convert rusqlite's ValueRef to Value.
+// Helper to convert rusqlcipher's ValueRef to Value.
 // This is used when processing query results.
 fn value_ref_to_value(value_ref: RusqliteValueRef<'_>) -> Value {
     match value_ref {
@@ -504,17 +523,14 @@ impl Query {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateOperation {
     pub table: String,
-    pub data: HashMap<String, Value>,
+    pub values: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadOperation {
     pub table: String,
     pub query: Query,
-    pub fields: Option<Vec<String>>,
-    pub limit: Option<u32>,
-    pub offset: Option<u32>,
-    pub order_by: Option<Vec<(String, bool)>>, // (field, is_ascending)
+    pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -542,64 +558,49 @@ pub enum CrudOperation {
 
 /// Configuration for the SQLite service.
 #[derive(Clone, Debug, Serialize, Deserialize)] // Ensure SqliteConfig is Clone + Debug + Send + Sync
-pub struct SqliteConfig {
+pub struct SqliteServiceConfig {
     /// Path to the SQLite database file
     pub db_path: String,
     /// Schema definition for the database
     pub schema: Schema,
-}
-
-impl SqliteConfig {
-    /// Create a new SQLite config with path and schema
-    pub fn new(db_path: impl Into<String>, schema: Schema) -> Self {
-        Self {
-            db_path: db_path.into(),
-            schema,
-        }
-    }
+    /// Key ID for the symmetric key used to encrypt the database
+    /// If None, the database will not be encrypted
+    pub key_id: Option<String>,
+    /// Direct symmetric key bytes for encryption (primarily for testing)
+    /// This takes precedence over key_id if both are provided
+    pub symmetric_key: Option<Vec<u8>>,
 }
 
 pub struct SqliteService {
     pub name: String,
-    pub path: String,
-    pub version: String,
-    pub description: String,
-    pub config: SqliteConfig,
+    config: SqliteServiceConfig,
     worker_tx: Arc<RwLock<Option<mpsc::Sender<SqliteWorkerCommand>>>>,
-    network_id: Option<String>,
 }
 
-// Manual Clone implementation because mpsc::Sender is Clone but not Copy.
+impl SqliteService {
+    pub fn new(name: &str, config: SqliteServiceConfig) -> Result<Self> {
+        Ok(Self {
+            name: name.to_string(),
+            config,
+            worker_tx: Arc::new(RwLock::new(None)),
+        })
+    }
+}
+
+// Manual Clone implementation because RwLock is not Clone.
 impl Clone for SqliteService {
     fn clone(&self) -> Self {
+        // Use Arc to share the worker_tx RwLock between clones
+        // This ensures all clones refer to the same worker thread
         Self {
             name: self.name.clone(),
-            path: self.path.clone(),
-            version: self.version.clone(),
-            description: self.description.clone(),
             config: self.config.clone(),
-            worker_tx: self.worker_tx.clone(),
-            //schema: self.schema.clone(), // Clone the new schema field
-            network_id: self.network_id.clone(),
+            worker_tx: self.worker_tx.clone(), // Clone the RwLock, not its contents
         }
     }
 }
 
 impl SqliteService {
-    #[allow(clippy::too_many_arguments)] // Common for service constructors
-    pub fn new(name: String, path: String, config: SqliteConfig) -> Self {
-        Self {
-            name,
-            path,
-            version: "0.0.1".to_string(),
-            description: "SQLite service".to_string(),
-            config,
-            worker_tx: Arc::new(RwLock::new(None)),
-            // schema: Some(schema_clone), // Store the cloned schema
-            network_id: None,
-        }
-    }
-
     async fn send_command<T: Send + 'static>(
         &self,
         constructor: impl FnOnce(oneshot::Sender<Result<T, String>>) -> SqliteWorkerCommand,
@@ -677,16 +678,16 @@ impl AbstractService for SqliteService {
         &self.name
     }
     fn version(&self) -> &str {
-        &self.version
+        "0.1.0"
     }
     fn path(&self) -> &str {
-        &self.path
+        &self.name
     }
     fn description(&self) -> &str {
-        &self.description
+        "An encrypted SQLite service based on SQLCipher."
     }
     fn network_id(&self) -> Option<String> {
-        self.network_id.clone()
+        None
     }
 
     async fn init(&self, context: LifecycleContext) -> Result<()> {
@@ -787,6 +788,7 @@ impl AbstractService for SqliteService {
         }
 
         let db_path_clone = self.config.db_path.clone();
+        let symmetric_key_clone = self.config.symmetric_key.clone(); // Clone the symmetric key
         let schema_clone = self.config.schema.clone();
         let logger_clone_for_thread = context.logger.clone();
 
@@ -799,6 +801,7 @@ impl AbstractService for SqliteService {
             worker_runtime.block_on(async move {
                 match SqliteWorker::new(
                     db_path_clone,
+                    symmetric_key_clone, // Pass the symmetric key directly
                     rx,
                     logger_clone_for_thread.clone(),
                     ready_tx, // Pass the ready signal sender

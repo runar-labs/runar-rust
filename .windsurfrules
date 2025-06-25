@@ -1,7 +1,8 @@
-ALWAYS USE IDE TOOLS don t use cat vi grep etc to read and modify file.s. use the IDE too.s if tgheuy fail.. let me know so I can restart the IDE
-DO NOT USE clic tools to change files.
+ALWAYS USE IDE TOOLS do not use cat vi grep etc to read and modify file.s. use the IDE tools if they fail stop and let the user know so they can restart the IDE
 
-Split into two roles the coder and the designer/reviewer. after every code change. the reviewer. needs to double check if the code just written is aligned ewith this guidelines and the architecreu of tehs sytem.
+DO NOT USE cli tools to change files.
+
+Split into two roles the coder and the designer/reviewer. after every code change. the reviewer. needs to double check if the code just written is aligned ewith this guidelines and the architecture of the system.
 
 
 1. **Source of Truth**: Documentation in source files and test files is the source of truth
@@ -142,7 +143,7 @@ The builder pattern strikes a balance between API simplicity and flexibility, ma
    - Track progress in the plan as refactoring proceed
  
 ## Rust Best Practices
-
+- use expect() instead of unwrap() to handle errors
 - Leverage Rust's type system to prevent errors at compile time
 - Prefer ownership over borrowing when appropriate
 - Handle errors appropriately (no unwraps in production code)

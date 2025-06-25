@@ -1,245 +1,325 @@
-use crate::{
-    hd::{derive_network_key, derive_node_key_from_master_key, derive_quic_key_from_network_key},
-    types::{NetworkId, NetworkKey, NodeKey, PeerId, QuicKey, UserMasterKey},
-    Result,
+use crate::crypto::{
+    Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey, SigningKeyPair, SymmetricKey,
 };
+use crate::error::{KeyError, Result};
+use crate::key_derivation::KeyDerivation;
+use ed25519_dalek::VerifyingKey;
+use serde::{Deserialize, Serialize};
+
 use std::collections::HashMap;
 
-/// Manages cryptographic keys in memory.
-///
-/// The `KeyManager` is initialized with a `UserMasterKey` and can derive and store
-/// `NetworkKey`s, `NodeKey`s (Peer Keys), and `QuicKey`s on demand.
+/// Key manager that stores and manages cryptographic keys
+/// Structure to hold serializable key data for persistence
+#[derive(Serialize, Deserialize)]
+pub struct KeyManagerData {
+    /// User seed for key derivation (if available)
+    pub seed: Option<[u8; 32]>,
+    /// Signing key pairs by ID
+    pub signing_keys: HashMap<String, SigningKeyPair>,
+    /// Encryption key pairs by ID
+    pub encryption_keys: HashMap<String, EncryptionKeyPair>,
+    /// Symmetric keys by ID
+    pub symmetric_keys: HashMap<String, SymmetricKey>,
+    /// Certificates by subject
+    pub certificates: HashMap<String, Certificate>,
+}
+
 pub struct KeyManager {
-    master_key: UserMasterKey,
-    network_keys: HashMap<u32, NetworkKey>, // Indexed by network_index
-    node_keys: HashMap<u32, NodeKey>,       // Indexed by peer_index
-    quic_keys: HashMap<NetworkId, QuicKey>, // Indexed by the NetworkId of the parent NetworkKey
+    /// User seed for key derivation (if available)
+    seed: Option<[u8; 32]>,
+    /// Signing key pairs by ID
+    signing_keys: HashMap<String, SigningKeyPair>,
+    /// Encryption key pairs by ID
+    encryption_keys: HashMap<String, EncryptionKeyPair>,
+    /// Symmetric keys by ID
+    symmetric_keys: HashMap<String, SymmetricKey>,
+    /// Certificates by subject
+    certificates: HashMap<String, Certificate>,
+}
+
+impl Default for KeyManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl KeyManager {
-    /// Creates a new `KeyManager` from a given `UserMasterKey`.
-    pub fn new(master_key: UserMasterKey) -> Self {
-        KeyManager {
-            master_key,
-            network_keys: HashMap::new(),
-            node_keys: HashMap::new(),
-            quic_keys: HashMap::new(),
+    /// Create a new key manager
+    pub fn new() -> Self {
+        Self {
+            seed: None,
+            signing_keys: HashMap::new(),
+            encryption_keys: HashMap::new(),
+            symmetric_keys: HashMap::new(),
+            certificates: HashMap::new(),
         }
     }
 
-    /// Creates a new `KeyManager` by generating a new `UserMasterKey`.
-    pub fn new_random() -> Self {
-        Self::new(UserMasterKey::generate())
+    /// Generate a new seed
+    pub fn generate_seed(&mut self) -> &[u8; 32] {
+        let seed = KeyDerivation::generate_seed();
+        self.seed = Some(seed);
+        self.seed.as_ref().unwrap()
     }
 
-    /// Returns a reference to the `UserMasterKey`.
-    pub fn master_key(&self) -> &UserMasterKey {
-        &self.master_key
+    /// Set an existing seed
+    pub fn set_seed(&mut self, seed: [u8; 32]) {
+        self.seed = Some(seed);
     }
 
-    /// Gets an existing `NetworkKey` for the given index, or derives and stores it if not present.
-    pub fn get_or_create_network_key(&mut self, network_index: u32) -> Result<&NetworkKey> {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.network_keys.entry(network_index)
-        {
-            let network_key = derive_network_key(&self.master_key, network_index)?;
-            e.insert(network_key);
-        }
-        // We can unwrap here because we've just ensured the key exists.
-        Ok(self.network_keys.get(&network_index).unwrap())
+    /// Get the current seed
+    pub fn get_seed(&self) -> Option<&[u8; 32]> {
+        self.seed.as_ref()
     }
 
-    /// Retrieves a `NetworkKey` by its `NetworkId` if it has been previously derived.
-    pub fn get_network_key_by_id(&self, network_id: &NetworkId) -> Option<&NetworkKey> {
-        self.network_keys
-            .values()
-            .find(|nk| *nk.id() == *network_id)
+    /// Generate a user root key from the seed and return only the public key
+    /// The private key remains securely stored in the key manager
+    pub fn generate_user_root_key(&mut self) -> Result<PublicKey> {
+        let seed = self.seed.ok_or_else(|| {
+            KeyError::InvalidOperation("No seed available for key derivation".to_string())
+        })?;
+
+        let signing_keypair: SigningKeyPair = KeyDerivation::derive_user_root_key(&seed)?;
+
+        // Store the signing key pair in the manager
+        self.signing_keys
+            .insert("user_root".to_string(), signing_keypair);
+
+        // Get the public key from the stored key pair
+        let key_pair = self.signing_keys.get("user_root").unwrap();
+        let public_key_bytes = *key_pair.public_key();
+
+        // Return only the public key
+        Ok(PublicKey::new(public_key_bytes))
     }
 
-    /// Gets an existing `NodeKey` for the given peer index, or derives and stores it if not present.
-    pub fn get_or_create_node_key(&mut self, peer_index: u32) -> Result<&NodeKey> {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.node_keys.entry(peer_index) {
-            let node_key = derive_node_key_from_master_key(&self.master_key, peer_index)?;
-            e.insert(node_key);
-        }
-        // We can unwrap here because we've just ensured the key exists.
-        Ok(self.node_keys.get(&peer_index).unwrap())
+    /// Generate a user profile key from the seed, creating and storing both a signing and an encryption key pair.
+    pub fn generate_user_profile_key(&mut self, profile_index: u32) -> Result<Vec<u8>> {
+        let seed = self.seed.ok_or_else(|| {
+            KeyError::InvalidOperation("No seed available for key derivation".to_string())
+        })?;
+
+        // 1. Derive the signing key pair
+        let signing_keypair = KeyDerivation::derive_user_profile_key(&seed, profile_index)?;
+
+        // 2. Derive the corresponding encryption key pair from the signing key pair
+        let encryption_keypair = EncryptionKeyPair::from_secret(signing_keypair.secret_key_bytes());
+
+        // 3. Store both key pairs with distinct IDs
+        let signing_key_id = format!("user_profile_signing_{}", profile_index);
+        self.signing_keys
+            .insert(signing_key_id, signing_keypair.clone());
+
+        let encryption_key_id = format!("user_profile_encryption_{}", profile_index);
+        self.encryption_keys
+            .insert(encryption_key_id, encryption_keypair);
+
+        // 4. Return the public signing key
+        Ok(signing_keypair.public_key().to_vec())
     }
 
-    /// Retrieves a `NodeKey` by its `PeerId` if it has been previously derived.
-    pub fn get_node_key_by_peer_id(&self, peer_id: &PeerId) -> Option<&NodeKey> {
-        self.node_keys.values().find(|nk| *nk.peer_id() == *peer_id)
+    /// Generate a node TLS key pair
+    pub fn generate_node_tls_key(&mut self) -> Result<Vec<u8>> {
+        let signing_keypair = SigningKeyPair::new();
+        let key_id = format!("node_tls_{}", hex::encode(signing_keypair.public_key()));
+        self.signing_keys
+            .insert(key_id.clone(), signing_keypair.clone());
+
+        Ok(signing_keypair.public_key().to_vec())
     }
 
-    /// Gets an existing `QuicKey` for the network identified by `network_index`,
-    /// or derives and stores it if not present. This will also derive the `NetworkKey` if needed.
-    pub fn get_or_create_quic_key(&mut self, network_index: u32) -> Result<&QuicKey> {
-        // Ensure the parent NetworkKey exists
-        let network_key_id_for_quic_map =
-            self.get_or_create_network_key(network_index)?.id().clone();
+    /// Generate a node storage key pair
+    pub fn generate_node_storage_key(&mut self, node_pk: &[u8]) -> Result<&EncryptionKeyPair> {
+        let encryption_keypair = EncryptionKeyPair::new();
 
-        if !self.quic_keys.contains_key(&network_key_id_for_quic_map) {
-            // Must get a fresh reference to network_key as self.network_keys might have been mutated
-            // if the network_key was just created.
-            let current_network_key = self.network_keys.get(&network_index).unwrap();
-            let quic_key = derive_quic_key_from_network_key(current_network_key)?;
-            self.quic_keys
-                .insert(network_key_id_for_quic_map.clone(), quic_key);
-        }
-        // We can unwrap here because we've just ensured the key exists.
-        Ok(self.quic_keys.get(&network_key_id_for_quic_map).unwrap())
+        let key_id = format!("node_storage_{}", hex::encode(node_pk));
+        self.encryption_keys
+            .insert(key_id.clone(), encryption_keypair);
+
+        Ok(self.encryption_keys.get(&key_id).unwrap())
     }
 
-    /// Retrieves a `QuicKey` by its parent `NetworkId` if it has been previously derived.
-    pub fn get_quic_key_by_network_id(&self, network_id: &NetworkId) -> Option<&QuicKey> {
-        self.quic_keys.get(network_id)
-    }
-}
+    /// Generate a network data key pair
+    pub fn generate_network_data_key(&mut self) -> Result<Vec<u8>> {
+        let encryption_keypair = EncryptionKeyPair::new();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_key_manager_creation() {
-        let master_key = UserMasterKey::generate();
-        let manager = KeyManager::new(master_key.clone());
-        assert_eq!(manager.master_key().as_bytes(), master_key.as_bytes());
-
-        let _random_manager = KeyManager::new_random(); // Just check it doesn't panic
-    }
-
-    #[test]
-    fn test_get_or_create_network_key() {
-        let mut manager = KeyManager::new_random();
-        let network_index = 0;
-
-        let key1_result = manager.get_or_create_network_key(network_index);
-        assert!(key1_result.is_ok());
-        let key1_id = key1_result.unwrap().id().clone();
-
-        // Calling again should return the same key
-        let key2 = manager.get_or_create_network_key(network_index).unwrap();
-        assert_eq!(key1_id, *key2.id());
-        assert_eq!(manager.network_keys.len(), 1);
-
-        // Retrieve by ID
-        let retrieved_key = manager.get_network_key_by_id(&key1_id);
-        assert!(retrieved_key.is_some());
-        assert_eq!(retrieved_key.unwrap().id(), &key1_id);
-
-        // Different index should produce a different key
-        let key_diff_index = manager.get_or_create_network_key(1).unwrap();
-        assert_ne!(key1_id, *key_diff_index.id());
-        assert_eq!(manager.network_keys.len(), 2);
-    }
-
-    #[test]
-    fn test_get_or_create_node_key() {
-        let mut manager = KeyManager::new_random();
-        let peer_index = 0;
-
-        let key1_result = manager.get_or_create_node_key(peer_index);
-        assert!(key1_result.is_ok());
-        let key1_peer_id = key1_result.unwrap().peer_id().clone();
-
-        let key2 = manager.get_or_create_node_key(peer_index).unwrap();
-        assert_eq!(key1_peer_id, *key2.peer_id());
-        assert_eq!(manager.node_keys.len(), 1);
-
-        // Retrieve by PeerId
-        let retrieved_key = manager.get_node_key_by_peer_id(&key1_peer_id);
-        assert!(retrieved_key.is_some());
-        assert_eq!(retrieved_key.unwrap().peer_id(), &key1_peer_id);
-
-        let key_diff_index = manager.get_or_create_node_key(1).unwrap();
-        assert_ne!(key1_peer_id, *key_diff_index.peer_id());
-        assert_eq!(manager.node_keys.len(), 2);
-    }
-
-    #[test]
-    fn test_get_or_create_quic_key() {
-        let mut manager = KeyManager::new_random();
-        let network_index = 0;
-
-        // First, get the network key to know its ID
-        let network_id = manager
-            .get_or_create_network_key(network_index)
-            .unwrap()
-            .id()
-            .clone();
-
-        let quic_key1_pk_hex = manager
-            .get_or_create_quic_key(network_index)
-            .unwrap()
-            .public_key_hex();
-
-        let quic_key2_pk_hex = manager
-            .get_or_create_quic_key(network_index)
-            .unwrap()
-            .public_key_hex();
-        assert_eq!(quic_key1_pk_hex, quic_key2_pk_hex);
-        assert_eq!(manager.quic_keys.len(), 1);
-
-        // Retrieve by NetworkId
-        let retrieved_key_pk_hex = manager
-            .get_quic_key_by_network_id(&network_id)
-            .unwrap()
-            .public_key_hex();
-        assert_eq!(retrieved_key_pk_hex, quic_key1_pk_hex);
-
-        // QUIC key for a different network
-        let network_index_2 = 1;
-        let network_id_2 = manager
-            .get_or_create_network_key(network_index_2)
-            .unwrap()
-            .id()
-            .clone();
-
-        let quic_key_diff_network_pk_hex = manager
-            .get_or_create_quic_key(network_index_2)
-            .unwrap()
-            .public_key_hex();
-        assert_ne!(quic_key1_pk_hex, quic_key_diff_network_pk_hex);
-        assert_eq!(manager.quic_keys.len(), 2);
-        assert!(manager.quic_keys.contains_key(&network_id));
-        assert!(manager.quic_keys.contains_key(&network_id_2));
-    }
-
-    #[test]
-    fn test_keys_are_distinct() {
-        let mut manager = KeyManager::new_random();
-        let index = 0;
-
-        let nk_pk_bytes_vec = manager
-            .get_or_create_network_key(index)
-            .unwrap()
-            .public_key()
-            .as_bytes()
-            .to_vec();
-        let node_pk_bytes_vec = manager
-            .get_or_create_node_key(index)
-            .unwrap()
-            .public_key()
-            .as_bytes()
-            .to_vec();
-        let quic_pk_bytes_vec = manager
-            .get_or_create_quic_key(index)
-            .unwrap()
-            .public_key()
-            .as_bytes()
-            .to_vec();
-
-        assert_ne!(
-            nk_pk_bytes_vec, node_pk_bytes_vec,
-            "Network key and Node key public keys should be different"
+        let key_id = format!(
+            "network_data_{}",
+            hex::encode(encryption_keypair.public_key())
         );
-        assert_ne!(
-            nk_pk_bytes_vec, quic_pk_bytes_vec,
-            "Network key and QUIC key public keys should be different"
-        );
-        assert_ne!(
-            node_pk_bytes_vec, quic_pk_bytes_vec,
-            "Node key and QUIC key public keys should be different"
-        );
+
+        self.encryption_keys
+            .insert(key_id.clone(), encryption_keypair.clone());
+
+        Ok(encryption_keypair.public_key().to_vec())
+    }
+
+    /// Create a network key message containing both public and private keys
+    /// This is more secure than exposing the private key directly
+    pub fn create_network_key_message(
+        &self,
+        network_public_key: &[u8],
+        network_name: &str,
+    ) -> Result<NetworkKeyMessage> {
+        let key_id = format!("network_data_{}", hex::encode(network_public_key));
+        let encryption_keypair = self.encryption_keys.get(&key_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("Encryption key not found: {}", key_id))
+        })?;
+
+        Ok(NetworkKeyMessage {
+            network_name: network_name.to_string(),
+            public_key: network_public_key.to_vec(),
+            private_key: encryption_keypair.secret_key().to_vec(),
+        })
+    }
+
+    /// Add a signing key to the key manager
+    pub fn add_signing_key(&mut self, key_id: &str, key_pair: SigningKeyPair) {
+        self.signing_keys.insert(key_id.to_string(), key_pair);
+    }
+
+    /// Add an encryption key pair
+    pub fn add_encryption_key(&mut self, key_id: &str, key_pair: EncryptionKeyPair) {
+        self.encryption_keys.insert(key_id.to_string(), key_pair);
+    }
+
+    /// Get a signing key pair by ID
+    pub fn get_signing_key(&self, key_id: &str) -> Option<&SigningKeyPair> {
+        self.signing_keys.get(key_id)
+    }
+
+    /// Get an encryption key pair by ID
+    pub fn get_encryption_key(&self, key_id: &str) -> Option<&EncryptionKeyPair> {
+        self.encryption_keys.get(key_id)
+    }
+
+    /// Generate a new symmetric encryption key and store it with the given ID.
+    /// This key is intended for encrypting data at rest (e.g., files) and will not leave the key manager.
+    pub fn generate_symmetric_key(&mut self, key_id: &str) -> Result<()> {
+        let symmetric_key = crate::crypto::SymmetricKey::new();
+        self.symmetric_keys
+            .insert(key_id.to_string(), symmetric_key);
+        Ok(())
+    }
+
+    /// Encrypt data using a stored symmetric key.
+    pub fn encrypt_with_symmetric_key(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
+        let key = self
+            .symmetric_keys
+            .get(key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id)))?;
+        key.encrypt(data)
+    }
+
+    /// Decrypt data using a stored symmetric key.
+    pub fn decrypt_with_symmetric_key(
+        &self,
+        key_id: &str,
+        encrypted_data: &[u8],
+    ) -> Result<Vec<u8>> {
+        let key = self
+            .symmetric_keys
+            .get(key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id)))?;
+        key.decrypt(encrypted_data)
+    }
+
+    /// Generate a new encryption key pair and store it with the given ID
+    /// Returns the public key bytes
+    pub fn generate_encryption_key(&mut self, key_id: &str) -> Result<Vec<u8>> {
+        let encryption_keypair = EncryptionKeyPair::new();
+        let public_key = encryption_keypair.public_key().to_vec();
+
+        self.encryption_keys
+            .insert(key_id.to_string(), encryption_keypair);
+
+        Ok(public_key)
+    }
+
+    /// Store an encryption key pair with the given ID
+    pub fn store_encryption_key(&mut self, key_id: &str, key_pair: EncryptionKeyPair) {
+        self.encryption_keys.insert(key_id.to_string(), key_pair);
+    }
+
+    /// Sign a Certificate Signing Request (CSR)
+    pub fn sign_csr(&mut self, csr_bytes: &[u8], ca_key_id: &str) -> Result<Certificate> {
+        // Get CA key
+        let signing_key_pair = self
+            .get_signing_key(ca_key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("CA key not found: {}", ca_key_id)))?;
+
+        // Sign CSR
+        let certificate = signing_key_pair.sign_csr(csr_bytes)?;
+
+        // Store certificate after validation
+        self.add_certificate(certificate.clone(), ca_key_id)?;
+
+        Ok(certificate)
+    }
+
+    /// Create a certificate signing request (CSR)
+    pub fn create_csr(&self, subject: &str, key_id: &str) -> Result<Vec<u8>> {
+        let signing_key = self
+            .signing_keys
+            .get(key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Signing key not found: {}", key_id)))?;
+
+        // Pass the public key bytes to the CSR creation function
+        Certificate::create_csr(subject, signing_key.public_key())
+    }
+
+    /// Add a certificate after validating it against the specified CA.
+    pub fn add_certificate(&mut self, certificate: Certificate, ca_key_id: &str) -> Result<()> {
+        let ca_key = self.get_signing_key(ca_key_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("CA key not found for validation: {}", ca_key_id))
+        })?;
+
+        let ca_public_key_bytes = ca_key.public_key();
+        let ca_verifying_key = VerifyingKey::from_bytes(ca_public_key_bytes)?;
+
+        certificate.validate(&ca_verifying_key)?;
+
+        self.certificates
+            .insert(certificate.subject.clone(), certificate);
+
+        Ok(())
+    }
+
+    /// Store a pre-validated certificate directly without re-validating it.
+    ///
+    /// This should only be used when the certificate has already been validated
+    /// with the appropriate CA key.
+    pub fn store_validated_certificate(&mut self, certificate: Certificate) -> Result<()> {
+        self.certificates
+            .insert(certificate.subject.clone(), certificate);
+
+        Ok(())
+    }
+
+    /// Get a certificate by subject
+    pub fn get_certificate(&self, subject: &str) -> Option<&Certificate> {
+        self.certificates.get(subject)
+    }
+
+    /// Export all keys and certificates for persistence
+    /// This allows saving the key manager state to secure storage
+    pub fn export_keys(&self) -> KeyManagerData {
+        KeyManagerData {
+            seed: self.seed,
+            signing_keys: self.signing_keys.clone(),
+            encryption_keys: self.encryption_keys.clone(),
+            symmetric_keys: self.symmetric_keys.clone(),
+            certificates: self.certificates.clone(),
+        }
+    }
+
+    /// Import keys and certificates from persistence
+    /// This allows restoring the key manager state from secure storage
+    pub fn import_keys(&mut self, data: KeyManagerData) {
+        self.seed = data.seed;
+        self.signing_keys = data.signing_keys;
+        self.encryption_keys = data.encryption_keys;
+        self.symmetric_keys = data.symmetric_keys;
+        self.certificates = data.certificates;
     }
 }

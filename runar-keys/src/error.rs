@@ -1,66 +1,74 @@
 use thiserror::Error;
 
-#[derive(Error, Debug, PartialEq, Eq, Clone)]
+/// Error types for the runar-keys crate
+#[derive(Error, Debug)]
 pub enum KeyError {
-    #[error("Invalid seed length or format: {0}")]
-    InvalidSeed(String),
-
-    #[error("Key derivation failed: {0}")]
+    #[error("Key derivation error: {0}")]
     DerivationError(String),
 
-    #[error("Serialization error: {0}")]
-    SerializationError(String),
+    #[error("Encryption error: {0}")]
+    EncryptionError(String),
 
-    #[error("Deserialization error: {0}")]
-    DeserializationError(String),
+    #[error("Decryption error: {0}")]
+    DecryptionError(String),
 
-    #[error("Cryptographic operation failed: {0}")]
+    #[error("Crypto error: {0}")]
     CryptoError(String),
 
-    #[error("Invalid access token: {0}")]
-    InvalidToken(String),
+    #[error("Signature error: {0}")]
+    SignatureError(String),
 
-    #[error("Access token has expired")]
-    TokenExpired,
+    #[error("Certificate error: {0}")]
+    CertificateError(String),
 
-    #[error("Invalid capability specified: {0}")]
-    InvalidCapability(String),
+    #[error("Invalid key: {0}")]
+    InvalidKey(String),
 
-    #[error("Hex decoding error: {0}")]
-    HexError(String),
+    #[error("Invalid key length")]
+    InvalidKeyLength,
 
-    #[error("IO error: {0}")]
-    IoError(String), // For potential future use if reading keys from disk etc.
-
-    #[error("Key not found in manager: {0}")]
+    #[error("Key not found: {0}")]
     KeyNotFound(String),
+
+    #[error("Envelope error: {0}")]
+    EnvelopeError(String),
+
+    #[error("Network error: {0}")]
+    NetworkError(String),
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
 
-    #[error("Invalid public key: {0}")]
-    InvalidPublicKey(String),
-    #[error("Invalid signature format: {0}")]
-    InvalidSignatureFormat(String),
+    #[error("Conversion error: {0}")]
+    ConversionError(String),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("Invalid key format: {0}")]
+    InvalidKeyFormat(String),
 }
 
-// Implement From<hex::FromHexError> for KeyError
-impl From<hex::FromHexError> for KeyError {
-    fn from(err: hex::FromHexError) -> Self {
-        KeyError::HexError(err.to_string())
+impl From<ed25519_dalek::ed25519::Error> for KeyError {
+    fn from(err: ed25519_dalek::ed25519::Error) -> Self {
+        KeyError::CryptoError(err.to_string())
     }
 }
 
-// Implement From<serde_json::Error> for KeyError for token serialization
-impl From<serde_json::Error> for KeyError {
-    fn from(err: serde_json::Error) -> Self {
-        KeyError::SerializationError(format!("JSON error: {}", err))
+impl From<std::array::TryFromSliceError> for KeyError {
+    fn from(err: std::array::TryFromSliceError) -> Self {
+        KeyError::InvalidKeyFormat(err.to_string())
     }
 }
 
-// Placeholder for other potential error conversions if needed, e.g.:
-// impl From<ed25519_dalek::SignatureError> for KeyError {
-//     fn from(err: ed25519_dalek::SignatureError) -> Self {
-//         KeyError::CryptoError(format!("Signature error: {}", err))
-//     }
-// }
+impl From<hkdf::InvalidLength> for KeyError {
+    fn from(err: hkdf::InvalidLength) -> Self {
+        KeyError::CryptoError(format!("HKDF error: {}", err))
+    }
+}
+
+/// Result type for runar-keys operations
+pub type Result<T> = std::result::Result<T, KeyError>;
