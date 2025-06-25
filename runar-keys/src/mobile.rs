@@ -2,17 +2,34 @@ use crate::crypto::{Certificate, EncryptionKeyPair, NodeMessage, PublicKey};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
-use crate::manager::KeyManager;
+use crate::manager::{KeyManager, KeyManagerData};
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use crate::node::SetupToken;
 
-/// Mobile key manager
-pub struct MobileKeyManager {
-    /// The underlying key manager
-    key_manager: KeyManager,
+/// Data structure for mobile key manager persistence
+#[derive(Serialize, Deserialize)]
+pub struct MobileKeyManagerData {
+    /// Key manager data
+    pub key_manager_data: KeyManagerData,
+    /// Counter for profile keys
+    pub profile_counter: u32,
+    /// Mapping from profile public key to profile index
+    pub profile_key_to_index: HashMap<String, u32>,
+    /// User public key
+    pub user_public_key: Option<Vec<u8>>,
+}
 
-    user_public_key: Option<Vec<u8>>,
-    /// User profile index counter
+/// Mobile key manager that handles key management for mobile devices
+pub struct MobileKeyManager {
+    /// Key manager for storing and managing keys
+    key_manager: KeyManager,
+    /// Counter for profile keys
     profile_counter: u32,
+    /// Mapping from profile public key to profile index
+    profile_key_to_index: HashMap<String, u32>,
+    /// User public key
+    user_public_key: Option<Vec<u8>>,
 }
 
 impl MobileKeyManager {
@@ -20,8 +37,19 @@ impl MobileKeyManager {
     pub fn new() -> Self {
         Self {
             key_manager: KeyManager::new(),
-            user_public_key: None,
             profile_counter: 0,
+            profile_key_to_index: HashMap::new(),
+            user_public_key: None,
+        }
+    }
+
+    /// Create a new mobile key manager with an existing key manager
+    pub fn new_with_key_manager(key_manager: KeyManager) -> Self {
+        Self {
+            key_manager,
+            profile_counter: 0,
+            profile_key_to_index: HashMap::new(),
+            user_public_key: None,
         }
     }
 
@@ -35,11 +63,12 @@ impl MobileKeyManager {
         self.key_manager.set_seed(seed);
     }
 
-    /// Generate the user root key and return only the public key
+    /// Generate a user root key
     /// The private key remains securely stored in the key manager
     pub fn generate_user_root_key(&mut self) -> Result<PublicKey> {
         let public_key = self.key_manager.generate_user_root_key()?;
         self.user_public_key = Some(public_key.bytes().to_vec());
+        self.profile_key_to_index.insert(hex::encode(&public_key.bytes()), 0);
         Ok(public_key)
     }
 
@@ -62,13 +91,22 @@ impl MobileKeyManager {
     }
 
     /// Generate a user profile key
-    pub fn generate_user_profile_key(&mut self) -> Result<(Vec<u8>, u32)> {
+    /// 
+    /// Returns only the public key. The profile index is stored internally.
+    pub fn generate_user_profile_key(&mut self) -> Result<Vec<u8>> {
         let profile_index = self.profile_counter;
         self.profile_counter += 1;
 
         let public_key = self.key_manager.generate_user_profile_key(profile_index)?;
-        Ok((public_key, profile_index))
+        
+        // Store the mapping from public key to profile index
+        let public_key_hex = hex::encode(&public_key);
+        self.profile_key_to_index.insert(public_key_hex, profile_index);
+        
+        Ok(public_key)
     }
+    
+    // Method removed: get_profile_index was unused and has been removed
 
     /// Process a node setup token by signing the CSR with the User CA key.
     /// 
@@ -130,71 +168,88 @@ impl MobileKeyManager {
         self.key_manager.generate_network_data_key()
     }
 
+    /// Export the mobile key manager state for persistence
+    pub fn export_state(&self) -> MobileKeyManagerData {
+        MobileKeyManagerData {
+            key_manager_data: self.key_manager.export_keys(),
+            profile_counter: self.profile_counter,
+            profile_key_to_index: self.profile_key_to_index.clone(),
+            user_public_key: self.user_public_key.clone(),
+        }
+    }
+    
+    /// Import the mobile key manager state from persistence
+    pub fn import_state(&mut self, data: MobileKeyManagerData) {
+        self.key_manager.import_keys(data.key_manager_data);
+        self.profile_counter = data.profile_counter;
+        self.profile_key_to_index = data.profile_key_to_index;
+        self.user_public_key = data.user_public_key;
+    }
+    
     /// Create an encrypted network keys message for secure transmission to a node
     /// 
     /// This creates an envelope containing network keys that can only be decrypted by the node with the given node_id.
     /// The node_id should be the hex-encoded node public key from the setup token.
     pub fn create_network_keys_message(&self, network_public_key: &[u8], network_name: &str, node_id: &str) -> Result<Envelope> {
-        // Create a NetworkKeyMessage using the key manager
         let network_key_message = self.key_manager.create_network_key_message(network_public_key, network_name)?;
-        
-        // Get the node's encryption key from storage
         let key_id = format!("node_encryption_{}", node_id);
         let encryption_key = self.key_manager.get_encryption_key(&key_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Node encryption key not found for {}", node_id)))?;
-        
-        // Serialize the message to bytes using bincode for binary serialization
         let message_bytes = bincode::serialize(&network_key_message)
             .map_err(|e| KeyError::SerializationError(e.to_string()))?;
-        
-        // Create an envelope with the message as payload, encrypted for the node
-        let envelope = Envelope::new(&message_bytes, &[encryption_key])
-            .map_err(|e| KeyError::EncryptionError(e.to_string()))?;
-            
+        let envelope = Envelope::new(&message_bytes, &[encryption_key])?;
         Ok(envelope)
     }
 
-    // TODO change thios to receive the profile public key instead of the index..
-    // the Key manager will maintain a map of profile public keys to indexes
-    /// Encrypt data for a network and user profile
+    /// Encrypt data for a network and profile
+    /// This creates an envelope that can be decrypted by the network or the profile
     pub fn encrypt_for_network_and_profile(
         &self,
         data: &[u8],
         network_public_key: &[u8],
-        profile_index: u32,
+        profile_public_key: &[u8],
     ) -> Result<Envelope> {
-        // Get the network data key
+        // Get the network encryption key
+        // The key is stored with prefix "network_data_" in generate_network_data_key
         let network_key_id = format!("network_data_{}", hex::encode(network_public_key));
-        let network_key = self
+        let network_encryption_key = self
             .key_manager
             .get_encryption_key(&network_key_id)
             .ok_or_else(|| {
-                KeyError::KeyNotFound(format!("Network key not found: {}", network_key_id))
+                KeyError::KeyNotFound(format!("Network encryption key not found for network: {}", hex::encode(network_public_key)))
             })?;
 
-        // Get the user profile encryption key, which is now stored correctly in the manager
+        // Get the profile index from the public key
+        let profile_key_hex = hex::encode(profile_public_key);
+        let profile_index = self.profile_key_to_index.get(&profile_key_hex)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Profile index not found for public key")))?;
+
+        // Get the profile encryption key
         let profile_encryption_key_id = format!("user_profile_encryption_{}", profile_index);
         let profile_encryption_key = self
             .key_manager
             .get_encryption_key(&profile_encryption_key_id)
             .ok_or_else(|| {
                 KeyError::KeyNotFound(format!(
-                    "Profile encryption key not found: {}",
-                    profile_encryption_key_id
+                    "Profile encryption key not found for index {}",
+                    profile_index
                 ))
             })?;
 
-        let recipients = vec![network_key, profile_encryption_key];
+        // Create an envelope that can be decrypted by either key
+        let envelope = Envelope::new(data, &[network_encryption_key, profile_encryption_key])?;
 
-        Envelope::new(data, &recipients)
+        Ok(envelope)
     }
 
-    /// Decrypt data using a user profile key
-    pub fn decrypt_with_profile_key(
-        &self,
-        envelope: &Envelope,
-        profile_index: u32,
-    ) -> Result<Vec<u8>> {
+    /// Decrypt data with a profile key
+    pub fn decrypt_with_profile_key(&self, envelope: &Envelope, profile_public_key: &[u8]) -> Result<Vec<u8>> {
+        // Get the profile index from the public key
+        let profile_key_hex = hex::encode(profile_public_key);
+        let profile_index = self.profile_key_to_index.get(&profile_key_hex)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Profile index not found for public key")))?;
+
+        // Get the profile encryption key
         // Get the user profile encryption key, which is now stored correctly in the manager
         let profile_encryption_key_id = format!("user_profile_encryption_{}", profile_index);
         let profile_encryption_key = self

@@ -2,10 +2,24 @@ use crate::crypto::{Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
 use ed25519_dalek::VerifyingKey;
+use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
 
 /// Key manager that stores and manages cryptographic keys
+/// Structure to hold serializable key data for persistence
+#[derive(Serialize, Deserialize)]
+pub struct KeyManagerData {
+    /// User seed for key derivation (if available)
+    pub seed: Option<[u8; 32]>,
+    /// Signing key pairs by ID
+    pub signing_keys: HashMap<String, SigningKeyPair>,
+    /// Encryption key pairs by ID
+    pub encryption_keys: HashMap<String, EncryptionKeyPair>,
+    /// Certificates by subject
+    pub certificates: HashMap<String, Certificate>,
+}
+
 pub struct KeyManager {
     /// User seed for key derivation (if available)
     seed: Option<[u8; 32]>,
@@ -223,26 +237,40 @@ impl KeyManager {
 
         Ok(())
     }
-
-    /// Store a pre-validated certificate without further validation.
+    
+    /// Store a pre-validated certificate directly without re-validating it.
+    /// 
     /// This should only be used when the certificate has already been validated
-    /// through other means, such as direct validation using the CA public key.
-    pub fn store_certificate_without_validation(&mut self, certificate: Certificate) -> Result<()> {
-        // Store the certificate directly without validation
+    /// with the appropriate CA key.
+    pub fn store_validated_certificate(&mut self, certificate: Certificate) -> Result<()> {
         self.certificates
             .insert(certificate.subject.clone(), certificate);
-
+            
         Ok(())
-    }
-
-    /// Store a certificate that has been directly validated.
-    /// This is an alias for store_certificate_without_validation for better semantic clarity.
-    pub fn store_certificate_directly(&mut self, certificate: Certificate) -> Result<()> {
-        self.store_certificate_without_validation(certificate)
     }
 
     /// Get a certificate by subject
     pub fn get_certificate(&self, subject: &str) -> Option<&Certificate> {
         self.certificates.get(subject)
+    }
+    
+    /// Export all keys and certificates for persistence
+    /// This allows saving the key manager state to secure storage
+    pub fn export_keys(&self) -> KeyManagerData {
+        KeyManagerData {
+            seed: self.seed,
+            signing_keys: self.signing_keys.clone(),
+            encryption_keys: self.encryption_keys.clone(),
+            certificates: self.certificates.clone(),
+        }
+    }
+    
+    /// Import keys and certificates from persistence
+    /// This allows restoring the key manager state from secure storage
+    pub fn import_keys(&mut self, data: KeyManagerData) {
+        self.seed = data.seed;
+        self.signing_keys = data.signing_keys;
+        self.encryption_keys = data.encryption_keys;
+        self.certificates = data.certificates;
     }
 }

@@ -26,7 +26,7 @@ pub const CHACHA20POLY1305_NONCE_LENGTH: usize = 12;
 
 /// Represents a public key that can be safely returned from key manager methods
 /// This follows the principle that manager methods should not expose private keys
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicKey {
     /// The raw bytes of the public key
     bytes: [u8; 32],
@@ -51,13 +51,83 @@ pub struct SigningKeyPair {
     verifying_key: VerifyingKey,
 }
 
+// Custom serialization for SigningKeyPair
+impl Serialize for SigningKeyPair {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // We only need to serialize the signing key since the verifying key can be derived from it
+        let bytes = self.signing_key.to_bytes();
+        
+        // Create a serializable structure
+        #[derive(Serialize)]
+        struct SerializableKeyPair {
+            signing_key: [u8; 32],
+        }
+        
+        let serializable = SerializableKeyPair {
+            signing_key: bytes,
+        };
+        
+        serializable.serialize(serializer)
+    }
+}
+
+// Custom deserialization for SigningKeyPair
+impl<'de> Deserialize<'de> for SigningKeyPair {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Define a structure to deserialize into
+        #[derive(Deserialize)]
+        struct SerializableKeyPair {
+            signing_key: [u8; 32],
+        }
+        
+        let serializable = SerializableKeyPair::deserialize(deserializer)?;
+        
+        // Convert from bytes back to the original type
+        // SigningKey::from_bytes returns a SigningKey directly
+        let signing_key = SigningKey::from_bytes(&serializable.signing_key);
+        
+        // Derive the verifying key from the signing key
+        // This ensures the verifying key is correctly derived from the signing key
+        let verifying_key = signing_key.verifying_key();
+        
+        Ok(SigningKeyPair {
+            signing_key,
+            verifying_key,
+        })
+    }
+}
+
 impl SigningKeyPair {
     /// Generate a new signing key pair
     pub fn new() -> Self {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
-        let verifying_key = signing_key.verifying_key();
+        let verifying_key = VerifyingKey::from(&signing_key);
         Self { signing_key, verifying_key }
+    }
+
+    /// Create a signing key pair from just a public key
+    /// 
+    /// This is useful when we only have the public key and need to validate certificates
+    /// Note: This key pair cannot be used for signing, only for verification
+    pub fn from_public_key(public_key: &[u8; 32]) -> Result<Self> {
+        let verifying_key = VerifyingKey::from_bytes(public_key)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))?;
+            
+        // Create a dummy signing key - this key pair can only be used for verification
+        // This is acceptable because we're only using it to validate certificates
+        let signing_key = SigningKey::generate(&mut OsRng);
+        
+        Ok(Self {
+            signing_key,
+            verifying_key,
+        })
     }
 
     /// Create a signing key pair from a secret key
@@ -104,6 +174,58 @@ impl SigningKeyPair {
 pub struct EncryptionKeyPair {
     secret_key: X25519StaticSecret,
     public_key: X25519PublicKey,
+}
+
+// Custom serialization for EncryptionKeyPair
+impl Serialize for EncryptionKeyPair {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Convert to bytes for serialization
+        let secret_bytes = self.secret_key.to_bytes();
+        let public_bytes = self.public_key.as_bytes();
+        
+        // Create a serializable structure
+        #[derive(Serialize)]
+        struct SerializableKeyPair {
+            secret_key: [u8; 32],
+            public_key: [u8; 32],
+        }
+        
+        let serializable = SerializableKeyPair {
+            secret_key: secret_bytes,
+            public_key: *public_bytes,
+        };
+        
+        serializable.serialize(serializer)
+    }
+}
+
+// Custom deserialization for EncryptionKeyPair
+impl<'de> Deserialize<'de> for EncryptionKeyPair {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Define a structure to deserialize into
+        #[derive(Deserialize)]
+        struct SerializableKeyPair {
+            secret_key: [u8; 32],
+            public_key: [u8; 32],
+        }
+        
+        let serializable = SerializableKeyPair::deserialize(deserializer)?;
+        
+        // Convert from bytes back to the original types
+        let secret_key = X25519StaticSecret::from(serializable.secret_key);
+        let public_key = X25519PublicKey::from(serializable.public_key);
+        
+        Ok(EncryptionKeyPair {
+            secret_key,
+            public_key,
+        })
+    }
 }
 
 impl EncryptionKeyPair {
@@ -319,9 +441,18 @@ impl Certificate {
     /// Validate the certificate against a CA's public key.
     pub fn validate(&self, ca_public_key: &VerifyingKey) -> Result<()> {
         // 1. Verify the signature
-        let signature_bytes: [u8; 64] = self.signature.as_slice().try_into()?;
+        let signature_bytes: [u8; 64] = self.signature.as_slice().try_into()
+            .map_err(|_| KeyError::SignatureError("Invalid signature length".to_string()))?;
         let signature = Signature::from_bytes(&signature_bytes);
         let data_to_verify = self.get_signed_data()?;
+        
+        // Debug prints
+        println!("Certificate validation:");
+        println!("  Subject: {}", self.subject);
+        println!("  Issuer: {}", self.issuer);
+        println!("  Signature length: {}", self.signature.len());
+        println!("  Data to verify length: {}", data_to_verify.len());
+        
         if ca_public_key.verify(&data_to_verify, &signature).is_err() {
             return Err(KeyError::SignatureError("Certificate signature verification failed".to_string()));
         }

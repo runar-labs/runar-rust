@@ -74,12 +74,12 @@ fn test_e2e_keys_generation_and_exchange() {
 
     // Extract the node ID from the setup token
     // In a real-world scenario, the mobile device would have received this in the setup token
-    let node_id = hex::encode(&setup_token_mobile.node_public_key);
+    let node_public_key = hex::encode(&setup_token_mobile.node_public_key);
 
     // Mobile encrypts a message containing both the certificate and CA public key for secure transmission to the node
     // This ensures only the target node can decrypt the message and has the CA key needed for verification
     let encrypted_node_msg = mobile
-        .encrypt_message_for_node(&cert, &node_id)
+        .encrypt_message_for_node(&cert, &node_public_key)
         .expect("Failed to encrypt message");
     println!("Certificate and CA key encrypted successfully for secure transmission");
 
@@ -131,7 +131,8 @@ fn test_e2e_keys_generation_and_exchange() {
     // at this point the node is ready to process requests, events and data of the network_X
 
     // 7 - (mobile side) - User creates a profile key
-    let (profile_public_key, profile_index) = mobile
+    // Note: The API now returns only the public key, profile index is managed internally
+    let profile_public_key = mobile
         .generate_user_profile_key()
         .expect("Failed to generate user profile key");
     assert!(
@@ -139,12 +140,12 @@ fn test_e2e_keys_generation_and_exchange() {
         "User profile key should have a valid public key"
     );
 
-    // 8 - (mobile side) - Encrypts data using envelop which is encrypted using the
+    // 8 - (mobile side) - Encrypts data using envelope which is encrypted using the
     //     user profile key and network key.
     //     so only the user or apps running in the network can decrypt it.
     let test_data = b"This is a test message that should be encrypted and decrypted";
     let envelope = mobile
-        .encrypt_for_network_and_profile(test_data, &network_public_key, profile_index)
+        .encrypt_for_network_and_profile(test_data, &network_public_key, &profile_public_key)
         .expect("Failed to encrypt data");
 
     // 9 - (node side) - received the encrypted data and decrypts it using the
@@ -159,10 +160,60 @@ fn test_e2e_keys_generation_and_exchange() {
 
     // Additionally, verify that the mobile can also decrypt the data using the profile key
     let decrypted_by_mobile = mobile
-        .decrypt_with_profile_key(&envelope, profile_index)
+        .decrypt_with_profile_key(&envelope, &profile_public_key)
         .expect("Mobile failed to decrypt data");
     assert_eq!(
         decrypted_by_mobile, test_data,
         "Mobile should be able to decrypt the data"
+    );
+
+    // Now let's simulate when mobile and node already have keys stored in secure storage.
+    // Step 1: Export the current state of the key managers
+    let mobile_state = mobile.export_state();
+    let node_state = node.export_state();
+
+    // In a real implementation, these states would be serialized and stored in secure storage
+    // For this test, we'll simulate that by serializing and deserializing them
+    let serialized_mobile_state =
+        bincode::serialize(&mobile_state).expect("Failed to serialize mobile state");
+    let serialized_node_state =
+        bincode::serialize(&node_state).expect("Failed to serialize node state");
+
+    // Step 2: Create new key managers and hydrate them with the exported state
+    // This simulates restarting the application and loading keys from secure storage
+    let deserialized_mobile_state =
+        bincode::deserialize(&serialized_mobile_state).expect("Failed to deserialize mobile state");
+    let deserialized_node_state =
+        bincode::deserialize(&serialized_node_state).expect("Failed to deserialize node state");
+
+    let mut mobile_hydrated = MobileKeyManager::new();
+    mobile_hydrated.import_state(deserialized_mobile_state);
+
+    let mut node_hydrated = NodeKeyManager::new();
+    node_hydrated.import_state(deserialized_node_state);
+
+    // Verify that the hydrated key managers can still perform operations
+    // Try encrypting and decrypting data with the hydrated managers
+    let test_data_2 = b"This is a second test message after key restoration";
+    let envelope_2 = mobile_hydrated
+        .encrypt_for_network_and_profile(test_data_2, &network_public_key, &profile_public_key)
+        .expect("Hydrated mobile failed to encrypt data");
+
+    // Node should be able to decrypt with the network key
+    let decrypted_by_node_2 = node_hydrated
+        .decrypt_with_network_key(&network_public_key, &envelope_2)
+        .expect("Hydrated node failed to decrypt data");
+    assert_eq!(
+        decrypted_by_node_2, test_data_2,
+        "Hydrated node should be able to decrypt the data"
+    );
+
+    // Mobile should be able to decrypt with the profile key
+    let decrypted_by_mobile_2 = mobile_hydrated
+        .decrypt_with_profile_key(&envelope_2, &profile_public_key)
+        .expect("Hydrated mobile failed to decrypt data");
+    assert_eq!(
+        decrypted_by_mobile_2, test_data_2,
+        "Hydrated mobile should be able to decrypt the data"
     );
 }
