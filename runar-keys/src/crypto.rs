@@ -220,6 +220,17 @@ pub struct NodeMessage {
     pub ca_public_key: Vec<u8>,
 }
 
+/// Message containing network key information for secure transmission
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkKeyMessage {
+    /// Network identifier or name
+    pub network_name: String,
+    /// Network public key
+    pub public_key: Vec<u8>,
+    /// Network private key (encrypted in transit)
+    pub private_key: Vec<u8>,
+}
+
 /// Certificate for authentication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Certificate {

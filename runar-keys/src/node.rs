@@ -1,8 +1,7 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, NodeMessage};
+use crate::crypto::{Certificate, EncryptionKeyPair, NetworkKeyMessage, NodeMessage};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::manager::KeyManager;
-use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 
@@ -158,6 +157,28 @@ impl NodeKeyManager {
             .store_certificate_directly(certificate.clone())?;
 
         return Ok(());
+    }
+
+    /// Process an encrypted envelope containing a NetworkKeyMessage
+    ///
+    /// This method decrypts the envelope, extracts the NetworkKeyMessage (containing network keys),
+    /// and stores the network key in the key manager.
+    pub fn process_network_keys_message(&mut self, envelope: &Envelope) -> Result<()> {
+        // Get the node's encryption key for decryption
+        let node_encryption_key = self
+            .key_manager
+            .get_encryption_key("node_encryption")
+            .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
+
+        // Decrypt the envelope
+        let decrypted_bytes = envelope.decrypt(node_encryption_key)?;
+
+        // Deserialize the NetworkKeyMessage using bincode for binary deserialization
+        let network_key_message: NetworkKeyMessage = bincode::deserialize(&decrypted_bytes)
+            .map_err(|e| KeyError::SerializationError(e.to_string()))?;
+
+        // Store the network key using the public key from the message
+        self.store_network_key(&network_key_message.public_key, network_key_message.private_key)
     }
 
     /// Store a network key

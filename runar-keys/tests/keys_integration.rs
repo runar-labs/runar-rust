@@ -1,9 +1,7 @@
-use ed25519_dalek::VerifyingKey;
 use runar_keys::*;
-use std::convert::TryInto;
 
 #[test]
-fn test_key_generation_and_derivation() {
+fn test_e2e_keys_generation_and_exchange() {
     // This goal of this test is to simulate the end to end encryption and keys management flows.
     // in the real implemetnation the mobile process  and the node
     // process will be in different machines and talkig over the network,
@@ -98,7 +96,8 @@ fn test_key_generation_and_derivation() {
     let deserialized_node_msg =
         bincode::deserialize(&serialized_node_msg).expect("Failed to deserialize envelope");
 
-    // 4 - (node side) - received the encrypted message, decrypts it, validates the certificate using the CA key, and stores it
+    // 4 - (node side) - received the encrypted message, decrypts it,
+    // validates the certificate using the CA key, and stores it
     node.process_mobile_message(&deserialized_node_msg)
         .expect("Failed to process encrypted certificate");
 
@@ -110,14 +109,24 @@ fn test_key_generation_and_derivation() {
         .generate_network_data_key()
         .expect("Failed to generate network data key");
 
-    // network key is sent to the node. over secure and ecnrypted channel
-    let network_private_key = mobile
-        .get_network_private_key(&network_public_key)
-        .expect("Failed to get network private key");
+    // Create an encrypted network keys message for the node
+    let network_name = "network_X";
+    let node_id = hex::encode(&setup_token_mobile.node_public_key);
+    let encrypted_network_keys = mobile
+        .create_network_keys_message(&network_public_key, network_name, &node_id)
+        .expect("Failed to create network keys message");
 
-    // 6 - (node side) - received the network key and store it encrypted and secure.
-    node.store_network_key(&network_public_key, network_private_key)
-        .expect("Failed to store network key");
+    // Serialize the encrypted network keys message for transmission
+    let serialized_network_keys = bincode::serialize(&encrypted_network_keys)
+        .expect("Failed to serialize network keys envelope");
+
+    // Node side - received the encrypted network keys message
+    let deserialized_network_keys = bincode::deserialize(&serialized_network_keys)
+        .expect("Failed to deserialize network keys envelope");
+
+    // 6 - (node side) - process the network keys message and store the keys securely
+    node.process_network_keys_message(&deserialized_network_keys)
+        .expect("Failed to process network keys message");
 
     // at this point the node is ready to process requests, events and data of the network_X
 

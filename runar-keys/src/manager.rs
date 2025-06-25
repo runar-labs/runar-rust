@@ -1,4 +1,4 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, PublicKey, SigningKeyPair};
+use crate::crypto::{Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey, SigningKeyPair};
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
 use ed25519_dalek::VerifyingKey;
@@ -127,15 +127,19 @@ impl KeyManager {
         Ok(encryption_keypair.public_key().to_vec())
     }
 
-    // TODO how to secure this method so it only is available in the mobile build -
-    // maybe as a feature flag
-    pub fn get_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+    /// Create a network key message containing both public and private keys
+    /// This is more secure than exposing the private key directly
+    pub fn create_network_key_message(&self, network_public_key: &[u8], network_name: &str) -> Result<NetworkKeyMessage> {
         let key_id = format!("network_data_{}", hex::encode(network_public_key));
         let encryption_keypair = self.encryption_keys.get(&key_id).ok_or_else(|| {
             KeyError::KeyNotFound(format!("Encryption key not found: {}", key_id))
         })?;
 
-        Ok(encryption_keypair.secret_key().to_vec())
+        Ok(NetworkKeyMessage {
+            network_name: network_name.to_string(),
+            public_key: network_public_key.to_vec(),
+            private_key: encryption_keypair.secret_key().to_vec(),
+        })
     }
 
     /// Add a signing key to the key manager

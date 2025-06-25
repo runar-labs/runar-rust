@@ -130,8 +130,28 @@ impl MobileKeyManager {
         self.key_manager.generate_network_data_key()
     }
 
-    pub fn get_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
-        self.key_manager.get_network_private_key(network_public_key)
+    /// Create an encrypted network keys message for secure transmission to a node
+    /// 
+    /// This creates an envelope containing network keys that can only be decrypted by the node with the given node_id.
+    /// The node_id should be the hex-encoded node public key from the setup token.
+    pub fn create_network_keys_message(&self, network_public_key: &[u8], network_name: &str, node_id: &str) -> Result<Envelope> {
+        // Create a NetworkKeyMessage using the key manager
+        let network_key_message = self.key_manager.create_network_key_message(network_public_key, network_name)?;
+        
+        // Get the node's encryption key from storage
+        let key_id = format!("node_encryption_{}", node_id);
+        let encryption_key = self.key_manager.get_encryption_key(&key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Node encryption key not found for {}", node_id)))?;
+        
+        // Serialize the message to bytes using bincode for binary serialization
+        let message_bytes = bincode::serialize(&network_key_message)
+            .map_err(|e| KeyError::SerializationError(e.to_string()))?;
+        
+        // Create an envelope with the message as payload, encrypted for the node
+        let envelope = Envelope::new(&message_bytes, &[encryption_key])
+            .map_err(|e| KeyError::EncryptionError(e.to_string()))?;
+            
+        Ok(envelope)
     }
 
     // TODO change thios to receive the profile public key instead of the index..
