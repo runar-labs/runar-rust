@@ -1,3 +1,0 @@
-# Clippy configuration
-# Ignore specific lints in dependencies
-allow-unwrap-in-tests = true

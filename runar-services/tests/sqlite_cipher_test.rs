@@ -4,7 +4,6 @@
 // to create a simple service with actions.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use runar_common::types::ArcValue;
 use runar_services::sqlite_cipher::{
@@ -34,7 +33,6 @@ struct MyData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hex;
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
     use runar_node::Node;
