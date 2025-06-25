@@ -37,6 +37,12 @@ pub struct NodeKeyManager {
     //network_id: Option<String>,
 }
 
+impl Default for NodeKeyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeKeyManager {
     /// Create a new node key manager
     pub fn new() -> Self {
@@ -56,8 +62,8 @@ impl NodeKeyManager {
             .expect("Failed to generate node storage key");
 
         Self {
-            key_manager: key_manager,
-            node_public_key: node_public_key,
+            key_manager,
+            node_public_key,
         }
     }
 
@@ -159,7 +165,7 @@ impl NodeKeyManager {
         // We've already validated it with the CA public key, so we can just store it
         self.key_manager.store_validated_certificate(certificate)?;
 
-        return Ok(());
+        Ok(())
     }
 
     /// Process a network keys message from a mobile device

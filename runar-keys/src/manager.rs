@@ -37,6 +37,12 @@ pub struct KeyManager {
     certificates: HashMap<String, Certificate>,
 }
 
+impl Default for KeyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyManager {
     /// Create a new key manager
     pub fn new() -> Self {

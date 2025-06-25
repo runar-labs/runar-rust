@@ -32,6 +32,12 @@ pub struct MobileKeyManager {
     user_public_key: Option<Vec<u8>>,
 }
 
+impl Default for MobileKeyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MobileKeyManager {
     /// Create a new mobile key manager
     pub fn new() -> Self {

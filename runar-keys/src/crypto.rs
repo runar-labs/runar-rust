@@ -51,6 +51,12 @@ pub struct SigningKeyPair {
     verifying_key: VerifyingKey,
 }
 
+impl Default for SigningKeyPair {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Custom serialization for SigningKeyPair
 impl Serialize for SigningKeyPair {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -178,6 +184,12 @@ impl SigningKeyPair {
 pub struct EncryptionKeyPair {
     secret_key: X25519StaticSecret,
     public_key: X25519PublicKey,
+}
+
+impl Default for EncryptionKeyPair {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // Custom serialization for EncryptionKeyPair
@@ -515,6 +527,12 @@ impl Certificate {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SymmetricKey {
     key: [u8; CHACHA20POLY1305_KEY_LENGTH],
+}
+
+impl Default for SymmetricKey {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SymmetricKey {

@@ -44,7 +44,7 @@ impl KeyDerivation {
         let ikm = user_root_key.secret_key_bytes();
         let salt = [0u8; 32]; // A fixed salt is acceptable for this use case
 
-        let hkdf = Hkdf::<Sha256>::new(Some(&salt), &ikm);
+        let hkdf = Hkdf::<Sha256>::new(Some(&salt), ikm);
         let mut okm = [0u8; 32]; // Output key material
         hkdf.expand(INFO_PERSON, &mut okm)?;
 
