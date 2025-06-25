@@ -550,13 +550,11 @@ impl SymmetricKey {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use crate::{Certificate, KeyError, SigningKeyPair};
     use ed25519_dalek::VerifyingKey;
     use std::time::{SystemTime, UNIX_EPOCH};
-    
-    
-
 
     #[test]
     fn test_certificate_serialization_consistency() {
