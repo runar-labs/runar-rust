@@ -2119,6 +2119,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "hex",
+ "runar-keys",
  "runar_common",
  "runar_macros",
  "runar_node",

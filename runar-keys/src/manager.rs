@@ -198,9 +198,10 @@ impl KeyManager {
 
     /// Encrypt data using a stored symmetric key.
     pub fn encrypt_with_symmetric_key(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
-        let key = self.symmetric_keys.get(key_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id))
-        })?;
+        let key = self
+            .symmetric_keys
+            .get(key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id)))?;
         key.encrypt(data)
     }
 
@@ -210,9 +211,10 @@ impl KeyManager {
         key_id: &str,
         encrypted_data: &[u8],
     ) -> Result<Vec<u8>> {
-        let key = self.symmetric_keys.get(key_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id))
-        })?;
+        let key = self
+            .symmetric_keys
+            .get(key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Symmetric key not found: {}", key_id)))?;
         key.decrypt(encrypted_data)
     }
 

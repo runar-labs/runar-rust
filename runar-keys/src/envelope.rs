@@ -1,6 +1,5 @@
 use crate::crypto::{
-    EncryptionKeyPair,
-    CHACHA20POLY1305_KEY_LENGTH as SYMMETRIC_KEY_LENGTH,
+    EncryptionKeyPair, CHACHA20POLY1305_KEY_LENGTH as SYMMETRIC_KEY_LENGTH,
     CHACHA20POLY1305_NONCE_LENGTH as NONCE_LENGTH,
 };
 use crate::error::{KeyError, Result};
@@ -56,8 +55,7 @@ impl Envelope {
         let mut recipient_keys = Vec::with_capacity(recipients.len());
         for recipient_key in recipients {
             // Use the new encrypt method which handles DH, HKDF, and encryption
-            let encrypted_key =
-                ephemeral_key.encrypt(&envelope_key, recipient_key.public_key())?;
+            let encrypted_key = ephemeral_key.encrypt(&envelope_key, recipient_key.public_key())?;
 
             recipient_keys.push(RecipientKey {
                 recipient_public_key: recipient_key.public_key().to_vec(),
@@ -96,10 +94,8 @@ impl Envelope {
         let envelope_key_vec =
             recipient_key.decrypt(&recipient_key_entry.encrypted_key, ephemeral_public_key)?;
 
-        let envelope_key: [u8; SYMMETRIC_KEY_LENGTH] = envelope_key_vec
-            .as_slice()
-            .try_into()
-            .map_err(|_| {
+        let envelope_key: [u8; SYMMETRIC_KEY_LENGTH] =
+            envelope_key_vec.as_slice().try_into().map_err(|_| {
                 KeyError::EnvelopeError("Decrypted envelope key has invalid length".to_string())
             })?;
 

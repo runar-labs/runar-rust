@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use std::sync::{Arc, RwLock};
 use std::thread;
-use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
+use tokio::sync::{mpsc, oneshot};
 
 // Schema definition structs
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -81,17 +81,17 @@ pub enum SqliteWorkerCommand {
 pub struct SqliteWorker {
     connection: Connection,
     receiver: mpsc::Receiver<SqliteWorkerCommand>,
-    logger: Arc<Logger>, // Added logger
+    logger: Arc<Logger>,                   // Added logger
     ready_tx: Option<oneshot::Sender<()>>, // To signal when worker is ready
 }
 
 impl SqliteWorker {
     pub fn new(
         db_path: String,
-        password: Option<String>,
+        symmetric_key: Option<Vec<u8>>, // Direct symmetric key bytes for encryption
         receiver: mpsc::Receiver<SqliteWorkerCommand>,
         logger: Arc<Logger>,
-        ready_tx: oneshot::Sender<()>, // Add ready channel sender
+        ready_tx: oneshot::Sender<()>, // Ready channel sender
     ) -> Result<Self, String> {
         let connection = Connection::open(db_path.clone()).map_err(|e| {
             let err_msg = format!("Failed to open SQLite connection to '{}': {}", db_path, e);
@@ -99,13 +99,21 @@ impl SqliteWorker {
             err_msg
         })?;
 
-        if let Some(pass) = password {
-            connection.pragma_update(None, "key", &pass).map_err(|e| {
-                let err_msg = format!("Failed to set database key: {}", e);
-                logger.error(&err_msg);
-                err_msg
-            })?;
-            logger.debug("Database key set successfully.");
+        // If a symmetric key is provided, use it for encryption
+        if let Some(key_bytes) = symmetric_key {
+            // Convert the key bytes to a hex string for SQLCipher
+            // SQLCipher expects the key as a hex string when using raw keys
+            let hex_key = format!("x'{}'", hex::encode(&key_bytes));
+
+            // Set the raw key using PRAGMA
+            connection
+                .pragma_update(None, "key", &hex_key)
+                .map_err(|e| {
+                    let err_msg = format!("Failed to set database key: {}", e);
+                    logger.error(&err_msg);
+                    err_msg
+                })?;
+            logger.debug("Database key set successfully using provided symmetric key.");
         }
 
         // TODO: Apply any pragmas or initial setup to the connection here if needed
@@ -515,17 +523,14 @@ impl Query {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateOperation {
     pub table: String,
-    pub data: HashMap<String, Value>,
+    pub values: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadOperation {
     pub table: String,
     pub query: Query,
-    pub fields: Option<Vec<String>>,
-    pub limit: Option<u32>,
-    pub offset: Option<u32>,
-    pub order_by: Option<Vec<(String, bool)>>, // (field, is_ascending)
+    pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -558,8 +563,12 @@ pub struct SqliteServiceConfig {
     pub db_path: String,
     /// Schema definition for the database
     pub schema: Schema,
-    /// Password for encrypted database connections
-    pub password: Option<String>,
+    /// Key ID for the symmetric key used to encrypt the database
+    /// If None, the database will not be encrypted
+    pub key_id: Option<String>,
+    /// Direct symmetric key bytes for encryption (primarily for testing)
+    /// This takes precedence over key_id if both are provided
+    pub symmetric_key: Option<Vec<u8>>,
 }
 
 pub struct SqliteService {
@@ -592,7 +601,6 @@ impl Clone for SqliteService {
 }
 
 impl SqliteService {
-
     async fn send_command<T: Send + 'static>(
         &self,
         constructor: impl FnOnce(oneshot::Sender<Result<T, String>>) -> SqliteWorkerCommand,
@@ -780,7 +788,7 @@ impl AbstractService for SqliteService {
         }
 
         let db_path_clone = self.config.db_path.clone();
-        let password_clone = self.config.password.clone();
+        let symmetric_key_clone = self.config.symmetric_key.clone(); // Clone the symmetric key
         let schema_clone = self.config.schema.clone();
         let logger_clone_for_thread = context.logger.clone();
 
@@ -793,7 +801,7 @@ impl AbstractService for SqliteService {
             worker_runtime.block_on(async move {
                 match SqliteWorker::new(
                     db_path_clone,
-                    password_clone,
+                    symmetric_key_clone, // Pass the symmetric key directly
                     rx,
                     logger_clone_for_thread.clone(),
                     ready_tx, // Pass the ready signal sender

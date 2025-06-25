@@ -1,6 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::crypto::EncryptionKeyPair;
-
+use serde::{Deserialize, Serialize};
 
 /// Represents a network configuration
 #[derive(Serialize, Deserialize, Clone, Debug)]

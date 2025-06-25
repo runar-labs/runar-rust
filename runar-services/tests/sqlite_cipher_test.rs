@@ -4,6 +4,7 @@
 // to create a simple service with actions.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use runar_common::types::ArcValue;
 use runar_services::sqlite_cipher::{
@@ -33,6 +34,7 @@ struct MyData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hex;
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
     use runar_node::Node;
@@ -78,11 +80,19 @@ mod tests {
             indexes: vec![], // Ensure all fields of Schema are initialized
         };
 
+        // Create raw key bytes directly for testing (32 bytes for AES-256)
+        let key_bytes: Vec<u8> = (0..32).map(|i| i as u8).collect();
+        println!("Using symmetric key: {}", hex::encode(&key_bytes));
+
+        // We don't need the key manager for this test since we're using raw key bytes directly
+
+        // Create the SQLite service with the raw key bytes directly
         let service_name = "users_db".to_string();
         let sqlite_config = SqliteServiceConfig {
             db_path: ":memory:".to_string(), // Use in-memory database for tests
             schema,
-            password: Some("test_password".to_string()),
+            key_id: None, // No key_id needed since we're using raw key bytes directly
+            symmetric_key: Some(key_bytes), // Pass the raw key bytes directly
         };
 
         let service = SqliteService::new(&service_name, sqlite_config).unwrap();

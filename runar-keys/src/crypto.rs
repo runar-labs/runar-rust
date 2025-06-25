@@ -37,7 +37,7 @@ impl PublicKey {
     pub fn new(bytes: [u8; 32]) -> Self {
         Self { bytes }
     }
-    
+
     /// Get the raw bytes of the public key
     pub fn bytes(&self) -> &[u8; 32] {
         &self.bytes
@@ -59,17 +59,15 @@ impl Serialize for SigningKeyPair {
     {
         // We only need to serialize the signing key since the verifying key can be derived from it
         let bytes = self.signing_key.to_bytes();
-        
+
         // Create a serializable structure
         #[derive(Serialize)]
         struct SerializableKeyPair {
             signing_key: [u8; 32],
         }
-        
-        let serializable = SerializableKeyPair {
-            signing_key: bytes,
-        };
-        
+
+        let serializable = SerializableKeyPair { signing_key: bytes };
+
         serializable.serialize(serializer)
     }
 }
@@ -85,17 +83,17 @@ impl<'de> Deserialize<'de> for SigningKeyPair {
         struct SerializableKeyPair {
             signing_key: [u8; 32],
         }
-        
+
         let serializable = SerializableKeyPair::deserialize(deserializer)?;
-        
+
         // Convert from bytes back to the original type
         // SigningKey::from_bytes returns a SigningKey directly
         let signing_key = SigningKey::from_bytes(&serializable.signing_key);
-        
+
         // Derive the verifying key from the signing key
         // This ensures the verifying key is correctly derived from the signing key
         let verifying_key = signing_key.verifying_key();
-        
+
         Ok(SigningKeyPair {
             signing_key,
             verifying_key,
@@ -109,21 +107,24 @@ impl SigningKeyPair {
         let mut csprng = OsRng;
         let signing_key = SigningKey::generate(&mut csprng);
         let verifying_key = VerifyingKey::from(&signing_key);
-        Self { signing_key, verifying_key }
+        Self {
+            signing_key,
+            verifying_key,
+        }
     }
 
     /// Create a signing key pair from just a public key
-    /// 
+    ///
     /// This is useful when we only have the public key and need to validate certificates
     /// Note: This key pair cannot be used for signing, only for verification
     pub fn from_public_key(public_key: &[u8; 32]) -> Result<Self> {
         let verifying_key = VerifyingKey::from_bytes(public_key)
             .map_err(|e| KeyError::CryptoError(e.to_string()))?;
-            
+
         // Create a dummy signing key - this key pair can only be used for verification
         // This is acceptable because we're only using it to validate certificates
         let signing_key = SigningKey::generate(&mut OsRng);
-        
+
         Ok(Self {
             signing_key,
             verifying_key,
@@ -135,7 +136,10 @@ impl SigningKeyPair {
         let secret_key_bytes: [u8; 32] = secret[..32].try_into().unwrap();
         let signing_key = SigningKey::from_bytes(&secret_key_bytes);
         let verifying_key = signing_key.verifying_key();
-        Self { signing_key, verifying_key }
+        Self {
+            signing_key,
+            verifying_key,
+        }
     }
 
     /// Get the public key
@@ -185,19 +189,19 @@ impl Serialize for EncryptionKeyPair {
         // Convert to bytes for serialization
         let secret_bytes = self.secret_key.to_bytes();
         let public_bytes = self.public_key.as_bytes();
-        
+
         // Create a serializable structure
         #[derive(Serialize)]
         struct SerializableKeyPair {
             secret_key: [u8; 32],
             public_key: [u8; 32],
         }
-        
+
         let serializable = SerializableKeyPair {
             secret_key: secret_bytes,
             public_key: *public_bytes,
         };
-        
+
         serializable.serialize(serializer)
     }
 }
@@ -214,13 +218,13 @@ impl<'de> Deserialize<'de> for EncryptionKeyPair {
             secret_key: [u8; 32],
             public_key: [u8; 32],
         }
-        
+
         let serializable = SerializableKeyPair::deserialize(deserializer)?;
-        
+
         // Convert from bytes back to the original types
         let secret_key = X25519StaticSecret::from(serializable.secret_key);
         let public_key = X25519PublicKey::from(serializable.public_key);
-        
+
         Ok(EncryptionKeyPair {
             secret_key,
             public_key,
@@ -233,7 +237,10 @@ impl EncryptionKeyPair {
     pub fn new() -> Self {
         let secret_key = X25519StaticSecret::random_from_rng(rand::rngs::OsRng);
         let public_key = X25519PublicKey::from(&secret_key);
-        Self { secret_key, public_key }
+        Self {
+            secret_key,
+            public_key,
+        }
     }
 
     /// Create an encryption key pair from a secret key
@@ -241,26 +248,31 @@ impl EncryptionKeyPair {
         let secret_bytes: [u8; 32] = secret[..32].try_into().unwrap();
         let secret_key = X25519StaticSecret::from(secret_bytes);
         let public_key = X25519PublicKey::from(&secret_key);
-        Self { secret_key, public_key }
+        Self {
+            secret_key,
+            public_key,
+        }
     }
 
     /// Create an encryption key pair from just a public key
-    /// 
+    ///
     /// This can only be used for encryption, not decryption, since the private key is zeroed.
     /// Useful when you need to encrypt data for a recipient whose public key you know.
     pub fn from_public_key(public_key_bytes: &[u8]) -> Result<Self> {
         if public_key_bytes.len() != 32 {
-            return Err(KeyError::InvalidKeyFormat("Public key must be 32 bytes".to_string()));
+            return Err(KeyError::InvalidKeyFormat(
+                "Public key must be 32 bytes".to_string(),
+            ));
         }
-        
+
         // Create a zeroed secret key - this key pair can only be used for encryption
         let secret_key = X25519StaticSecret::from([0u8; 32]);
-        
+
         // Convert the provided bytes to an X25519PublicKey
         let mut public_key_array = [0u8; 32];
         public_key_array.copy_from_slice(&public_key_bytes[..32]);
         let public_key = X25519PublicKey::from(public_key_array);
-        
+
         Ok(Self {
             secret_key,
             public_key,
@@ -295,7 +307,9 @@ impl EncryptionKeyPair {
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        let ciphertext = cipher.encrypt(nonce, data).map_err(|e| KeyError::CryptoError(e.to_string()))?;
+        let ciphertext = cipher
+            .encrypt(nonce, data)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))?;
 
         let mut result = Vec::with_capacity(nonce_bytes.len() + ciphertext.len());
         result.extend_from_slice(&nonce_bytes);
@@ -322,7 +336,9 @@ impl EncryptionKeyPair {
         let (nonce_bytes, ciphertext) = encrypted_data.split_at(CHACHA20POLY1305_NONCE_LENGTH);
         let nonce = Nonce::from_slice(nonce_bytes);
 
-        cipher.decrypt(nonce, ciphertext).map_err(|e| KeyError::CryptoError(e.to_string()))
+        cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| KeyError::CryptoError(e.to_string()))
     }
 }
 
@@ -374,9 +390,9 @@ impl Certificate {
             &self.issuer,
             &self.public_key,
             &self.valid_from,
-            &self.valid_until
+            &self.valid_until,
         );
-        
+
         bincode::serialize(&data_to_sign).map_err(|e| KeyError::SerializationError(e.to_string()))
     }
 
@@ -385,24 +401,26 @@ impl Certificate {
         //TODO FIX this.. we DO NOT WANT SHORCUTS LIKE THIS.. we are after a real implementation
         let csr_str = String::from_utf8(csr_bytes.to_vec())
             .map_err(|_| KeyError::InvalidKeyFormat("Invalid CSR format".to_string()))?;
-        
+
         // First, verify that the string starts with "csr:"
         if !csr_str.starts_with("csr:") {
-            return Err(KeyError::InvalidKeyFormat("Invalid CSR format: missing csr: prefix".to_string()));
+            return Err(KeyError::InvalidKeyFormat(
+                "Invalid CSR format: missing csr: prefix".to_string(),
+            ));
         }
-        
+
         // Remove the "csr:" prefix
         let without_prefix = &csr_str[4..];
-        
+
         // Find the last colon which separates the subject from the public key
         let last_colon_pos = without_prefix.rfind(':').ok_or_else(|| {
             KeyError::InvalidKeyFormat("Invalid CSR format: missing public key".to_string())
         })?;
-        
+
         // Extract the subject and the public key hex
         let subject = &without_prefix[..last_colon_pos];
         let pk_hex = &without_prefix[last_colon_pos + 1..];
-        
+
         // Decode the public key hex
         let public_key = hex::decode(pk_hex)
             .map_err(|_| KeyError::InvalidKeyFormat("Invalid public key in CSR".to_string()))?;
@@ -441,31 +459,43 @@ impl Certificate {
     /// Validate the certificate against a CA's public key.
     pub fn validate(&self, ca_public_key: &VerifyingKey) -> Result<()> {
         // 1. Verify the signature
-        let signature_bytes: [u8; 64] = self.signature.as_slice().try_into()
+        let signature_bytes: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
             .map_err(|_| KeyError::SignatureError("Invalid signature length".to_string()))?;
         let signature = Signature::from_bytes(&signature_bytes);
         let data_to_verify = self.get_signed_data()?;
-        
+
         // Debug prints
         println!("Certificate validation:");
         println!("  Subject: {}", self.subject);
         println!("  Issuer: {}", self.issuer);
         println!("  Signature length: {}", self.signature.len());
         println!("  Data to verify length: {}", data_to_verify.len());
-        
+
         if ca_public_key.verify(&data_to_verify, &signature).is_err() {
-            return Err(KeyError::SignatureError("Certificate signature verification failed".to_string()));
+            return Err(KeyError::SignatureError(
+                "Certificate signature verification failed".to_string(),
+            ));
         }
 
         // 2. Check the validity period
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
         if current_time < self.valid_from {
-            return Err(KeyError::InvalidOperation("Certificate is not yet valid".to_string()));
+            return Err(KeyError::InvalidOperation(
+                "Certificate is not yet valid".to_string(),
+            ));
         }
 
         if current_time > self.valid_until {
-            return Err(KeyError::InvalidOperation("Certificate has expired".to_string()));
+            return Err(KeyError::InvalidOperation(
+                "Certificate has expired".to_string(),
+            ));
         }
 
         Ok(())
@@ -535,8 +565,7 @@ impl SymmetricKey {
             ));
         }
 
-        let (nonce_bytes, ciphertext) =
-            encrypted_data.split_at(CHACHA20POLY1305_NONCE_LENGTH);
+        let (nonce_bytes, ciphertext) = encrypted_data.split_at(CHACHA20POLY1305_NONCE_LENGTH);
         let nonce = Nonce::from_slice(nonce_bytes);
 
         let cipher = ChaCha20Poly1305::new_from_slice(&self.key)
@@ -571,8 +600,7 @@ mod tests {
         let serialized2 = cert.get_signed_data().unwrap();
 
         assert_eq!(
-            serialized1,
-            serialized2,
+            serialized1, serialized2,
             "Serialization should be deterministic"
         );
     }
@@ -585,7 +613,8 @@ mod tests {
         let ca_verifying_key = VerifyingKey::from_bytes(ca_keypair.public_key()).unwrap();
 
         // --- Test Case: Valid Certificate ---
-        let mut valid_cert = Certificate::new("subject", "ca", subject_keypair.public_key()).unwrap();
+        let mut valid_cert =
+            Certificate::new("subject", "ca", subject_keypair.public_key()).unwrap();
         let data_to_sign = valid_cert.get_signed_data().unwrap();
         valid_cert.signature = ca_keypair.sign(&data_to_sign).to_bytes().to_vec();
 
@@ -593,7 +622,8 @@ mod tests {
         assert!(valid_cert.is_valid());
 
         // --- Test Case: Expired Certificate ---
-        let mut expired_cert = Certificate::new("subject", "ca", subject_keypair.public_key()).unwrap();
+        let mut expired_cert =
+            Certificate::new("subject", "ca", subject_keypair.public_key()).unwrap();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -612,7 +642,8 @@ mod tests {
         assert!(!expired_cert.is_valid());
 
         // --- Test Case: Not-Yet-Valid Certificate ---
-        let mut future_cert = Certificate::new("subject", "ca", subject_keypair.public_key()).unwrap();
+        let mut future_cert =
+            Certificate::new("subject", "ca", subject_keypair.public_key()).unwrap();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -642,9 +673,7 @@ mod tests {
         let validation_result = cert_with_bad_sig.validate(&ca_verifying_key);
         assert!(validation_result.is_err());
         match validation_result.unwrap_err() {
-            KeyError::SignatureError(_) => {
-                /* Expected */
-            }
+            KeyError::SignatureError(_) => { /* Expected */ }
             _ => panic!("Expected SignatureError for invalid signature"),
         }
     }

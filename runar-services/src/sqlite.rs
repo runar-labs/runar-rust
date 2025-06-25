@@ -81,7 +81,7 @@ pub enum SqliteWorkerCommand {
 pub struct SqliteWorker {
     connection: Connection,
     receiver: mpsc::Receiver<SqliteWorkerCommand>,
-    logger: Arc<Logger>, // Added logger
+    logger: Arc<Logger>,                   // Added logger
     ready_tx: Option<oneshot::Sender<()>>, // To signal when worker is ready
 }
 

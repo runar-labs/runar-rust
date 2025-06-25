@@ -2,8 +2,8 @@ use crate::crypto::SigningKeyPair;
 use crate::error::Result;
 // SigningKey is imported via the SigningKeyPair struct
 
-use rand::RngCore;
 use hkdf::Hkdf;
+use rand::RngCore;
 use sha2::Sha256;
 
 /// Key derivation using SLIP-0010
