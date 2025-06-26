@@ -49,6 +49,15 @@ impl MobileKeyManager {
         }
     }
 
+    pub fn new_with_state(state: MobileKeyManagerData) -> Self {
+        Self {
+            key_manager: KeyManager::new_with_state(state.key_manager_data),
+            profile_counter: state.profile_counter,
+            profile_key_to_index: state.profile_key_to_index,
+            user_public_key: state.user_public_key,
+        }
+    }
+
     /// Generate a new seed
     pub fn generate_seed(&mut self) -> &[u8; 32] {
         self.key_manager.generate_seed()
@@ -189,14 +198,6 @@ impl MobileKeyManager {
             profile_key_to_index: self.profile_key_to_index.clone(),
             user_public_key: self.user_public_key.clone(),
         }
-    }
-
-    /// Import the mobile key manager state from persistence
-    pub fn import_state(&mut self, data: MobileKeyManagerData) {
-        self.key_manager.import_keys(data.key_manager_data);
-        self.profile_counter = data.profile_counter;
-        self.profile_key_to_index = data.profile_key_to_index;
-        self.user_public_key = data.user_public_key;
     }
 
     /// Create an encrypted network keys message for secure transmission to a node

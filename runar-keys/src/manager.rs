@@ -68,6 +68,16 @@ impl KeyManager {
         }
     }
 
+    pub fn new_with_state(state: KeyManagerData) -> Self {
+        Self {
+            seed: state.seed,
+            signing_keys: state.signing_keys,
+            encryption_keys: state.encryption_keys,
+            symmetric_keys: state.symmetric_keys,
+            certificates: state.certificates,
+        }
+    }
+
     /// Generate a new seed
     pub fn generate_seed(&mut self) -> &[u8; 32] {
         let seed = KeyDerivation::generate_seed();
@@ -134,11 +144,18 @@ impl KeyManager {
     /// Generate a node TLS key pair
     pub fn generate_node_tls_key(&mut self) -> Result<Vec<u8>> {
         let signing_keypair = SigningKeyPair::new();
-        let key_id = format!("node_tls_{}", hex::encode(signing_keypair.public_key()));
         self.signing_keys
-            .insert(key_id.clone(), signing_keypair.clone());
-
+            .insert("node_tls".to_string(), signing_keypair.clone());
         Ok(signing_keypair.public_key().to_vec())
+    }
+
+    pub fn get_node_public_key(&self) -> Result<Vec<u8>> {
+        let key_id = "node_tls".to_string();
+        let key_pair = self
+            .signing_keys
+            .get(&key_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Signing key not found: {}", key_id)))?;
+        Ok(key_pair.public_key().to_vec())
     }
 
     /// Generate a node storage key pair
@@ -332,15 +349,5 @@ impl KeyManager {
             symmetric_keys: self.symmetric_keys.clone(),
             certificates: self.certificates.clone(),
         }
-    }
-
-    /// Import keys and certificates from persistence
-    /// This allows restoring the key manager state from secure storage
-    pub fn import_keys(&mut self, data: KeyManagerData) {
-        self.seed = data.seed;
-        self.signing_keys = data.signing_keys;
-        self.encryption_keys = data.encryption_keys;
-        self.symmetric_keys = data.symmetric_keys;
-        self.certificates = data.certificates;
     }
 }

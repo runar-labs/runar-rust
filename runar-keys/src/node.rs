@@ -65,6 +65,17 @@ impl NodeKeyManager {
         }
     }
 
+    pub fn new_with_state(state: NodeKeyManagerData) -> Self {
+        let key_manager = KeyManager::new_with_state(state.key_manager_data);
+        let node_public_key = key_manager
+            .get_node_public_key()
+            .expect("Failed to get node Public key");
+        Self {
+            key_manager,
+            node_public_key,
+        }
+    }
+
     /// Get the node's encryption public key for secure communication
     pub fn get_encryption_public_key(&self) -> Result<Vec<u8>> {
         let encryption_key = self
@@ -87,7 +98,7 @@ impl NodeKeyManager {
         let subject = format!("node:{}", hex::encode(&node_public_key));
 
         // Create CSR for the node TLS key
-        let tls_key_id = format!("node_tls_{}", hex::encode(&node_public_key));
+        let tls_key_id = "node_tls".to_string();
         let tls_csr = self.key_manager.create_csr(&subject, &tls_key_id)?;
 
         // Ensure node has an encryption key pair for secure communication
@@ -214,11 +225,6 @@ impl NodeKeyManager {
         NodeKeyManagerData {
             key_manager_data: self.key_manager.export_keys(),
         }
-    }
-
-    /// Import the node key manager state from persistence
-    pub fn import_state(&mut self, data: NodeKeyManagerData) {
-        self.key_manager.import_keys(data.key_manager_data);
     }
 
     /// Store a network key

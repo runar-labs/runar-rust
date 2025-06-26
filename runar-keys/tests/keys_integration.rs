@@ -208,11 +208,8 @@ fn test_e2e_keys_generation_and_exchange() {
     let deserialized_node_state =
         bincode::deserialize(&serialized_node_state).expect("Failed to deserialize node state");
 
-    let mut mobile_hydrated = MobileKeyManager::new();
-    mobile_hydrated.import_state(deserialized_mobile_state);
-
-    let mut node_hydrated = NodeKeyManager::new();
-    node_hydrated.import_state(deserialized_node_state);
+    let mobile_hydrated = MobileKeyManager::new_with_state(deserialized_mobile_state);
+    let node_hydrated = NodeKeyManager::new_with_state(deserialized_node_state);
 
     // Verify that the hydrated key managers can still perform operations
     // Try encrypting and decrypting data with the hydrated managers
