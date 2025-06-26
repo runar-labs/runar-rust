@@ -195,11 +195,19 @@ impl KeyManager {
 
     /// Generate a new symmetric encryption key and store it with the given ID.
     /// This key is intended for encrypting data at rest (e.g., files) and will not leave the key manager.
-    pub fn generate_symmetric_key(&mut self, key_id: &str) -> Result<()> {
+    pub fn generate_symmetric_key(&mut self, key_id: &str) -> Result<SymmetricKey> {
         let symmetric_key = crate::crypto::SymmetricKey::new();
         self.symmetric_keys
-            .insert(key_id.to_string(), symmetric_key);
-        Ok(())
+            .insert(key_id.to_string(), symmetric_key.clone());
+        Ok(symmetric_key)
+    }
+
+    /// Ensure a symmetric key exists and return it (create one if it doesn't exist)
+    pub fn ensure_symmetric_key(&mut self, key_id: &str) -> Result<SymmetricKey> {
+        if let Some(key) = self.symmetric_keys.get(key_id) {
+            return Ok(key.clone());
+        }
+        self.generate_symmetric_key(key_id)
     }
 
     /// Encrypt data using a stored symmetric key.

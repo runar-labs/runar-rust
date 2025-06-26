@@ -2000,36 +2000,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runar-keys"
-version = "0.1.0"
-dependencies = [
- "aead",
- "aes-gcm",
- "anyhow",
- "async-trait",
- "bincode",
- "chacha20poly1305",
- "ed25519-dalek",
- "ed25519-hd-key",
- "futures",
- "hex",
- "hkdf",
- "rand 0.8.5",
- "runar_common",
- "runar_macros",
- "runar_node",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "uuid",
- "x25519-dalek",
-]
-
-[[package]]
 name = "runar_common"
 version = "0.1.0"
 dependencies = [
@@ -2049,6 +2019,35 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "runar_keys"
+version = "0.1.0"
+dependencies = [
+ "aead",
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "ed25519-hd-key",
+ "futures",
+ "hex",
+ "hkdf",
+ "rand 0.8.5",
+ "runar_common",
+ "runar_macros",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -2097,6 +2096,7 @@ dependencies = [
  "rcgen",
  "ring 0.17.14",
  "runar_common",
+ "runar_keys",
  "rustls 0.21.12",
  "rustls-native-certs",
  "rustls-pemfile",
@@ -2120,7 +2120,6 @@ dependencies = [
  "async-trait",
  "futures",
  "hex",
- "runar-keys",
  "runar_common",
  "runar_macros",
  "runar_node",

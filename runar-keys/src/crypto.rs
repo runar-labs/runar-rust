@@ -555,6 +555,10 @@ impl SymmetricKey {
         Ok(Self { key })
     }
 
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.key.to_vec()
+    }
+
     /// Encrypt data using ChaCha20Poly1305
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
         let cipher = ChaCha20Poly1305::new_from_slice(&self.key)

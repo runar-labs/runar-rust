@@ -1,5 +1,5 @@
 [package]
-name = "runar-keys"
+name = "runar_keys"
 version = "0.1.0"
 edition = "2021"
 authors = ["Runar Team"]
@@ -17,7 +17,7 @@ uuid = { version = "1.8", features = ["v4", "serde"] } # Added for crud_sqlite.r
 futures = "0.3"
 tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
 runar_common = { path = "../runar-common", features = ["abstract_service"] }
-runar_node = { path = "../runar-node" }
+
 
 # Cryptography dependencies for runar-keys POC
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "std"] } # For Ed25519 operations, version 2.x is common

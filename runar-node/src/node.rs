@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
+use runar_keys::NodeKeyManager;
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -34,18 +35,19 @@ use crate::config::LoggingConfig;
 use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
 
 use crate::routing::TopicPath;
+use crate::services::keys_service::KeysService;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
 use crate::services::registry_service::RegistryService;
 use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
 use crate::services::service_registry::{ServiceEntry, ServiceRegistry};
-use crate::services::EventContext; // Explicit import for EventContext
 use crate::services::NodeDelegate;
 use crate::services::{
     ActionHandler, /* EventContext, NodeDelegate, */ EventCallback, EventRegistrationOptions,
     PublishOptions, RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
+use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
 use runar_common::types::AsArcValue;
 
@@ -189,6 +191,8 @@ pub struct Node {
     pub serializer: Arc<RwLock<SerializerRegistry>>,
 
     pub registry_version: Arc<AtomicI64>,
+
+    keys_manager: Arc<RwLock<NodeKeyManager>>,
 }
 
 // Implementation for Node
@@ -234,7 +238,13 @@ impl Node {
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
         let peer_id = PeerId::new(node_id.clone());
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
-        // Create the node (with network fields now included)
+
+        // TODO implement proper initialization where we check if the node has previous being initialized
+        // if not then is a bran new node and need to enter setup mode
+        // we need this to support two modes.. one is embeded and one is cli
+        // in cli mode the setup is made via cli, em embeded the setupo is done via API
+        let keys_manager = Arc::new(RwLock::new(NodeKeyManager::new()));
+
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: default_network_id,
@@ -254,6 +264,7 @@ impl Node {
                 serializer_logger,
             ))),
             registry_version: Arc::new(AtomicI64::new(0)),
+            keys_manager,
         };
 
         // Register the registry service
@@ -261,9 +272,13 @@ impl Node {
             logger.clone(),
             Arc::new(node.clone()) as Arc<dyn RegistryDelegate>,
         );
-
-        // Add the registry service to the node
         node.add_service(registry_service).await?;
+
+        let keys_service = KeysService::new(
+            logger.clone(),
+            Arc::new(node.clone()) as Arc<dyn KeysDelegate>,
+        );
+        node.add_service(keys_service).await?;
 
         Ok(node)
     }
@@ -1849,6 +1864,17 @@ impl NodeDelegate for Node {
 }
 
 #[async_trait]
+impl KeysDelegate for Node {
+    async fn ensure_symetric_key(&self, key_name: &str) -> Result<ArcValue> {
+        let mut keys_manager = self.keys_manager.write().await;
+        let key_bytes: Vec<u8> = keys_manager
+            .ensure_symetric_key(key_name)
+            .expect("Failed to ensure symmetric key");
+        Ok(ArcValue::new_bytes(key_bytes))
+    }
+}
+
+#[async_trait]
 impl RegistryDelegate for Node {
     /// Get service state
     async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
@@ -1927,6 +1953,7 @@ impl Clone for Node {
             pending_requests: self.pending_requests.clone(),
             serializer: self.serializer.clone(),
             registry_version: self.registry_version.clone(),
+            keys_manager: self.keys_manager.clone(),
         }
     }
 }

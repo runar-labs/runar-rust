@@ -90,13 +90,32 @@ impl SqliteWorker {
         db_path: String,
         receiver: mpsc::Receiver<SqliteWorkerCommand>,
         logger: Arc<Logger>,
-        ready_tx: oneshot::Sender<()>, // Add ready channel sender
+        ready_tx: oneshot::Sender<()>,  // Add ready channel sender
+        symmetric_key: Option<Vec<u8>>, // Direct symmetric key bytes for encryption
     ) -> Result<Self, String> {
         let connection = Connection::open(db_path.clone()).map_err(|e| {
             let err_msg = format!("Failed to open SQLite connection to '{}': {}", db_path, e);
             logger.error(&err_msg);
             err_msg
         })?;
+
+        // If a symmetric key is provided, use it for encryption
+        if let Some(key_bytes) = symmetric_key {
+            // Convert the key bytes to a hex string for SQLCipher
+            // SQLCipher expects the key as a hex string when using raw keys
+            let hex_key = format!("x'{}'", hex::encode(&key_bytes));
+
+            // Set the raw key using PRAGMA
+            connection
+                .pragma_update(None, "key", &hex_key)
+                .map_err(|e| {
+                    let err_msg = format!("Failed to set database key: {}", e);
+                    logger.error(&err_msg);
+                    err_msg
+                })?;
+            logger.debug("Database key set successfully using provided symmetric key.");
+        }
+
         // TODO: Apply any pragmas or initial setup to the connection here if needed
         // E.g., conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
         logger.debug(
@@ -547,14 +566,17 @@ pub struct SqliteConfig {
     pub db_path: String,
     /// Schema definition for the database
     pub schema: Schema,
+    /// Encryption flag
+    pub encryption: bool,
 }
 
 impl SqliteConfig {
     /// Create a new SQLite config with path and schema
-    pub fn new(db_path: impl Into<String>, schema: Schema) -> Self {
+    pub fn new(db_path: impl Into<String>, schema: Schema, encryption: bool) -> Self {
         Self {
             db_path: db_path.into(),
             schema,
+            encryption,
         }
     }
 }
@@ -790,6 +812,26 @@ impl AbstractService for SqliteService {
         let schema_clone = self.config.schema.clone();
         let logger_clone_for_thread = context.logger.clone();
 
+        let mut encryption_key: Option<Vec<u8>> = None;
+
+        if self.config.encryption {
+            context.info("SqliteService encryption enabled - requesting symetric key.");
+            // request a symetric key for this service,
+            // if one exists it will be returned, if not one will be created, stored amd returned
+            let key_name = format!(
+                "sqlite_{}_{}_{}",
+                self.path,
+                self.version,
+                self.network_id.as_ref().expect("network_id is required")
+            );
+            let key: Vec<u8> = context
+                .request("$keys/ensure_symetric_key", Some(key_name))
+                .await?;
+            encryption_key = Some(key);
+        } else {
+            context.warn("SqliteService encryption disabled.");
+        }
+
         thread::spawn(move || {
             let worker_runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -802,6 +844,7 @@ impl AbstractService for SqliteService {
                     rx,
                     logger_clone_for_thread.clone(),
                     ready_tx, // Pass the ready signal sender
+                    encryption_key,
                 ) {
                     Ok(worker) => {
                         logger_clone_for_thread.info("SqliteWorker thread starting run loop.");

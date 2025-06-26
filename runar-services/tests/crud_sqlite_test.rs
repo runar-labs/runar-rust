@@ -148,6 +148,7 @@ async fn setup_node_with_services() -> Result<Node> {
     let sqlite_config = SqliteConfig {
         db_path: ":memory:".to_string(),
         schema: (*app_schema).clone(), // SqliteService takes ownership of the schema for table creation
+        encryption: false,
     };
     let sqlite_service = SqliteService::new(
         SQLITE_SERVICE_NAME.to_string(),

@@ -23,6 +23,7 @@ rand = "0.9.0"
 
 # Local dependencies
 runar_common = { path = "../runar-common" }
+runar_keys = { path = "../runar-keys" }
 
 # Network dependencies
 quinn = "0.10.1"

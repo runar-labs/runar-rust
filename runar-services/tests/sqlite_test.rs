@@ -91,6 +91,7 @@ mod tests {
         let sqlite_config = SqliteConfig {
             db_path: ":memory:".to_string(), // Use in-memory database for tests
             schema,
+            encryption: true,
         };
 
         let service = SqliteService::new(service_name, service_path, sqlite_config);

@@ -19,6 +19,7 @@
 // Module declarations
 pub mod abstract_service;
 pub mod event_context;
+pub mod keys_service;
 pub mod load_balancing;
 pub mod registry_service;
 pub mod remote_service;
@@ -728,6 +729,17 @@ pub trait NodeDelegate: Send + Sync {
         handler: ActionHandler,
         metadata: Option<ActionMetadata>,
     ) -> Result<()>;
+}
+
+/// Registry Delegate trait for keys service operations
+///
+/// INTENTION: Provide a dedicated interface for the Keys Service
+/// to interact with the core keys management without creating circular references.
+/// This follows the same pattern as NodeDelegate but provides only
+/// the functionality needed by keys operations.
+#[async_trait::async_trait]
+pub trait KeysDelegate: Send + Sync {
+    async fn ensure_symetric_key(&self, key_name: &str) -> Result<ArcValue>;
 }
 
 /// Registry Delegate trait for registry service operations

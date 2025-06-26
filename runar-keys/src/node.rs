@@ -32,9 +32,6 @@ pub struct NodeKeyManager {
     key_manager: KeyManager,
     /// Node identifier
     node_public_key: Vec<u8>,
-    //TODO review and remove this... node can participate in a multiple networiks not just one
-    // Network identifier (if part of a network)
-    //network_id: Option<String>,
 }
 
 impl Default for NodeKeyManager {
@@ -294,5 +291,11 @@ impl NodeKeyManager {
     pub fn decrypt_data(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
         self.key_manager
             .decrypt_with_symmetric_key("node_storage", encrypted_data)
+    }
+
+    /// Ensure a symmetric key exists and return it (create one if it doesn't exist)
+    pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
+        let key = self.key_manager.ensure_symmetric_key(key_name)?;
+        Ok(key.to_bytes())
     }
 }
