@@ -66,7 +66,7 @@ impl KeysService {
         key_name: String,
         ctx: RequestContext,
     ) -> Result<ArcValue> {
-        ctx.logger.debug("Listing all services");
+        ctx.logger.debug("ensure_symetric_key");
         self.keys_delegate.ensure_symetric_key(&key_name).await
     }
 }

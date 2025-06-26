@@ -36,6 +36,32 @@ struct MyData {
     map_field: HashMap<String, String>,
 }
 
+// Helper struct to ensure test database is cleaned up
+struct TestDbGuard {
+    db_path: String,
+}
+
+impl TestDbGuard {
+    fn new() -> Self {
+        let current_dir = std::env::current_dir().unwrap();
+        let db_path = format!("{}/users_db_test.db", current_dir.display());
+        Self { db_path }
+    }
+
+    fn path(&self) -> &str {
+        &self.db_path
+    }
+}
+
+impl Drop for TestDbGuard {
+    fn drop(&mut self) {
+        // Clean up the test database file if it exists
+        if std::path::Path::new(&self.db_path).exists() {
+            let _ = std::fs::remove_file(&self.db_path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,10 +112,12 @@ mod tests {
 
         let service_name = "users_db_test".to_string();
         let service_path = "users_db".to_string();
-        //let service_version = "0.1.0".to_string();
-        //let service_description = "Test SQLite User Service".to_string();
+
+        // Create a test database guard that will clean up after the test
+        let db_guard = TestDbGuard::new();
+
         let sqlite_config = SqliteConfig {
-            db_path: ":memory:".to_string(), // Use in-memory database for tests
+            db_path: db_guard.path().to_string(),
             schema,
             encryption: true,
         };
