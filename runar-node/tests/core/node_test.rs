@@ -39,7 +39,7 @@ async fn test_node_create() {
     match timeout(Duration::from_secs(10), async {
         println!("Starting test_node_create");
         // Create a node with a test network ID
-        let mut config = NodeConfig::new("test-node", "test_network");
+        let mut config = NodeConfig::new_test_config("test-node", "test_network");
         // Disable networking properly
         config.network_config = None;
         let _node = Node::new(config).await.unwrap();
@@ -68,7 +68,7 @@ async fn test_node_add_service() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
-        let mut config = NodeConfig::new("test-node", "test_network");
+        let mut config = NodeConfig::new_test_config("test-node", "test_network");
         // Disable networking
         config.network_config = None;
         let mut node = Node::new(config).await.unwrap();
@@ -107,7 +107,7 @@ async fn test_node_request() {
 
         // Create a node with a test network ID
         let mut config =
-            NodeConfig::new("test-node", "test_network").with_logging_config(logging_config);
+            NodeConfig::new_test_config("test-node", "test_network").with_logging_config(logging_config);
         // Disable networking
         config.network_config = None;
         let mut node = Node::new(config).await.unwrap();
@@ -154,7 +154,7 @@ async fn test_node_lifecycle() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
-        let mut config = NodeConfig::new("test-node", "test_network");
+        let mut config = NodeConfig::new_test_config("test-node", "test_network");
         // Disable networking
         config.network_config = None;
         let mut node = Node::new(config).await.unwrap();
@@ -182,7 +182,7 @@ async fn test_node_lifecycle() {
 /// components which are required for remote communication.
 #[tokio::test]
 async fn test_node_event_metadata_registration() -> Result<()> {
-    let mut config = NodeConfig::new("test-node-event-meta", "test_network_event");
+    let mut config = NodeConfig::new_test_config("test-node-event-meta", "test_network_event");
     config.network_config = None; // Disable networking for this unit test
     let mut node = Node::new(config).await?;
 
@@ -259,7 +259,7 @@ async fn test_node_event_metadata_registration() -> Result<()> {
 #[tokio::test]
 async fn test_node_init() -> Result<()> {
     // Create a node configuration
-    let mut config = NodeConfig::new("test-node", "test-network");
+    let mut config = NodeConfig::new_test_config("test-node", "test-network");
     config.network_config = None;
 
     // Create a node
@@ -288,7 +288,7 @@ async fn test_node_events() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
-        let mut config = NodeConfig::new("test-node", "test_network");
+        let mut config = NodeConfig::new_test_config("test-node", "test_network");
         config.network_config = None;
         let node = Node::new(config).await.unwrap();
 
@@ -345,7 +345,7 @@ async fn test_node_events() {
 #[tokio::test]
 async fn test_path_params_in_context() {
     // Create a node with a test network ID
-    let mut config = NodeConfig::new("test-node", "test_network");
+    let mut config = NodeConfig::new_test_config("test-node", "test_network");
     config.network_config = None;
     let mut node = Node::new(config).await.unwrap();
 

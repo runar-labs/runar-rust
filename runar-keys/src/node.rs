@@ -27,6 +27,7 @@ pub struct NodeKeyManagerData {
 }
 
 /// Node key manager
+#[derive(Debug)]
 pub struct NodeKeyManager {
     /// The underlying key manager
     key_manager: KeyManager,

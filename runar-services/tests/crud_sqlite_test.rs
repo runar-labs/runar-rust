@@ -30,7 +30,7 @@ const CRUD_SERVICE_PATH: &str = "crud_db";
 async fn setup_node_with_services() -> Result<Node> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     let node_config =
-        NodeConfig::new("crud-test-node", "test_network_crud").with_logging_config(logging_config);
+        NodeConfig::new_test_config("crud-test-node", "test_network_crud").with_logging_config(logging_config);
     let mut node = Node::new(node_config).await?;
 
     let _logger_arc = Arc::new(Logger::new_root(

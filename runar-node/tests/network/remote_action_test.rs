@@ -50,7 +50,7 @@ async fn test_remote_action_call() -> Result<()> {
         .with_quinn_log_level(log::LevelFilter::Warn); // Reduce noisy Quinn connection logs
 
     // Create node configurations with network enabled
-    let node1_config = NodeConfig::new("node1", "test")
+    let node1_config = NodeConfig::new_test_config("node1", "test")
         .with_network_config(NetworkConfig::with_quic(options_a).with_multicast_discovery());
 
     logger.info(format!("Node1 config: {}", node1_config));
@@ -72,7 +72,7 @@ async fn test_remote_action_call() -> Result<()> {
         .with_stream_idle_timeout(Duration::from_secs(30))
         .with_quinn_log_level(log::LevelFilter::Warn); // Reduce noisy Quinn connection logs
 
-    let node2_config = NodeConfig::new("node2", "test")
+    let node2_config = NodeConfig::new_test_config("node2", "test")
         .with_network_config(NetworkConfig::with_quic(options_b).with_multicast_discovery());
 
     logger.info(format!("Node2 config: {}", node2_config));

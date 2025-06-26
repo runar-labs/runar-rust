@@ -70,28 +70,41 @@ pub struct NodeConfig {
 
     /// Logging configuration options
     pub logging_config: Option<LoggingConfig>,
+
+    /// Node keys manager
+    pub node_keys_manager: Option<Arc<RwLock<NodeKeyManager>>>,
+
     //FIX: move this to the network config.. local sercvies shuold not have timeout checks.
     /// Request timeout in milliseconds
     pub request_timeout_ms: u64,
 }
 
 impl NodeConfig {
-    /// Create a new configuration with the specified node ID and network ID
-    pub fn new(node_id: impl Into<String>, default_network_id: impl Into<String>) -> Self {
+    /// Create a new test configuration with the specified node ID and network ID and a empty node keys manager
+    pub fn new_test_config(
+        node_id: impl Into<String>,
+        default_network_id: impl Into<String>,
+    ) -> Self {
         Self {
             node_id: node_id.into(),
             default_network_id: default_network_id.into(),
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            request_timeout_ms: 30000,                           // 30 seconds
+            node_keys_manager: Some(Arc::new(RwLock::new(NodeKeyManager::new()))),
+            request_timeout_ms: 30000, // 30 seconds
         }
     }
 
     /// Generate a node ID if not provided
     pub fn new_with_generated_id(default_network_id: impl Into<String>) -> Self {
         let node_id = Uuid::new_v4().to_string();
-        Self::new(node_id, default_network_id)
+        Self::new_test_config(node_id, default_network_id)
+    }
+
+    pub fn with_node_keys_manager(mut self, node_keys_manager: NodeKeyManager) -> Self {
+        self.node_keys_manager = Some(Arc::new(RwLock::new(node_keys_manager)));
+        self
     }
 
     /// Add network configuration
@@ -239,11 +252,11 @@ impl Node {
         let peer_id = PeerId::new(node_id.clone());
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
-        // TODO implement proper initialization where we check if the node has previous being initialized
-        // if not then is a bran new node and need to enter setup mode
-        // we need this to support two modes.. one is embeded and one is cli
-        // in cli mode the setup is made via cli, em embeded the setupo is done via API
-        let keys_manager = Arc::new(RwLock::new(NodeKeyManager::new()));
+        let keys_manager = config
+            .node_keys_manager
+            .as_ref()
+            .cloned()
+            .expect("Node keys manager not found");
 
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),

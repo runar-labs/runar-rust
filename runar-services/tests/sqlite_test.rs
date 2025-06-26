@@ -76,8 +76,8 @@ mod tests {
         let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
 
         // Create a node with a test network ID
-        let config =
-            NodeConfig::new("test-node", "test_network").with_logging_config(logging_config);
+        let config = NodeConfig::new_test_config("test-node", "test_network")
+            .with_logging_config(logging_config);
         let mut node = Node::new(config).await.unwrap();
 
         let schema = Schema {

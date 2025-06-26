@@ -7,6 +7,7 @@ use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
+use std::fmt;
 
 /// Key manager that stores and manages cryptographic keys
 /// Structure to hold serializable key data for persistence
@@ -35,6 +36,18 @@ pub struct KeyManager {
     symmetric_keys: HashMap<String, SymmetricKey>,
     /// Certificates by subject
     certificates: HashMap<String, Certificate>,
+}
+
+impl fmt::Debug for KeyManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeyManager")
+            .field("seed", &self.seed.as_ref().map(|_| "[REDACTED]"))
+            .field("signing_keys_count", &self.signing_keys.len())
+            .field("encryption_keys_count", &self.encryption_keys.len())
+            .field("symmetric_keys_count", &self.symmetric_keys.len())
+            .field("certificates_count", &self.certificates.len())
+            .finish()
+    }
 }
 
 impl Default for KeyManager {
