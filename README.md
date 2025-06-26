@@ -1,8 +1,10 @@
-# Runar ‑ Rust Backend Framework
+# Runar ‑ Build Privacy Preserving Applications
 
-Runar is a lightweight, high-performance Rust framework for building **end-to-end encrypted, modular, and developer-friendly** back-end services. Due to its architecture it also makes it easy to build peer-to-peer (P2P) applications.
+Runar is a lightweight, high-performance framework for building **end-to-end encrypted, modular, and developer-friendly** applications. Due to its architecture it also makes it easy to build peer-to-peer (P2P) applications.
 
 Runar’s design blends battle-tested cryptography with an ergonomic API surface and mobile-wallet key management, enabling small teams to ship production-grade back-ends without a dedicated DevOps or security department.
+
+We are currently working on the rust version, but the plans is to support also TypeScript, Python and Golang.
 
 ---
 
