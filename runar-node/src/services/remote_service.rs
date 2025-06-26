@@ -361,6 +361,9 @@ impl AbstractService for RemoteService {
     fn network_id(&self) -> Option<String> {
         Some(self.service_topic.network_id())
     }
+    fn set_network_id(&mut self, _network_id: String) {
+        // remote services cannoty change network id
+    }
 
     async fn init(&self, _context: LifecycleContext) -> Result<()> {
         // Remote services don't need initialization since they're just proxies

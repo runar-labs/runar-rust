@@ -117,6 +117,7 @@ fn generate_service_metadata(struct_type: &Ident) -> TokenStream2 {
     let path_ident = Ident::new(&format!("SERVICE_PATH_{}", base), Span::call_site());
     let desc_ident = Ident::new(&format!("SERVICE_DESCRIPTION_{}", base), Span::call_site());
     let ver_ident = Ident::new(&format!("SERVICE_VERSION_{}", base), Span::call_site());
+    let net_ident = Ident::new(&format!("SERVICE_NETWORK_ID_{}", base), Span::call_site());
 
     quote! {
         // Static metadata holders (unique per service)
@@ -124,6 +125,7 @@ fn generate_service_metadata(struct_type: &Ident) -> TokenStream2 {
         static #path_ident: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         static #desc_ident: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         static #ver_ident: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        static #net_ident: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
     }
 }
 
@@ -254,6 +256,8 @@ fn generate_abstract_service_impl(
         .cloned()
         .unwrap_or_else(|| "1.0.0".to_string());
 
+    let network_id_value = service_attrs.get("network_id").cloned();
+
     // Extract all types from methods
     let mut all_types = HashSet::new();
 
@@ -319,6 +323,10 @@ fn generate_abstract_service_impl(
         &format!("SERVICE_VERSION_{}", base_upper),
         Span::call_site(),
     );
+    let net_ident = Ident::new(
+        &format!("SERVICE_NETWORK_ID_{}", base_upper),
+        Span::call_site(),
+    );
 
     quote! {
         #[async_trait::async_trait]
@@ -348,7 +356,10 @@ fn generate_abstract_service_impl(
             }
 
             fn network_id(&self) -> Option<String> {
-                None
+                #net_ident.read().unwrap().clone()
+            }
+            fn set_network_id(&mut self, network_id: String) {
+                *#net_ident.write().unwrap() = Some(network_id);
             }
 
             async fn init(&self, context: runar_node::services::LifecycleContext) -> anyhow::Result<()> {

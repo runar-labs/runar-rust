@@ -9,6 +9,7 @@ use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::ArcValue;
 use runar_macros::{action, publish, service, subscribe};
 use runar_node::services::{EventContext, RequestContext};
+use runar_node::AbstractService;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc}; // Added for metadata testing
 
@@ -21,6 +22,7 @@ struct MyData {
     float_field: f64,
     vector_field: Vec<i32>,
     map_field: HashMap<String, i32>,
+    network_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -129,6 +131,7 @@ impl TestService {
             float_field: total,
             vector_field: vec![1, 2, 3],
             map_field: HashMap::new(),
+            network_id: self.network_id(),
         };
         ctx.publish("my_data_changed", Some(ArcValue::from_struct(data.clone())))
             .await?;
@@ -468,6 +471,7 @@ mod tests {
                 float_field: 1500.0,
                 vector_field: vec![1, 2, 3],
                 map_field: HashMap::new(),
+                network_id: Some("test_network".to_string()),
             }
         );
 

@@ -294,25 +294,30 @@ impl Node {
     /// INTENTION: Register a service with this node, making its actions available
     /// for requests and allowing it to receive events. This method initializes the
     /// service but does not start it - services are started when the node is started.
-    pub async fn add_service<S: AbstractService + 'static>(&mut self, service: S) -> Result<()> {
-        let service_path = service.path();
-        let service_name = service.name();
+    pub async fn add_service<S: AbstractService + 'static>(
+        &mut self,
+        mut service: S,
+    ) -> Result<()> {
         let default_network_id = self.network_id.to_string();
         let service_network_id = match service.network_id() {
             Some(id) => id,
-            None => default_network_id,
+            None => default_network_id.clone(),
         };
+        service.set_network_id(service_network_id.clone());
+
+        let service_path = service.path();
+        let service_name = service.name();
 
         self.logger.info(format!(
             "Adding service '{}' to node using path {}",
             service_name, service_path
         ));
         self.logger
-            .debug(format!("network id {}", service_network_id));
+            .debug(format!("network id {}", default_network_id));
 
         let registry = Arc::clone(&self.service_registry);
         // Create a proper topic path for the service
-        let service_topic = match crate::routing::TopicPath::new(service_path, &service_network_id)
+        let service_topic = match crate::routing::TopicPath::new(service_path, &default_network_id)
         {
             Ok(tp) => tp,
             Err(e) => {
@@ -1525,11 +1530,12 @@ impl Node {
         // Build capability information for each service
         let mut services = Vec::new();
 
+        let internal_services = vec!["$registry", "$keys"];
+
         for (service_path, service_entry) in service_paths {
             let service = &service_entry.service;
             // Skip internals services:
-            // -$registry service -
-            if service.path().contains("$registry") {
+            if internal_services.contains(&service.path()) {
                 continue;
             }
 
