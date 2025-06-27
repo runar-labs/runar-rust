@@ -25,7 +25,8 @@ async fn test_registry_service_list_services() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
-        let config = NodeConfig::new_test_config("node-reg-list".to_string(), "test_network".to_string());
+        let config =
+            NodeConfig::new_test_config("node-reg-list".to_string(), "test_network".to_string());
         let mut node = Node::new(config).await.unwrap();
 
         // Create a test service
@@ -95,8 +96,8 @@ async fn test_registry_service_get_service_info() {
         let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
 
         // Create a node with a test network ID
-        let config =
-            NodeConfig::new_test_config("node-reg-info", "test_network").with_logging_config(logging_config);
+        let config = NodeConfig::new_test_config("node-reg-info", "test_network")
+            .with_logging_config(logging_config);
         let mut node = Node::new(config).await.unwrap();
 
         // Create a test service

@@ -72,7 +72,7 @@ pub struct NodeConfig {
     pub logging_config: Option<LoggingConfig>,
 
     /// Node keys manager
-    pub node_keys_manager: Option<Arc<RwLock<NodeKeyManager>>>,
+    // pub node_keys_manager: Option<Arc<RwLock<NodeKeyManager>>>,
 
     //FIX: move this to the network config.. local sercvies shuold not have timeout checks.
     /// Request timeout in milliseconds
@@ -91,7 +91,7 @@ impl NodeConfig {
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            node_keys_manager: Some(Arc::new(RwLock::new(NodeKeyManager::new()))),
+            // node_keys_manager: Some(Arc::new(RwLock::new(NodeKeyManager::new()))),
             request_timeout_ms: 30000, // 30 seconds
         }
     }
@@ -102,10 +102,10 @@ impl NodeConfig {
         Self::new_test_config(node_id, default_network_id)
     }
 
-    pub fn with_node_keys_manager(mut self, node_keys_manager: NodeKeyManager) -> Self {
-        self.node_keys_manager = Some(Arc::new(RwLock::new(node_keys_manager)));
-        self
-    }
+    // pub fn with_node_keys_manager(mut self, node_keys_manager: NodeKeyManager) -> Self {
+    //     self.node_keys_manager = Some(Arc::new(RwLock::new(node_keys_manager)));
+    //     self
+    // }
 
     /// Add network configuration
     pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
@@ -252,11 +252,13 @@ impl Node {
         let peer_id = PeerId::new(node_id.clone());
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
-        let keys_manager = config
-            .node_keys_manager
-            .as_ref()
-            .cloned()
-            .expect("Node keys manager not found");
+        // let keys_manager = config
+        //     .node_keys_manager
+        //     .as_ref()
+        //     .cloned()
+        //     .expect("Node keys manager not found");
+
+        let keys_manager = Arc::new(RwLock::new(NodeKeyManager::new()));
 
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),

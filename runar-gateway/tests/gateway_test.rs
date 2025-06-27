@@ -69,8 +69,8 @@ async fn test_gateway_routes() -> Result<()> {
     let node_network_id = "test-network-gw";
     let logging_config = runar_node::config::LoggingConfig::new()
         .with_default_level(runar_node::config::LogLevel::Debug);
-    let node_config =
-        NodeConfig::new_test_config("gateway-test-node", node_network_id).with_logging_config(logging_config);
+    let node_config = NodeConfig::new_test_config("gateway-test-node", node_network_id)
+        .with_logging_config(logging_config);
     let mut node = Node::new(node_config).await?;
 
     // 2. Setup and Add EchoService

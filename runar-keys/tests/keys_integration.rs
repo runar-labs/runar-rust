@@ -109,10 +109,10 @@ fn test_e2e_keys_generation_and_exchange() {
     let (quic_certs, _quic_certs_verifier) = node
         .get_quic_certs()
         .expect("Failed to get QUIC certificates");
-    
+
     // Validate the QUIC certificates
     assert!(!quic_certs.is_empty(), "No QUIC certificates returned");
-    
+
     // Basic validation of the certificates
     for cert in &quic_certs {
         assert!(!cert.is_empty(), "Empty certificate in chain");

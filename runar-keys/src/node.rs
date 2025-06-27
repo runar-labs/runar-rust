@@ -290,9 +290,14 @@ impl NodeKeyManager {
             .get_certificate("node_tls_cert")
             .ok_or_else(|| KeyError::KeyNotFound("Node certificate not found".to_string()))
     }
-    
+
     /// Get QUIC-compatible certificates and verifier for this node
-    pub fn get_quic_certs(&self) -> Result<(Vec<rustls::pki_types::CertificateDer<'static>>, std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier>)> {
+    pub fn get_quic_certs(
+        &self,
+    ) -> Result<(
+        Vec<rustls::pki_types::CertificateDer<'static>>,
+        std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier>,
+    )> {
         self.key_manager.get_quic_certs()
     }
 
