@@ -85,14 +85,19 @@ impl NodeConfig {
         node_id: impl Into<String>,
         default_network_id: impl Into<String>,
     ) -> Self {
+        //create test credentials
+        let node_keys_manager = NodeKeyManager::new();
+        node_keys_manager
+            .save_credentials()
+            .expect("Failed to save credentials");
+
         Self {
             node_id: node_id.into(),
             default_network_id: default_network_id.into(),
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            // node_keys_manager: Some(Arc::new(RwLock::new(NodeKeyManager::new()))),
-            request_timeout_ms: 30000, // 30 seconds
+            request_timeout_ms: 30000,                           // 30 seconds
         }
     }
 
