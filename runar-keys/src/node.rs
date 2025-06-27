@@ -1,4 +1,6 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, NetworkKeyMessage, NodeMessage};
+use crate::crypto::{
+    Certificate, EncryptionKeyPair, NetworkKeyMessage, NodeMessage, SigningKeyPair,
+};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::manager::{KeyManager, KeyManagerData};
@@ -45,9 +47,13 @@ impl NodeKeyManager {
     /// Create a new node key manager
     pub fn new() -> Self {
         let mut key_manager = KeyManager::new();
-        let node_public_key = key_manager
-            .generate_node_tls_key()
-            .expect("Failed to generate node TLS key");
+
+        // Generate a key pair for the node (certificate will be added later via CSR)
+        let keypair = SigningKeyPair::new();
+        let node_public_key = keypair.public_key().to_vec();
+
+        // Store the key pair
+        key_manager.add_signing_key("node_tls", keypair);
 
         // Generate an encryption key pair for the node
         key_manager
@@ -170,9 +176,13 @@ impl NodeKeyManager {
         // Validate the certificate using the provided CA public key
         certificate.validate(&ca_verifying_key)?;
 
-        // Store the certificate directly in the key manager
-        // We've already validated it with the CA public key, so we can just store it
-        self.key_manager.store_validated_certificate(certificate)?;
+        // Update the certificate subject and issuer to match our expected format
+        let mut cert = certificate;
+        cert.subject = format!("node:{}", hex::encode(&self.node_public_key));
+        cert.issuer = format!("ca:{}", hex::encode(&ca_public_key));
+
+        // Store the certificate - store_validated_certificate will handle the QUIC key mapping
+        self.key_manager.store_validated_certificate(cert)?;
 
         Ok(())
     }
@@ -269,11 +279,6 @@ impl NodeKeyManager {
         envelope.decrypt(network_encryption_key)
     }
 
-    /// Get the underlying key manager
-    pub fn key_manager(&self) -> &KeyManager {
-        &self.key_manager
-    }
-
     /// Get the underlying key manager mutably
     pub fn key_manager_mut(&mut self) -> &mut KeyManager {
         &mut self.key_manager
@@ -281,11 +286,14 @@ impl NodeKeyManager {
 
     /// Get the node's certificate
     pub fn get_node_certificate(&self) -> Result<&Certificate> {
-        let node_pk_str = hex::encode(self.node_public_key());
-        let subject = format!("node:{}", node_pk_str);
         self.key_manager
-            .get_certificate(&subject)
+            .get_certificate("node_tls_cert")
             .ok_or_else(|| KeyError::KeyNotFound("Node certificate not found".to_string()))
+    }
+    
+    /// Get QUIC-compatible certificates and verifier for this node
+    pub fn get_quic_certs(&self) -> Result<(Vec<rustls::pki_types::CertificateDer<'static>>, std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier>)> {
+        self.key_manager.get_quic_certs()
     }
 
     /// Encrypt data using the node's symmetric storage key.

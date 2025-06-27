@@ -394,7 +394,9 @@ pub struct Certificate {
 }
 
 impl Certificate {
-    fn get_signed_data(&self) -> Result<Vec<u8>> {
+    /// Get the data to be signed for this certificate
+    /// Returns a serialized representation of the certificate fields that should be signed
+    pub fn get_signed_data(&self) -> Result<Vec<u8>> {
         // Create a temporary struct with the same data but empty signature
         // This ensures consistent serialization for both signing and verification
         let data_to_sign = (

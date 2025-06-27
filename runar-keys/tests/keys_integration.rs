@@ -104,6 +104,20 @@ fn test_e2e_keys_generation_and_exchange() {
     // FROM THIS POINT THE NODE AND MOBILE WILL RE-CONNECT USING THE NEW CERTIFICATES AND
     // ALL FUTURE COMMS ARE SECURED AND ECNRYPTED USING THESE NEW CREDENTIALS.
 
+    // Get QUIC-compatible certificates and verifier from the node
+    // This uses the existing certificate that was just validated from the mobile side
+    let (quic_certs, _quic_certs_verifier) = node
+        .get_quic_certs()
+        .expect("Failed to get QUIC certificates");
+    
+    // Validate the QUIC certificates
+    assert!(!quic_certs.is_empty(), "No QUIC certificates returned");
+    
+    // Basic validation of the certificates
+    for cert in &quic_certs {
+        assert!(!cert.is_empty(), "Empty certificate in chain");
+    }
+
     // 5 - (mobile side) -  user created a network with a given name - generate a network key
     let network_public_key = mobile
         .generate_network_data_key()

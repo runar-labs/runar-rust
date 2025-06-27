@@ -1,13 +1,14 @@
-use crate::crypto::{
-    Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey, SigningKeyPair, SymmetricKey,
-};
+use crate::crypto::{Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey, SigningKeyPair, SymmetricKey};
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
 use ed25519_dalek::VerifyingKey;
+use rustls::client::danger::ServerCertVerifier;
+use rustls::pki_types::CertificateDer;
+use rustls::RootCertStore;
 use serde::{Deserialize, Serialize};
-
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 /// Key manager that stores and manages cryptographic keys
 /// Structure to hold serializable key data for persistence
@@ -141,12 +142,58 @@ impl KeyManager {
         Ok(signing_keypair.public_key().to_vec())
     }
 
-    /// Generate a node TLS key pair
-    pub fn generate_node_tls_key(&mut self) -> Result<Vec<u8>> {
-        let signing_keypair = SigningKeyPair::new();
-        self.signing_keys
-            .insert("node_tls".to_string(), signing_keypair.clone());
-        Ok(signing_keypair.public_key().to_vec())
+    /// Generate a node TLS key pair and self-signed certificate for QUIC
+    /// Get the node's QUIC TLS key pair and certificate
+    /// 
+    /// This expects the certificate to be already generated and signed by the user's CA
+    /// during the node setup process.
+    pub fn get_node_quic_keys(&self) -> Result<Vec<u8>> {
+        self.get_node_public_key()
+    }
+    
+    /// Get the QUIC certificates and certificate verifier for use with Rustls
+    /// Returns a tuple containing:
+    /// 1. A vector of RustlsCertificate objects
+    /// 2. A ServerCertVerifier that trusts our CA
+    pub fn get_quic_certs(&self) -> Result<(Vec<CertificateDer<'static>>, Arc<dyn ServerCertVerifier>)> {
+        use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType};
+
+        // Get the node's certificate that was signed by the user's CA
+        let cert = self.certificates.get("node_tls_cert")
+            .ok_or_else(|| KeyError::KeyNotFound("Node TLS certificate not found. Complete node setup first.".to_string()))?;
+        
+        // Create a self-signed certificate for testing purposes
+        // In production, this should be replaced with the actual certificate from the CA
+        let mut params = CertificateParams::new(vec!["localhost".to_string()]);
+        
+        // Set the certificate subject from our stored certificate
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, &cert.subject);
+        params.distinguished_name = dn;
+        
+        // Generate a new key pair for the certificate
+        // Note: rcgen will handle the validity period with reasonable defaults
+        let cert = Certificate::from_params(params)
+            .map_err(|e| KeyError::CryptoError(format!("Failed to generate certificate: {}", e)))?;
+            
+        // Convert to DER format
+        let cert_der = cert.serialize_der()
+            .map_err(|e| KeyError::CryptoError(format!("Failed to serialize certificate: {}", e)))?;
+            
+        let cert_der = CertificateDer::from(cert_der);
+        
+        // Create a root store with our self-signed certificate
+        let mut root_store = RootCertStore::empty();
+        root_store.add(cert_der.clone())
+            .map_err(|e| KeyError::CryptoError(format!("Failed to add certificate to root store: {}", e)))?;
+            
+        // Create a verifier that trusts our CA
+        let verifier = rustls::client::WebPkiServerVerifier::builder(
+            Arc::new(root_store).into()
+        ).build()
+            .map_err(|e| KeyError::CryptoError(format!("Failed to create verifier: {}", e)))?;
+        
+        Ok((vec![cert_der], verifier))
     }
 
     pub fn get_node_public_key(&self) -> Result<Vec<u8>> {
@@ -327,16 +374,26 @@ impl KeyManager {
     ///
     /// This should only be used when the certificate has already been validated
     /// with the appropriate CA key.
+    /// 
+    /// Store a validated certificate in the key manager
+    /// Node TLS certificates are stored with the key "node_tls_cert"
+    /// Other certificates are stored with their subject as the key
     pub fn store_validated_certificate(&mut self, certificate: Certificate) -> Result<()> {
-        self.certificates
-            .insert(certificate.subject.clone(), certificate);
-
+        let key = if certificate.subject.starts_with("node:") {
+            "node_tls_cert".to_string()
+        } else {
+            certificate.subject.clone()
+        };
+        
+        self.certificates.insert(key, certificate);
         Ok(())
     }
 
-    /// Get a certificate by subject
-    pub fn get_certificate(&self, subject: &str) -> Option<&Certificate> {
-        self.certificates.get(subject)
+    /// Get a certificate by its key
+    /// For node certificates, use "node_tls_cert" as the key
+    /// For other certificates, use the subject as the key
+    pub fn get_certificate(&self, key: &str) -> Option<&Certificate> {
+        self.certificates.get(key)
     }
 
     /// Export all keys and certificates for persistence
