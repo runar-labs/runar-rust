@@ -41,6 +41,7 @@ webpki-roots = "0.25.0"  # For system root certificates
 # For the example
 tokio-stream = "0.1.14"
 ring = { version = "0.17.14", features = ["std"] }
+hex = "0.4.3"
 
 [dev-dependencies]
 tokio-test = "0.4"

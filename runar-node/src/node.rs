@@ -4,13 +4,13 @@
 // The Node is responsible for managing the service registry, handling requests, and
 // coordinating event publishing and subscriptions.
 //
-
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use hex;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
-use runar_keys::NodeKeyManager;
+use runar_keys::{MobileKeyManager, NodeKeyManager, NodeKeyManagerData};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -71,6 +71,8 @@ pub struct NodeConfig {
     /// Logging configuration options
     pub logging_config: Option<LoggingConfig>,
 
+    key_manager_state: Option<Vec<u8>>,
+
     //FIX: move this to the network config.. local sercvies shuold not have timeout checks.
     /// Request timeout in milliseconds
     pub request_timeout_ms: u64,
@@ -84,9 +86,10 @@ impl NodeConfig {
     ) -> Self {
         //create test credentials
         let node_keys_manager = NodeKeyManager::new();
-        node_keys_manager
-            .save_credentials()
-            .expect("Failed to save credentials");
+        let key_state = node_keys_manager.export_state();
+
+        let key_state_bytes =
+            bincode::serialize(&key_state).expect("Failed to serialize node state");
 
         Self {
             node_id: node_id.into(),
@@ -94,7 +97,74 @@ impl NodeConfig {
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            request_timeout_ms: 30000,                           // 30 seconds
+            key_manager_state: Some(key_state_bytes),
+            request_timeout_ms: 30000, // 30 seconds
+        }
+    }
+
+    //TODO move these test methods to another objct with only the tests utils..
+    // so this never gets to the final production code
+    pub fn new_network_test_config(
+        node_id: impl Into<String>,
+        default_network_id: impl Into<String>,
+    ) -> Self {
+        //create test credentials
+        //for network tests we need to also need the mobile manger to have the user CA
+        // and be able to validate the certifcates
+
+        let mut mobile = MobileKeyManager::new();
+        mobile.generate_seed();
+
+        // Generate user root key - now returns only the public key
+        let _user_root_public_key = mobile
+            .generate_user_root_key()
+            .expect("Failed to generate user root key");
+
+        // Create a user owned and managed CA
+        let _user_ca_public_key = mobile
+            .generate_user_ca_key()
+            .expect("Failed to generate user CA key");
+
+        let mut node_keys_manager = NodeKeyManager::new();
+        let setup_token = node_keys_manager
+            .generate_setup_token()
+            .expect("Failed to generate setup token");
+
+        // 3 - (mobile side) - received the token and sign the CSR
+        let cert = mobile
+            .process_setup_token(&setup_token)
+            .expect("Failed to process setup token");
+
+        // Extract the node ID from the setup token
+        // In a real-world scenario, the mobile device would have received this in the setup token
+        let node_public_key = hex::encode(&setup_token.node_public_key);
+
+        // Mobile encrypts a message containing both the certificate and CA public key for secure transmission to the node
+        // This ensures only the target node can decrypt the message and has the CA key needed for verification
+        let encrypted_node_msg = mobile
+            .encrypt_message_for_node(&cert, &node_public_key)
+            .expect("Failed to encrypt message");
+
+        node_keys_manager
+            .process_mobile_message(&encrypted_node_msg)
+            .expect("Failed to process encrypted certificate");
+
+        let key_state = node_keys_manager.export_state();
+
+        let key_state_bytes =
+            bincode::serialize(&key_state).expect("Failed to serialize node state");
+
+        //now the node keys manager contain valid keys and certificates and is stored in the
+        //key ring
+
+        Self {
+            node_id: node_id.into(),
+            default_network_id: default_network_id.into(),
+            network_ids: Vec::new(),
+            network_config: None,
+            logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
+            key_manager_state: Some(key_state_bytes),
+            request_timeout_ms: 30000, // 30 seconds
         }
     }
 
@@ -250,15 +320,17 @@ impl Node {
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
         // at this stage the node credentials must already exist and must be in a secure store
-        // TODO create a function called load_credentials() that return : Arc<RwLock<NodeKeyManager>>
-        // and is created from the existing credentials in the secure store (using keyring) and loaded via the
-        //  NodeKeyManager::new_with_state(deserialized_node_state);
-        // if new there are no credentials in the secure store, it shuold return an error
-        let manager = NodeKeyManager::load_credentials().context(
-            "Failed to load node credentials. Node must be initialized before it can be started.",
-        )?;
+        let key_manager_state_bytes = config
+            .key_manager_state
+            .clone()
+            .expect("Failed to load node credentials.");
+
+        let key_manager_state: NodeKeyManagerData = bincode::deserialize(&key_manager_state_bytes)
+            .expect("Failed to deserialize node keys state");
+
+        let keys_manager = NodeKeyManager::new_with_state(key_manager_state);
+
         logger.info("Successfully loaded existing node credentials.");
-        let keys_manager = Arc::new(tokio::sync::RwLock::new(manager));
 
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
@@ -279,7 +351,7 @@ impl Node {
                 serializer_logger,
             ))),
             registry_version: Arc::new(AtomicI64::new(0)),
-            keys_manager,
+            keys_manager: Arc::new(tokio::sync::RwLock::new(keys_manager)),
         };
 
         // Register the registry service
@@ -691,6 +763,22 @@ impl Node {
                     // Return success immediately since we've spawned the task
                     Ok(())
                 });
+
+                //TODO lets change how QUIC certificates current work
+                //curently they are passed in the options.. but now they should be passsed in the
+                //  QuicTransport::new() call..
+                // 1 remove everythig relate to certs from the QuicTransportOptions
+                // 2 update QuicTransport::new() to accept certs and verifier
+                // 3 make sure the internals of QuicTransportImpl are updated to use the certs and verifier
+                // DO NOT change anytihg else.. focus on QUIC transporter with these new certificates
+                // I have already created the test utils to generate certificates and keys -> new_network_test_config
+                // and udpate the tests on remove_action.rs to use it
+                let (cert_chain, verifier) = self
+                    .keys_manager
+                    .read()
+                    .await
+                    .get_quic_certs()
+                    .context("Failed to get QUIC certificates")?;
 
                 let transport = QuicTransport::new(
                     local_node_info,

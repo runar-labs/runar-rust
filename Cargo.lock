@@ -2758,6 +2758,7 @@ dependencies = [
  "dashmap",
  "env_logger",
  "futures-util",
+ "hex",
  "log",
  "quinn 0.10.2",
  "rand 0.9.1",

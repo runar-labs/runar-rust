@@ -38,19 +38,19 @@ async fn test_remote_action_call() -> Result<()> {
     let math_service1 = MathService::new("math1", "math1");
     let math_service2 = MathService::new("math2", "math2");
 
-    let (certs_a, key_a) = generate_test_certificates();
+    // let (certs_a, key_a) = generate_test_certificates();
     let options_a = QuicTransportOptions::new()
-        .with_certificates(certs_a)
-        .with_private_key(key_a)
-        .with_verify_certificates(false)
-        .with_certificate_verifier(Arc::new(SkipServerVerification {}))
+        // .with_certificates(certs_a)
+        // .with_private_key(key_a)
+        .with_verify_certificates(true)
+        // .with_certificate_verifier(Arc::new(SkipServerVerification {}))
         .with_keep_alive_interval(Duration::from_secs(1))
         .with_connection_idle_timeout(Duration::from_secs(60))
         .with_stream_idle_timeout(Duration::from_secs(30))
         .with_quinn_log_level(log::LevelFilter::Warn); // Reduce noisy Quinn connection logs
 
     // Create node configurations with network enabled
-    let node1_config = NodeConfig::new_test_config("node1", "test")
+    let node1_config = NodeConfig::new_network_test_config("node1", "test")
         .with_network_config(NetworkConfig::with_quic(options_a).with_multicast_discovery());
 
     logger.info(format!("Node1 config: {}", node1_config));
@@ -63,10 +63,10 @@ async fn test_remote_action_call() -> Result<()> {
 
     let (certs_b, key_b) = generate_test_certificates();
     let options_b = QuicTransportOptions::new()
-        .with_certificates(certs_b)
-        .with_private_key(key_b)
-        .with_verify_certificates(false)
-        .with_certificate_verifier(Arc::new(SkipServerVerification {}))
+        // .with_certificates(certs_b)
+        // .with_private_key(key_b)
+        .with_verify_certificates(true)
+        // .with_certificate_verifier(Arc::new(SkipServerVerification {}))
         .with_keep_alive_interval(Duration::from_secs(1))
         .with_connection_idle_timeout(Duration::from_secs(60))
         .with_stream_idle_timeout(Duration::from_secs(30))
