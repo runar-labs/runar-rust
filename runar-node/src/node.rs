@@ -252,11 +252,11 @@ impl Node {
         let peer_id = PeerId::new(node_id.clone());
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
-        // TODO
         // at this stage the node credentials must already exist and must be in a secure store
-        // create a function in the node to load_credentials() that return : Arc<RwLock<NodeKeyManager>>
-        // and is created from the existing credentials in the secure store (using keyring)
-        // if new there are no credentials, it shuold return an error
+        // TODO create a function called load_credentials() that return : Arc<RwLock<NodeKeyManager>>
+        // and is created from the existing credentials in the secure store (using keyring) and loaded via the
+        //  NodeKeyManager::new_with_state(deserialized_node_state);
+        // if new there are no credentials in the secure store, it shuold return an error
         let keys_manager = Arc::new(RwLock::new(NodeKeyManager::new()));
 
         let mut node = Self {
