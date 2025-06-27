@@ -197,7 +197,7 @@ impl KeyManager {
         })?;
 
         // Create a verifier that trusts our CA
-        let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store).into())
+        let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
             .build()
             .map_err(|e| KeyError::CryptoError(format!("Failed to create verifier: {}", e)))?;
 

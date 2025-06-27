@@ -256,7 +256,7 @@ fn generate_abstract_service_impl(
         .cloned()
         .unwrap_or_else(|| "1.0.0".to_string());
 
-    let network_id_value = service_attrs.get("network_id").cloned();
+    let _network_id_value = service_attrs.get("network_id").cloned();
 
     // Extract all types from methods
     let mut all_types = HashSet::new();

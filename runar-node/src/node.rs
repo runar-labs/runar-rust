@@ -252,12 +252,11 @@ impl Node {
         let peer_id = PeerId::new(node_id.clone());
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
-        // let keys_manager = config
-        //     .node_keys_manager
-        //     .as_ref()
-        //     .cloned()
-        //     .expect("Node keys manager not found");
-
+        // TODO
+        // at this stage the node credentials must already exist and must be in a secure store
+        // create a function in the node to load_credentials() that return : Arc<RwLock<NodeKeyManager>>
+        // and is created from the existing credentials in the secure store (using keyring)
+        // if new there are no credentials, it shuold return an error
         let keys_manager = Arc::new(RwLock::new(NodeKeyManager::new()));
 
         let mut node = Self {
@@ -1545,7 +1544,7 @@ impl Node {
         // Build capability information for each service
         let mut services = Vec::new();
 
-        let internal_services = vec!["$registry", "$keys"];
+        let internal_services = ["$registry", "$keys"];
 
         for (service_path, service_entry) in service_paths {
             let service = &service_entry.service;
