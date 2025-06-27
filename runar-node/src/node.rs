@@ -5,7 +5,7 @@
 // coordinating event publishing and subscriptions.
 //
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
@@ -257,7 +257,11 @@ impl Node {
         // and is created from the existing credentials in the secure store (using keyring) and loaded via the
         //  NodeKeyManager::new_with_state(deserialized_node_state);
         // if new there are no credentials in the secure store, it shuold return an error
-        let keys_manager = Arc::new(RwLock::new(NodeKeyManager::new()));
+        let manager = NodeKeyManager::load_credentials().context(
+            "Failed to load node credentials. Node must be initialized before it can be started.",
+        )?;
+        logger.info("Successfully loaded existing node credentials.");
+        let keys_manager = Arc::new(tokio::sync::RwLock::new(manager));
 
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),

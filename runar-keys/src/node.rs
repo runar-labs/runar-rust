@@ -1,3 +1,5 @@
+use hex;
+
 use crate::crypto::{
     Certificate, EncryptionKeyPair, NetworkKeyMessage, NodeMessage, SigningKeyPair,
 };
@@ -314,8 +316,91 @@ impl NodeKeyManager {
     }
 
     /// Ensure a symmetric key exists and return it (create one if it doesn't exist)
-    pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
+        pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
         let key = self.key_manager.ensure_symmetric_key(key_name)?;
         Ok(key.to_bytes())
+    }
+
+    pub fn save_credentials(&self) -> Result<()> {
+        let state = self.export_state();
+        let serialized_state = bincode::serialize(&state)?;
+        let serialized_state_hex = hex::encode(serialized_state);
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)?;
+        entry.set_password(&serialized_state_hex)?;
+        Ok(())
+    }
+
+    pub fn load_credentials() -> Result<NodeKeyManager> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)?;
+        let serialized_state_hex = entry.get_password()?;
+        let serialized_state = hex::decode(serialized_state_hex)?;
+        let state: NodeKeyManagerData = bincode::deserialize(&serialized_state)?;
+        let manager = NodeKeyManager::new_with_state(state);
+        Ok(manager)
+    }
+}
+
+const KEYRING_SERVICE: &str = "runar_node";
+const KEYRING_USERNAME: &str = "credentials";
+
+#[cfg(test)]
+mod credentials_tests {
+    use super::*;
+    use keyring::Entry;
+    use std::sync::Mutex;
+
+    // A mutex to ensure that tests that interact with the system keyring run serially.
+    static KEYRING_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn delete_test_credentials() -> Result<()> {
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)?;
+        match entry.delete_password() {
+            Ok(_) => Ok(()),
+            Err(keyring::Error::NoEntry) => Ok(()), // It's ok if it's already gone
+            Err(e) => Err(KeyError::KeyringError(format!(
+                "Failed to delete test credentials: {}",
+                e
+            ))),
+        }
+    }
+
+    #[test]
+    fn test_save_and_load_credentials() {
+        let _guard = KEYRING_MUTEX.lock().unwrap();
+
+        // Setup: Create a new manager
+        let original_manager = NodeKeyManager::new();
+        let original_pub_key = original_manager.node_public_key().to_vec();
+
+        // Action: Save the credentials
+        original_manager
+            .save_credentials()
+            .expect("Failed to save credentials");
+
+        // Action: Load the credentials
+        let loaded_manager = NodeKeyManager::load_credentials().expect("Failed to load credentials");
+
+        // Assert: The loaded manager should have the same public key
+        assert_eq!(original_pub_key.as_slice(), loaded_manager.node_public_key());
+
+        // Cleanup
+        delete_test_credentials().expect("Failed to delete test credentials");
+    }
+
+    #[test]
+    fn test_load_credentials_not_found() {
+        let _guard = KEYRING_MUTEX.lock().unwrap();
+
+        // Setup: Ensure no credentials exist
+        delete_test_credentials().expect("Failed to delete test credentials before test");
+
+        // Action: Attempt to load credentials
+        let result = NodeKeyManager::load_credentials();
+
+        // Assert: The result should be an error indicating no entry
+        assert!(result.is_err());
+        let error = result.err().unwrap();
+        assert!(matches!(error, KeyError::KeyNotFound(_)));
+        assert!(error.to_string().contains("No credentials found"));
     }
 }

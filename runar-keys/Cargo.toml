@@ -44,6 +44,8 @@ rustls-pki-types = "1.0.0" # For Rustls certificate types
 webpki = { version = "0.22.4", features = ["std"] } # For WebPKI certificate verification
 webpki-roots = "0.26" # For Mozilla's root certificates
 
+keyring = "2.3"
+
 # X.509 certificate handling using rcgen
 
 [dev-dependencies]

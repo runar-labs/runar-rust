@@ -50,6 +50,9 @@ pub enum KeyError {
 
     #[error("Invalid key format: {0}")]
     InvalidKeyFormat(String),
+
+    #[error("Keyring error: {0}")]
+    KeyringError(String),
 }
 
 impl From<ed25519_dalek::ed25519::Error> for KeyError {
@@ -67,6 +70,29 @@ impl From<std::array::TryFromSliceError> for KeyError {
 impl From<hkdf::InvalidLength> for KeyError {
     fn from(err: hkdf::InvalidLength) -> Self {
         KeyError::CryptoError(format!("HKDF error: {}", err))
+    }
+}
+
+impl From<Box<bincode::ErrorKind>> for KeyError {
+    fn from(err: Box<bincode::ErrorKind>) -> Self {
+        KeyError::SerializationError(err.to_string())
+    }
+}
+
+impl From<keyring::Error> for KeyError {
+    fn from(err: keyring::Error) -> Self {
+        match err {
+            keyring::Error::NoEntry => {
+                KeyError::KeyNotFound("No credentials found in secure store.".to_string())
+            }
+            other => KeyError::KeyringError(other.to_string()),
+        }
+    }
+}
+
+impl From<hex::FromHexError> for KeyError {
+    fn from(err: hex::FromHexError) -> Self {
+        KeyError::ConversionError(err.to_string())
     }
 }
 
