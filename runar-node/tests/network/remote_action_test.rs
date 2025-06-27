@@ -61,7 +61,7 @@ async fn test_remote_action_call() -> Result<()> {
     node1.start().await?;
     //after node 1 starts and use the port .. next node will use the next available port
 
-    let (certs_b, key_b) = generate_test_certificates();
+    // let (certs_b, key_b) = generate_test_certificates();
     let options_b = QuicTransportOptions::new()
         // .with_certificates(certs_b)
         // .with_private_key(key_b)

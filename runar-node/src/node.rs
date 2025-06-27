@@ -772,7 +772,9 @@ impl Node {
                 // 3 make sure the internals of QuicTransportImpl are updated to use the certs and verifier
                 // DO NOT change anytihg else.. focus on QUIC transporter with these new certificates
                 // I have already created the test utils to generate certificates and keys -> new_network_test_config
-                // and udpate the tests on remove_action.rs to use it
+                // I have updated the test test_remote_action_call() to use them.. use this test to validate your quic changes..
+                // QUIC shuold ahve only one weay to handle certs.. which is this wauy.. any other wauy shuold be remove. to keep it simple and concise
+                // when we craate the QUIC certs we use localhost.. if that cauases any issue,.. stop adn ask my input.. as I intend to chagne this later.. but dont want ot make too manyu chagnes .. so want this focus on the carts refact.. but if the localhost causes isues then we need to tacle..
                 let (cert_chain, verifier) = self
                     .keys_manager
                     .read()
