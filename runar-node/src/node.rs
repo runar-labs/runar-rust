@@ -71,9 +71,6 @@ pub struct NodeConfig {
     /// Logging configuration options
     pub logging_config: Option<LoggingConfig>,
 
-    /// Node keys manager
-    // pub node_keys_manager: Option<Arc<RwLock<NodeKeyManager>>>,
-
     //FIX: move this to the network config.. local sercvies shuold not have timeout checks.
     /// Request timeout in milliseconds
     pub request_timeout_ms: u64,
@@ -106,11 +103,6 @@ impl NodeConfig {
         let node_id = Uuid::new_v4().to_string();
         Self::new_test_config(node_id, default_network_id)
     }
-
-    // pub fn with_node_keys_manager(mut self, node_keys_manager: NodeKeyManager) -> Self {
-    //     self.node_keys_manager = Some(Arc::new(RwLock::new(node_keys_manager)));
-    //     self
-    // }
 
     /// Add network configuration
     pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
