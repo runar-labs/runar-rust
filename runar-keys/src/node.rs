@@ -316,7 +316,7 @@ impl NodeKeyManager {
     }
 
     /// Ensure a symmetric key exists and return it (create one if it doesn't exist)
-        pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
+    pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
         let key = self.key_manager.ensure_symmetric_key(key_name)?;
         Ok(key.to_bytes())
     }
@@ -378,10 +378,14 @@ mod credentials_tests {
             .expect("Failed to save credentials");
 
         // Action: Load the credentials
-        let loaded_manager = NodeKeyManager::load_credentials().expect("Failed to load credentials");
+        let loaded_manager =
+            NodeKeyManager::load_credentials().expect("Failed to load credentials");
 
         // Assert: The loaded manager should have the same public key
-        assert_eq!(original_pub_key.as_slice(), loaded_manager.node_public_key());
+        assert_eq!(
+            original_pub_key.as_slice(),
+            loaded_manager.node_public_key()
+        );
 
         // Cleanup
         delete_test_credentials().expect("Failed to delete test credentials");
