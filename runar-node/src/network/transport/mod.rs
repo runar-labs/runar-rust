@@ -13,7 +13,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 // Import the new rustls types
-use rustls::client::danger::{ServerCertVerifier, ServerCertVerified};
+use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
 use rustls_pki_types::{CertificateDer, ServerName};
 
 // Internal module declarations

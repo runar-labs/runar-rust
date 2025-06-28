@@ -55,7 +55,8 @@ impl Envelope {
         let mut recipient_keys = Vec::with_capacity(recipients.len());
         for recipient_key in recipients {
             // Use the new encrypt method which handles DH, HKDF, and encryption
-            let encrypted_key = ephemeral_key.encrypt(&envelope_key, recipient_key.public_key_bytes())?;
+            let encrypted_key =
+                ephemeral_key.encrypt(&envelope_key, recipient_key.public_key_bytes())?;
 
             recipient_keys.push(RecipientKey {
                 recipient_public_key: recipient_key.public_key_bytes().to_vec(),
@@ -88,8 +89,7 @@ impl Envelope {
             })?;
 
         // 2. Decrypt the envelope key using the new decrypt method that expects embedded sender key
-        let envelope_key_vec =
-            recipient_key.decrypt(&recipient_key_entry.encrypted_key)?;
+        let envelope_key_vec = recipient_key.decrypt(&recipient_key_entry.encrypted_key)?;
 
         let envelope_key: [u8; SYMMETRIC_KEY_LENGTH] =
             envelope_key_vec.as_slice().try_into().map_err(|_| {

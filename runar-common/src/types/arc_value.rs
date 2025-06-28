@@ -1256,8 +1256,7 @@ impl Serialize for ArcValue {
                 // Fallback serialization for types that can't be easily converted to JSON by to_json_value
                 let mut state = serializer.serialize_struct("ArcValueFallback", 2)?;
                 state.serialize_field("category", &self.category)?;
-                state
-                    .serialize_field("error", &format!("Failed to convert to full JSON: {e}"))?;
+                state.serialize_field("error", &format!("Failed to convert to full JSON: {e}"))?;
                 state.end()
             }
         }

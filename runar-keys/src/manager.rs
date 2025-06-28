@@ -110,11 +110,10 @@ impl KeyManager {
 
         // Store the signing key pair in the manager
         self.signing_keys
-            .insert("user_root".to_string(), signing_keypair);
+            .insert("user_root".to_string(), signing_keypair.clone());
 
-        // Get the public key from the stored key pair
-        let key_pair = self.signing_keys.get("user_root").unwrap();
-        let public_key_bytes = *key_pair.public_key();
+        // Get the public key from the key pair we just created
+        let public_key_bytes = *signing_keypair.public_key();
 
         // Return only the public key
         Ok(PublicKey::new(public_key_bytes))
@@ -130,7 +129,8 @@ impl KeyManager {
         let signing_keypair = KeyDerivation::derive_user_profile_key(&seed, profile_index)?;
 
         // 2. Derive the corresponding encryption key pair from the signing key pair
-        let signing_key_bytes: [u8; 32] = signing_keypair.secret_key_bytes()
+        let signing_key_bytes: [u8; 32] = signing_keypair
+            .secret_key_bytes()
             .try_into()
             .map_err(|_| KeyError::InvalidKeyFormat("Invalid signing key length".to_string()))?;
         let encryption_keypair = EncryptionKeyPair::from_secret(&signing_key_bytes);
@@ -181,46 +181,51 @@ impl KeyManager {
         // Create a root store with the CA certificate (not the node certificate)
         // We need to create the CA certificate from our stored CA key
         let mut root_store = RootCertStore::empty();
-        
-        // Get the CA signing key to create the CA certificate
-        if let Some(ca_key) = self.get_signing_key("user_ca") {
-            // Create a CA certificate from our User CA key
-            let mut ca_params = rcgen::CertificateParams::new(vec!["ca.localhost".to_string()]);
-            let mut ca_distinguished_name = rcgen::DistinguishedName::new();
-            ca_distinguished_name.push(rcgen::DnType::CommonName, &format!("ca:{}", hex::encode(ca_key.public_key())));
-            ca_params.distinguished_name = ca_distinguished_name;
-            ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-            ca_params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
-            
-            // Create CA key pair using P256 for rcgen compatibility  
-            use p256::ecdsa::{SigningKey as P256SigningKey};
-            use pkcs8::EncodePrivateKey;
-            use rand::rngs::OsRng;
-            
-            let ca_p256_key = P256SigningKey::random(&mut OsRng);
-            let ca_key_pair = rcgen::KeyPair::from_der(ca_p256_key.to_pkcs8_der().unwrap().as_bytes())
-                .map_err(|e| KeyError::CertificateError(format!("Failed to create CA key pair: {}", e)))?;
-            ca_params.key_pair = Some(ca_key_pair);
-            
-            let ca_cert = rcgen::Certificate::from_params(ca_params)
-                .map_err(|e| KeyError::CertificateError(format!("Failed to create CA certificate: {}", e)))?;
-            
-            // Serialize CA certificate to DER
-            let ca_cert_der = ca_cert.serialize_der()
-                .map_err(|e| KeyError::CertificateError(format!("Failed to serialize CA certificate: {}", e)))?;
-            
-            // Add the CA certificate to the root store
-            let ca_cert_rustls = CertificateDer::from(ca_cert_der);
-            root_store.add(ca_cert_rustls).map_err(|e| {
-                KeyError::CryptoError(format!("Failed to add CA certificate to root store: {}", e))
+
+        // Get the User CA signing key - this MUST exist after node setup
+        let ca_key = self.get_signing_key("user_ca").ok_or_else(|| {
+            KeyError::KeyNotFound(
+                "User CA key not found. Node setup must be completed first.".to_string(),
+            )
+        })?;
+
+        // Create a CA certificate from our stored User CA key
+        let mut ca_params = rcgen::CertificateParams::new(vec!["ca.localhost".to_string()]);
+        let mut ca_distinguished_name = rcgen::DistinguishedName::new();
+        ca_distinguished_name.push(
+            rcgen::DnType::CommonName,
+            &format!("ca:{}", hex::encode(ca_key.public_key())),
+        );
+        ca_params.distinguished_name = ca_distinguished_name;
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
+
+        // Create CA key pair using P256 for rcgen compatibility
+        use p256::ecdsa::SigningKey as P256SigningKey;
+        use pkcs8::EncodePrivateKey;
+        use rand::rngs::OsRng;
+
+        let ca_p256_key = P256SigningKey::random(&mut OsRng);
+        let ca_key_pair = rcgen::KeyPair::from_der(ca_p256_key.to_pkcs8_der().unwrap().as_bytes())
+            .map_err(|e| {
+                KeyError::CertificateError(format!("Failed to create CA key pair: {}", e))
             })?;
-        } else {
-            // Fallback: if no CA key is found, add the node certificate itself
-            // This should not happen in a proper production setup
-            root_store.add(cert_der.clone()).map_err(|e| {
-                KeyError::CryptoError(format!("Failed to add certificate to root store: {}", e))
-            })?;
-        }
+        ca_params.key_pair = Some(ca_key_pair);
+
+        let ca_cert = rcgen::Certificate::from_params(ca_params).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to create CA certificate: {}", e))
+        })?;
+
+        // Serialize CA certificate to DER
+        let ca_cert_der = ca_cert.serialize_der().map_err(|e| {
+            KeyError::CertificateError(format!("Failed to serialize CA certificate: {}", e))
+        })?;
+
+        // Add the CA certificate to the root store
+        let ca_cert_rustls = CertificateDer::from(ca_cert_der);
+        root_store.add(ca_cert_rustls).map_err(|e| {
+            KeyError::CryptoError(format!("Failed to add CA certificate to root store: {}", e))
+        })?;
 
         // Create a verifier that trusts certificates in our root store
         let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
@@ -242,12 +247,15 @@ impl KeyManager {
     /// Generate a node storage key pair
     pub fn generate_node_storage_key(&mut self, node_pk: &[u8]) -> Result<&EncryptionKeyPair> {
         let encryption_keypair = EncryptionKeyPair::new();
-
         let key_id = format!("node_storage_{}", hex::encode(node_pk));
+
         self.encryption_keys
             .insert(key_id.clone(), encryption_keypair);
 
-        Ok(self.encryption_keys.get(&key_id).unwrap())
+        // Return reference to the stored key pair
+        self.encryption_keys.get(&key_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("Failed to store encryption key: {}", key_id))
+        })
     }
 
     /// Generate a network data key pair
@@ -365,23 +373,25 @@ impl KeyManager {
     pub fn store_network_metadata(&mut self, metadata_key: &str, network_name: &str) -> Result<()> {
         // Generate a proper encryption key for metadata storage
         let metadata_encryption_key = SymmetricKey::new();
-        
+
         // Encrypt the network name using the generated key
         let encrypted_metadata = metadata_encryption_key.encrypt(network_name.as_bytes())?;
-        
+
         // Store both the encryption key and encrypted data
         // The key is stored with a "_key" suffix, the data with "_data" suffix
         let key_storage_id = format!("{}_key", metadata_key);
         let data_storage_id = format!("{}_data", metadata_key);
-        
-        self.symmetric_keys.insert(key_storage_id, metadata_encryption_key);
-        
+
+        self.symmetric_keys
+            .insert(key_storage_id, metadata_encryption_key);
+
         // Store encrypted data as a synthetic symmetric key for storage consistency
         let encrypted_key = SymmetricKey::from_bytes(
-            &encrypted_metadata[..std::cmp::min(encrypted_metadata.len(), CHACHA20POLY1305_KEY_LENGTH)]
+            &encrypted_metadata
+                [..std::cmp::min(encrypted_metadata.len(), CHACHA20POLY1305_KEY_LENGTH)],
         )?;
         self.symmetric_keys.insert(data_storage_id, encrypted_key);
-        
+
         Ok(())
     }
 
@@ -389,14 +399,14 @@ impl KeyManager {
     pub fn get_network_metadata(&self, metadata_key: &str) -> Option<String> {
         let key_storage_id = format!("{}_key", metadata_key);
         let data_storage_id = format!("{}_data", metadata_key);
-        
+
         // Get both the encryption key and encrypted data
         let encryption_key = self.symmetric_keys.get(&key_storage_id)?;
         let encrypted_data_key = self.symmetric_keys.get(&data_storage_id)?;
-        
+
         // Extract the encrypted data bytes
         let encrypted_data = encrypted_data_key.to_bytes();
-        
+
         // Decrypt the metadata
         match encryption_key.decrypt(&encrypted_data) {
             Ok(decrypted_bytes) => String::from_utf8(decrypted_bytes).ok(),

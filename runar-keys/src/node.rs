@@ -114,7 +114,7 @@ impl NodeKeyManager {
             .key_manager
             .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
-        
+
         let node_encryption_public_key = encryption_key.public_key_bytes().to_vec();
 
         // Create a setup token
@@ -176,6 +176,10 @@ impl NodeKeyManager {
         // Validate the certificate using the provided CA public key
         certificate.validate(&ca_verifying_key)?;
 
+        // Store the User CA public key for future certificate chain operations
+        let ca_key_pair = SigningKeyPair::from_public_key(&ca_public_key_array)?;
+        self.key_manager.add_signing_key("user_ca", ca_key_pair);
+
         // Update the certificate subject and issuer to match our expected format
         let mut cert = certificate;
         cert.subject = format!("node:{}", hex::encode(&self.node_public_key));
@@ -225,12 +229,10 @@ impl NodeKeyManager {
             "network_metadata_{}",
             hex::encode(&network_key_message.public_key)
         );
-        
+
         // Store network metadata in the key manager using proper encrypted storage
-        self.key_manager_mut().store_network_metadata(
-            &network_metadata_key,
-            &network_key_message.network_name,
-        )?;
+        self.key_manager_mut()
+            .store_network_metadata(&network_metadata_key, &network_key_message.network_name)?;
 
         Ok(())
     }

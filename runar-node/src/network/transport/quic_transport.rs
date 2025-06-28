@@ -169,7 +169,8 @@ pub struct QuicTransportConfig {
 /// Helper function to generate self-signed certificates for testing
 ///
 /// INTENTION: Provide a consistent way to generate test certificates across test and core code, using explicit rustls namespaces to avoid type conflicts.
-pub(crate) fn generate_test_certificates() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
+pub(crate) fn generate_test_certificates() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)
+{
     use rcgen;
     // Create certificate parameters with default values
     let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()]);
@@ -391,7 +392,9 @@ impl QuicTransportImpl {
 
         // Minimal fix for compilation - disable QUIC transport for now
         // TODO: Fix Quinn compatibility with rustls 0.23.28
-        return Err(NetworkError::ConfigurationError("QUIC transport temporarily disabled for rustls 0.23.28 compatibility".to_string()));
+        return Err(NetworkError::ConfigurationError(
+            "QUIC transport temporarily disabled for rustls 0.23.28 compatibility".to_string(),
+        ));
     }
 
     // Certificate generation has been moved to the test file
