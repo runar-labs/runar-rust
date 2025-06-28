@@ -104,9 +104,9 @@ fn test_e2e_keys_generation_and_exchange() {
     // FROM THIS POINT THE NODE AND MOBILE WILL RE-CONNECT USING THE NEW CERTIFICATES AND
     // ALL FUTURE COMMS ARE SECURED AND ECNRYPTED USING THESE NEW CREDENTIALS.
 
-    // Get QUIC-compatible certificates and verifier from the node
+    // Get QUIC-compatible certificates, private key, and verifier from the node
     // This uses the existing certificate that was just validated from the mobile side
-    let (quic_certs, _quic_certs_verifier) = node
+    let (quic_certs, _private_key, _quic_certs_verifier) = node
         .get_quic_certs()
         .expect("Failed to get QUIC certificates");
 

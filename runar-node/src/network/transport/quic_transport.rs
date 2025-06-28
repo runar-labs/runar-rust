@@ -17,8 +17,9 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use bincode;
-use quinn::{self, Endpoint, TransportConfig};
+use quinn::{self, Endpoint};
 use quinn::{ClientConfig, ServerConfig};
+// Using Quinn 0.11.x API - no need for proto imports
 use runar_common::logging::Logger;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -95,6 +96,8 @@ pub struct QuicTransportOptions {
     max_idle_streams_per_peer: usize,
     /// TLS certificates for secure connections (REQUIRED)
     certificates: Option<Vec<CertificateDer<'static>>>,
+    /// Private key corresponding to the certificates (REQUIRED)
+    private_key: Option<PrivateKeyDer<'static>>,
     /// Custom certificate verifier for client connections (REQUIRED)
     certificate_verifier: Option<Arc<dyn rustls::client::danger::ServerCertVerifier + Send + Sync>>,
     /// Log level for Quinn-related logs (default: Warn to reduce noisy connection logs)
@@ -110,6 +113,7 @@ impl Clone for QuicTransportOptions {
             stream_idle_timeout: self.stream_idle_timeout,
             max_idle_streams_per_peer: self.max_idle_streams_per_peer,
             certificates: self.certificates.clone(),
+            private_key: self.private_key.as_ref().map(|k| k.clone_key()),
             certificate_verifier: self.certificate_verifier.clone(),
             quinn_log_level: self.quinn_log_level,
         }
@@ -127,6 +131,10 @@ impl fmt::Debug for QuicTransportOptions {
             .field(
                 "certificates",
                 &self.certificates.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "private_key",
+                &self.private_key.as_ref().map(|_| "[redacted]"),
             )
             .field(
                 "certificate_verifier",
@@ -232,6 +240,11 @@ impl QuicTransportOptions {
         self
     }
 
+    pub fn with_private_key(mut self, key: PrivateKeyDer<'static>) -> Self {
+        self.private_key = Some(key);
+        self
+    }
+
     pub fn with_certificate_verifier(
         mut self,
         verifier: Arc<dyn rustls::client::danger::ServerCertVerifier + Send + Sync>,
@@ -249,6 +262,10 @@ impl QuicTransportOptions {
     pub fn certificates(&self) -> Option<&Vec<CertificateDer<'static>>> {
         self.certificates.as_ref()
     }
+
+    pub fn private_key(&self) -> Option<&PrivateKeyDer<'static>> {
+        self.private_key.as_ref()
+    }
 }
 
 impl Default for QuicTransportOptions {
@@ -260,6 +277,7 @@ impl Default for QuicTransportOptions {
             stream_idle_timeout: Duration::from_secs(30),
             max_idle_streams_per_peer: 100,
             certificates: None,
+            private_key: None,
             certificate_verifier: None,
             quinn_log_level: log::LevelFilter::Warn, // Default to Warn to reduce noisy logs
         }
@@ -320,15 +338,52 @@ impl QuicTransportImpl {
     fn create_quinn_configs(
         self: &Arc<Self>,
     ) -> Result<(ServerConfig, ClientConfig), NetworkError> {
-        // TODO: Fix Quinn 0.10.1 compatibility with rustls 0.23.28
-        // Quinn 0.10.1 expects older rustls types that don't match 0.23.28
-        // We need to either:
-        // 1. Update Quinn to a version that supports rustls 0.23.28, or
-        // 2. Use rustls version compatible with Quinn 0.10.1
-        
-        return Err(NetworkError::ConfigurationError(
-            "QUIC transport temporarily disabled due to Quinn/rustls version compatibility issue".to_string(),
+        self.logger.info("Creating Quinn configurations with certificates");
+
+        // Install default crypto provider for rustls 0.23.x if not already installed
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            rustls::crypto::ring::default_provider()
+                .install_default()
+                .expect("Failed to install default crypto provider");
+        }
+
+        // Get certificates, private key, and verifier from options
+        let certificates = self.options.certificates().ok_or_else(|| {
+            NetworkError::ConfigurationError("No certificates provided".to_string())
+        })?;
+
+        let private_key = self.options.private_key().ok_or_else(|| {
+            NetworkError::ConfigurationError("No private key provided".to_string())
+        })?;
+
+        let certificate_verifier = self.options.certificate_verifier().ok_or_else(|| {
+            NetworkError::ConfigurationError("No certificate verifier provided".to_string())
+        })?;
+
+        self.logger.info(format!("Using {} certificates for QUIC with proper private key", certificates.len()));
+
+        // Create server configuration using Quinn 0.11.x API
+        let server_config = ServerConfig::with_single_cert(
+            certificates.clone(),
+            private_key.clone_key(),
+        ).map_err(|e| {
+            NetworkError::ConfigurationError(format!("Failed to create server config: {}", e))
+        })?;
+
+        // Create client configuration using custom certificate verifier for proper peer validation
+        let rustls_client_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(certificate_verifier.clone())
+            .with_no_client_auth();
+
+        let client_config = ClientConfig::new(Arc::new(
+            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config)
+                .map_err(|e| NetworkError::ConfigurationError(format!("Failed to convert rustls config: {}", e)))?
         ));
+
+        self.logger.info("Successfully created Quinn server and client configurations");
+
+        Ok((server_config, client_config))
     }
 
     // Certificate generation has been moved to the test file
@@ -402,14 +457,20 @@ impl QuicTransportImpl {
 
         while self.running.load(Ordering::Relaxed) {
             match endpoint.accept().await {
-                Some(connecting) => {
+                Some(incoming) => {
                     // Process the connection in a separate task
                     let inner_arc = self.clone();
                     let logger = self.logger.clone();
                     tokio::spawn(async move {
-                        match inner_arc.handle_new_connection(connecting).await {
-                            Ok(_) => {} // Task handle is returned but not stored here
-                            Err(e) => logger.error(format!("Error handling connection: {}", e)),
+                        // In Quinn 0.11.x, we need to call await on incoming to get Connection
+                        match incoming.await {
+                            Ok(connection) => {
+                                match inner_arc.handle_new_connection(connection).await {
+                                    Ok(_) => {} // Task handle is returned but not stored here
+                                    Err(e) => logger.error(format!("Error handling connection: {}", e)),
+                                }
+                            }
+                            Err(e) => logger.error(format!("Error accepting connection: {}", e)),
                         }
                     });
                     // Note: We're not storing these task handles since they're short-lived
@@ -526,10 +587,9 @@ impl QuicTransportImpl {
             NetworkError::MessageError(format!("Failed to write message data: {}", e))
         })?;
 
-        // Finish the stream
+        // Finish the stream (no longer async in Quinn 0.11.x)
         stream
             .finish()
-            .await
             .map_err(|e| NetworkError::MessageError(format!("Failed to finish stream: {}", e)))?;
 
         self.logger
@@ -876,12 +936,9 @@ impl QuicTransportImpl {
     /// INTENTION: Process an incoming connection request and set up the connection state.
     async fn handle_new_connection(
         self: &Arc<Self>,
-        conn: quinn::Connecting,
+        connection: quinn::Connection,
     ) -> Result<JoinHandle<()>, Box<dyn std::error::Error + Send + Sync>> {
         self.logger.debug("Handling new incoming connection");
-
-        // Wait for the connection to be established
-        let connection = conn.await?;
 
         // Get connection info
         let remote_addr = connection.remote_address();

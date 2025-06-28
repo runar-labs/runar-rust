@@ -1,0 +1,3 @@
+[submodule "quinn"]
+	path = quinn
+	url = git@github.com:runar-labs/quinn.git

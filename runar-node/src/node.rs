@@ -775,18 +775,24 @@ impl Node {
                 // I have updated the test test_remote_action_call() to use them.. use this test to validate your quic changes..
                 // QUIC shuold ahve only one weay to handle certs.. which is this wauy.. any other wauy shuold be remove. to keep it simple and concise
                 // when we craate the QUIC certs we use localhost.. if that cauases any issue,.. stop adn ask my input.. as I intend to chagne this later.. but dont want ot make too manyu chagnes .. so want this focus on the carts refact.. but if the localhost causes isues then we need to tacle..
-                let (cert_chain, verifier) = self
+                let (cert_chain, private_key, verifier) = self
                     .keys_manager
                     .read()
                     .await
                     .get_quic_certs()
                     .context("Failed to get QUIC certificates")?;
 
+                // Configure QUIC options with certificates and private key from key manager
+                let configured_quic_options = quic_options
+                    .with_certificates(cert_chain)
+                    .with_private_key(private_key)
+                    .with_certificate_verifier(verifier);
+
                 let transport = QuicTransport::new(
                     local_node_info,
                     bind_addr,
                     message_handler,
-                    quic_options,
+                    configured_quic_options,
                     self.logger.clone(),
                 )
                 .map_err(|e| anyhow!("Failed to create QUIC transport: {}", e))?;
