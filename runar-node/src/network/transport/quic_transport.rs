@@ -86,8 +86,6 @@ pub struct QuicTransport {
     background_tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
-// This function is no longer needed as we've integrated its functionality directly into create_quinn_configs
-
 /// QUIC-specific transport options
 pub struct QuicTransportOptions {
     verify_certificates: bool,
@@ -95,13 +93,9 @@ pub struct QuicTransportOptions {
     connection_idle_timeout: Duration,
     stream_idle_timeout: Duration,
     max_idle_streams_per_peer: usize,
-    /// Optional TLS certificates for secure connections
+    /// TLS certificates for secure connections (REQUIRED)
     certificates: Option<Vec<CertificateDer<'static>>>,
-    /// Optional private key for the certificate
-    private_key: Option<PrivateKeyDer<'static>>,
-    /// Optional path to certificate file
-    cert_path: Option<String>,
-    // Custom certificate verifier for client connections
+    /// Custom certificate verifier for client connections (REQUIRED)
     certificate_verifier: Option<Arc<dyn rustls::client::danger::ServerCertVerifier + Send + Sync>>,
     /// Log level for Quinn-related logs (default: Warn to reduce noisy connection logs)
     quinn_log_level: log::LevelFilter,
@@ -116,8 +110,6 @@ impl Clone for QuicTransportOptions {
             stream_idle_timeout: self.stream_idle_timeout,
             max_idle_streams_per_peer: self.max_idle_streams_per_peer,
             certificates: self.certificates.clone(),
-            private_key: None, // Cannot clone PrivateKeyDer, so set to None
-            cert_path: self.cert_path.clone(),
             certificate_verifier: self.certificate_verifier.clone(),
             quinn_log_level: self.quinn_log_level,
         }
@@ -136,11 +128,6 @@ impl fmt::Debug for QuicTransportOptions {
                 "certificates",
                 &self.certificates.as_ref().map(|_| "[redacted]"),
             )
-            .field(
-                "private_key",
-                &self.private_key.as_ref().map(|_| "[redacted]"),
-            )
-            .field("cert_path", &self.cert_path)
             .field(
                 "certificate_verifier",
                 &self
@@ -198,14 +185,11 @@ impl QuicTransportOptions {
         Self::default()
     }
 
-    /// Builder: Attach test certificates for use in test environments.
+    /// Builder: Attach certificates for production use.
     ///
-    /// In production, certificates must be provided by the node. In tests, this method
-    /// attaches self-signed certificates for convenience. This is a temporary measure.
-    pub fn with_test_certificates(mut self) -> Self {
-        let (certs, key) = generate_test_certificates();
-        self.certificates = Some(certs);
-        self.private_key = Some(key);
+    /// Certificates must be provided from the key management system.
+    pub fn with_test_certificates(self) -> Self {
+        // This method is no longer needed - certificates should come from key management
         self
     }
 
@@ -248,16 +232,6 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_private_key(mut self, key: PrivateKeyDer<'static>) -> Self {
-        self.private_key = Some(key);
-        self
-    }
-
-    pub fn with_cert_path(mut self, path: String) -> Self {
-        self.cert_path = Some(path);
-        self
-    }
-
     pub fn with_certificate_verifier(
         mut self,
         verifier: Arc<dyn rustls::client::danger::ServerCertVerifier + Send + Sync>,
@@ -275,14 +249,6 @@ impl QuicTransportOptions {
     pub fn certificates(&self) -> Option<&Vec<CertificateDer<'static>>> {
         self.certificates.as_ref()
     }
-
-    pub fn private_key(&self) -> Option<&PrivateKeyDer<'static>> {
-        self.private_key.as_ref()
-    }
-
-    pub fn cert_path(&self) -> Option<&str> {
-        self.cert_path.as_deref()
-    }
 }
 
 impl Default for QuicTransportOptions {
@@ -294,8 +260,6 @@ impl Default for QuicTransportOptions {
             stream_idle_timeout: Duration::from_secs(30),
             max_idle_streams_per_peer: 100,
             certificates: None,
-            private_key: None,
-            cert_path: None,
             certificate_verifier: None,
             quinn_log_level: log::LevelFilter::Warn, // Default to Warn to reduce noisy logs
         }
@@ -356,44 +320,14 @@ impl QuicTransportImpl {
     fn create_quinn_configs(
         self: &Arc<Self>,
     ) -> Result<(ServerConfig, ClientConfig), NetworkError> {
-        // INTENTION: Create a transport config with desired parameters from our options
-        let mut transport_config = TransportConfig::default();
-
-        // Configure QUIC transport parameters based on our options with proper type conversions
-        transport_config
-            .max_concurrent_uni_streams((self.options.max_idle_streams_per_peer as u32).into());
-        transport_config.keep_alive_interval(Some(self.options.keep_alive_interval));
-
-        // Convert Duration to IdleTimeout for max_idle_timeout
-        // Quinn expects milliseconds as a VarInt
-        let millis = self.options.connection_idle_timeout.as_millis();
-        if millis <= u64::MAX as u128 {
-            let timeout_ms = quinn::VarInt::from_u64(millis as u64).unwrap_or(quinn::VarInt::MAX);
-            transport_config.max_idle_timeout(Some(timeout_ms.into()));
-        } else {
-            // If the duration is too large, use the maximum allowed value
-            transport_config.max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::MAX)));
-        }
-
-        // Convert to Arc for sharing between configs
-        let transport_config = Arc::new(transport_config);
-
-        // Get certificates from options
-        let (cert_chain, priv_key) = match (self.options.certificates(), self.options.private_key())
-        {
-            (Some(certs), Some(key)) => (certs.clone(), key.clone()),
-            _ => {
-                return Err(NetworkError::ConfigurationError(
-                    "Certificates and private key must be provided in QuicTransportOptions"
-                        .to_string(),
-                ))
-            }
-        };
-
-        // Minimal fix for compilation - disable QUIC transport for now
-        // TODO: Fix Quinn compatibility with rustls 0.23.28
+        // TODO: Fix Quinn 0.10.1 compatibility with rustls 0.23.28
+        // Quinn 0.10.1 expects older rustls types that don't match 0.23.28
+        // We need to either:
+        // 1. Update Quinn to a version that supports rustls 0.23.28, or
+        // 2. Use rustls version compatible with Quinn 0.10.1
+        
         return Err(NetworkError::ConfigurationError(
-            "QUIC transport temporarily disabled for rustls 0.23.28 compatibility".to_string(),
+            "QUIC transport temporarily disabled due to Quinn/rustls version compatibility issue".to_string(),
         ));
     }
 

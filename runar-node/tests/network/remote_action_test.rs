@@ -8,16 +8,11 @@ use runar_node::network::network_config::NetworkConfig;
 use runar_node::network::transport::QuicTransportOptions;
 use runar_node::node::{Node, NodeConfig};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
 // Import the fixture MathService
 use crate::fixtures::math_service::MathService;
-
-use runar_node::network::transport::SkipServerVerification;
-
-use crate::network::quic_transport_test::generate_test_certificates;
 
 /// Test for remote action calls between two nodes
 ///
@@ -38,12 +33,8 @@ async fn test_remote_action_call() -> Result<()> {
     let math_service1 = MathService::new("math1", "math1");
     let math_service2 = MathService::new("math2", "math2");
 
-    // let (certs_a, key_a) = generate_test_certificates();
     let options_a = QuicTransportOptions::new()
-        // .with_certificates(certs_a)
-        // .with_private_key(key_a)
         .with_verify_certificates(true)
-        // .with_certificate_verifier(Arc::new(SkipServerVerification {}))
         .with_keep_alive_interval(Duration::from_secs(1))
         .with_connection_idle_timeout(Duration::from_secs(60))
         .with_stream_idle_timeout(Duration::from_secs(30))
@@ -61,12 +52,8 @@ async fn test_remote_action_call() -> Result<()> {
     node1.start().await?;
     //after node 1 starts and use the port .. next node will use the next available port
 
-    // let (certs_b, key_b) = generate_test_certificates();
     let options_b = QuicTransportOptions::new()
-        // .with_certificates(certs_b)
-        // .with_private_key(key_b)
         .with_verify_certificates(true)
-        // .with_certificate_verifier(Arc::new(SkipServerVerification {}))
         .with_keep_alive_interval(Duration::from_secs(1))
         .with_connection_idle_timeout(Duration::from_secs(60))
         .with_stream_idle_timeout(Duration::from_secs(30))
