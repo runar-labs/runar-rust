@@ -230,6 +230,8 @@ async fn test_quic_transport_connection_end_to_end() {
         }
     }
 
+    // TODO continue the tests with sendin message betwee the tqo transpoter and asseting them.
+
     // Clean up
     println!("Stopping transports...");
     transport_a

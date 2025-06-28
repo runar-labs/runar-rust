@@ -197,6 +197,12 @@ impl NodeConfig {
         self.request_timeout_ms = timeout_ms;
         self
     }
+
+    /// Set the key manager state from serialized bytes
+    pub fn with_key_manager_state(mut self, key_state_bytes: Vec<u8>) -> Self {
+        self.key_manager_state = Some(key_state_bytes);
+        self
+    }
 }
 
 // Implement Display for NodeConfig to enable logging it directly

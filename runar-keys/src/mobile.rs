@@ -51,7 +51,7 @@ impl MobileKeyManager {
 
     pub fn new_with_state(state: MobileKeyManagerData) -> Self {
         Self {
-            key_manager: KeyManager::new_with_state(state.key_manager_data),
+            key_manager: KeyManager::from_data(state.key_manager_data),
             profile_counter: state.profile_counter,
             profile_key_to_index: state.profile_key_to_index,
             user_public_key: state.user_public_key,
@@ -149,9 +149,12 @@ impl MobileKeyManager {
             .ok_or_else(|| KeyError::KeyNotFound("User CA key not found".to_string()))?;
 
         // Create a NodeMessage containing both the certificate and CA public key
+        let mut ca_public_key_array = [0u8; 32];
+        ca_public_key_array.copy_from_slice(ca_key.public_key());
+        
         let node_message = NodeMessage {
             certificate: certificate.clone(),
-            ca_public_key: ca_key.public_key().to_vec(),
+            ca_public_key: ca_public_key_array,
         };
 
         // Get the node's encryption key from storage

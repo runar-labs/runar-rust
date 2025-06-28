@@ -74,7 +74,7 @@ impl NodeKeyManager {
     }
 
     pub fn new_with_state(state: NodeKeyManagerData) -> Self {
-        let key_manager = KeyManager::new_with_state(state.key_manager_data);
+        let key_manager = KeyManager::from_data(state.key_manager_data);
         let node_public_key = key_manager
             .get_node_public_key()
             .expect("Failed to get node Public key");
@@ -134,33 +134,43 @@ impl NodeKeyManager {
     /// This method decrypts a NodeMessage that was encrypted specifically for this node.
     /// The NodeMessage contains both the certificate and the CA public key needed to verify it.
     pub fn decrypt_node_message(&self, envelope: &Envelope) -> Result<NodeMessage> {
-        // Get the node's encryption key pair
-        let node_encryption_key = self
+        // Get our node encryption key for decryption
+        let encryption_key = self
             .key_manager
             .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
 
-        // Decrypt the envelope
-        let decrypted_bytes = envelope.decrypt(node_encryption_key)?;
+        // Decrypt the envelope using our node encryption key
+        let decrypted_message = envelope.decrypt(encryption_key)?;
 
-        // Deserialize the NodeMessage using bincode for binary deserialization
-        let node_message: NodeMessage = bincode::deserialize(&decrypted_bytes)
-            .map_err(|e| KeyError::SerializationError(e.to_string()))?;
+        // Deserialize the decrypted message as a NodeMessage
+        let node_message: NodeMessage = bincode::deserialize(&decrypted_message)
+            .map_err(|e| KeyError::InvalidOperation(format!("Failed to deserialize node message: {}", e)))?;
 
         Ok(node_message)
     }
 
-    /// Process an encrypted envelope containing a NodeMessage from mobile
+    /// Process a NodeMessage containing a certificate and CA public key from a mobile device
     ///
-    /// This method decrypts the envelope, extracts the NodeMessage (containing certificate and CA public key),
-    /// Validates the certificate using the provided CA public key, and stores it if valid.
+    /// This method:
+    /// 1. Decrypts the envelope using the node's private encryption key
+    /// 2. Validates the certificate using the provided CA public key
+    /// 3. Stores both the certificate and CA public key for future use
+    /// 4. Ensures QUIC certificates are generated for transport compatibility
     pub fn process_mobile_message(&mut self, envelope: &Envelope) -> Result<()> {
+        println!("🔍 [process_mobile_message] Starting mobile message processing");
+        
         // Try to decrypt as a NodeMessage first (preferred approach)
         let node_message = self.decrypt_node_message(envelope)?;
+        println!("✅ [process_mobile_message] Successfully decrypted node message");
 
         // Extract certificate and CA public key from the NodeMessage
         let certificate = node_message.certificate;
         let ca_public_key = node_message.ca_public_key;
+        
+        println!("🔍 [process_mobile_message] Certificate subject: {}, issuer: {}", certificate.subject, certificate.issuer);
+        println!("🔍 [process_mobile_message] Certificate DER length: {} bytes", certificate.der_bytes().len());
+        println!("🔍 [process_mobile_message] CA public key: {}", hex::encode(&ca_public_key));
 
         // Create a VerifyingKey from the CA public key for validation
         // Convert Vec<u8> to [u8; 32] for ed25519_dalek::VerifyingKey::from_bytes
@@ -175,19 +185,35 @@ impl NodeKeyManager {
 
         // Validate the certificate using the provided CA public key
         certificate.validate(&ca_verifying_key)?;
+        println!("✅ [process_mobile_message] Certificate validation successful");
 
         // Store the User CA public key for future certificate chain operations
         let ca_key_pair = SigningKeyPair::from_public_key(&ca_public_key_array)?;
         self.key_manager.add_signing_key("user_ca", ca_key_pair);
+        println!("✅ [process_mobile_message] Stored CA public key as 'user_ca'");
 
         // Update the certificate subject and issuer to match our expected format
         let mut cert = certificate;
         cert.subject = format!("node:{}", hex::encode(&self.node_public_key));
         cert.issuer = format!("ca:{}", hex::encode(&ca_public_key));
+        println!("🔍 [process_mobile_message] Updated certificate - Subject: {}, Issuer: {}", cert.subject, cert.issuer);
 
         // Store the certificate - store_validated_certificate will handle the QUIC key mapping
         self.key_manager.store_validated_certificate(cert)?;
+        println!("✅ [process_mobile_message] Stored validated certificate");
 
+        // Verify we can retrieve the certificate for QUIC use
+        match self.key_manager.get_certificate("node_tls_cert") {
+            Some(stored_cert) => {
+                println!("✅ [process_mobile_message] Certificate successfully stored and retrievable as 'node_tls_cert'");
+                println!("🔍 [process_mobile_message] Stored certificate subject: {}, issuer: {}", stored_cert.subject, stored_cert.issuer);
+            },
+            None => {
+                println!("❌ [process_mobile_message] ERROR: Certificate not found after storage!");
+            }
+        }
+
+        println!("🎉 [process_mobile_message] Mobile message processing completed successfully");
         Ok(())
     }
 
@@ -209,7 +235,7 @@ impl NodeKeyManager {
             .map_err(|e| KeyError::SerializationError(e.to_string()))?;
 
         // Store the network private key
-        let network_private_key = network_key_message.private_key.clone();
+        let network_private_key = network_key_message.private_key.to_vec();
 
         // Also store the network key as an encryption key for future use
         let _network_encryption_key_id = format!(
@@ -324,7 +350,7 @@ impl NodeKeyManager {
     /// Ensure a symmetric key exists and return it (create one if it doesn't exist)
     pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
         let key = self.key_manager.ensure_symmetric_key(key_name)?;
-        Ok(key.to_bytes())
+        Ok(key.to_bytes().to_vec())
     }
 
     pub fn save_credentials(&self) -> Result<()> {
