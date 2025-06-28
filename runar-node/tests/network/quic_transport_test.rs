@@ -24,17 +24,20 @@ async fn test_quic_transport_connection_end_to_end() {
 
     println!("🚀 Setting up QUIC transport test with proper key store separation");
     println!("📋 Scenario: One User CA signs certificates for two independent nodes");
-    
+
     // ==========================================
     // STEP 1: Create Mobile Key Manager (User CA)
     // ==========================================
     let mut mobile_manager = MobileKeyManager::new();
     mobile_manager.generate_seed();
-    
+
     // Generate User root key and CA
     let _user_ca_public_key = mobile_manager.generate_user_root_key().unwrap();
     let user_ca_key = mobile_manager.generate_user_ca_key().unwrap();
-    println!("✅ Generated User CA with public key: {:?}", hex::encode(user_ca_key.bytes()));
+    println!(
+        "✅ Generated User CA with public key: {:?}",
+        hex::encode(user_ca_key.bytes())
+    );
 
     // ==========================================
     // STEP 2: Create Two Independent Node Key Managers
@@ -45,11 +48,17 @@ async fn test_quic_transport_connection_end_to_end() {
     // Get node public keys (these will be different for each node)
     let node_a_public_key = node_a_manager.node_public_key().clone();
     let node_b_public_key = node_b_manager.node_public_key().clone();
-    
-    println!("✅ Node A created with public key: {}", hex::encode(&node_a_public_key));
-    println!("✅ Node B created with public key: {}", hex::encode(&node_b_public_key));
 
-    // Create node IDs from public keys  
+    println!(
+        "✅ Node A created with public key: {}",
+        hex::encode(&node_a_public_key)
+    );
+    println!(
+        "✅ Node B created with public key: {}",
+        hex::encode(&node_b_public_key)
+    );
+
+    // Create node IDs from public keys
     let node_a_id = PeerId::new(hex::encode(&node_a_public_key));
     let node_b_id = PeerId::new(hex::encode(&node_b_public_key));
 
@@ -62,7 +71,7 @@ async fn test_quic_transport_connection_end_to_end() {
     // ==========================================
     let setup_token_a = node_a_manager.generate_setup_token().unwrap();
     let setup_token_b = node_b_manager.generate_setup_token().unwrap();
-    
+
     println!("✅ Generated setup tokens for both nodes");
 
     // ==========================================
@@ -70,7 +79,7 @@ async fn test_quic_transport_connection_end_to_end() {
     // ==========================================
     let cert_a = mobile_manager.process_setup_token(&setup_token_a).unwrap();
     let cert_b = mobile_manager.process_setup_token(&setup_token_b).unwrap();
-    
+
     println!("✅ Mobile CA signed certificates for both nodes");
 
     // ==========================================
@@ -78,16 +87,24 @@ async fn test_quic_transport_connection_end_to_end() {
     // ==========================================
     let node_a_id_str = hex::encode(&node_a_public_key);
     let node_b_id_str = hex::encode(&node_b_public_key);
-    
-    let cert_envelope_a = mobile_manager.encrypt_message_for_node(&cert_a, &node_a_id_str).unwrap();
-    let cert_envelope_b = mobile_manager.encrypt_message_for_node(&cert_b, &node_b_id_str).unwrap();
+
+    let cert_envelope_a = mobile_manager
+        .encrypt_message_for_node(&cert_a, &node_a_id_str)
+        .unwrap();
+    let cert_envelope_b = mobile_manager
+        .encrypt_message_for_node(&cert_b, &node_b_id_str)
+        .unwrap();
 
     // ==========================================
     // STEP 6: Nodes Process Their Certificates
     // ==========================================
-    node_a_manager.process_mobile_message(&cert_envelope_a).unwrap();
-    node_b_manager.process_mobile_message(&cert_envelope_b).unwrap();
-    
+    node_a_manager
+        .process_mobile_message(&cert_envelope_a)
+        .unwrap();
+    node_b_manager
+        .process_mobile_message(&cert_envelope_b)
+        .unwrap();
+
     println!("✅ Both nodes processed their certificates from Mobile CA");
 
     // Test: Get QUIC certificates for both nodes
@@ -134,13 +151,9 @@ async fn test_quic_transport_connection_end_to_end() {
     };
 
     // Setup dummy message handlers for transport creation
-    let message_handler_a = Box::new(move |_message: NetworkMessage| {
-        Ok::<(), NetworkError>(())
-    });
+    let message_handler_a = Box::new(move |_message: NetworkMessage| Ok::<(), NetworkError>(()));
 
-    let message_handler_b = Box::new(move |_message: NetworkMessage| {
-        Ok::<(), NetworkError>(())
-    });
+    let message_handler_b = Box::new(move |_message: NetworkMessage| Ok::<(), NetworkError>(()));
 
     // Test: Create transport instances (this should work even with disabled QUIC)
     let transport_a = QuicTransport::new(
@@ -149,7 +162,8 @@ async fn test_quic_transport_connection_end_to_end() {
         message_handler_a,
         options_a,
         logger_a.clone(),
-    ).expect("Failed to create transport A");
+    )
+    .expect("Failed to create transport A");
 
     let transport_b = QuicTransport::new(
         node_b_info.clone(),
@@ -157,13 +171,14 @@ async fn test_quic_transport_connection_end_to_end() {
         message_handler_b,
         options_b,
         logger_b.clone(),
-    ).expect("Failed to create transport B");
+    )
+    .expect("Failed to create transport B");
 
     println!("✅ Transport instances created successfully!");
 
     // Test: Start transports - should now work with proper certificates and private keys
     println!("Starting QUIC transports...");
-    
+
     match transport_a.start().await {
         Ok(_) => {
             println!("✅ Transport A started successfully!");
@@ -187,7 +202,7 @@ async fn test_quic_transport_connection_end_to_end() {
 
     // Test: Attempt to connect Node A to Node B
     println!("Testing QUIC connection from Node A to Node B...");
-    
+
     // Create peer info for connection
     let peer_info_b = runar_node::network::discovery::multicast_discovery::PeerInfo {
         public_key: hex::encode(&node_b_public_key),
@@ -201,26 +216,36 @@ async fn test_quic_transport_connection_end_to_end() {
         }
         Err(e) => {
             // This might fail due to certificate validation issues, but the transport itself should work
-            println!("⚠️  Connection failed (expected due to cert validation): {}", e);
+            println!(
+                "⚠️  Connection failed (expected due to cert validation): {}",
+                e
+            );
             assert!(
-                e.to_string().contains("certificate") || 
-                e.to_string().contains("handshake") || 
-                e.to_string().contains("connection"),
-                "Should be a connection/certificate error, got: {}", e
+                e.to_string().contains("certificate")
+                    || e.to_string().contains("handshake")
+                    || e.to_string().contains("connection"),
+                "Should be a connection/certificate error, got: {}",
+                e
             );
         }
     }
 
     // Clean up
     println!("Stopping transports...");
-    transport_a.stop().await.expect("Failed to stop transport A");
-    transport_b.stop().await.expect("Failed to stop transport B");
+    transport_a
+        .stop()
+        .await
+        .expect("Failed to stop transport A");
+    transport_b
+        .stop()
+        .await
+        .expect("Failed to stop transport B");
     println!("✅ Transports stopped successfully!");
 
     println!("🎉 All QUIC transport tests passed!");
     println!("📋 Summary:");
     println!("  - User CA generation: ✅");
-    println!("  - Node certificate signing: ✅");  
+    println!("  - Node certificate signing: ✅");
     println!("  - Certificate processing: ✅");
     println!("  - QUIC certificate retrieval: ✅");
     println!("  - Transport option creation: ✅");

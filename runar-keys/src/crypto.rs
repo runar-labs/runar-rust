@@ -183,19 +183,19 @@ impl SigningKeyPair {
 
         // PRODUCTION APPROACH: Manual X.509 certificate construction
         // This ensures the certificate contains the exact public key from the CSR
-        
+
         // Create TBSCertificate (To Be Signed Certificate) structure manually
         let mut cert_der = Vec::new();
-        
+
         // Certificate SEQUENCE (outer wrapper)
         cert_der.push(0x30); // SEQUENCE tag
-        
+
         // We'll come back to fill in the length after we build the content
         let length_pos = cert_der.len();
         cert_der.push(0x82); // Long form length (2 bytes to follow)
         cert_der.push(0x00); // High byte of length (placeholder)
         cert_der.push(0x00); // Low byte of length (placeholder)
-        
+
         // TBSCertificate SEQUENCE
         let tbs_start = cert_der.len();
         cert_der.push(0x30); // SEQUENCE tag
@@ -203,56 +203,70 @@ impl SigningKeyPair {
         cert_der.push(0x82); // Long form length (2 bytes to follow)
         cert_der.push(0x00); // High byte of length (placeholder)
         cert_der.push(0x00); // Low byte of length (placeholder)
-        
+
         // Version [0] EXPLICIT INTEGER 2 (v3)
         cert_der.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]);
-        
+
         // Serial Number (INTEGER) - Use first 8 bytes of CSR public key as serial
         cert_der.push(0x02); // INTEGER tag
         cert_der.push(0x08); // 8 bytes length
         cert_der.extend_from_slice(&csr.public_key[0..8]);
-        
+
         // Signature Algorithm Identifier (Ed25519)
         cert_der.extend_from_slice(&[
             0x30, 0x05, // SEQUENCE, 5 bytes
             0x06, 0x03, // OID, 3 bytes
-            0x2B, 0x65, 0x70 // Ed25519 OID: 1.3.101.112
+            0x2B, 0x65, 0x70, // Ed25519 OID: 1.3.101.112
         ]);
-        
+
         // Issuer Name (Distinguished Name)
         let issuer_cn = format!("ca:{}", hex::encode(self.public_key()));
         cert_der.push(0x30); // SEQUENCE tag
         cert_der.push((issuer_cn.len() + 11) as u8); // Length of DN structure
         cert_der.extend_from_slice(&[
-            0x31, (issuer_cn.len() + 9) as u8, // SET
-            0x30, (issuer_cn.len() + 7) as u8, // SEQUENCE
-            0x06, 0x03, 0x55, 0x04, 0x03, // CommonName OID: 2.5.4.3
-            0x0C, issuer_cn.len() as u8 // UTF8String
+            0x31,
+            (issuer_cn.len() + 9) as u8, // SET
+            0x30,
+            (issuer_cn.len() + 7) as u8, // SEQUENCE
+            0x06,
+            0x03,
+            0x55,
+            0x04,
+            0x03, // CommonName OID: 2.5.4.3
+            0x0C,
+            issuer_cn.len() as u8, // UTF8String
         ]);
         cert_der.extend_from_slice(issuer_cn.as_bytes());
-        
+
         // Validity (Not Before / Not After)
         cert_der.extend_from_slice(&[
             0x30, 0x1E, // SEQUENCE, 30 bytes
             // Not Before: 240101000000Z (2024-01-01)
             0x17, 0x0D, // UTCTime, 13 bytes
             b'2', b'4', b'0', b'1', b'0', b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'Z',
-            // Not After: 301231235959Z (2030-12-31)  
+            // Not After: 301231235959Z (2030-12-31)
             0x17, 0x0D, // UTCTime, 13 bytes
-            b'3', b'0', b'1', b'2', b'3', b'1', b'2', b'3', b'5', b'9', b'5', b'9', b'Z'
+            b'3', b'0', b'1', b'2', b'3', b'1', b'2', b'3', b'5', b'9', b'5', b'9', b'Z',
         ]);
-        
+
         // Subject Name (from CSR)
         cert_der.push(0x30); // SEQUENCE tag
         cert_der.push((csr.subject.len() + 11) as u8); // Length
         cert_der.extend_from_slice(&[
-            0x31, (csr.subject.len() + 9) as u8, // SET
-            0x30, (csr.subject.len() + 7) as u8, // SEQUENCE
-            0x06, 0x03, 0x55, 0x04, 0x03, // CommonName OID: 2.5.4.3
-            0x0C, csr.subject.len() as u8 // UTF8String
+            0x31,
+            (csr.subject.len() + 9) as u8, // SET
+            0x30,
+            (csr.subject.len() + 7) as u8, // SEQUENCE
+            0x06,
+            0x03,
+            0x55,
+            0x04,
+            0x03, // CommonName OID: 2.5.4.3
+            0x0C,
+            csr.subject.len() as u8, // UTF8String
         ]);
         cert_der.extend_from_slice(csr.subject.as_bytes());
-        
+
         // Subject Public Key Info (THE CRITICAL PART - CSR's public key)
         cert_der.extend_from_slice(&[
             0x30, 0x2A, // SEQUENCE, 42 bytes
@@ -260,45 +274,45 @@ impl SigningKeyPair {
             0x06, 0x03, // OID, 3 bytes
             0x2B, 0x65, 0x70, // Ed25519 OID: 1.3.101.112
             0x03, 0x21, // BIT STRING, 33 bytes (32 key bytes + 1 unused bits byte)
-            0x00 // Unused bits
+            0x00, // Unused bits
         ]);
         cert_der.extend_from_slice(&csr.public_key); // THE CSR'S PUBLIC KEY!
-        
+
         // Calculate and fill in TBSCertificate length
         let tbs_content_len = cert_der.len() - tbs_start - 4;
         cert_der[tbs_length_pos + 1] = ((tbs_content_len >> 8) & 0xFF) as u8;
         cert_der[tbs_length_pos + 2] = (tbs_content_len & 0xFF) as u8;
-        
+
         // Now sign the TBSCertificate with the CA's private key
         let tbs_bytes = &cert_der[tbs_start..];
         let signature = self.sign(tbs_bytes);
-        
+
         // Add signature algorithm identifier to the certificate
         cert_der.extend_from_slice(&[
             0x30, 0x05, // SEQUENCE, 5 bytes
-            0x06, 0x03, // OID, 3 bytes  
-            0x2B, 0x65, 0x70 // Ed25519 OID: 1.3.101.112
+            0x06, 0x03, // OID, 3 bytes
+            0x2B, 0x65, 0x70, // Ed25519 OID: 1.3.101.112
         ]);
-        
+
         // Add signature value (BIT STRING)
         cert_der.push(0x03); // BIT STRING tag
         cert_der.push(0x41); // 65 bytes (64 signature bytes + 1 unused bits byte)
         cert_der.push(0x00); // Unused bits
         cert_der.extend_from_slice(&signature.to_bytes());
-        
+
         // Calculate and fill in total certificate length
         let total_content_len = cert_der.len() - 4;
         cert_der[length_pos + 1] = ((total_content_len >> 8) & 0xFF) as u8;
         cert_der[length_pos + 2] = (total_content_len & 0xFF) as u8;
-        
+
         // Create our Certificate wrapper with proper metadata
         let ca_pub_key_hex = hex::encode(self.public_key());
         let issuer_cn = format!("ca:{}", ca_pub_key_hex);
-        
+
         let mut certificate = Certificate::from_der(cert_der);
         certificate.subject = csr.subject;
         certificate.issuer = issuer_cn;
-        
+
         Ok(certificate)
     }
 }

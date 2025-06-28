@@ -167,7 +167,11 @@ impl KeyManager {
     /// 2. A ServerCertVerifier that accepts the stored certificates
     pub fn get_quic_certs(
         &self,
-    ) -> Result<(Vec<CertificateDer<'static>>, rustls_pki_types::PrivateKeyDer<'static>, Arc<dyn ServerCertVerifier>)> {
+    ) -> Result<(
+        Vec<CertificateDer<'static>>,
+        rustls_pki_types::PrivateKeyDer<'static>,
+        Arc<dyn ServerCertVerifier>,
+    )> {
         // Get the node's certificate that was signed by the User CA and stored
         let stored_cert = self.certificates.get("node_tls_cert").ok_or_else(|| {
             KeyError::KeyNotFound(
@@ -235,45 +239,53 @@ impl KeyManager {
         // PRODUCTION FIX: Use the NODE's private key that corresponds to the certificate's public key
         // The certificate contains the node's public key, so we need the node's private key
         let node_signing_key = self.get_signing_key("node_tls").ok_or_else(|| {
-            KeyError::KeyNotFound("Node TLS signing key not found. Complete node setup first.".to_string())
+            KeyError::KeyNotFound(
+                "Node TLS signing key not found. Complete node setup first.".to_string(),
+            )
         })?;
 
         // Convert the Ed25519 signing key to rustls-compatible private key format
         // Use the NODE's private key bytes that correspond to the certificate's public key
         let ed25519_private_bytes = node_signing_key.secret_key_bytes();
-        
+
         // Create a proper PKCS#8 DER encoding for the Ed25519 private key
         // Ed25519 OID: 1.3.101.112 (0x2B, 0x65, 0x70)
-        let ed25519_key_bytes: [u8; 32] = ed25519_private_bytes.try_into()
+        let ed25519_key_bytes: [u8; 32] = ed25519_private_bytes
+            .try_into()
             .map_err(|_| KeyError::CryptoError("Invalid Ed25519 key length".to_string()))?;
-        
+
         // Manual PKCS#8 DER encoding for Ed25519 private key
         // This creates a proper PKCS#8 PrivateKeyInfo structure
         let mut pkcs8_der = Vec::new();
-        
+
         // SEQUENCE tag and length for PrivateKeyInfo
         pkcs8_der.push(0x30); // SEQUENCE
         pkcs8_der.push(0x2E); // Length: 46 bytes
-        
+
         // Version (INTEGER 0)
         pkcs8_der.extend_from_slice(&[0x02, 0x01, 0x00]);
-        
+
         // AlgorithmIdentifier for Ed25519
         pkcs8_der.push(0x30); // SEQUENCE
         pkcs8_der.push(0x05); // Length: 5 bytes
         pkcs8_der.push(0x06); // OBJECT IDENTIFIER
         pkcs8_der.push(0x03); // Length: 3 bytes
         pkcs8_der.extend_from_slice(&[0x2B, 0x65, 0x70]); // Ed25519 OID
-        
+
         // PrivateKey (OCTET STRING containing the 32-byte Ed25519 private key)
         pkcs8_der.push(0x04); // OCTET STRING
         pkcs8_der.push(0x22); // Length: 34 bytes
         pkcs8_der.push(0x04); // Inner OCTET STRING
         pkcs8_der.push(0x20); // Length: 32 bytes
         pkcs8_der.extend_from_slice(&ed25519_key_bytes);
-        
-        let private_key_der = rustls_pki_types::PrivateKeyDer::try_from(pkcs8_der)
-            .map_err(|e| KeyError::CryptoError(format!("Failed to create PKCS#8 DER for Ed25519 key: {}", e)))?;
+
+        let private_key_der =
+            rustls_pki_types::PrivateKeyDer::try_from(pkcs8_der).map_err(|e| {
+                KeyError::CryptoError(format!(
+                    "Failed to create PKCS#8 DER for Ed25519 key: {}",
+                    e
+                ))
+            })?;
 
         Ok((vec![cert_der], private_key_der, verifier))
     }

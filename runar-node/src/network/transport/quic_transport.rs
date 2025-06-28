@@ -338,7 +338,8 @@ impl QuicTransportImpl {
     fn create_quinn_configs(
         self: &Arc<Self>,
     ) -> Result<(ServerConfig, ClientConfig), NetworkError> {
-        self.logger.info("Creating Quinn configurations with certificates");
+        self.logger
+            .info("Creating Quinn configurations with certificates");
 
         // Install default crypto provider for rustls 0.23.x if not already installed
         if rustls::crypto::CryptoProvider::get_default().is_none() {
@@ -360,13 +361,17 @@ impl QuicTransportImpl {
             NetworkError::ConfigurationError("No certificate verifier provided".to_string())
         })?;
 
-        self.logger.info(format!("Using {} certificates for QUIC with proper private key", certificates.len()));
+        self.logger.info(format!(
+            "Using {} certificates for QUIC with proper private key",
+            certificates.len()
+        ));
 
         // Create server configuration using Quinn 0.11.x API
         let server_config = ServerConfig::with_single_cert(
             certificates.clone(),
             private_key.clone_key(),
-        ).map_err(|e| {
+        )
+        .map_err(|e| {
             NetworkError::ConfigurationError(format!("Failed to create server config: {}", e))
         })?;
 
@@ -377,11 +382,18 @@ impl QuicTransportImpl {
             .with_no_client_auth();
 
         let client_config = ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config)
-                .map_err(|e| NetworkError::ConfigurationError(format!("Failed to convert rustls config: {}", e)))?
+            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config).map_err(
+                |e| {
+                    NetworkError::ConfigurationError(format!(
+                        "Failed to convert rustls config: {}",
+                        e
+                    ))
+                },
+            )?,
         ));
 
-        self.logger.info("Successfully created Quinn server and client configurations");
+        self.logger
+            .info("Successfully created Quinn server and client configurations");
 
         Ok((server_config, client_config))
     }
@@ -467,7 +479,9 @@ impl QuicTransportImpl {
                             Ok(connection) => {
                                 match inner_arc.handle_new_connection(connection).await {
                                     Ok(_) => {} // Task handle is returned but not stored here
-                                    Err(e) => logger.error(format!("Error handling connection: {}", e)),
+                                    Err(e) => {
+                                        logger.error(format!("Error handling connection: {}", e))
+                                    }
                                 }
                             }
                             Err(e) => logger.error(format!("Error accepting connection: {}", e)),
