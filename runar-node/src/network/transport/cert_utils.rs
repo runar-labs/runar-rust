@@ -2,11 +2,6 @@
 //
 // This module provides utility functions for working with TLS certificates.
 
-use std::fs::File;
-use std::io::BufReader;
-use std::io::Read;
-use std::path::Path;
-
 use anyhow::Result;
 use rcgen;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};

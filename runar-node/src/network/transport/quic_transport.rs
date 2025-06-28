@@ -158,47 +158,12 @@ pub struct QuicTransportConfig {
     pub message_handler:
         Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>,
     pub options: QuicTransportOptions,
-    pub logger: Arc<Logger>,
-}
-
-/// Helper function to generate self-signed certificates for testing
-///
-/// INTENTION: Provide a consistent way to generate test certificates across test and core code, using explicit rustls namespaces to avoid type conflicts.
-pub(crate) fn generate_test_certificates() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)
-{
-    use rcgen;
-    // Create certificate parameters with default values
-    let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()]);
-    params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
-    params.not_before = rcgen::date_time_ymd(2023, 1, 1);
-    params.not_after = rcgen::date_time_ymd(2026, 1, 1);
-
-    let cert = rcgen::Certificate::from_params(params).expect("Failed to generate certificate");
-
-    // Get the DER encoded certificate and private key
-    let cert_der = cert
-        .serialize_der()
-        .expect("Failed to serialize certificate");
-    let key_der = cert.serialize_private_key_der();
-
-    // Convert to rustls types with explicit namespace qualification
-    let rustls_cert = CertificateDer::from(cert_der);
-    let rustls_key = PrivateKeyDer::try_from(key_der).expect("Failed to convert private key");
-
-    (vec![rustls_cert], rustls_key)
+        pub logger: Arc<Logger>,
 }
 
 impl QuicTransportOptions {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Builder: Attach certificates for production use.
-    ///
-    /// Certificates must be provided from the key management system.
-    pub fn with_test_certificates(self) -> Self {
-        // This method is no longer needed - certificates should come from key management
-        self
     }
 
     /// Set the log level for Quinn-related logs

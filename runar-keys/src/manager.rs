@@ -198,7 +198,7 @@ impl KeyManager {
         let mut ca_distinguished_name = rcgen::DistinguishedName::new();
         ca_distinguished_name.push(
             rcgen::DnType::CommonName,
-            &format!("ca:{}", hex::encode(ca_key.public_key())),
+            format!("ca:{}", hex::encode(ca_key.public_key())),
         );
         ca_params.distinguished_name = ca_distinguished_name;
         ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);

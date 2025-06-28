@@ -35,21 +35,18 @@ async fn main() -> Result<()> {
     };
 
     // Configure NetworkConfig using its constructor and builder methods
-    let quic_options = QuicTransportOptions::new().with_test_certificates();
+    let quic_options = QuicTransportOptions::new();
     let mut network_config = NetworkConfig::new();
     network_config.quic_options = Some(quic_options);
     // Override default transport options if necessary (NetworkConfig::new() sets defaults)
     // The bind_address is handled by TransportOptions::default() called within NetworkConfig::new()
     network_config.transport_options.timeout = Some(Duration::from_secs(30));
 
-    let node_config = NodeConfig {
-        node_id: "micro_services_demo_node".to_string(),
-        default_network_id: "default_network".to_string(),
-        network_ids: vec!["default_network".to_string()],
-        network_config: Some(network_config),
-        logging_config: Some(logging_config),
-        request_timeout_ms: 30000, // Default or example value
-    };
+    let node_config = NodeConfig::new_network_test_config("micro_services_demo_node", "default_network")
+        .with_network_config(network_config)
+        .with_logging_config(logging_config)
+        .with_additional_networks(vec!["default_network".to_string()])
+        .with_request_timeout(30000);
 
     let mut node = Node::new(node_config).await?;
     println!("Node created successfully.");
