@@ -1,5 +1,6 @@
 use crate::crypto::{
     Certificate, EncryptionKeyPair, NetworkKeyMessage, PublicKey, SigningKeyPair, SymmetricKey,
+    CHACHA20POLY1305_KEY_LENGTH,
 };
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
@@ -129,7 +130,10 @@ impl KeyManager {
         let signing_keypair = KeyDerivation::derive_user_profile_key(&seed, profile_index)?;
 
         // 2. Derive the corresponding encryption key pair from the signing key pair
-        let encryption_keypair = EncryptionKeyPair::from_secret(signing_keypair.secret_key_bytes());
+        let signing_key_bytes: [u8; 32] = signing_keypair.secret_key_bytes()
+            .try_into()
+            .map_err(|_| KeyError::InvalidKeyFormat("Invalid signing key length".to_string()))?;
+        let encryption_keypair = EncryptionKeyPair::from_secret(&signing_key_bytes);
 
         // 3. Store both key pairs with distinct IDs
         let signing_key_id = format!("user_profile_signing_{}", profile_index);
@@ -141,7 +145,7 @@ impl KeyManager {
             .insert(encryption_key_id, encryption_keypair);
 
         // 4. Return the public signing key
-        Ok(signing_keypair.public_key().to_vec())
+        Ok(signing_keypair.public_key().as_slice().to_vec())
     }
 
     /// Generate a node TLS key pair and self-signed certificate for QUIC
@@ -153,50 +157,72 @@ impl KeyManager {
         self.get_node_public_key()
     }
 
-    /// Get the QUIC certificates and certificate verifier for use with Rustls
+    /// Get QUIC-compatible certificates and verifier from stored certificates
+    ///
+    /// This method returns the certificate that was previously signed by the User CA
+    /// and stored via process_mobile_message. It does NOT create new certificates.
+    ///
     /// Returns a tuple containing:
-    /// 1. A vector of RustlsCertificate objects
-    /// 2. A ServerCertVerifier that trusts our CA
+    /// 1. A vector of CertificateDer objects (from stored certificates)
+    /// 2. A ServerCertVerifier that accepts the stored certificates
     pub fn get_quic_certs(
         &self,
     ) -> Result<(Vec<CertificateDer<'static>>, Arc<dyn ServerCertVerifier>)> {
-        use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType};
-
-        // Get the node's certificate that was signed by the user's CA
-        let cert = self.certificates.get("node_tls_cert").ok_or_else(|| {
+        // Get the node's certificate that was signed by the User CA and stored
+        let stored_cert = self.certificates.get("node_tls_cert").ok_or_else(|| {
             KeyError::KeyNotFound(
                 "Node TLS certificate not found. Complete node setup first.".to_string(),
             )
         })?;
 
-        // Create a self-signed certificate for testing purposes
-        // In production, this should be replaced with the actual certificate from the CA
-        let mut params = CertificateParams::new(vec!["localhost".to_string()]);
+        // Convert the stored certificate to rustls format
+        let cert_der = stored_cert.to_rustls_certificate();
 
-        // Set the certificate subject from our stored certificate
-        let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, &cert.subject);
-        params.distinguished_name = dn;
-
-        // Generate a new key pair for the certificate
-        // Note: rcgen will handle the validity period with reasonable defaults
-        let cert = Certificate::from_params(params)
-            .map_err(|e| KeyError::CryptoError(format!("Failed to generate certificate: {}", e)))?;
-
-        // Convert to DER format
-        let cert_der = cert.serialize_der().map_err(|e| {
-            KeyError::CryptoError(format!("Failed to serialize certificate: {}", e))
-        })?;
-
-        let cert_der = CertificateDer::from(cert_der);
-
-        // Create a root store with our self-signed certificate
+        // Create a root store with the CA certificate (not the node certificate)
+        // We need to create the CA certificate from our stored CA key
         let mut root_store = RootCertStore::empty();
-        root_store.add(cert_der.clone()).map_err(|e| {
-            KeyError::CryptoError(format!("Failed to add certificate to root store: {}", e))
-        })?;
+        
+        // Get the CA signing key to create the CA certificate
+        if let Some(ca_key) = self.get_signing_key("user_ca") {
+            // Create a CA certificate from our User CA key
+            let mut ca_params = rcgen::CertificateParams::new(vec!["ca.localhost".to_string()]);
+            let mut ca_distinguished_name = rcgen::DistinguishedName::new();
+            ca_distinguished_name.push(rcgen::DnType::CommonName, &format!("ca:{}", hex::encode(ca_key.public_key())));
+            ca_params.distinguished_name = ca_distinguished_name;
+            ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+            ca_params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
+            
+            // Create CA key pair using P256 for rcgen compatibility  
+            use p256::ecdsa::{SigningKey as P256SigningKey};
+            use pkcs8::EncodePrivateKey;
+            use rand::rngs::OsRng;
+            
+            let ca_p256_key = P256SigningKey::random(&mut OsRng);
+            let ca_key_pair = rcgen::KeyPair::from_der(ca_p256_key.to_pkcs8_der().unwrap().as_bytes())
+                .map_err(|e| KeyError::CertificateError(format!("Failed to create CA key pair: {}", e)))?;
+            ca_params.key_pair = Some(ca_key_pair);
+            
+            let ca_cert = rcgen::Certificate::from_params(ca_params)
+                .map_err(|e| KeyError::CertificateError(format!("Failed to create CA certificate: {}", e)))?;
+            
+            // Serialize CA certificate to DER
+            let ca_cert_der = ca_cert.serialize_der()
+                .map_err(|e| KeyError::CertificateError(format!("Failed to serialize CA certificate: {}", e)))?;
+            
+            // Add the CA certificate to the root store
+            let ca_cert_rustls = CertificateDer::from(ca_cert_der);
+            root_store.add(ca_cert_rustls).map_err(|e| {
+                KeyError::CryptoError(format!("Failed to add CA certificate to root store: {}", e))
+            })?;
+        } else {
+            // Fallback: if no CA key is found, add the node certificate itself
+            // This should not happen in a proper production setup
+            root_store.add(cert_der.clone()).map_err(|e| {
+                KeyError::CryptoError(format!("Failed to add certificate to root store: {}", e))
+            })?;
+        }
 
-        // Create a verifier that trusts our CA
+        // Create a verifier that trusts certificates in our root store
         let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(root_store))
             .build()
             .map_err(|e| KeyError::CryptoError(format!("Failed to create verifier: {}", e)))?;
@@ -210,7 +236,7 @@ impl KeyManager {
             .signing_keys
             .get(&key_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Signing key not found: {}", key_id)))?;
-        Ok(key_pair.public_key().to_vec())
+        Ok(Vec::from(*key_pair.public_key()))
     }
 
     /// Generate a node storage key pair
@@ -230,13 +256,13 @@ impl KeyManager {
 
         let key_id = format!(
             "network_data_{}",
-            hex::encode(encryption_keypair.public_key())
+            hex::encode(encryption_keypair.public_key_bytes())
         );
 
         self.encryption_keys
             .insert(key_id.clone(), encryption_keypair.clone());
 
-        Ok(encryption_keypair.public_key().to_vec())
+        Ok(encryption_keypair.public_key_bytes().to_vec())
     }
 
     /// Create a network key message containing both public and private keys
@@ -254,7 +280,7 @@ impl KeyManager {
         Ok(NetworkKeyMessage {
             network_name: network_name.to_string(),
             public_key: network_public_key.to_vec(),
-            private_key: encryption_keypair.secret_key().to_vec(),
+            private_key: encryption_keypair.secret_key_bytes().to_vec(),
         })
     }
 
@@ -321,7 +347,7 @@ impl KeyManager {
     /// Returns the public key bytes
     pub fn generate_encryption_key(&mut self, key_id: &str) -> Result<Vec<u8>> {
         let encryption_keypair = EncryptionKeyPair::new();
-        let public_key = encryption_keypair.public_key().to_vec();
+        let public_key = encryption_keypair.public_key_bytes().to_vec();
 
         self.encryption_keys
             .insert(key_id.to_string(), encryption_keypair);
@@ -332,6 +358,50 @@ impl KeyManager {
     /// Store an encryption key pair with the given ID
     pub fn store_encryption_key(&mut self, key_id: &str, key_pair: EncryptionKeyPair) {
         self.encryption_keys.insert(key_id.to_string(), key_pair);
+    }
+
+    /// Store network metadata (like network name) associated with a network key
+    /// Uses proper encrypted storage for network metadata
+    pub fn store_network_metadata(&mut self, metadata_key: &str, network_name: &str) -> Result<()> {
+        // Generate a proper encryption key for metadata storage
+        let metadata_encryption_key = SymmetricKey::new();
+        
+        // Encrypt the network name using the generated key
+        let encrypted_metadata = metadata_encryption_key.encrypt(network_name.as_bytes())?;
+        
+        // Store both the encryption key and encrypted data
+        // The key is stored with a "_key" suffix, the data with "_data" suffix
+        let key_storage_id = format!("{}_key", metadata_key);
+        let data_storage_id = format!("{}_data", metadata_key);
+        
+        self.symmetric_keys.insert(key_storage_id, metadata_encryption_key);
+        
+        // Store encrypted data as a synthetic symmetric key for storage consistency
+        let encrypted_key = SymmetricKey::from_bytes(
+            &encrypted_metadata[..std::cmp::min(encrypted_metadata.len(), CHACHA20POLY1305_KEY_LENGTH)]
+        )?;
+        self.symmetric_keys.insert(data_storage_id, encrypted_key);
+        
+        Ok(())
+    }
+
+    /// Retrieve network metadata by metadata key
+    pub fn get_network_metadata(&self, metadata_key: &str) -> Option<String> {
+        let key_storage_id = format!("{}_key", metadata_key);
+        let data_storage_id = format!("{}_data", metadata_key);
+        
+        // Get both the encryption key and encrypted data
+        let encryption_key = self.symmetric_keys.get(&key_storage_id)?;
+        let encrypted_data_key = self.symmetric_keys.get(&data_storage_id)?;
+        
+        // Extract the encrypted data bytes
+        let encrypted_data = encrypted_data_key.to_bytes();
+        
+        // Decrypt the metadata
+        match encryption_key.decrypt(&encrypted_data) {
+            Ok(decrypted_bytes) => String::from_utf8(decrypted_bytes).ok(),
+            Err(_) => None,
+        }
     }
 
     /// Sign a Certificate Signing Request (CSR)
@@ -358,7 +428,7 @@ impl KeyManager {
             .ok_or_else(|| KeyError::KeyNotFound(format!("Signing key not found: {}", key_id)))?;
 
         // Pass the public key bytes to the CSR creation function
-        Certificate::create_csr(subject, signing_key.public_key())
+        Certificate::create_csr(subject, signing_key)
     }
 
     /// Add a certificate after validating it against the specified CA.

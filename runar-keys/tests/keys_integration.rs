@@ -69,7 +69,7 @@ fn test_e2e_keys_generation_and_exchange() {
     assert_eq!(
         cert.issuer,
         format!("ca:{}", hex::encode(user_ca_public_key.bytes())),
-        "Certificate should be issued by the network CA"
+        "Certificate should be issued by the user CA"
     );
 
     // Extract the node ID from the setup token

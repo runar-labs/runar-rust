@@ -18,7 +18,6 @@ futures = "0.3"
 tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
 runar_common = { path = "../runar-common", features = ["abstract_service"] }
 
-
 # Cryptography dependencies for runar-keys POC
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "std"] } # For Ed25519 operations, version 2.x is common
 ed25519-hd-key = "^0.3.0" # As specified in keys-management.md (check for latest compatible version)
@@ -36,17 +35,22 @@ hkdf = "0.12" # For HKDF
 aes-gcm = "0.10" # For AES-GCM encryption
 serde_json = "1.0" # For JSON serialization/deserialization
 
-# TLS/QUIC dependencies
-rcgen = "0.12" # For generating self-signed certificates
+# TLS/QUIC dependencies - X.509 Certificate Support
+rustls = { version = "0.23.28", features = [] } # For QUIC transport
+rustls-pki-types = "1.12.0" # For Rustls certificate types
+
+# X.509 certificate handling
+rcgen = "0.12" # For generating X.509 certificates
 x509-parser = "0.15" # For X.509 certificate parsing
-rustls = { version = "0.22.0", features = [] } # For QUIC transport
-rustls-pki-types = "1.0.0" # For Rustls certificate types
-webpki = { version = "0.22.4", features = ["std"] } # For WebPKI certificate verification
-webpki-roots = "0.26" # For Mozilla's root certificates
+der = { version = "0.7.8", features = ["derive", "pem"] }
+time = { version = "0.3.34", features = ["formatting", "parsing"] }
+# PKCS#10 CSR handling
+pkcs1 = "0.7"
+pkcs8 = "0.10"
+spki = "0.7"
+p256 = { version = "0.13", features = ["ecdsa"] }
 
 keyring = "2.3"
-
-# X.509 certificate handling using rcgen
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -53,6 +53,24 @@ pub enum KeyError {
 
     #[error("Keyring error: {0}")]
     KeyringError(String),
+
+    #[error("HKDF error")]
+    HkdfError,
+
+    #[error("Symmetric encryption/decryption error: {0}")]
+    SymmetricCryptoError(String),
+
+    #[error("AES-GCM error")]
+    AesGcmError,
+
+    #[error("Asymmetric encryption/decryption error: {0}")]
+    AsymmetricCryptoError(String),
+
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+
+    #[error("Service connection error: {0}")]
+    ServiceConnectionError(String),
 }
 
 impl From<ed25519_dalek::ed25519::Error> for KeyError {
@@ -64,18 +82,6 @@ impl From<ed25519_dalek::ed25519::Error> for KeyError {
 impl From<std::array::TryFromSliceError> for KeyError {
     fn from(err: std::array::TryFromSliceError) -> Self {
         KeyError::InvalidKeyFormat(err.to_string())
-    }
-}
-
-impl From<hkdf::InvalidLength> for KeyError {
-    fn from(err: hkdf::InvalidLength) -> Self {
-        KeyError::CryptoError(format!("HKDF error: {}", err))
-    }
-}
-
-impl From<Box<bincode::ErrorKind>> for KeyError {
-    fn from(err: Box<bincode::ErrorKind>) -> Self {
-        KeyError::SerializationError(err.to_string())
     }
 }
 
@@ -93,6 +99,18 @@ impl From<keyring::Error> for KeyError {
 impl From<hex::FromHexError> for KeyError {
     fn from(err: hex::FromHexError) -> Self {
         KeyError::ConversionError(err.to_string())
+    }
+}
+
+impl From<hkdf::InvalidLength> for KeyError {
+    fn from(_err: hkdf::InvalidLength) -> Self {
+        KeyError::HkdfError
+    }
+}
+
+impl From<Box<bincode::ErrorKind>> for KeyError {
+    fn from(err: Box<bincode::ErrorKind>) -> Self {
+        KeyError::SerializationError(err.to_string())
     }
 }
 

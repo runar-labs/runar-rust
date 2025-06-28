@@ -49,16 +49,16 @@ impl Envelope {
 
         // 3. Generate an ephemeral key pair for this encryption session
         let ephemeral_key = EncryptionKeyPair::new();
-        let ephemeral_public_key_bytes = ephemeral_key.public_key().to_vec();
+        let ephemeral_public_key_bytes = ephemeral_key.public_key_bytes().to_vec();
 
         // 4. Encrypt the envelope key for each recipient
         let mut recipient_keys = Vec::with_capacity(recipients.len());
         for recipient_key in recipients {
             // Use the new encrypt method which handles DH, HKDF, and encryption
-            let encrypted_key = ephemeral_key.encrypt(&envelope_key, recipient_key.public_key())?;
+            let encrypted_key = ephemeral_key.encrypt(&envelope_key, recipient_key.public_key_bytes())?;
 
             recipient_keys.push(RecipientKey {
-                recipient_public_key: recipient_key.public_key().to_vec(),
+                recipient_public_key: recipient_key.public_key_bytes().to_vec(),
                 encrypted_key,
             });
         }
@@ -73,13 +73,13 @@ impl Envelope {
 
     /// Decrypt the envelope using a recipient's key
     pub fn decrypt(&self, recipient_key: &EncryptionKeyPair) -> Result<Vec<u8>> {
-        let recipient_public_key_bytes = recipient_key.public_key();
+        let recipient_public_key_bytes = recipient_key.public_key_bytes();
 
         // 1. Find the encrypted key for this recipient
         let recipient_key_entry = self
             .recipient_keys
             .iter()
-            .find(|r| r.recipient_public_key == recipient_public_key_bytes)
+            .find(|r| r.recipient_public_key == recipient_public_key_bytes.as_slice())
             .ok_or_else(|| {
                 KeyError::EnvelopeError(format!(
                     "No key found for recipient: {}",
@@ -87,12 +87,9 @@ impl Envelope {
                 ))
             })?;
 
-        // 2. The ephemeral public key is the sender's public key for decryption
-        let ephemeral_public_key = &self.ephemeral_public_key;
-
-        // 3. Decrypt the envelope key
+        // 2. Decrypt the envelope key using the new decrypt method that expects embedded sender key
         let envelope_key_vec =
-            recipient_key.decrypt(&recipient_key_entry.encrypted_key, ephemeral_public_key)?;
+            recipient_key.decrypt(&recipient_key_entry.encrypted_key)?;
 
         let envelope_key: [u8; SYMMETRIC_KEY_LENGTH] =
             envelope_key_vec.as_slice().try_into().map_err(|_| {

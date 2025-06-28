@@ -91,7 +91,7 @@ impl NodeKeyManager {
             .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
 
-        Ok(encryption_key.public_key().to_vec())
+        Ok(encryption_key.public_key_bytes().to_vec())
     }
 
     /// Get the node ID
@@ -109,15 +109,13 @@ impl NodeKeyManager {
         let tls_key_id = "node_tls".to_string();
         let tls_csr = self.key_manager.create_csr(&subject, &tls_key_id)?;
 
-        // Ensure node has an encryption key pair for secure communication
-        let node_encryption_public_key =
-            if let Some(key) = self.key_manager.get_encryption_key("node_encryption") {
-                key.public_key().to_vec()
-            } else {
-                // Generate a new encryption key pair if one doesn't exist
-                self.key_manager
-                    .generate_encryption_key("node_encryption")?
-            };
+        // Get the node encryption public key - it must exist at this point
+        let encryption_key = self
+            .key_manager
+            .get_encryption_key("node_encryption")
+            .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
+        
+        let node_encryption_public_key = encryption_key.public_key_bytes().to_vec();
 
         // Create a setup token
         let token = SetupToken {
@@ -222,12 +220,17 @@ impl NodeKeyManager {
         // Store the network key using the existing method
         self.store_network_key(&network_key_message.public_key, network_private_key)?;
 
-        // Store the network name
-        // For now, we'll just log it (implementation depends on requirements)
-        println!(
-            "Received network name: {}",
-            network_key_message.network_name
+        // Store the network name with the network key for future reference
+        let network_metadata_key = format!(
+            "network_metadata_{}",
+            hex::encode(&network_key_message.public_key)
         );
+        
+        // Store network metadata in the key manager using proper encrypted storage
+        self.key_manager_mut().store_network_metadata(
+            &network_metadata_key,
+            &network_key_message.network_name,
+        )?;
 
         Ok(())
     }
