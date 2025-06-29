@@ -127,7 +127,9 @@ fn test_e2e_keys_generation_and_exchange() {
 
     // Parse the certificate using x509-parser to validate structure
     let (_, parsed_cert) = x509_parser::certificate::X509Certificate::from_der(cert_der.as_ref())
-        .expect("Failed to parse certificate as valid X.509 DER - we only accept real X.509 certificates");
+        .expect(
+        "Failed to parse certificate as valid X.509 DER - we only accept real X.509 certificates",
+    );
 
     println!("   - Certificate version: {:?}", parsed_cert.version());
     println!(
@@ -181,7 +183,7 @@ fn test_e2e_keys_generation_and_exchange() {
 
     // For ECDSA, we validate the certificate structure rather than recreating key pairs
     // since ECDSA key derivation is more complex than Ed25519
-    
+
     // Validate that the public key starts with 0x04 (uncompressed format indicator)
     assert_eq!(
         cert_public_key_bytes[0], 0x04,
@@ -189,13 +191,20 @@ fn test_e2e_keys_generation_and_exchange() {
     );
 
     println!("   - ECDSA public key format: uncompressed (0x04 prefix)");
-    println!("   - X coordinate: {}", hex::encode(&cert_public_key_bytes[1..33]));
-    println!("   - Y coordinate: {}", hex::encode(&cert_public_key_bytes[33..65]));
-    
+    println!(
+        "   - X coordinate: {}",
+        hex::encode(&cert_public_key_bytes[1..33])
+    );
+    println!(
+        "   - Y coordinate: {}",
+        hex::encode(&cert_public_key_bytes[33..65])
+    );
+
     // Validate that the private key can be parsed by rustls
-    let _rustls_private_key = rustls::pki_types::PrivateKeyDer::try_from(private_key.secret_der().to_vec())
-        .expect("ECDSA private key should be parseable by rustls");
-    
+    let _rustls_private_key =
+        rustls::pki_types::PrivateKeyDer::try_from(private_key.secret_der().to_vec())
+            .expect("ECDSA private key should be parseable by rustls");
+
     println!("   ✅ ECDSA key pair structure validated!");
 
     // ==============================================
@@ -236,7 +245,7 @@ fn test_e2e_keys_generation_and_exchange() {
 
     println!("   - Issuer CN: {}", issuer_cn);
 
-    // For QUIC self-signed certificates, issuer should be "rcgen self signed cert" 
+    // For QUIC self-signed certificates, issuer should be "rcgen self signed cert"
     assert_eq!(
         issuer_cn, "rcgen self signed cert",
         "QUIC certificate should be self-signed by rcgen"
@@ -446,6 +455,100 @@ fn test_e2e_keys_generation_and_exchange() {
         &decrypted_file_1[..],
         "Decrypted data should match original"
     );
+
+    // ==========================================
+    // NEW: Test QUIC Certificate Retrieval Before and After Hydration
+    // ==========================================
+    println!("\n--- Testing QUIC Certificate Serialization Bug ---");
+
+    // Test 1: Get QUIC certificates from ORIGINAL node (before serialization)
+    println!("🔍 Testing QUIC certs BEFORE state serialization...");
+    let (original_certs, original_key, _original_verifier) = node
+        .get_quic_certs()
+        .expect("Failed to get QUIC certs from original node");
+
+    assert!(
+        !original_certs.is_empty(),
+        "Original node should have QUIC certificates"
+    );
+    println!(
+        "✅ Original node has {} QUIC certificate(s)",
+        original_certs.len()
+    );
+
+    // Parse original certificate to check subject
+    let (_, original_parsed_cert) =
+        x509_parser::certificate::X509Certificate::from_der(original_certs[0].as_ref())
+            .expect("Failed to parse original certificate");
+
+    let original_subject_cn = original_parsed_cert
+        .subject()
+        .iter_common_name()
+        .next()
+        .and_then(|cn| cn.as_str().ok())
+        .expect("Original certificate should have a subject CN");
+
+    println!("📋 Original certificate subject: '{}'", original_subject_cn);
+
+    // Test 2: Get QUIC certificates from HYDRATED node (after serialization/deserialization)
+    println!("🔍 Testing QUIC certs AFTER state serialization/hydration...");
+    let (hydrated_certs, hydrated_key, _hydrated_verifier) = node_hydrated
+        .get_quic_certs()
+        .expect("Failed to get QUIC certs from hydrated node");
+
+    assert!(
+        !hydrated_certs.is_empty(),
+        "Hydrated node should have QUIC certificates"
+    );
+    println!(
+        "✅ Hydrated node has {} QUIC certificate(s)",
+        hydrated_certs.len()
+    );
+
+    // Parse hydrated certificate to check subject
+    let (_, hydrated_parsed_cert) =
+        x509_parser::certificate::X509Certificate::from_der(hydrated_certs[0].as_ref())
+            .expect("Failed to parse hydrated certificate");
+
+    let hydrated_subject_cn = hydrated_parsed_cert
+        .subject()
+        .iter_common_name()
+        .next()
+        .and_then(|cn| cn.as_str().ok())
+        .expect("Hydrated certificate should have a subject CN");
+
+    println!("📋 Hydrated certificate subject: '{}'", hydrated_subject_cn);
+
+    // Test 3: Compare subjects - this should reveal the serialization bug
+    println!("🔍 Comparing certificate subjects before and after serialization...");
+
+    if original_subject_cn == hydrated_subject_cn {
+        println!("✅ Certificate subjects match - serialization working correctly");
+        println!("   Original:  '{}'", original_subject_cn);
+        println!("   Hydrated:  '{}'", hydrated_subject_cn);
+    } else {
+        println!("❌ SERIALIZATION BUG DETECTED!");
+        println!("   Original subject:  '{}'", original_subject_cn);
+        println!("   Hydrated subject:  '{}'", hydrated_subject_cn);
+        println!("   ☝️  Certificate subject/issuer fields lost during state serialization!");
+
+        // This assertion will fail and expose the bug
+        assert_eq!(
+            original_subject_cn, hydrated_subject_cn,
+            "Certificate subject should be preserved across serialization. Bug: #[serde(skip)] on Certificate fields!"
+        );
+    }
+
+    // Test 4: Also verify certificate DER bytes match
+    println!("🔍 Comparing certificate DER bytes...");
+
+    if original_certs[0] == hydrated_certs[0] {
+        println!("✅ Certificate DER bytes match exactly");
+    } else {
+        println!("⚠️  Certificate DER bytes differ - new certs generated after hydration");
+        println!("   Original cert size:  {} bytes", original_certs[0].len());
+        println!("   Hydrated cert size:  {} bytes", hydrated_certs[0].len());
+    }
 
     // 1. Encrypt and decrypt data with the original node instance
     let file_data_2 = b"This is some secret file content that should be encrypted on the node.";

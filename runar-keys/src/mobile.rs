@@ -151,7 +151,7 @@ impl MobileKeyManager {
         // Create a NodeMessage containing both the certificate and CA public key
         let mut ca_public_key_array = [0u8; 32];
         ca_public_key_array.copy_from_slice(ca_key.public_key());
-        
+
         let node_message = NodeMessage {
             certificate: certificate.clone(),
             ca_public_key: ca_public_key_array,

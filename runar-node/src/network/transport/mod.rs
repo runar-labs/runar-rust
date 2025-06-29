@@ -137,7 +137,7 @@ impl Default for TransportOptions {
     fn default() -> Self {
         let port = pick_free_port(50000..51000).unwrap_or(0);
         let bind_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
-        println!("TransportOptions Using port: {port}");
+
         Self {
             timeout: Some(Duration::from_secs(30)),
             max_message_size: Some(1024 * 1024), // 1MB default

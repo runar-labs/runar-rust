@@ -214,10 +214,16 @@ impl RemoteService {
             let network_transport = service.network_transport.clone();
             let serializer = service.serializer.clone();
             let request_timeout_ms = service.request_timeout_ms;
+            let logger = service.logger.clone();
 
             Box::pin(async move {
                 // Generate a unique request ID
                 let request_id = Uuid::new_v4().to_string();
+
+                logger.info(format!(
+                    "🚀 [RemoteService] Starting remote request - Action: {}, Request ID: {}, Target: {}", 
+                    action, request_id, peer_id
+                ));
 
                 // Create a channel for receiving the response
                 let (tx, rx) = tokio::sync::oneshot::channel();
@@ -228,6 +234,11 @@ impl RemoteService {
                     .await
                     .insert(request_id.clone(), tx);
 
+                logger.debug(format!(
+                    "📝 [RemoteService] Stored response channel for request ID: {}",
+                    request_id
+                ));
+
                 let serializer = serializer.read().await;
                 // Serialize the parameters and convert from Arc<[u8]> to Vec<u8>
                 let payload_vec: Vec<u8> = match if let Some(params) = params {
@@ -236,8 +247,21 @@ impl RemoteService {
                     serializer.serialize_value(&ArcValue::null())
                 } {
                     Ok(bytes) => bytes.to_vec(), // Convert Arc<[u8]> to Vec<u8>
-                    Err(e) => return Err(anyhow::anyhow!("Serialization error: {}", e)),
+                    Err(e) => {
+                        logger.error(format!(
+                            "❌ [RemoteService] Serialization error for request {}: {}",
+                            request_id, e
+                        ));
+                        return Err(anyhow::anyhow!("Serialization error: {}", e));
+                    }
                 };
+
+                logger.info(format!(
+                    "📤 [RemoteService] Sending request - ID: {}, Path: {}, Size: {} bytes",
+                    request_id,
+                    action_topic_path,
+                    payload_vec.len()
+                ));
 
                 // Create the network message
                 let message = NetworkMessage {
@@ -254,28 +278,66 @@ impl RemoteService {
                 // Send the request
                 if let Some(transport) = &*network_transport.read().await {
                     if let Err(e) = transport.send_message(message).await {
+                        logger.error(format!(
+                            "❌ [RemoteService] Failed to send request {}: {}",
+                            request_id, e
+                        ));
                         // Clean up the pending request
                         pending_requests.write().await.remove(&request_id);
                         return Err(anyhow::anyhow!("Failed to send request: {}", e));
+                    } else {
+                        logger.info(format!(
+                            "✅ [RemoteService] Request sent successfully - ID: {}, waiting for response...", 
+                            request_id
+                        ));
                     }
                 } else {
+                    logger.error(format!(
+                        "❌ [RemoteService] No transport available for request {}",
+                        request_id
+                    ));
                     return Err(anyhow::anyhow!("Network transport not available"));
                 }
+
+                logger.info(format!(
+                    "⏳ [RemoteService] Waiting for response - ID: {}, Timeout: {}ms",
+                    request_id, request_timeout_ms
+                ));
 
                 // Wait for the response with a timeout
                 match tokio::time::timeout(std::time::Duration::from_millis(request_timeout_ms), rx)
                     .await
                 {
-                    Ok(Ok(Ok(response))) => Ok(response),
-                    Ok(Ok(Err(e))) => Err(anyhow::anyhow!("Remote service error: {}", e)),
+                    Ok(Ok(Ok(response))) => {
+                        logger.info(format!(
+                            "✅ [RemoteService] Response received successfully - ID: {}",
+                            request_id
+                        ));
+                        Ok(response)
+                    }
+                    Ok(Ok(Err(e))) => {
+                        logger.error(format!(
+                            "❌ [RemoteService] Remote service error for request {}: {}",
+                            request_id, e
+                        ));
+                        Err(anyhow::anyhow!("Remote service error: {}", e))
+                    }
                     Ok(Err(_)) => {
                         // Clean up the pending request
                         pending_requests.write().await.remove(&request_id);
+                        logger.error(format!(
+                            "❌ [RemoteService] Response channel closed for request {}",
+                            request_id
+                        ));
                         Err(anyhow::anyhow!("Response channel closed"))
                     }
                     Err(_) => {
                         // Clean up the pending request
                         pending_requests.write().await.remove(&request_id);
+                        logger.error(format!(
+                            "⏰ [RemoteService] Request timeout after {}ms - ID: {}",
+                            request_timeout_ms, request_id
+                        ));
                         Err(anyhow::anyhow!("Request timeout"))
                     }
                 }

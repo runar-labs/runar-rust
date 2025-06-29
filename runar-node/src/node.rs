@@ -322,7 +322,6 @@ impl Node {
         ));
 
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
-        let peer_id = PeerId::new(node_id.clone());
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
         // at this stage the node credentials must already exist and must be in a secure store
@@ -336,7 +335,13 @@ impl Node {
 
         let keys_manager = NodeKeyManager::new_with_state(key_manager_state);
 
+        // **CRITICAL FIX**: Use the real node public key as peer_id, not the simple node_id
+        let node_public_key_bytes = keys_manager.node_public_key().clone();
+        let node_public_key_hex = hex::encode(&node_public_key_bytes);
+        let peer_id = PeerId::new(node_public_key_hex);
+
         logger.info("Successfully loaded existing node credentials.");
+        logger.info(format!("Node peer ID (public key): {}", peer_id));
 
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
@@ -838,59 +843,69 @@ impl Node {
         }
     }
 
-    /// Handle discovery of a new node
+    /// Handle discovered nodes and establish connections using lexicographic ordering
+    ///
+    /// INTENTION: Process discovered peer information and establish connections
+    /// following the rule that only the node with the lexicographically smaller
+    /// peer ID initiates the connection to prevent duplicate connections.
     pub async fn handle_discovered_node(&self, peer_info: PeerInfo) -> Result<()> {
-        // Skip if networking is not enabled
         if !self.supports_networking {
-            self.logger
-                .warn("Received node discovery event but networking is disabled");
             return Ok(());
         }
 
-        // let local_node_info = self.get_local_node_info().await?;
-
-        let peer_public_key = peer_info.public_key.clone();
+        let discovered_peer_id = PeerId::new(peer_info.public_key.clone());
 
         self.logger.info(format!(
             "Discovery listener found node: {}",
-            peer_public_key
+            discovered_peer_id
         ));
 
-        let transport = self.network_transport.read().await;
-        if let Some(transport) = transport.as_ref() {
-            // Check if the transporter is already connected to this peer
-            let is_already_connected = transport
-                .is_connected(PeerId::new(peer_public_key.clone()))
-                .await;
+        // **CRITICAL FIX**: Implement lexicographic ordering to prevent duplicate connections
+        // Only the node with the smaller peer ID should initiate the connection
+        let local_peer_id = &self.peer_id;
+        let should_initiate = local_peer_id.public_key < discovered_peer_id.public_key;
 
-            if is_already_connected {
+        if !should_initiate {
+            self.logger.info(format!(
+                "🚫 [ConnectionOrdering] Not initiating connection to {} - our peer ID ({}) is larger, waiting for them to connect to us",
+                discovered_peer_id, local_peer_id
+            ));
+            return Ok(());
+        }
+
+        self.logger.info(format!(
+            "✅ [ConnectionOrdering] Initiating connection to {} - our peer ID ({}) is smaller",
+            discovered_peer_id, local_peer_id
+        ));
+
+        // Check if we're already connected to this peer
+        let transport_guard = self.network_transport.read().await;
+        if let Some(transport) = transport_guard.as_ref() {
+            if transport.is_connected(discovered_peer_id.clone()).await {
                 self.logger.info(format!(
                     "Already connected to node: {}, ignoring discovery event",
-                    peer_public_key
+                    discovered_peer_id
                 ));
                 return Ok(());
             }
 
-            // Not connected yet, so connect to the peer
-            // The peer node info will be received through the peer_node_info_channel
-            match transport.connect_peer(peer_info.clone()).await {
+            // Attempt to connect to the discovered peer
+            match transport.connect_peer(peer_info).await {
                 Ok(()) => {
                     self.logger
-                        .info(format!("Connected to node: {}", peer_public_key));
-                    // Note: Peer node info is sent through the peer_node_info_channel
-                    // and will be processed by the peer_node_info_listener task
-                    return Ok(());
+                        .info(format!("Connected to node: {}", discovered_peer_id));
                 }
                 Err(e) => {
-                    self.logger.warn(format!(
-                        "Failed to connect to peer {}: {}",
-                        peer_public_key, e
+                    self.logger.error(format!(
+                        "Failed to connect to discovered node {}: {}",
+                        discovered_peer_id, e
                     ));
+                    return Err(anyhow::anyhow!("Connection failed: {}", e));
                 }
             }
         } else {
             self.logger
-                .warn("No transport available to handle discovered node");
+                .warn("No network transport available for connection");
         }
 
         Ok(())
@@ -922,7 +937,7 @@ impl Node {
         }
     }
 
-    // /// Handle a network request
+    /// Handle a network request
     async fn handle_network_request(&self, message: NetworkMessage) -> Result<()> {
         // Skip if networking is not enabled
         if !self.supports_networking {
@@ -931,10 +946,16 @@ impl Node {
             return Ok(());
         }
 
-        self.logger
-            .info(format!("Handling network request from {}", message.source));
+        self.logger.info(format!(
+            "📥 [Node] Handling network request from {} - Type: {}, Payloads: {}",
+            message.source,
+            message.message_type,
+            message.payloads.len()
+        ));
 
         if message.payloads.is_empty() {
+            self.logger
+                .error("❌ [Node] Received request message with no payloads");
             return Err(anyhow!("Received request message with no payloads"));
         }
         let serializer = self.serializer.read().await;
@@ -943,13 +964,20 @@ impl Node {
             let path = payload_item.path.clone();
             let correlation_id = payload_item.correlation_id.clone();
 
+            self.logger.info(format!(
+                "🔄 [Node] Processing request payload - Path: {}, Correlation ID: {}, Size: {} bytes", 
+                path, correlation_id, payload_item.value_bytes.len()
+            ));
+
             // Deserialize the value from bytes
             let params =
                 match serializer.deserialize_value(Arc::from(payload_item.value_bytes.clone())) {
                     Ok(value) => value,
                     Err(e) => {
-                        self.logger
-                            .error(format!("Failed to deserialize request payload: {}", e));
+                        self.logger.error(format!(
+                            "❌ [Node] Failed to deserialize request payload - Path: {}, Error: {}",
+                            path, e
+                        ));
                         return Err(anyhow!("Failed to deserialize request payload: {}", e));
                     }
                 };
@@ -958,17 +986,27 @@ impl Node {
             let local_peer_id = self.peer_id.clone();
 
             // Process the request locally using extracted topic and params
-            self.logger
-                .debug(format!("Processing network request for topic: {}", path));
+            self.logger.info(format!(
+                "⚙️ [Node] Processing local request for path: {} (correlation: {})",
+                path, correlation_id
+            ));
             match self.local_request(path.as_str(), params_option).await {
                 Ok(response) => {
+                    self.logger.info(format!(
+                        "✅ [Node] Local request completed successfully - Path: {}, Correlation: {}", 
+                        path, correlation_id
+                    ));
+
                     // Serialize the response data
                     let serialized_data_result = serializer.serialize_value(&response);
                     let serialized_data = match serialized_data_result {
                         Ok(bytes) => bytes.to_vec(), // Assuming Arc<[u8]> or similar
                         Err(e) => {
                             self.logger
-                                .error(format!("Failed to serialize response in handshake: {}", e));
+                                .error(format!(
+                                    "❌ [Node] Failed to serialize response - Path: {}, Correlation: {}, Error: {}", 
+                                    path, correlation_id, e
+                                ));
                             return Err(anyhow!(
                                 "Failed to serialize response in handshake: {}",
                                 e
@@ -976,11 +1014,18 @@ impl Node {
                         }
                     };
 
+                    self.logger.info(format!(
+                        "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
+                        message.source,
+                        correlation_id,
+                        serialized_data.len()
+                    ));
+
                     // Create a payload item with the serialized response
                     let response_payload = NetworkMessagePayloadItem {
                         path,
                         value_bytes: serialized_data,
-                        correlation_id,
+                        correlation_id: correlation_id.clone(),
                     };
 
                     // Create response message - destination is the original source
@@ -994,7 +1039,10 @@ impl Node {
                     // Check if networking is still enabled before trying to send response
                     if !self.supports_networking {
                         self.logger
-                            .warn("Can't send response - networking is disabled");
+                            .warn(format!(
+                                "⚠️ [Node] Can't send response - networking is disabled (correlation: {})", 
+                                correlation_id
+                            ));
                         return Ok(());
                     }
 
@@ -1003,17 +1051,31 @@ impl Node {
                     if let Some(transport) = transport_guard.as_ref() {
                         if let Err(e) = transport.send_message(response_message).await {
                             self.logger
-                                .error(format!("Failed to send response message: {}", e));
+                                .error(format!(
+                                    "❌ [Node] Failed to send response message - To: {}, Correlation: {}, Error: {}", 
+                                    message.source, correlation_id, e
+                                ));
                             // Consider returning error or just logging?
                         } else {
-                            self.logger.debug("Sent response message to remote node");
+                            self.logger.info(format!(
+                                "✅ [Node] Response sent successfully - To: {}, Correlation: {}",
+                                message.source, correlation_id
+                            ));
                         }
                     } else {
                         self.logger
-                            .warn("No network transport available to send response");
+                            .warn(format!(
+                                "⚠️ [Node] No network transport available to send response (correlation: {})", 
+                                correlation_id
+                            ));
                     }
                 }
                 Err(e) => {
+                    self.logger.error(format!(
+                        "❌ [Node] Local request failed - Path: {}, Correlation: {}, Error: {}",
+                        path, correlation_id, e
+                    ));
+
                     // Create a map for the error response
                     let mut error_map = HashMap::new();
                     error_map.insert("error".to_string(), ArcValue::new_primitive(true));
@@ -1024,21 +1086,33 @@ impl Node {
                     let error_value = ArcValue::from_map(error_map);
 
                     // Serialize the error value
-                    let serialized_error =
-                        match self.serializer.read().await.serialize_value(&error_value) {
-                            Ok(bytes) => bytes.to_vec(),
-                            Err(e) => {
-                                self.logger
-                                    .error(format!("Failed to serialize error response: {}", e));
-                                return Err(anyhow!("Failed to serialize error response: {}", e));
-                            }
-                        };
+                    let serialized_error = match self
+                        .serializer
+                        .read()
+                        .await
+                        .serialize_value(&error_value)
+                    {
+                        Ok(bytes) => bytes.to_vec(),
+                        Err(e) => {
+                            self.logger
+                                    .error(format!(
+                                        "❌ [Node] Failed to serialize error response - Path: {}, Correlation: {}, Error: {}", 
+                                        path, correlation_id, e
+                                    ));
+                            return Err(anyhow!("Failed to serialize error response: {}", e));
+                        }
+                    };
+
+                    self.logger.info(format!(
+                        "📤 [Node] Sending error response - To: {}, Correlation: {}, Size: {} bytes", 
+                        message.source, correlation_id, serialized_error.len()
+                    ));
 
                     // Create payload item with serialized error
                     let error_payload = NetworkMessagePayloadItem {
                         path,
                         value_bytes: serialized_error,
-                        correlation_id,
+                        correlation_id: correlation_id.clone(),
                     };
 
                     let response_message = NetworkMessage {
@@ -1051,7 +1125,10 @@ impl Node {
                     // Check if networking is still enabled before trying to send error response
                     if !self.supports_networking {
                         self.logger
-                            .warn("Can't send error response - networking is disabled");
+                            .warn(format!(
+                                "⚠️ [Node] Can't send error response - networking is disabled (correlation: {})", 
+                                correlation_id
+                            ));
                         return Ok(());
                     }
 
@@ -1060,14 +1137,23 @@ impl Node {
                     if let Some(transport) = transport_guard.as_ref() {
                         if let Err(e) = transport.send_message(response_message).await {
                             self.logger
-                                .error(format!("Failed to send error response message: {}", e));
+                                .error(format!(
+                                    "❌ [Node] Failed to send error response message - To: {}, Correlation: {}, Error: {}", 
+                                    message.source, correlation_id, e
+                                ));
                         } else {
                             self.logger
-                                .debug(format!("Sent error response to remote node: {}", e));
+                                .info(format!(
+                                    "✅ [Node] Error response sent successfully - To: {}, Correlation: {}", 
+                                    message.source, correlation_id
+                                ));
                         }
                     } else {
                         self.logger
-                            .warn("No network transport available to send error response");
+                            .warn(format!(
+                                "⚠️ [Node] No network transport available to send error response (correlation: {})", 
+                                correlation_id
+                            ));
                     }
                 }
             }

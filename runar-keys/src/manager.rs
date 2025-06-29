@@ -5,7 +5,7 @@ use crate::crypto::{
 use crate::error::{KeyError, Result};
 use crate::key_derivation::KeyDerivation;
 use ed25519_dalek::VerifyingKey;
-use rustls::client::danger::{ServerCertVerifier, HandshakeSignatureValid};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
 use serde::{Deserialize, Serialize};
@@ -13,14 +13,12 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-
 /// Certificate verifier for ECDSA certificates used by QUIC transport
 #[derive(Debug)]
 struct EcdsaCertVerifier;
 
 impl EcdsaCertVerifier {
     fn new() -> Self {
-        println!("🔍 [EcdsaCertVerifier] Creating new ECDSA certificate verifier for QUIC");
         Self
     }
 }
@@ -28,18 +26,14 @@ impl EcdsaCertVerifier {
 impl ServerCertVerifier for EcdsaCertVerifier {
     fn verify_server_cert(
         &self,
-        end_entity: &CertificateDer<'_>,
+        _end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
         _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> std::result::Result<rustls::client::danger::ServerCertVerified, TlsError> {
-        println!("🔍 [EcdsaCertVerifier::verify_server_cert] Verifying ECDSA server certificate");
-        println!("🔍 [EcdsaCertVerifier::verify_server_cert] Certificate DER length: {} bytes", end_entity.len());
-        
         // For QUIC transport, we accept any valid X.509 certificate
         // In production, you would validate against your CA here
-        println!("✅ [EcdsaCertVerifier::verify_server_cert] Accepting ECDSA certificate for QUIC transport");
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 
@@ -49,21 +43,14 @@ impl ServerCertVerifier for EcdsaCertVerifier {
         _cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, TlsError> {
-        println!("🔍 [EcdsaCertVerifier::verify_tls12_signature] Verifying TLS 1.2 ECDSA signature");
-        println!("🔍 [EcdsaCertVerifier::verify_tls12_signature] Signature scheme: {:?}", dss.scheme);
-        
         // Accept ECDSA signature schemes for QUIC
         match dss.scheme {
-            SignatureScheme::ECDSA_NISTP256_SHA256 | 
-            SignatureScheme::ECDSA_NISTP384_SHA384 |
-            SignatureScheme::ECDSA_NISTP521_SHA512 => {
-                println!("✅ [EcdsaCertVerifier::verify_tls12_signature] Accepting ECDSA signature for QUIC");
-                Ok(HandshakeSignatureValid::assertion())
-            },
-            _ => {
-                println!("❌ [EcdsaCertVerifier::verify_tls12_signature] Unsupported signature scheme: {:?}", dss.scheme);
-                Err(TlsError::InvalidCertificate(rustls::CertificateError::BadSignature))
-            }
+            SignatureScheme::ECDSA_NISTP256_SHA256
+            | SignatureScheme::ECDSA_NISTP384_SHA384
+            | SignatureScheme::ECDSA_NISTP521_SHA512 => Ok(HandshakeSignatureValid::assertion()),
+            _ => Err(TlsError::InvalidCertificate(
+                rustls::CertificateError::BadSignature,
+            )),
         }
     }
 
@@ -73,26 +60,18 @@ impl ServerCertVerifier for EcdsaCertVerifier {
         _cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> std::result::Result<HandshakeSignatureValid, TlsError> {
-        println!("🔍 [EcdsaCertVerifier::verify_tls13_signature] Verifying TLS 1.3 ECDSA signature");
-        println!("🔍 [EcdsaCertVerifier::verify_tls13_signature] Signature scheme: {:?}", dss.scheme);
-        
         // Accept ECDSA signature schemes for QUIC
         match dss.scheme {
-            SignatureScheme::ECDSA_NISTP256_SHA256 | 
-            SignatureScheme::ECDSA_NISTP384_SHA384 |
-            SignatureScheme::ECDSA_NISTP521_SHA512 => {
-                println!("✅ [EcdsaCertVerifier::verify_tls13_signature] Accepting ECDSA signature for QUIC");
-                Ok(HandshakeSignatureValid::assertion())
-            },
-            _ => {
-                println!("❌ [EcdsaCertVerifier::verify_tls13_signature] Unsupported signature scheme: {:?}", dss.scheme);
-                Err(TlsError::InvalidCertificate(rustls::CertificateError::BadSignature))
-            }
+            SignatureScheme::ECDSA_NISTP256_SHA256
+            | SignatureScheme::ECDSA_NISTP384_SHA384
+            | SignatureScheme::ECDSA_NISTP521_SHA512 => Ok(HandshakeSignatureValid::assertion()),
+            _ => Err(TlsError::InvalidCertificate(
+                rustls::CertificateError::BadSignature,
+            )),
         }
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        println!("🔍 [EcdsaCertVerifier::supported_verify_schemes] Returning ECDSA signature schemes for QUIC");
         vec![
             SignatureScheme::ECDSA_NISTP256_SHA256,
             SignatureScheme::ECDSA_NISTP384_SHA384,
@@ -100,8 +79,6 @@ impl ServerCertVerifier for EcdsaCertVerifier {
         ]
     }
 }
-
-
 
 /// Key manager that stores and manages cryptographic keys
 /// Structure to hold serializable key data for persistence
@@ -134,10 +111,12 @@ impl Serialize for EcdsaKeyPair {
     {
         use pkcs8::EncodePrivateKey;
         use serde::ser::Error;
-        
-        let pkcs8_der = self.signing_key.to_pkcs8_der()
+
+        let pkcs8_der = self
+            .signing_key
+            .to_pkcs8_der()
             .map_err(|e| S::Error::custom(format!("Failed to encode ECDSA key: {}", e)))?;
-        
+
         serializer.serialize_bytes(pkcs8_der.as_bytes())
     }
 }
@@ -149,11 +128,11 @@ impl<'de> Deserialize<'de> for EcdsaKeyPair {
     {
         use pkcs8::DecodePrivateKey;
         use serde::de::Error;
-        
+
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let signing_key = p256::ecdsa::SigningKey::from_pkcs8_der(&bytes)
             .map_err(|e| D::Error::custom(format!("Failed to decode ECDSA key: {}", e)))?;
-            
+
         Ok(EcdsaKeyPair { signing_key })
     }
 }
@@ -165,42 +144,47 @@ impl EcdsaKeyPair {
             signing_key: p256::ecdsa::SigningKey::random(rng),
         }
     }
-    
+
     /// Create from PKCS#8 DER bytes
     pub fn from_pkcs8(pkcs8_der: &[u8]) -> Result<Self> {
         use pkcs8::DecodePrivateKey;
-        
-        let signing_key = p256::ecdsa::SigningKey::from_pkcs8_der(pkcs8_der)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to decode ECDSA key: {}", e)))?;
-            
+
+        let signing_key = p256::ecdsa::SigningKey::from_pkcs8_der(pkcs8_der).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to decode ECDSA key: {}", e))
+        })?;
+
         Ok(Self { signing_key })
     }
-    
+
     /// Export to PKCS#8 DER
     pub fn to_pkcs8_der(&self) -> Result<pkcs8::SecretDocument> {
         use pkcs8::EncodePrivateKey;
-        
-        self.signing_key.to_pkcs8_der()
+
+        self.signing_key
+            .to_pkcs8_der()
             .map_err(|e| KeyError::CertificateError(format!("Failed to encode ECDSA key: {}", e)))
     }
-    
+
     /// Get the verifying key (public key)
     pub fn verifying_key(&self) -> p256::ecdsa::VerifyingKey {
         *self.signing_key.verifying_key()
     }
-    
+
     /// Convert to rcgen KeyPair for certificate generation
     pub fn to_rcgen_key_pair(&self) -> Result<rcgen::KeyPair> {
         use pkcs8::EncodePrivateKey;
-        
-        let pkcs8_der = self.signing_key.to_pkcs8_der()
-            .map_err(|e| KeyError::CertificateError(format!("Failed to encode ECDSA key: {}", e)))?;
-            
-        let pem_str = pkcs8_der.to_pem("PRIVATE KEY", pkcs8::LineEnding::LF)
+
+        let pkcs8_der = self.signing_key.to_pkcs8_der().map_err(|e| {
+            KeyError::CertificateError(format!("Failed to encode ECDSA key: {}", e))
+        })?;
+
+        let pem_str = pkcs8_der
+            .to_pem("PRIVATE KEY", pkcs8::LineEnding::LF)
             .map_err(|e| KeyError::CertificateError(format!("Failed to convert to PEM: {}", e)))?;
-            
-        rcgen::KeyPair::from_pem(&pem_str)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to create rcgen key pair: {}", e)))
+
+        rcgen::KeyPair::from_pem(&pem_str).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to create rcgen key pair: {}", e))
+        })
     }
 }
 
@@ -266,7 +250,7 @@ impl KeyManager {
     /// Generate a new ECDSA P-256 key pair for TLS/QUIC transport
     pub fn generate_ecdsa_key(&mut self, name: &str) -> Result<&EcdsaKeyPair> {
         use rand::rngs::OsRng;
-        
+
         let key = EcdsaKeyPair::generate(&mut OsRng);
         self.ecdsa_keys.insert(name.to_string(), key);
         Ok(self.ecdsa_keys.get(name).unwrap())
@@ -377,121 +361,54 @@ impl KeyManager {
         rustls_pki_types::PrivateKeyDer<'static>,
         Arc<dyn ServerCertVerifier>,
     )> {
-        println!("🔍 [get_quic_certs] Starting QUIC certificate retrieval");
-        
         // First, try to get the node's certificate that was signed by the CA
-        let node_cert = self.get_certificate("node_tls_cert")
-            .ok_or_else(|| KeyError::CertificateError("Node certificate not found - ensure certificate has been processed from mobile".to_string()))?;
-        
-        println!("✅ [get_quic_certs] Found node certificate: subject={}, issuer={}", node_cert.subject, node_cert.issuer);
-        println!("🔍 [get_quic_certs] Original certificate DER length: {} bytes", node_cert.der_bytes().len());
-        
+        let node_cert = self.get_certificate("node_tls_cert").ok_or_else(|| {
+            KeyError::CertificateError(
+                "Node certificate not found - ensure certificate has been processed from mobile"
+                    .to_string(),
+            )
+        })?;
+
         // Get the node's signing key for the private key
-        let node_signing_key = self.get_signing_key("node_tls")
+        let _node_signing_key = self
+            .get_signing_key("node_tls")
             .ok_or_else(|| KeyError::CertificateError("Node signing key not found".to_string()))?;
-        
-        println!("✅ [get_quic_certs] Found node signing key (Ed25519)");
-        
+
         // CRITICAL FIX: Create a proper X.509 certificate AND get the matching private key
         // Use rcgen to create a certificate with a matching key pair
-        let (x509_cert_der, x509_private_key_der) = self.create_x509_certificate_and_key_for_quic(&node_cert.subject)?;
-        println!("✅ [get_quic_certs] Created X.509 certificate and matching private key");
-        
+        let (x509_cert_der, x509_private_key_der) =
+            self.create_x509_certificate_and_key_for_quic(&node_cert.subject)?;
+
         // Convert the X.509 certificate to rustls format
         let cert_der = CertificateDer::from(x509_cert_der);
-        println!("✅ [get_quic_certs] Converted X.509 certificate to rustls format");
-        
+
         // Create certificate verifier for ECDSA certificates (which is what QUIC/TLS expects)
         let verifier = EcdsaCertVerifier::new();
-        println!("✅ [get_quic_certs] Created ECDSA certificate verifier for QUIC compatibility");
-        
-        println!("🎉 [get_quic_certs] Successfully prepared QUIC certificates with matching keys");
-        
-        Ok((
-            vec![cert_der],
-            x509_private_key_der,
-            Arc::new(verifier),
-        ))
+
+        Ok((vec![cert_der], x509_private_key_der, Arc::new(verifier)))
     }
-    
+
     /// Create a proper X.509 certificate and matching private key for QUIC/rustls compatibility
     /// Returns both the certificate DER and the matching private key DER
-    fn create_x509_certificate_and_key_for_quic(&self, subject: &str) -> Result<(Vec<u8>, rustls_pki_types::PrivateKeyDer<'static>)> {
-        println!("🔍 [create_x509_certificate_and_key_for_quic] Creating X.509 certificate and key for QUIC");
-        
+    fn create_x509_certificate_and_key_for_quic(
+        &self,
+        _subject: &str,
+    ) -> Result<(Vec<u8>, rustls_pki_types::PrivateKeyDer<'static>)> {
         // Use rcgen's simple self-signed certificate generation (this works and is tested)
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
-            .map_err(|e| KeyError::CertificateError(format!("Failed to create X.509 certificate: {}", e)))?;
-        
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).map_err(|e| {
+                KeyError::CertificateError(format!("Failed to create X.509 certificate: {}", e))
+            })?;
+
         // Get the DER-encoded certificate
         let cert_der = cert.cert.der();
 
         // Get the private key in DER format and convert to rustls PrivateKeyDer
         let rustls_private_key = rustls_pki_types::PrivateKeyDer::Pkcs8(
-            rustls_pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der())
+            rustls_pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
         );
-        
-        println!("✅ [create_x509_certificate_and_key_for_quic] X.509 certificate and key created successfully");
-        println!("🔍 [create_x509_certificate_and_key_for_quic] Certificate DER length: {} bytes", cert_der.len());
-        println!("🔍 [create_x509_certificate_and_key_for_quic] rcgen default subject (original subject: {})", subject);
-        
+
         Ok((cert_der.to_vec(), rustls_private_key))
-    }
-    
-
-    
-    /// Create proper PKCS#8 DER format for Ed25519 keys
-    fn create_ed25519_pkcs8_der(&self, private_key_bytes: &[u8]) -> Result<Vec<u8>> {
-        // Ed25519 private key in PKCS#8 format
-        // Based on RFC 5958 and RFC 8410
-        let mut pkcs8_der = Vec::new();
-        
-        // SEQUENCE {
-        pkcs8_der.push(0x30);
-        pkcs8_der.push(0x2E); // Length: 46 bytes
-        
-        // version Version
-        pkcs8_der.extend_from_slice(&[0x02, 0x01, 0x00]); // INTEGER 0
-        
-        // privateKeyAlgorithm AlgorithmIdentifier
-        // SEQUENCE {
-        pkcs8_der.push(0x30);
-        pkcs8_der.push(0x05); // Length: 5 bytes
-        // algorithm OBJECT IDENTIFIER
-        pkcs8_der.extend_from_slice(&[0x06, 0x03, 0x2B, 0x65, 0x70]); // Ed25519 OID: 1.3.101.112
-        // parameters [0] EXPLICIT ANY OPTIONAL -- omitted for Ed25519
-        // }
-        
-        // privateKey PrivateKey
-        pkcs8_der.push(0x04); // OCTET STRING
-        pkcs8_der.push(0x22); // Length: 34 bytes
-        // CurvePrivateKey for Ed25519
-        pkcs8_der.push(0x04); // OCTET STRING
-        pkcs8_der.push(0x20); // Length: 32 bytes
-        pkcs8_der.extend_from_slice(private_key_bytes); // 32-byte Ed25519 private key
-        
-        // attributes [0] Attributes OPTIONAL -- omitted
-        // }
-        
-        Ok(pkcs8_der)
-    }
-
-    /// Create PKCS#8 DER private key from Ed25519 signing key
-    fn create_pkcs8_private_key(&self, signing_key: &SigningKeyPair) -> Result<rustls_pki_types::PrivateKeyDer<'static>> {
-        println!("🔍 [create_pkcs8_private_key] Converting Ed25519 key to PKCS#8 format");
-        
-        // Get the raw Ed25519 private key bytes
-        let private_key_bytes = signing_key.secret_key_bytes();
-        println!("🔍 [create_pkcs8_private_key] Ed25519 private key length: {} bytes", private_key_bytes.len());
-        
-        // Create PKCS#8 DER using our helper method
-        let pkcs8_der = self.create_ed25519_pkcs8_der(private_key_bytes)?;
-        
-        println!("✅ [create_pkcs8_private_key] Created PKCS#8 DER, length: {} bytes", pkcs8_der.len());
-        
-        // Convert to PrivateKeyDer using the correct constructor
-        let private_key_der = rustls_pki_types::PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(pkcs8_der));
-        Ok(private_key_der)
     }
 
     pub fn get_node_public_key(&self) -> Result<Vec<u8>> {
@@ -546,7 +463,7 @@ impl KeyManager {
 
         let mut public_key_array = [0u8; 32];
         let mut private_key_array = [0u8; 32];
-        
+
         public_key_array.copy_from_slice(network_public_key);
         private_key_array.copy_from_slice(&encryption_keypair.secret_key_bytes());
 

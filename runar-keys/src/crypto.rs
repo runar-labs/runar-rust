@@ -7,10 +7,9 @@ use rustls_pki_types::CertificateDer;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
-use x509_parser::prelude::FromDer;
 use x509_parser::certificate::X509Certificate;
 use x509_parser::oid_registry::{OID_SIG_ECDSA_WITH_SHA256, OID_SIG_ED25519};
-
+use x509_parser::prelude::FromDer;
 
 use crate::error::{KeyError, Result};
 
@@ -173,13 +172,14 @@ impl SigningKeyPair {
 
         // Create a simple Ed25519 certificate for CA operations
         // Note: QUIC certificates are handled separately using ECDSA
-        let ed25519_identity = hex::encode(&csr.public_key);
+        let ed25519_identity = hex::encode(csr.public_key);
         let subject_with_identity = format!("{}:ed25519:{}", csr.subject, ed25519_identity);
         let ca_identity = format!("ca:{}", hex::encode(self.public_key()));
 
         // Create a simple certificate structure for our internal format
         // This is sufficient for Ed25519 CA operations
-        let cert_data = self.create_simple_certificate(&subject_with_identity, &csr.public_key, &ca_identity)?;
+        let cert_data =
+            self.create_simple_certificate(&subject_with_identity, &csr.public_key, &ca_identity)?;
 
         // Create our Certificate wrapper with proper metadata
         let mut certificate = Certificate::from_der(cert_data);
@@ -190,31 +190,36 @@ impl SigningKeyPair {
     }
 
     /// Create a simple certificate structure for Ed25519 operations
-    fn create_simple_certificate(&self, subject: &str, subject_public_key: &[u8; 32], issuer: &str) -> Result<Vec<u8>> {
+    fn create_simple_certificate(
+        &self,
+        subject: &str,
+        subject_public_key: &[u8; 32],
+        issuer: &str,
+    ) -> Result<Vec<u8>> {
         // Create a simple DER-like structure for our Ed25519 certificates
         // This is a minimal certificate format that our validation code can handle
         let mut cert_data = Vec::new();
-        
+
         // Add a basic DER sequence header
         cert_data.extend_from_slice(&[0x30, 0x82]); // SEQUENCE tag, length will be updated
-        
+
         // Add subject
         cert_data.extend_from_slice(subject.as_bytes());
         cert_data.push(0x00); // separator
-        
+
         // Add issuer
         cert_data.extend_from_slice(issuer.as_bytes());
         cert_data.push(0x00); // separator
-        
+
         // Add public key
         cert_data.extend_from_slice(subject_public_key);
         cert_data.push(0x00); // separator
-        
+
         // Add a simple signature (for testing purposes)
         let message = format!("{}{}", subject, issuer);
         let signature = self.sign(message.as_bytes());
         cert_data.extend_from_slice(&signature.to_bytes());
-        
+
         Ok(cert_data)
     }
 }
@@ -224,10 +229,9 @@ impl SigningKeyPair {
 pub struct Certificate {
     /// DER-encoded X.509 certificate
     der_bytes: Vec<u8>,
-    /// Temporary compatibility fields for the test
-    #[serde(skip)]
+    /// Certificate subject - serialized for proper state persistence
     pub subject: String,
-    #[serde(skip)]
+    /// Certificate issuer - serialized for proper state persistence
     pub issuer: String,
 }
 
@@ -273,7 +277,9 @@ impl Certificate {
                     .next()
                     .and_then(|cn| cn.as_str().ok())
                     .ok_or_else(|| {
-                        KeyError::CertificateError("Certificate subject common name not found".to_string())
+                        KeyError::CertificateError(
+                            "Certificate subject common name not found".to_string(),
+                        )
                     })?
                     .to_string();
 
@@ -298,7 +304,9 @@ impl Certificate {
                     .next()
                     .and_then(|cn| cn.as_str().ok())
                     .ok_or_else(|| {
-                        KeyError::CertificateError("Certificate issuer common name not found".to_string())
+                        KeyError::CertificateError(
+                            "Certificate issuer common name not found".to_string(),
+                        )
                     })?
                     .to_string();
 
@@ -314,54 +322,74 @@ impl Certificate {
     /// Parse custom certificate format to extract subject
     fn parse_custom_cert_subject(&self) -> Result<String> {
         if self.der_bytes.len() < 4 {
-            return Err(KeyError::CertificateError("Certificate too short".to_string()));
+            return Err(KeyError::CertificateError(
+                "Certificate too short".to_string(),
+            ));
         }
-        
+
         // Check for our custom format header
         if self.der_bytes[0] != 0x30 || self.der_bytes[1] != 0x82 {
-            return Err(KeyError::CertificateError("Invalid certificate format".to_string()));
+            return Err(KeyError::CertificateError(
+                "Invalid certificate format".to_string(),
+            ));
         }
-        
-        let mut pos = 2;
-        
+
+        let pos = 2;
+
         // Find first separator (end of subject)
-        let subject_end = self.der_bytes[pos..].iter().position(|&b| b == 0x00)
-            .ok_or_else(|| KeyError::CertificateError("Invalid certificate: no subject separator".to_string()))?;
-        
+        let subject_end = self.der_bytes[pos..]
+            .iter()
+            .position(|&b| b == 0x00)
+            .ok_or_else(|| {
+                KeyError::CertificateError("Invalid certificate: no subject separator".to_string())
+            })?;
+
         let subject_bytes = &self.der_bytes[pos..pos + subject_end];
         let subject_str = String::from_utf8(subject_bytes.to_vec())
             .map_err(|_| KeyError::CertificateError("Invalid subject encoding".to_string()))?;
-        
+
         Ok(subject_str)
     }
-    
+
     /// Parse custom certificate format to extract issuer
     fn parse_custom_cert_issuer(&self) -> Result<String> {
         if self.der_bytes.len() < 4 {
-            return Err(KeyError::CertificateError("Certificate too short".to_string()));
+            return Err(KeyError::CertificateError(
+                "Certificate too short".to_string(),
+            ));
         }
-        
+
         // Check for our custom format header
         if self.der_bytes[0] != 0x30 || self.der_bytes[1] != 0x82 {
-            return Err(KeyError::CertificateError("Invalid certificate format".to_string()));
+            return Err(KeyError::CertificateError(
+                "Invalid certificate format".to_string(),
+            ));
         }
-        
+
         let mut pos = 2;
-        
+
         // Find first separator (end of subject)
-        let subject_end = self.der_bytes[pos..].iter().position(|&b| b == 0x00)
-            .ok_or_else(|| KeyError::CertificateError("Invalid certificate: no subject separator".to_string()))?;
-        
+        let subject_end = self.der_bytes[pos..]
+            .iter()
+            .position(|&b| b == 0x00)
+            .ok_or_else(|| {
+                KeyError::CertificateError("Invalid certificate: no subject separator".to_string())
+            })?;
+
         pos += subject_end + 1; // Skip subject and separator
-        
+
         // Find second separator (end of issuer)
-        let issuer_end = self.der_bytes[pos..].iter().position(|&b| b == 0x00)
-            .ok_or_else(|| KeyError::CertificateError("Invalid certificate: no issuer separator".to_string()))?;
-        
+        let issuer_end = self.der_bytes[pos..]
+            .iter()
+            .position(|&b| b == 0x00)
+            .ok_or_else(|| {
+                KeyError::CertificateError("Invalid certificate: no issuer separator".to_string())
+            })?;
+
         let issuer_bytes = &self.der_bytes[pos..pos + issuer_end];
         let issuer_str = String::from_utf8(issuer_bytes.to_vec())
             .map_err(|_| KeyError::CertificateError("Invalid issuer encoding".to_string()))?;
-        
+
         Ok(issuer_str)
     }
 
@@ -373,19 +401,20 @@ impl Certificate {
 
         // Try to parse as X.509 certificate first
         match X509Certificate::from_der(&self.der_bytes) {
-            Ok((_, cert)) => {
-                self.validate_x509_cert(&cert, ca_verifying_key)
-            }
+            Ok((_, cert)) => self.validate_x509_cert(&cert, ca_verifying_key),
             Err(_) => {
                 // Fall back to validating our custom format
                 self.validate_custom_cert(ca_verifying_key)
             }
         }
     }
-    
-    /// Validate X.509 certificate
-    fn validate_x509_cert(&self, cert: &X509Certificate, ca_verifying_key: &VerifyingKey) -> Result<()> {
 
+    /// Validate X.509 certificate
+    fn validate_x509_cert(
+        &self,
+        cert: &X509Certificate,
+        ca_verifying_key: &VerifyingKey,
+    ) -> Result<()> {
         // Check certificate validity period with proper time validation
         let not_before_time = cert.validity().not_before;
         let not_after_time = cert.validity().not_after;
@@ -441,7 +470,7 @@ impl Certificate {
             }
 
             let mut sig_bytes = [0u8; 64];
-            sig_bytes.copy_from_slice(&signature_value);
+            sig_bytes.copy_from_slice(signature_value);
             let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
 
             // Verify the signature
@@ -477,23 +506,27 @@ impl Certificate {
 
         Ok(())
     }
-    
+
     /// Validate custom certificate format
     fn validate_custom_cert(&self, _ca_verifying_key: &VerifyingKey) -> Result<()> {
         // For our custom format, just verify basic structure
         if self.der_bytes.len() < 4 {
-            return Err(KeyError::CertificateError("Certificate too short".to_string()));
+            return Err(KeyError::CertificateError(
+                "Certificate too short".to_string(),
+            ));
         }
-        
+
         // Check for our custom format header
         if self.der_bytes[0] != 0x30 || self.der_bytes[1] != 0x82 {
-            return Err(KeyError::CertificateError("Invalid certificate format".to_string()));
+            return Err(KeyError::CertificateError(
+                "Invalid certificate format".to_string(),
+            ));
         }
-        
+
         // Check that we can parse subject and issuer
         let _subject = self.parse_custom_cert_subject()?;
         let _issuer = self.parse_custom_cert_issuer()?;
-        
+
         // For testing purposes, consider custom format certificates as valid
         // In production, you would perform proper signature verification
         Ok(())
@@ -511,25 +544,25 @@ impl Certificate {
         // Create a simple CSR structure with Ed25519 identity
         let ed25519_pubkey_hex = hex::encode(signing_key.public_key());
         let subject_with_identity = format!("{}:ed25519:{}", subject_name, ed25519_pubkey_hex);
-        
+
         // Create a minimal CSR-like structure
         let mut csr_bytes = Vec::new();
-        
+
         // Add DER sequence tag
         csr_bytes.extend_from_slice(&[0x30, 0x82]); // SEQUENCE
-        
+
         // Add subject
         csr_bytes.extend_from_slice(subject_with_identity.as_bytes());
         csr_bytes.push(0x00); // separator
-        
+
         // Add public key
         csr_bytes.extend_from_slice(signing_key.public_key());
         csr_bytes.push(0x00); // separator
-        
+
         // Sign the CSR data
         let signature = signing_key.sign(&csr_bytes);
         csr_bytes.extend_from_slice(&signature.to_bytes());
-        
+
         Ok(csr_bytes)
     }
 
@@ -564,7 +597,7 @@ impl Certificate {
 
                         let mut public_key_array = [0u8; 32];
                         public_key_array.copy_from_slice(&public_key);
-                        
+
                         return Ok(CSR {
                             subject: actual_subject,
                             public_key: public_key_array,
@@ -575,11 +608,13 @@ impl Certificate {
                 // If no embedded Ed25519 key, try to extract from the CSR's public key
                 let public_key_info = &csr.certification_request_info.subject_pki;
                 let public_key_bytes = &public_key_info.subject_public_key.data;
-                
+
                 if public_key_bytes.len() != 32 {
-                    return Err(KeyError::CertificateError("Invalid public key length in CSR".to_string()));
+                    return Err(KeyError::CertificateError(
+                        "Invalid public key length in CSR".to_string(),
+                    ));
                 }
-                
+
                 let mut public_key_array = [0u8; 32];
                 public_key_array.copy_from_slice(public_key_bytes);
 
@@ -594,51 +629,63 @@ impl Certificate {
             }
         }
     }
-    
+
     /// Parse our custom CSR format: [0x30, 0x82, subject_bytes, 0x00, public_key_bytes, 0x00, signature_bytes]
     fn parse_custom_csr(csr_bytes: &[u8]) -> Result<CSR> {
         if csr_bytes.len() < 4 {
             return Err(KeyError::CertificateError("CSR too short".to_string()));
         }
-        
+
         // Check for our custom format header
         if csr_bytes[0] != 0x30 || csr_bytes[1] != 0x82 {
             return Err(KeyError::CertificateError("Invalid CSR format".to_string()));
         }
-        
+
         let mut pos = 2;
-        
+
         // Find first separator (end of subject)
-        let subject_end = csr_bytes[pos..].iter().position(|&b| b == 0x00)
-            .ok_or_else(|| KeyError::CertificateError("Invalid CSR: no subject separator".to_string()))?;
-        
+        let subject_end = csr_bytes[pos..]
+            .iter()
+            .position(|&b| b == 0x00)
+            .ok_or_else(|| {
+                KeyError::CertificateError("Invalid CSR: no subject separator".to_string())
+            })?;
+
         let subject_bytes = &csr_bytes[pos..pos + subject_end];
         let subject_str = String::from_utf8(subject_bytes.to_vec())
             .map_err(|_| KeyError::CertificateError("Invalid subject encoding".to_string()))?;
-        
+
         pos += subject_end + 1; // Skip separator
-        
+
         // Extract public key (32 bytes)
         if pos + 32 >= csr_bytes.len() {
-            return Err(KeyError::CertificateError("Invalid CSR: incomplete public key".to_string()));
+            return Err(KeyError::CertificateError(
+                "Invalid CSR: incomplete public key".to_string(),
+            ));
         }
-        
+
         let mut public_key = [0u8; 32];
         public_key.copy_from_slice(&csr_bytes[pos..pos + 32]);
         pos += 32;
-        
+
         // Check for second separator
         if pos >= csr_bytes.len() || csr_bytes[pos] != 0x00 {
-            return Err(KeyError::CertificateError("Invalid CSR: no public key separator".to_string()));
+            return Err(KeyError::CertificateError(
+                "Invalid CSR: no public key separator".to_string(),
+            ));
         }
-        
+
         // Extract subject name (remove Ed25519 public key if embedded)
         let actual_subject = if subject_str.contains(":ed25519:") {
-            subject_str.split(":ed25519:").next().unwrap_or(&subject_str).to_string()
+            subject_str
+                .split(":ed25519:")
+                .next()
+                .unwrap_or(&subject_str)
+                .to_string()
         } else {
             subject_str
         };
-        
+
         Ok(CSR {
             subject: actual_subject,
             public_key,

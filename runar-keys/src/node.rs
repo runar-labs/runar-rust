@@ -144,8 +144,9 @@ impl NodeKeyManager {
         let decrypted_message = envelope.decrypt(encryption_key)?;
 
         // Deserialize the decrypted message as a NodeMessage
-        let node_message: NodeMessage = bincode::deserialize(&decrypted_message)
-            .map_err(|e| KeyError::InvalidOperation(format!("Failed to deserialize node message: {}", e)))?;
+        let node_message: NodeMessage = bincode::deserialize(&decrypted_message).map_err(|e| {
+            KeyError::InvalidOperation(format!("Failed to deserialize node message: {}", e))
+        })?;
 
         Ok(node_message)
     }
@@ -158,19 +159,12 @@ impl NodeKeyManager {
     /// 3. Stores both the certificate and CA public key for future use
     /// 4. Ensures QUIC certificates are generated for transport compatibility
     pub fn process_mobile_message(&mut self, envelope: &Envelope) -> Result<()> {
-        println!("🔍 [process_mobile_message] Starting mobile message processing");
-        
         // Try to decrypt as a NodeMessage first (preferred approach)
         let node_message = self.decrypt_node_message(envelope)?;
-        println!("✅ [process_mobile_message] Successfully decrypted node message");
 
         // Extract certificate and CA public key from the NodeMessage
         let certificate = node_message.certificate;
         let ca_public_key = node_message.ca_public_key;
-        
-        println!("🔍 [process_mobile_message] Certificate subject: {}, issuer: {}", certificate.subject, certificate.issuer);
-        println!("🔍 [process_mobile_message] Certificate DER length: {} bytes", certificate.der_bytes().len());
-        println!("🔍 [process_mobile_message] CA public key: {}", hex::encode(&ca_public_key));
 
         // Create a VerifyingKey from the CA public key for validation
         // Convert Vec<u8> to [u8; 32] for ed25519_dalek::VerifyingKey::from_bytes
@@ -185,35 +179,31 @@ impl NodeKeyManager {
 
         // Validate the certificate using the provided CA public key
         certificate.validate(&ca_verifying_key)?;
-        println!("✅ [process_mobile_message] Certificate validation successful");
 
         // Store the User CA public key for future certificate chain operations
         let ca_key_pair = SigningKeyPair::from_public_key(&ca_public_key_array)?;
         self.key_manager.add_signing_key("user_ca", ca_key_pair);
-        println!("✅ [process_mobile_message] Stored CA public key as 'user_ca'");
 
         // Update the certificate subject and issuer to match our expected format
         let mut cert = certificate;
         cert.subject = format!("node:{}", hex::encode(&self.node_public_key));
-        cert.issuer = format!("ca:{}", hex::encode(&ca_public_key));
-        println!("🔍 [process_mobile_message] Updated certificate - Subject: {}, Issuer: {}", cert.subject, cert.issuer);
+        cert.issuer = format!("ca:{}", hex::encode(ca_public_key));
 
         // Store the certificate - store_validated_certificate will handle the QUIC key mapping
         self.key_manager.store_validated_certificate(cert)?;
-        println!("✅ [process_mobile_message] Stored validated certificate");
 
         // Verify we can retrieve the certificate for QUIC use
         match self.key_manager.get_certificate("node_tls_cert") {
-            Some(stored_cert) => {
-                println!("✅ [process_mobile_message] Certificate successfully stored and retrievable as 'node_tls_cert'");
-                println!("🔍 [process_mobile_message] Stored certificate subject: {}, issuer: {}", stored_cert.subject, stored_cert.issuer);
-            },
+            Some(_stored_cert) => {
+                // Certificate successfully stored and retrievable
+            }
             None => {
-                println!("❌ [process_mobile_message] ERROR: Certificate not found after storage!");
+                return Err(KeyError::CertificateError(
+                    "Certificate not found after storage".to_string(),
+                ));
             }
         }
 
-        println!("🎉 [process_mobile_message] Mobile message processing completed successfully");
         Ok(())
     }
 
@@ -240,7 +230,7 @@ impl NodeKeyManager {
         // Also store the network key as an encryption key for future use
         let _network_encryption_key_id = format!(
             "network_encryption_{}",
-            hex::encode(&network_key_message.public_key)
+            hex::encode(network_key_message.public_key)
         );
         // Create an encryption key pair from the network key (if needed)
         // This is commented out for now as we're using the existing store_network_key method
@@ -253,7 +243,7 @@ impl NodeKeyManager {
         // Store the network name with the network key for future reference
         let network_metadata_key = format!(
             "network_metadata_{}",
-            hex::encode(&network_key_message.public_key)
+            hex::encode(network_key_message.public_key)
         );
 
         // Store network metadata in the key manager using proper encrypted storage
