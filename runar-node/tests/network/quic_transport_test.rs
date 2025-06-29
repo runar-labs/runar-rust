@@ -563,9 +563,9 @@ async fn test_quic_transport_complete_api_validation(
     }
 
     println!("  - Node B received {} messages:", node2_msgs.len());
-    let mut request_count_b = 0;
-    let mut response_count_b = 0;
-    let mut event_count_b = 0;
+    let mut _request_count_b = 0;
+    let mut _response_count_b = 0;
+    let mut _event_count_b = 0;
 
     for msg in node2_msgs.iter() {
         println!(
@@ -573,9 +573,9 @@ async fn test_quic_transport_complete_api_validation(
             msg.message_type, msg.source, msg.message_type
         );
         match msg.message_type.as_str() {
-            "REQUEST" => request_count_b += 1,
-            "RESPONSE" => response_count_b += 1,
-            "EVENT" => event_count_b += 1,
+            "REQUEST" => _request_count_b += 1,
+            "RESPONSE" => _response_count_b += 1,
+            "EVENT" => _event_count_b += 1,
             _ => {}
         }
     }

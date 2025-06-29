@@ -463,7 +463,7 @@ fn test_e2e_keys_generation_and_exchange() {
 
     // Test 1: Get QUIC certificates from ORIGINAL node (before serialization)
     println!("🔍 Testing QUIC certs BEFORE state serialization...");
-    let (original_certs, original_key, _original_verifier) = node
+    let (original_certs, _original_key, _original_verifier) = node
         .get_quic_certs()
         .expect("Failed to get QUIC certs from original node");
 
@@ -492,7 +492,7 @@ fn test_e2e_keys_generation_and_exchange() {
 
     // Test 2: Get QUIC certificates from HYDRATED node (after serialization/deserialization)
     println!("🔍 Testing QUIC certs AFTER state serialization/hydration...");
-    let (hydrated_certs, hydrated_key, _hydrated_verifier) = node_hydrated
+    let (hydrated_certs, _hydrated_key, _hydrated_verifier) = node_hydrated
         .get_quic_certs()
         .expect("Failed to get QUIC certs from hydrated node");
 

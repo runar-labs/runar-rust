@@ -167,8 +167,10 @@ async fn test_remote_action_call() -> Result<()> {
     logger.info("🔧 Configuring nodes with QUIC certificates...");
 
     // Node 1 QUIC options with its certificates (using localhost to bypass macOS restrictions)
-    let mut node1_transport_options = runar_node::network::transport::TransportOptions::default();
-    node1_transport_options.bind_address = "127.0.0.1:50067".parse().unwrap();
+    let node1_transport_options = runar_node::network::transport::TransportOptions {
+        bind_address: "127.0.0.1:50067".parse().unwrap(),
+        ..Default::default()
+    };
 
     let options_a = QuicTransportOptions::new()
         .with_certificates(node1_certs)
@@ -180,8 +182,10 @@ async fn test_remote_action_call() -> Result<()> {
         .with_quinn_log_level(log::LevelFilter::Warn);
 
     // Node 2 QUIC options with its certificates (using localhost to bypass macOS restrictions)
-    let mut node2_transport_options = runar_node::network::transport::TransportOptions::default();
-    node2_transport_options.bind_address = "127.0.0.1:50042".parse().unwrap();
+    let node2_transport_options = runar_node::network::transport::TransportOptions {
+        bind_address: "127.0.0.1:50042".parse().unwrap(),
+        ..Default::default()
+    };
 
     let options_b = QuicTransportOptions::new()
         .with_certificates(node2_certs)
