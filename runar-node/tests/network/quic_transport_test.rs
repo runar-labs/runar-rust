@@ -43,19 +43,26 @@ async fn test_quic_transport_complete_api_validation(
     println!("🔑 [QUIC Transport API] Setting up certificate infrastructure...");
 
     // Create ONE mobile key manager that acts as the CA for both nodes
-    let mut mobile_ca = MobileKeyManager::new();
-    mobile_ca.generate_seed();
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
 
     // Generate user root key and CA key (mobile acts as CA)
     let _user_root_public_key = mobile_ca
-        .generate_user_root_key()
-        .expect("Failed to generate user root key");
+        .initialize_user_root_key()
+        .expect("Failed to initialize user root key");
 
-    let _user_ca_public_key = mobile_ca
-        .generate_user_ca_key()
-        .expect("Failed to generate user CA key");
+    let _user_ca_public_key = mobile_ca.get_ca_public_key();
 
     println!("✅ [QUIC Transport API] Created mobile CA with user root and CA keys");
+
+    // Log CA certificate subject and issuer
+    println!(
+        "CA Certificate Subject: {}",
+        mobile_ca.get_ca_certificate().subject()
+    );
+    println!(
+        "CA Certificate Issuer: {}",
+        mobile_ca.get_ca_certificate().issuer()
+    );
 
     // ==================================================
     // STEP 2: Setup Node 1 Certificate (Following keys_integration.rs pattern)
@@ -64,9 +71,9 @@ async fn test_quic_transport_complete_api_validation(
     println!("🔐 [QUIC Transport API] Setting up Node 1 certificate...");
 
     // Create node 1 key manager and generate setup token
-    let mut node_key_manager_1 = NodeKeyManager::new();
+    let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
     let setup_token_1 = node_key_manager_1
-        .generate_setup_token()
+        .generate_csr()
         .expect("Failed to generate setup token for node 1");
 
     // Mobile CA processes setup token and signs certificate
@@ -74,18 +81,24 @@ async fn test_quic_transport_complete_api_validation(
         .process_setup_token(&setup_token_1)
         .expect("Failed to process setup token for node 1");
 
-    // Extract node ID and encrypt certificate message
-    let node_public_key_1 = hex::encode(&setup_token_1.node_public_key);
-    let encrypted_node_msg_1 = mobile_ca
-        .encrypt_message_for_node(&cert_1, &node_public_key_1)
-        .expect("Failed to encrypt message for node 1");
-
-    // Node 1 processes the encrypted certificate message
+    // Node 1 installs the certificate directly
     node_key_manager_1
-        .process_mobile_message(&encrypted_node_msg_1)
-        .expect("Failed to process encrypted certificate for node 1");
+        .install_certificate(cert_1)
+        .expect("Failed to install certificate for node 1");
 
     println!("✅ [QUIC Transport API] Node 1 certificate setup completed");
+
+    // Log Node 1 certificate subject and issuer
+    if let Some(info) = node_key_manager_1.get_certificate_info() {
+        println!(
+            "Node 1 Certificate Subject: {}",
+            info.node_certificate_subject
+        );
+        println!(
+            "Node 1 Certificate Issuer: {}",
+            info.node_certificate_issuer
+        );
+    }
 
     // ==================================================
     // STEP 3: Setup Node 2 Certificate (Same pattern)
@@ -94,9 +107,9 @@ async fn test_quic_transport_complete_api_validation(
     logger.info("🔐 [QUIC Transport API] Setting up Node 2 certificate...");
 
     // Create node 2 key manager and generate setup token
-    let mut node_key_manager_2 = NodeKeyManager::new();
+    let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
     let setup_token_2 = node_key_manager_2
-        .generate_setup_token()
+        .generate_csr()
         .expect("Failed to generate setup token for node 2");
 
     // Mobile CA processes setup token and signs certificate
@@ -104,18 +117,24 @@ async fn test_quic_transport_complete_api_validation(
         .process_setup_token(&setup_token_2)
         .expect("Failed to process setup token for node 2");
 
-    // Extract node ID and encrypt certificate message
-    let node_public_key_2 = hex::encode(&setup_token_2.node_public_key);
-    let encrypted_node_msg_2 = mobile_ca
-        .encrypt_message_for_node(&cert_2, &node_public_key_2)
-        .expect("Failed to encrypt message for node 2");
-
-    // Node 2 processes the encrypted certificate message
+    // Node 2 installs the certificate directly
     node_key_manager_2
-        .process_mobile_message(&encrypted_node_msg_2)
-        .expect("Failed to process encrypted certificate for node 2");
+        .install_certificate(cert_2)
+        .expect("Failed to install certificate for node 2");
 
     logger.info("✅ [QUIC Transport API] Node 2 certificate setup completed");
+
+    // Log Node 2 certificate subject and issuer
+    if let Some(info) = node_key_manager_2.get_certificate_info() {
+        println!(
+            "Node 2 Certificate Subject: {}",
+            info.node_certificate_subject
+        );
+        println!(
+            "Node 2 Certificate Issuer: {}",
+            info.node_certificate_issuer
+        );
+    }
 
     // ==================================================
     // STEP 4: Get QUIC Certificates (Now nodes have valid certificates)
@@ -124,8 +143,11 @@ async fn test_quic_transport_complete_api_validation(
     println!("🛡️  [QUIC Transport API] Retrieving QUIC certificates...");
 
     // NOW both nodes can get QUIC certificates because they have valid certificates
-    let (node1_certs, node1_key, node1_verifier) = node_key_manager_1.get_quic_certs()?;
-    let (node2_certs, node2_key, node2_verifier) = node_key_manager_2.get_quic_certs()?;
+    let node1_cert_config = node_key_manager_1.get_quic_certificate_config()?;
+    let node2_cert_config = node_key_manager_2.get_quic_certificate_config()?;
+
+    // Get the CA certificate to use as root certificate for validation
+    let ca_certificate = mobile_ca.get_ca_certificate().to_rustls_certificate();
 
     println!("✅ [QUIC Transport API] Retrieved QUIC certificates for both nodes");
 
@@ -136,8 +158,8 @@ async fn test_quic_transport_complete_api_validation(
     println!("🔑 [QUIC Transport API] Getting real node public keys...");
 
     // Get the actual node public keys (not hardcoded values)
-    let node1_public_key_bytes = node_key_manager_1.node_public_key().clone();
-    let node2_public_key_bytes = node_key_manager_2.node_public_key().clone();
+    let node1_public_key_bytes = node_key_manager_1.get_node_public_key();
+    let node2_public_key_bytes = node_key_manager_2.get_node_public_key();
 
     let node1_public_key_hex = hex::encode(&node1_public_key_bytes);
     let node2_public_key_hex = hex::encode(&node2_public_key_bytes);
@@ -282,14 +304,14 @@ async fn test_quic_transport_complete_api_validation(
     };
 
     let transport1_options = QuicTransportOptions::new()
-        .with_certificates(node1_certs)
-        .with_private_key(node1_key)
-        .with_certificate_verifier(node1_verifier);
+        .with_certificates(node1_cert_config.certificate_chain)
+        .with_private_key(node1_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate.clone()]);
 
     let transport2_options = QuicTransportOptions::new()
-        .with_certificates(node2_certs)
-        .with_private_key(node2_key)
-        .with_certificate_verifier(node2_verifier);
+        .with_certificates(node2_cert_config.certificate_chain)
+        .with_private_key(node2_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate]);
 
     let transport1 = QuicTransport::new(
         node1_info.clone(),

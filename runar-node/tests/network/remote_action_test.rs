@@ -11,6 +11,7 @@ use runar_node::network::transport::QuicTransportOptions;
 use runar_node::node::{Node, NodeConfig};
 use rustls;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -35,7 +36,7 @@ async fn test_remote_action_call() -> Result<()> {
     logging_config.apply();
 
     // Set up logger
-    let logger = Logger::new_root(Component::Network, "remote_action_test");
+    let logger = Arc::new(Logger::new_root(Component::Network, "remote_action_test"));
     logger.info("🚀 Starting QUIC-secured remote action test with proper certificate management");
     logger.info("📋 Scenario: Two nodes with shared CA, secure service discovery and remote calls");
 
@@ -44,20 +45,17 @@ async fn test_remote_action_call() -> Result<()> {
     // ==========================================
     logger.info("🔧 Setting up shared User CA for both nodes...");
 
-    let mut mobile_manager = MobileKeyManager::new();
-    mobile_manager.generate_seed();
+    let mut mobile_manager = MobileKeyManager::new(Arc::clone(&logger))?;
 
     // Generate User root key and CA
     let _user_ca_public_key = mobile_manager
-        .generate_user_root_key()
-        .expect("Failed to generate user root key");
-    let user_ca_key = mobile_manager
-        .generate_user_ca_key()
-        .expect("Failed to generate user CA key");
+        .initialize_user_root_key()
+        .expect("Failed to initialize user root key");
+    let user_ca_key = mobile_manager.get_ca_public_key();
 
     logger.info(format!(
         "✅ Generated User CA with public key: {}",
-        hex::encode(user_ca_key.bytes())
+        hex::encode(&user_ca_key)
     ));
 
     // ==========================================
@@ -65,12 +63,12 @@ async fn test_remote_action_call() -> Result<()> {
     // ==========================================
     logger.info("🔧 Setting up Node 1 certificates...");
 
-    let mut node1_manager = NodeKeyManager::new();
-    let mut node2_manager = NodeKeyManager::new();
+    let mut node1_manager = NodeKeyManager::new(Arc::clone(&logger))?;
+    let mut node2_manager = NodeKeyManager::new(Arc::clone(&logger))?;
 
     // Get node public keys (these will be different for each node)
-    let node1_public_key = node1_manager.node_public_key().clone();
-    let node2_public_key = node2_manager.node_public_key().clone();
+    let node1_public_key = node1_manager.get_node_public_key();
+    let node2_public_key = node2_manager.get_node_public_key();
 
     logger.info(format!(
         "✅ Node 1 created with public key: {}",
@@ -85,10 +83,10 @@ async fn test_remote_action_call() -> Result<()> {
     // STEP 3: Generate Setup Tokens for Both Nodes
     // ==========================================
     let setup_token1 = node1_manager
-        .generate_setup_token()
+        .generate_csr()
         .expect("Failed to generate setup token for node1");
     let setup_token2 = node2_manager
-        .generate_setup_token()
+        .generate_csr()
         .expect("Failed to generate setup token for node2");
 
     logger.info("✅ Generated setup tokens for both nodes");
@@ -106,37 +104,25 @@ async fn test_remote_action_call() -> Result<()> {
     logger.info("✅ Mobile CA signed certificates for both nodes");
     logger.info(format!(
         "   - Node 1 certificate subject: {}",
-        cert1.subject
+        cert1.node_certificate.subject()
     ));
     logger.info(format!(
         "   - Node 2 certificate subject: {}",
-        cert2.subject
+        cert2.node_certificate.subject()
     ));
 
     // ==========================================
     // STEP 5: Secure Certificate Distribution to Nodes
     // ==========================================
-    let node1_id_str = hex::encode(&node1_public_key);
-    let node2_id_str = hex::encode(&node2_public_key);
-
-    let cert_envelope1 = mobile_manager
-        .encrypt_message_for_node(&cert1, &node1_id_str)
-        .expect("Failed to encrypt message for node1");
-    let cert_envelope2 = mobile_manager
-        .encrypt_message_for_node(&cert2, &node2_id_str)
-        .expect("Failed to encrypt message for node2");
-
-    // ==========================================
-    // STEP 6: Nodes Process Their Certificates
-    // ==========================================
+    // Install certificates directly
     node1_manager
-        .process_mobile_message(&cert_envelope1)
-        .expect("Failed to process encrypted certificate for node1");
+        .install_certificate(cert1.clone())
+        .expect("Failed to install certificate for node1");
     node2_manager
-        .process_mobile_message(&cert_envelope2)
-        .expect("Failed to process encrypted certificate for node2");
+        .install_certificate(cert2.clone())
+        .expect("Failed to install certificate for node2");
 
-    logger.info("✅ Both nodes processed their certificates from Mobile CA");
+    logger.info("✅ Both nodes installed their certificates from Mobile CA");
 
     // ==========================================
     // STEP 7: Extract QUIC Certificates for Both Nodes
@@ -144,27 +130,52 @@ async fn test_remote_action_call() -> Result<()> {
     logger.info("🔧 Extracting QUIC certificates for both nodes...");
 
     // Get QUIC certificates for Node 1
-    let (node1_certs, node1_private_key, node1_verifier) = node1_manager
-        .get_quic_certs()
+    let node1_cert_config = node1_manager
+        .get_quic_certificate_config()
         .expect("Failed to get QUIC certificates for node1");
 
     // Get QUIC certificates for Node 2
-    let (node2_certs, node2_private_key, node2_verifier) = node2_manager
-        .get_quic_certs()
+    let node2_cert_config = node2_manager
+        .get_quic_certificate_config()
         .expect("Failed to get QUIC certificates for node2");
 
     // Verify certificates are generated correctly
-    assert!(!node1_certs.is_empty(), "Node 1 should have certificates");
-    assert!(!node2_certs.is_empty(), "Node 2 should have certificates");
+    assert!(
+        !node1_cert_config.certificate_chain.is_empty(),
+        "Node 1 should have certificates"
+    );
+    assert!(
+        !node2_cert_config.certificate_chain.is_empty(),
+        "Node 2 should have certificates"
+    );
 
     logger.info("✅ QUIC certificates extracted for both nodes");
-    logger.info(format!("   - Node 1: {} certificate(s)", node1_certs.len()));
-    logger.info(format!("   - Node 2: {} certificate(s)", node2_certs.len()));
+    logger.info(format!(
+        "   - Node 1: {} certificate(s)",
+        node1_cert_config.certificate_chain.len()
+    ));
+    logger.info(format!(
+        "   - Node 2: {} certificate(s)",
+        node2_cert_config.certificate_chain.len()
+    ));
 
     // ==========================================
     // STEP 8: Configure QUIC Transport Options
     // ==========================================
     logger.info("🔧 Configuring nodes with QUIC certificates...");
+
+    // Get the CA certificate to use as root certificate for validation
+    let ca_certificate = mobile_manager.get_ca_certificate().to_rustls_certificate();
+
+    let transport1_options = QuicTransportOptions::new()
+        .with_certificates(node1_cert_config.certificate_chain)
+        .with_private_key(node1_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate.clone()]);
+
+    let transport2_options = QuicTransportOptions::new()
+        .with_certificates(node2_cert_config.certificate_chain)
+        .with_private_key(node2_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate]);
 
     // Node 1 QUIC options with its certificates (using localhost to bypass macOS restrictions)
     let node1_transport_options = runar_node::network::transport::TransportOptions {
@@ -172,10 +183,7 @@ async fn test_remote_action_call() -> Result<()> {
         ..Default::default()
     };
 
-    let options_a = QuicTransportOptions::new()
-        .with_certificates(node1_certs)
-        .with_private_key(node1_private_key)
-        .with_certificate_verifier(node1_verifier)
+    let options_a = transport1_options
         .with_keep_alive_interval(Duration::from_secs(5))
         .with_connection_idle_timeout(Duration::from_secs(120))
         .with_stream_idle_timeout(Duration::from_secs(60))
@@ -187,10 +195,7 @@ async fn test_remote_action_call() -> Result<()> {
         ..Default::default()
     };
 
-    let options_b = QuicTransportOptions::new()
-        .with_certificates(node2_certs)
-        .with_private_key(node2_private_key)
-        .with_certificate_verifier(node2_verifier)
+    let options_b = transport2_options
         .with_verify_certificates(true)
         .with_keep_alive_interval(Duration::from_secs(5))
         .with_connection_idle_timeout(Duration::from_secs(120))
@@ -277,15 +282,15 @@ async fn test_remote_action_call() -> Result<()> {
     logger.info("🔍 Certificate trust validation:");
     logger.info(format!(
         "   - Both nodes have certificates signed by CA: {}",
-        hex::encode(user_ca_key.bytes())
+        hex::encode(&user_ca_key)
     ));
     logger.info(format!(
         "   - Node 1 certificate subject: {}",
-        cert1.subject
+        cert1.node_certificate.subject()
     ));
     logger.info(format!(
         "   - Node 2 certificate subject: {}",
-        cert2.subject
+        cert2.node_certificate.subject()
     ));
     logger.info("   - Both nodes should trust each other's certificates via shared CA");
 

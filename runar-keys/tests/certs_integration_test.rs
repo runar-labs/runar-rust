@@ -587,3 +587,45 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_symmetric_key_management() {
+    let logger = Arc::new(Logger::new_root(
+        runar_common::logging::Component::System,
+        "test",
+    ));
+    let mut node_manager = NodeKeyManager::new(logger).expect("Failed to create NodeKeyManager");
+
+    // Test symmetric key management
+    let key1 = node_manager
+        .ensure_symetric_key("service_a")
+        .expect("Failed to create key");
+    let key2 = node_manager
+        .ensure_symetric_key("service_b")
+        .expect("Failed to create key");
+    let key1_retrieved = node_manager
+        .ensure_symetric_key("service_a")
+        .expect("Failed to retrieve key");
+
+    // Keys should be different for different services
+    assert_ne!(key1, key2);
+    // Same service should return the same key
+    assert_eq!(key1, key1_retrieved);
+    // Keys should be 32 bytes
+    assert_eq!(key1.len(), 32);
+    assert_eq!(key2.len(), 32);
+
+    // Test node key pair access
+    let _node_key_pair = node_manager.get_node_key_pair();
+    let _node_public_key = node_manager.get_node_public_key();
+    let node_id = node_manager.get_node_id();
+
+    // Verify node ID is derived from public key
+    assert!(!node_id.is_empty());
+    // 65-byte uncompressed ECDSA public key encoded in base64 URL-safe = 87 characters
+    assert_eq!(node_id.len(), 87);
+
+    // Test storage key access
+    let storage_key = node_manager.get_storage_key();
+    assert_eq!(storage_key.len(), 32);
+}

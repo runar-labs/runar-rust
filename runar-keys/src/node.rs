@@ -6,6 +6,7 @@
 use crate::certificate::{CertificateRequest, CertificateValidator, EcdsaKeyPair, X509Certificate};
 use crate::error::{KeyError, Result};
 use crate::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
+use rand::RngCore;
 use runar_common::logging::Logger;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,8 @@ pub struct NodeKeyManager {
     certificate_validator: Option<CertificateValidator>,
     /// Network keys indexed by network public key (hex)
     network_keys: HashMap<String, EcdsaKeyPair>,
+    /// Symmetric keys indexed by key name for services
+    symmetric_keys: HashMap<String, Vec<u8>>,
     /// Node storage key for local file encryption (always present)
     storage_key: Vec<u8>,
     /// Certificate status
@@ -78,6 +81,7 @@ impl NodeKeyManager {
             ca_certificate: None,
             certificate_validator: None,
             network_keys: HashMap::new(),
+            symmetric_keys: HashMap::new(),
             storage_key,
             certificate_status: CertificateStatus::None,
             logger,
@@ -105,6 +109,26 @@ impl NodeKeyManager {
     /// Get the node storage key for local encryption
     pub fn get_storage_key(&self) -> &[u8] {
         &self.storage_key
+    }
+
+    /// Ensure a symmetric key exists with the given name, creating it if it doesn't exist
+    pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
+        if let Some(key) = self.symmetric_keys.get(key_name) {
+            return Ok(key.clone());
+        }
+
+        // Generate a new 32-byte symmetric key
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        let key_vec = key.to_vec();
+
+        // Store the key for future use
+        self.symmetric_keys
+            .insert(key_name.to_string(), key_vec.clone());
+
+        self.logger
+            .debug(format!("Generated new symmetric key: {}", key_name));
+        Ok(key_vec)
     }
 
     /// Encrypt local data using the node storage key
@@ -631,6 +655,7 @@ pub struct NodeKeyManagerState {
     node_certificate: Option<X509Certificate>,
     ca_certificate: Option<X509Certificate>,
     network_keys: HashMap<String, EcdsaKeyPair>,
+    symmetric_keys: HashMap<String, Vec<u8>>,
     storage_key: Vec<u8>,
 }
 
@@ -642,6 +667,7 @@ impl NodeKeyManager {
             node_certificate: self.node_certificate.clone(),
             ca_certificate: self.ca_certificate.clone(),
             network_keys: self.network_keys.clone(),
+            symmetric_keys: self.symmetric_keys.clone(),
             storage_key: self.storage_key.clone(),
         }
     }
@@ -674,6 +700,7 @@ impl NodeKeyManager {
             ca_certificate: state.ca_certificate,
             certificate_validator,
             network_keys: state.network_keys,
+            symmetric_keys: state.symmetric_keys,
             storage_key: state.storage_key,
             certificate_status,
             logger,

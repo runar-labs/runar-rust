@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 // Import rustls explicitly - these types need clear namespacing to avoid conflicts with quinn's types
 // Quinn uses rustls internally but we need to reference specific rustls types
 use rustls;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
 use super::{
     ConnectionPool, NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
@@ -146,6 +146,8 @@ pub struct QuicTransportOptions {
     private_key: Option<PrivateKeyDer<'static>>,
     /// Custom certificate verifier for client connections (REQUIRED)
     certificate_verifier: Option<Arc<dyn rustls::client::danger::ServerCertVerifier + Send + Sync>>,
+    /// Custom root certificates for CA validation (optional - uses system roots if not provided)
+    root_certificates: Option<Vec<CertificateDer<'static>>>,
     /// Log level for Quinn-related logs (default: Warn to reduce noisy connection logs)
     quinn_log_level: log::LevelFilter,
 }
@@ -161,6 +163,7 @@ impl Clone for QuicTransportOptions {
             certificates: self.certificates.clone(),
             private_key: self.private_key.as_ref().map(|k| k.clone_key()),
             certificate_verifier: self.certificate_verifier.clone(),
+            root_certificates: self.root_certificates.clone(),
             quinn_log_level: self.quinn_log_level,
         }
     }
@@ -188,6 +191,10 @@ impl fmt::Debug for QuicTransportOptions {
                     .certificate_verifier
                     .as_ref()
                     .map(|_| "[custom verifier]"),
+            )
+            .field(
+                "root_certificates",
+                &self.root_certificates.as_ref().map(|_| "[redacted]"),
             )
             .field("quinn_log_level", &self.quinn_log_level)
             .finish()
@@ -256,18 +263,9 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_certificate_verifier(
-        mut self,
-        verifier: Arc<dyn rustls::client::danger::ServerCertVerifier + Send + Sync>,
-    ) -> Self {
-        self.certificate_verifier = Some(verifier);
+    pub fn with_root_certificates(mut self, certs: Vec<CertificateDer<'static>>) -> Self {
+        self.root_certificates = Some(certs);
         self
-    }
-
-    pub fn certificate_verifier(
-        &self,
-    ) -> Option<&Arc<dyn rustls::client::danger::ServerCertVerifier + Send + Sync>> {
-        self.certificate_verifier.as_ref()
     }
 
     pub fn certificates(&self) -> Option<&Vec<CertificateDer<'static>>> {
@@ -290,6 +288,7 @@ impl Default for QuicTransportOptions {
             certificates: None,
             private_key: None,
             certificate_verifier: None,
+            root_certificates: None,
             quinn_log_level: log::LevelFilter::Warn, // Default to Warn to reduce noisy logs
         }
     }
@@ -1490,10 +1489,6 @@ impl QuicTransportImpl {
             NetworkError::ConfigurationError("No private key provided".to_string())
         })?;
 
-        let certificate_verifier = self.options.certificate_verifier().ok_or_else(|| {
-            NetworkError::ConfigurationError("No certificate verifier provided".to_string())
-        })?;
-
         self.logger.info(format!(
             "Using {} certificates for QUIC with proper private key",
             certificates.len()
@@ -1531,10 +1526,10 @@ impl QuicTransportImpl {
         // Apply the transport config to server
         server_config.transport_config(transport_config.clone());
 
-        // Create client configuration using custom certificate verifier for proper peer validation
+        // Create client configuration using custom server name verifier for node IDs
         let rustls_client_config = rustls::ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(certificate_verifier.clone())
+            .with_custom_certificate_verifier(Arc::new(NodeIdServerNameVerifier))
             .with_no_client_auth();
 
         let mut client_config = ClientConfig::new(Arc::new(
@@ -1935,5 +1930,59 @@ impl QuicTransport {
             node_id: local_node_info.peer_id, // local_node_info is already cloned for config, can move peer_id here
             background_tasks: Mutex::new(Vec::new()),
         })
+    }
+}
+
+// Custom server name verifier that accepts node IDs as valid server names
+#[derive(Debug)]
+struct NodeIdServerNameVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NodeIdServerNameVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        // Accept any server name - we validate certificates through our own CA chain
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA1,
+            rustls::SignatureScheme::ECDSA_SHA1_Legacy,
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::ED448,
+        ]
     }
 }

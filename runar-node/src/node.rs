@@ -10,7 +10,7 @@ use hex;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
-use runar_keys::{MobileKeyManager, NodeKeyManager, NodeKeyManagerData};
+use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -85,7 +85,12 @@ impl NodeConfig {
         default_network_id: impl Into<String>,
     ) -> Self {
         //create test credentials
-        let node_keys_manager = NodeKeyManager::new();
+        let logger = Arc::new(Logger::new_root(
+            runar_common::logging::Component::Node,
+            "test",
+        ));
+        let node_keys_manager =
+            NodeKeyManager::new(logger).expect("Failed to create NodeKeyManager");
         let key_state = node_keys_manager.export_state();
 
         let key_state_bytes =
@@ -104,69 +109,69 @@ impl NodeConfig {
 
     //TODO move these test methods to another objct with only the tests utils..
     // so this never gets to the final production code
-    pub fn new_network_test_config(
-        node_id: impl Into<String>,
-        default_network_id: impl Into<String>,
-    ) -> Self {
-        //create test credentials
-        //for network tests we need to also need the mobile manger to have the user CA
-        // and be able to validate the certifcates
+    // pub fn new_network_test_config(
+    //     node_id: impl Into<String>,
+    //     default_network_id: impl Into<String>,
+    // ) -> Self {
+    //     //create test credentials
+    //     //for network tests we need to also need the mobile manger to have the user CA
+    //     // and be able to validate the certifcates
 
-        let mut mobile = MobileKeyManager::new();
-        mobile.generate_seed();
+    //     let mut mobile = MobileKeyManager::new();
+    //     mobile.generate_seed();
 
-        // Generate user root key - now returns only the public key
-        let _user_root_public_key = mobile
-            .generate_user_root_key()
-            .expect("Failed to generate user root key");
+    //     // Generate user root key - now returns only the public key
+    //     let _user_root_public_key = mobile
+    //         .generate_user_root_key()
+    //         .expect("Failed to generate user root key");
 
-        // Create a user owned and managed CA
-        let _user_ca_public_key = mobile
-            .generate_user_ca_key()
-            .expect("Failed to generate user CA key");
+    //     // Create a user owned and managed CA
+    //     let _user_ca_public_key = mobile
+    //         .generate_user_ca_key()
+    //         .expect("Failed to generate user CA key");
 
-        let mut node_keys_manager = NodeKeyManager::new();
-        let setup_token = node_keys_manager
-            .generate_setup_token()
-            .expect("Failed to generate setup token");
+    //     let mut node_keys_manager = NodeKeyManager::new();
+    //     let setup_token = node_keys_manager
+    //         .generate_setup_token()
+    //         .expect("Failed to generate setup token");
 
-        // 3 - (mobile side) - received the token and sign the CSR
-        let cert = mobile
-            .process_setup_token(&setup_token)
-            .expect("Failed to process setup token");
+    //     // 3 - (mobile side) - received the token and sign the CSR
+    //     let cert = mobile
+    //         .process_setup_token(&setup_token)
+    //         .expect("Failed to process setup token");
 
-        // Extract the node ID from the setup token
-        // In a real-world scenario, the mobile device would have received this in the setup token
-        let node_public_key = hex::encode(&setup_token.node_public_key);
+    //     // Extract the node ID from the setup token
+    //     // In a real-world scenario, the mobile device would have received this in the setup token
+    //     let node_public_key = hex::encode(&setup_token.node_public_key);
 
-        // Mobile encrypts a message containing both the certificate and CA public key for secure transmission to the node
-        // This ensures only the target node can decrypt the message and has the CA key needed for verification
-        let encrypted_node_msg = mobile
-            .encrypt_message_for_node(&cert, &node_public_key)
-            .expect("Failed to encrypt message");
+    //     // Mobile encrypts a message containing both the certificate and CA public key for secure transmission to the node
+    //     // This ensures only the target node can decrypt the message and has the CA key needed for verification
+    //     let encrypted_node_msg = mobile
+    //         .encrypt_message_for_node(&cert, &node_public_key)
+    //         .expect("Failed to encrypt message");
 
-        node_keys_manager
-            .process_mobile_message(&encrypted_node_msg)
-            .expect("Failed to process encrypted certificate");
+    //     node_keys_manager
+    //         .process_mobile_message(&encrypted_node_msg)
+    //         .expect("Failed to process encrypted certificate");
 
-        let key_state = node_keys_manager.export_state();
+    //     let key_state = node_keys_manager.export_state();
 
-        let key_state_bytes =
-            bincode::serialize(&key_state).expect("Failed to serialize node state");
+    //     let key_state_bytes =
+    //         bincode::serialize(&key_state).expect("Failed to serialize node state");
 
-        //now the node keys manager contain valid keys and certificates and is stored in the
-        //key ring
+    //     //now the node keys manager contain valid keys and certificates and is stored in the
+    //     //key ring
 
-        Self {
-            node_id: node_id.into(),
-            default_network_id: default_network_id.into(),
-            network_ids: Vec::new(),
-            network_config: None,
-            logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            key_manager_state: Some(key_state_bytes),
-            request_timeout_ms: 30000, // 30 seconds
-        }
-    }
+    //     Self {
+    //         node_id: node_id.into(),
+    //         default_network_id: default_network_id.into(),
+    //         network_ids: Vec::new(),
+    //         network_config: None,
+    //         logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
+    //         key_manager_state: Some(key_state_bytes),
+    //         request_timeout_ms: 30000, // 30 seconds
+    //     }
+    // }
 
     /// Generate a node ID if not provided
     pub fn new_with_generated_id(default_network_id: impl Into<String>) -> Self {
@@ -330,13 +335,13 @@ impl Node {
             .clone()
             .expect("Failed to load node credentials.");
 
-        let key_manager_state: NodeKeyManagerData = bincode::deserialize(&key_manager_state_bytes)
+        let key_manager_state: NodeKeyManagerState = bincode::deserialize(&key_manager_state_bytes)
             .expect("Failed to deserialize node keys state");
 
-        let keys_manager = NodeKeyManager::new_with_state(key_manager_state);
+        let keys_manager = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
 
         // **CRITICAL FIX**: Use the real node public key as peer_id, not the simple node_id
-        let node_public_key_bytes = keys_manager.node_public_key().clone();
+        let node_public_key_bytes = keys_manager.get_node_public_key();
         let node_public_key_hex = hex::encode(&node_public_key_bytes);
         let peer_id = PeerId::new(node_public_key_hex);
 
@@ -786,18 +791,18 @@ impl Node {
                 // I have updated the test test_remote_action_call() to use them.. use this test to validate your quic changes..
                 // QUIC shuold ahve only one weay to handle certs.. which is this wauy.. any other wauy shuold be remove. to keep it simple and concise
                 // when we craate the QUIC certs we use localhost.. if that cauases any issue,.. stop adn ask my input.. as I intend to chagne this later.. but dont want ot make too manyu chagnes .. so want this focus on the carts refact.. but if the localhost causes isues then we need to tacle..
-                let (cert_chain, private_key, verifier) = self
+                let cert_config = self
                     .keys_manager
                     .read()
                     .await
-                    .get_quic_certs()
+                    .get_quic_certificate_config()
                     .context("Failed to get QUIC certificates")?;
 
                 // Configure QUIC options with certificates and private key from key manager
+                // Standard QUIC/TLS will handle certificate validation using the CA certificate
                 let configured_quic_options = quic_options
-                    .with_certificates(cert_chain)
-                    .with_private_key(private_key)
-                    .with_certificate_verifier(verifier);
+                    .with_certificates(cert_config.certificate_chain)
+                    .with_private_key(cert_config.private_key);
 
                 let transport = QuicTransport::new(
                     local_node_info,
@@ -2076,10 +2081,8 @@ impl NodeDelegate for Node {
 impl KeysDelegate for Node {
     async fn ensure_symetric_key(&self, key_name: &str) -> Result<ArcValue> {
         let mut keys_manager = self.keys_manager.write().await;
-        let key_bytes: Vec<u8> = keys_manager
-            .ensure_symetric_key(key_name)
-            .expect("Failed to ensure symmetric key");
-        Ok(ArcValue::new_bytes(key_bytes))
+        let key = keys_manager.ensure_symetric_key(key_name)?;
+        Ok(ArcValue::new_bytes(key))
     }
 }
 
