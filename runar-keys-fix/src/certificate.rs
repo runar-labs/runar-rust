@@ -453,15 +453,40 @@ impl CertificateValidator {
     /// Validate certificate against trusted CAs with full cryptographic verification
     pub fn validate_certificate(&self, certificate: &X509Certificate) -> Result<()> {
         for ca_cert in &self.trusted_ca_certificates {
+            // Try exact match first
             if certificate.issuer() == ca_cert.subject() {
+                let ca_public_key = ca_cert.public_key()?;
+                return certificate.validate(&ca_public_key);
+            }
+            
+            // Handle DN component order differences between OpenSSL and rcgen
+            if self.normalize_dn(certificate.issuer()) == self.normalize_dn(ca_cert.subject()) {
                 let ca_public_key = ca_cert.public_key()?;
                 return certificate.validate(&ca_public_key);
             }
         }
         
         Err(KeyError::ChainValidationError(
-            "No trusted CA found for certificate".to_string()
+            format!("No trusted CA found for certificate. Certificate issuer: '{}', Available CAs: {:?}", 
+                certificate.issuer(),
+                self.trusted_ca_certificates.iter().map(|ca| ca.subject()).collect::<Vec<_>>())
         ))
+    }
+    
+    /// Normalize DN string to handle component order differences
+    fn normalize_dn(&self, dn: &str) -> String {
+        let mut components = Vec::new();
+        
+        for component in dn.split(',') {
+            let component = component.trim();
+            if !component.is_empty() {
+                components.push(component);
+            }
+        }
+        
+        // Sort components to handle order differences
+        components.sort();
+        components.join(",")
     }
     
     /// Validate complete certificate chain
