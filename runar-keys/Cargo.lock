@@ -948,6 +948,7 @@ dependencies = [
 name = "runar-keys"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "ecdsa",
  "hex",
  "openssl",

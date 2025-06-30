@@ -371,6 +371,7 @@ impl MobileKeyManager {
         }
     }
 
+    //TODO rem9ove node_id uis not needed 
     /// Create a network key message for a node
     pub fn create_network_key_message(
         &self,

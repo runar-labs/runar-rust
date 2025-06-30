@@ -6,7 +6,7 @@
 use crate::certificate::{CertificateRequest, CertificateValidator, EcdsaKeyPair, X509Certificate};
 use crate::error::{KeyError, Result};
 use crate::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
-use runar_common::logging::{Component, Logger};
+use runar_common::logging::Logger;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
