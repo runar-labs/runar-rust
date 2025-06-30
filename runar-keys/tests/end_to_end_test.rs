@@ -6,12 +6,12 @@
 //! end-to-end flow and test the whole system by bypassing the network part
 //! and dealing with the internal components directly.
 
+use runar_common::logging::{Component, Logger};
 use runar_keys::{
     error::Result,
-    mobile::{MobileKeyManager, SetupToken, NodeCertificateMessage},
-    node::{NodeKeyManager, CertificateStatus},
+    mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
+    node::{CertificateStatus, NodeKeyManager},
 };
-use runar_common::logging::{Component, Logger};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::sync::Arc;
 use x509_parser::prelude::FromDer;
@@ -23,55 +23,65 @@ fn create_test_logger(component: &str) -> Arc<Logger> {
 #[tokio::test]
 async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("🚀 Starting comprehensive end-to-end keys generation and exchange test");
-    
+
     // ==========================================
     // Mobile side - first time use - generate user keys
     // ==========================================
     println!("\n📱 MOBILE SIDE - First Time Setup");
-    
+
     // 1 - (mobile side) - generate user master key
     let mobile_logger = create_test_logger("mobile-e2e");
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
-    
+
     // Generate user root key - now returns only the public key
     let user_root_public_key = mobile
         .initialize_user_root_key()
         .expect("Failed to generate user root key");
     assert_eq!(
-        user_root_public_key.len(), 65, // ECDSA P-256 uncompressed public key  
+        user_root_public_key.len(),
+        65, // ECDSA P-256 uncompressed public key
         "User root key should have a valid public key"
     );
 
     let user_public_key = user_root_public_key.clone();
-    println!("   ✅ User public key generated: {}", hex::encode(&user_public_key));
+    println!(
+        "   ✅ User public key generated: {}",
+        hex::encode(&user_public_key)
+    );
 
     // Create a user owned and managed CA
     let user_ca_public_key = mobile.get_ca_public_key();
     assert_eq!(user_ca_public_key.len(), 33); // ECDSA P-256 compressed
-    println!("   ✅ User CA public key: {}", hex::encode(&user_ca_public_key));
+    println!(
+        "   ✅ User CA public key: {}",
+        hex::encode(&user_ca_public_key)
+    );
 
     // ==========================================
     // Node first time use - enter in setup mode
     // ==========================================
     println!("\n🖥️  NODE SIDE - Setup Mode");
-    
+
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
     //     and generate a setup handshake token which contains the CSR request and the node public key
     //     which will be presented as QR code.. here in the test we use the token as a string directly.
     let node_logger = create_test_logger("node-e2e");
     let mut node = NodeKeyManager::new(node_logger)?;
-    
+
     // Get the node public key (node ID) - keys are created in constructor
     let node_public_key = node.get_node_public_key();
-    println!("   ✅ Node identity created: {}", hex::encode(&node_public_key));
-    let setup_token = node
-        .generate_csr()
-        .expect("Failed to generate setup token");
+    println!(
+        "   ✅ Node identity created: {}",
+        hex::encode(&node_public_key)
+    );
+    let setup_token = node.generate_csr().expect("Failed to generate setup token");
 
     // In a real scenario, the node gets the mobile public key (e.g., by scanning a QR code)
     // and uses it to encrypt the setup token.
-    let setup_token_bytes = bincode::serialize(&setup_token).expect("Failed to serialize setup token");
-    let encrypted_setup_token = node.encrypt_message_for_mobile(&setup_token_bytes, &user_public_key)
+    let setup_token_bytes =
+        bincode::serialize(&setup_token).expect("Failed to serialize setup token");
+    let encrypted_setup_token = node
+        .encrypt_message_for_mobile(&setup_token_bytes, &user_public_key)
         .expect("Failed to encrypt setup token for mobile");
 
     // The encrypted token is then encoded (e.g., into a QR code).
@@ -82,10 +92,12 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Mobile scans a Node QR code which contains the setup token
     // ==========================================
     println!("\n📱 MOBILE SIDE - Processing Node Setup Token");
-    
+
     // Mobile decodes the QR code and decrypts the setup token.
-    let encrypted_setup_token_mobile = hex::decode(setup_token_str).expect("Failed to decode setup token");
-    let decrypted_setup_token_bytes = mobile.decrypt_message_from_node(&encrypted_setup_token_mobile)
+    let encrypted_setup_token_mobile =
+        hex::decode(setup_token_str).expect("Failed to decode setup token");
+    let decrypted_setup_token_bytes = mobile
+        .decrypt_message_from_node(&encrypted_setup_token_mobile)
         .expect("Failed to decrypt setup token from node");
 
     let setup_token_mobile: SetupToken = bincode::deserialize(&decrypted_setup_token_bytes)
@@ -95,46 +107,55 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let cert_message = mobile
         .process_setup_token(&setup_token_mobile)
         .expect("Failed to process setup token");
-    
+
     println!("   ✅ Certificate issued:");
     println!("      Subject: {}", cert_message.node_certificate.subject());
     println!("      Issuer: {}", cert_message.node_certificate.issuer());
     println!("      Purpose: {}", cert_message.metadata.purpose);
-    
+
     // Extract the node's public key from the now-decrypted setup token
     let node_public_key_from_token = setup_token_mobile.node_public_key.clone();
-    println!("   ✅ Node public key verified from token: {}", hex::encode(&node_public_key_from_token));
+    println!(
+        "   ✅ Node public key verified from token: {}",
+        hex::encode(&node_public_key_from_token)
+    );
 
     // ==========================================
     // Secure certificate transmission to node
     // ==========================================
     println!("\n🔐 SECURE CERTIFICATE TRANSMISSION");
-    
+
     // The certificate message is serialized and then encrypted for the node using its public key.
-    let serialized_cert_msg = bincode::serialize(&cert_message)
-        .expect("Failed to serialize certificate message");
-    let encrypted_cert_msg = mobile.encrypt_message_for_node(&serialized_cert_msg, &node_public_key_from_token)
+    let serialized_cert_msg =
+        bincode::serialize(&cert_message).expect("Failed to serialize certificate message");
+    let encrypted_cert_msg = mobile
+        .encrypt_message_for_node(&serialized_cert_msg, &node_public_key_from_token)
         .expect("Failed to encrypt certificate message for node");
 
     // Node side - receives the encrypted certificate message, decrypts, and installs it.
-    let decrypted_cert_msg_bytes = node.decrypt_message_from_mobile(&encrypted_cert_msg)
+    let decrypted_cert_msg_bytes = node
+        .decrypt_message_from_mobile(&encrypted_cert_msg)
         .expect("Failed to decrypt certificate message from mobile");
-    let deserialized_cert_msg: NodeCertificateMessage = bincode::deserialize(&decrypted_cert_msg_bytes)
-        .expect("Failed to deserialize certificate message");
+    let deserialized_cert_msg: NodeCertificateMessage =
+        bincode::deserialize(&decrypted_cert_msg_bytes)
+            .expect("Failed to deserialize certificate message");
 
     // 4 - (node side) - received the certificate message, validates it, and stores it
     node.install_certificate(deserialized_cert_msg)
         .expect("Failed to install certificate");
 
     println!("   ✅ Certificate installed on node");
-    println!("      Node certificate status: {:?}", node.get_certificate_status());
+    println!(
+        "      Node certificate status: {:?}",
+        node.get_certificate_status()
+    );
     assert_eq!(node.get_certificate_status(), CertificateStatus::Valid);
 
     // ==========================================
     // FROM THIS POINT FORWARD - SECURE QUIC TRANSPORT READY
     // ==========================================
     println!("\n🌐 QUIC TRANSPORT VALIDATION");
-    
+
     // Get QUIC-compatible certificates, private key, and validator from the node
     let quic_config = node
         .get_quic_certificate_config()
@@ -145,9 +166,13 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Validate the QUIC certificates
     let quic_certs = &quic_config.certificate_chain;
     let private_key = &quic_config.private_key;
-    
+
     assert!(!quic_certs.is_empty(), "No QUIC certificates returned");
-    assert_eq!(quic_certs.len(), 2, "Expected node certificate + CA certificate");
+    assert_eq!(
+        quic_certs.len(),
+        2,
+        "Expected node certificate + CA certificate"
+    );
 
     let cert_der = &quic_certs[0]; // Node certificate
     assert!(!cert_der.is_empty(), "Empty certificate in chain");
@@ -159,14 +184,22 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Parse the certificate using x509-parser to validate structure
     let (_, parsed_cert) = x509_parser::certificate::X509Certificate::from_der(cert_der.as_ref())
-        .expect("Failed to parse certificate as valid X.509 DER - we only accept real X.509 certificates");
+        .expect(
+        "Failed to parse certificate as valid X.509 DER - we only accept real X.509 certificates",
+    );
 
     println!("      - Certificate version: {:?}", parsed_cert.version());
-    println!("      - Certificate serial: {}", hex::encode(parsed_cert.serial.to_bytes_be()));
+    println!(
+        "      - Certificate serial: {}",
+        hex::encode(parsed_cert.serial.to_bytes_be())
+    );
     println!("      - Certificate subject: {}", parsed_cert.subject());
     println!("      - Certificate issuer: {}", parsed_cert.issuer());
-    println!("      - Certificate validity: {:?} to {:?}", 
-             parsed_cert.validity().not_before, parsed_cert.validity().not_after);
+    println!(
+        "      - Certificate validity: {:?} to {:?}",
+        parsed_cert.validity().not_before,
+        parsed_cert.validity().not_after
+    );
 
     // ==============================================
     // 2. PUBLIC KEY EXTRACTION AND VALIDATION
@@ -190,9 +223,18 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         "ECDSA P-256 public key should be 65 bytes (uncompressed format)"
     );
 
-    println!("      - Public key algorithm: {:?}", public_key_info.algorithm);
-    println!("      - Public key length: {} bytes", cert_public_key_bytes.len());
-    println!("      - Public key bytes: {}", hex::encode(cert_public_key_bytes));
+    println!(
+        "      - Public key algorithm: {:?}",
+        public_key_info.algorithm
+    );
+    println!(
+        "      - Public key length: {} bytes",
+        cert_public_key_bytes.len()
+    );
+    println!(
+        "      - Public key bytes: {}",
+        hex::encode(cert_public_key_bytes)
+    );
 
     // ==============================================
     // 3. CRYPTOGRAPHIC KEY PAIR VALIDATION
@@ -206,8 +248,14 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     );
 
     println!("      - ECDSA public key format: uncompressed (0x04 prefix)");
-    println!("      - X coordinate: {}", hex::encode(&cert_public_key_bytes[1..33]));
-    println!("      - Y coordinate: {}", hex::encode(&cert_public_key_bytes[33..65]));
+    println!(
+        "      - X coordinate: {}",
+        hex::encode(&cert_public_key_bytes[1..33])
+    );
+    println!(
+        "      - Y coordinate: {}",
+        hex::encode(&cert_public_key_bytes[33..65])
+    );
 
     // Validate that the private key can be parsed by rustls
     let _rustls_private_key = PrivateKeyDer::try_from(private_key.secret_der().to_vec())
@@ -223,10 +271,12 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Extract subject common name
     let subject_str = parsed_cert.subject().to_string();
     println!("      - Subject: {}", subject_str);
-    
+
     // For our certificates, we expect the node public key in the subject
-    assert!(subject_str.contains(&hex::encode(&node_public_key_from_token)), 
-            "Certificate subject should contain node public key");
+    assert!(
+        subject_str.contains(&hex::encode(&node_public_key_from_token)),
+        "Certificate subject should contain node public key"
+    );
 
     println!("      ✅ Subject validated for node certificate!");
 
@@ -237,7 +287,10 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Test that rustls can parse the certificate
     let rustls_cert = CertificateDer::from(cert_der.as_ref().to_vec());
-    assert!(!rustls_cert.is_empty(), "Rustls certificate should not be empty");
+    assert!(
+        !rustls_cert.is_empty(),
+        "Rustls certificate should not be empty"
+    );
 
     // Test that rustls can parse the private key
     let _rustls_private_key = PrivateKeyDer::try_from(private_key.secret_der().to_vec())
@@ -272,8 +325,8 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // The sensitive part of the network_key_message (the key itself) is already encrypted.
     // We just serialize the container message for transmission.
-    let serialized_network_keys = bincode::serialize(&network_key_message)
-        .expect("Failed to serialize network key message");
+    let serialized_network_keys =
+        bincode::serialize(&network_key_message).expect("Failed to serialize network key message");
 
     // Node side - received the network key message
     let deserialized_network_keys = bincode::deserialize(&serialized_network_keys)
@@ -293,23 +346,39 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let profile_work_key = mobile
         .derive_user_profile_key("work")
         .expect("Failed to generate work profile key");
-    
-    assert!(!profile_personal_key.is_empty(), "Personal profile key should be valid");
-    assert!(!profile_work_key.is_empty(), "Work profile key should be valid");
-    assert_ne!(profile_personal_key, profile_work_key, "Profile keys should be unique");
+
+    assert!(
+        !profile_personal_key.is_empty(),
+        "Personal profile key should be valid"
+    );
+    assert!(
+        !profile_work_key.is_empty(),
+        "Work profile key should be valid"
+    );
+    assert_ne!(
+        profile_personal_key, profile_work_key,
+        "Profile keys should be unique"
+    );
     println!("   ✅ Profile keys generated: personal, work");
 
     // 8 - (mobile side) - Encrypts data using envelope which is encrypted using the
-    //     user profile key and network key, so only the user or apps running in the 
+    //     user profile key and network key, so only the user or apps running in the
     //     network can decrypt it.
     let test_data = b"This is a test message that should be encrypted and decrypted";
     let envelope = mobile
-        .encrypt_with_envelope(test_data, &network_id, vec!["personal".to_string(), "work".to_string()])
+        .encrypt_with_envelope(
+            test_data,
+            &network_id,
+            vec!["personal".to_string(), "work".to_string()],
+        )
         .expect("Failed to encrypt data with envelope");
-    
+
     println!("   ✅ Data encrypted with envelope encryption");
     println!("      Network: {}", envelope.network_id);
-    println!("      Profile recipients: {}", envelope.profile_encrypted_keys.len());
+    println!(
+        "      Profile recipients: {}",
+        envelope.profile_encrypted_keys.len()
+    );
 
     // 9 - (node side) - received the encrypted data and decrypts it using the
     //     network key (the node does not have the user profile key)
@@ -343,19 +412,25 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // 10 - Test node local storage encryption
     println!("\n💾 NODE LOCAL STORAGE ENCRYPTION");
-    
+
     let file_data_1 = b"This is some secret file content that should be encrypted on the node.";
-    
+
     let encrypted_file_1 = node
         .encrypt_local_data(file_data_1)
         .expect("Node failed to encrypt local data");
-    println!("   ✅ Encrypted local data (hex): {}", hex::encode(&encrypted_file_1));
+    println!(
+        "   ✅ Encrypted local data (hex): {}",
+        hex::encode(&encrypted_file_1)
+    );
     assert_ne!(file_data_1, &encrypted_file_1[..]); // Ensure it's not plaintext
 
     let decrypted_file_1 = node
         .decrypt_local_data(&encrypted_file_1)
         .expect("Node failed to decrypt local data");
-    println!("   ✅ Decrypted data: {:?}", std::str::from_utf8(&decrypted_file_1).unwrap());
+    println!(
+        "   ✅ Decrypted data: {:?}",
+        std::str::from_utf8(&decrypted_file_1).unwrap()
+    );
 
     assert_eq!(
         file_data_1,
@@ -367,24 +442,24 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // STATE SERIALIZATION AND RESTORATION
     // ==========================================
     println!("\n💾 STATE SERIALIZATION AND RESTORATION TESTING");
-    
+
     // Now let's simulate when mobile and node already have keys stored in secure storage.
     // Step 1: Export the current state of the key managers
     let node_state = node.export_state();
-    
+
     // In a real implementation, these states would be serialized and stored in secure storage
     // For this test, we'll simulate that by serializing and deserializing them
-    let serialized_node_state = bincode::serialize(&node_state)
-        .expect("Failed to serialize node state");
+    let serialized_node_state =
+        bincode::serialize(&node_state).expect("Failed to serialize node state");
 
     // Step 2: Create new key managers and hydrate them with the exported state
     // This simulates restarting the application and loading keys from secure storage
-    let deserialized_node_state = bincode::deserialize(&serialized_node_state)
-        .expect("Failed to deserialize node state");
+    let deserialized_node_state =
+        bincode::deserialize(&serialized_node_state).expect("Failed to deserialize node state");
 
     let node_logger_2 = create_test_logger("node-hydrated");
     let node_hydrated = NodeKeyManager::from_state(deserialized_node_state, node_logger_2)?;
-    
+
     println!("   ✅ Node state successfully serialized and restored");
 
     // Verify that the hydrated node manager can still perform operations
@@ -443,13 +518,16 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         !original_quic_config.certificate_chain.is_empty(),
         "Original node should have QUIC certificates"
     );
-    println!("   ✅ Original node has {} QUIC certificate(s)", 
-             original_quic_config.certificate_chain.len());
+    println!(
+        "   ✅ Original node has {} QUIC certificate(s)",
+        original_quic_config.certificate_chain.len()
+    );
 
     // Parse original certificate to check subject
     let (_, original_parsed_cert) = x509_parser::certificate::X509Certificate::from_der(
-        original_quic_config.certificate_chain[0].as_ref()
-    ).expect("Failed to parse original certificate");
+        original_quic_config.certificate_chain[0].as_ref(),
+    )
+    .expect("Failed to parse original certificate");
 
     let original_subject = original_parsed_cert.subject().to_string();
     println!("   📋 Original certificate subject: '{}'", original_subject);
@@ -464,13 +542,16 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         !hydrated_quic_config.certificate_chain.is_empty(),
         "Hydrated node should have QUIC certificates"
     );
-    println!("   ✅ Hydrated node has {} QUIC certificate(s)", 
-             hydrated_quic_config.certificate_chain.len());
+    println!(
+        "   ✅ Hydrated node has {} QUIC certificate(s)",
+        hydrated_quic_config.certificate_chain.len()
+    );
 
     // Parse hydrated certificate to check subject
     let (_, hydrated_parsed_cert) = x509_parser::certificate::X509Certificate::from_der(
-        hydrated_quic_config.certificate_chain[0].as_ref()
-    ).expect("Failed to parse hydrated certificate");
+        hydrated_quic_config.certificate_chain[0].as_ref(),
+    )
+    .expect("Failed to parse hydrated certificate");
 
     let hydrated_subject = hydrated_parsed_cert.subject().to_string();
     println!("   📋 Hydrated certificate subject: '{}'", hydrated_subject);
@@ -486,7 +567,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         println!("   ❌ SERIALIZATION BUG DETECTED!");
         println!("      Original subject:  '{}'", original_subject);
         println!("      Hydrated subject:  '{}'", hydrated_subject);
-        
+
         // This would indicate a serialization issue
         assert_eq!(
             original_subject, hydrated_subject,
@@ -501,8 +582,14 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         println!("   ✅ Certificate DER bytes match exactly");
     } else {
         println!("   ⚠️  Certificate DER bytes differ - new certs generated after hydration");
-        println!("      Original cert size:  {} bytes", original_quic_config.certificate_chain[0].len());
-        println!("      Hydrated cert size:  {} bytes", hydrated_quic_config.certificate_chain[0].len());
+        println!(
+            "      Original cert size:  {} bytes",
+            original_quic_config.certificate_chain[0].len()
+        );
+        println!(
+            "      Hydrated cert size:  {} bytes",
+            hydrated_quic_config.certificate_chain[0].len()
+        );
     }
 
     // Additional local storage test after hydration
@@ -512,14 +599,23 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let encrypted_file_2 = node
         .encrypt_local_data(file_data_2)
         .expect("Node failed to encrypt data");
-    println!("   Original data: {:?}", std::str::from_utf8(file_data_2).unwrap());
-    println!("   Encrypted data (hex): {}", hex::encode(&encrypted_file_2));
+    println!(
+        "   Original data: {:?}",
+        std::str::from_utf8(file_data_2).unwrap()
+    );
+    println!(
+        "   Encrypted data (hex): {}",
+        hex::encode(&encrypted_file_2)
+    );
     assert_ne!(file_data_2, &encrypted_file_2[..]); // Ensure it's not plaintext
 
     let decrypted_file_2 = node
         .decrypt_local_data(&encrypted_file_2)
         .expect("Node failed to decrypt data");
-    println!("   Decrypted data: {:?}", std::str::from_utf8(&decrypted_file_2).unwrap());
+    println!(
+        "   Decrypted data: {:?}",
+        std::str::from_utf8(&decrypted_file_2).unwrap()
+    );
 
     assert_eq!(
         file_data_2,
@@ -553,9 +649,12 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   • CA public key: {} bytes", user_ca_public_key.len());
     println!("   • Profile keys: 2 (personal, work)");
     println!("   • Network keys: 1 ({})", network_id);
-    println!("   • Node certificates: 1 ({})", hex::encode(&node_public_key_from_token));
+    println!(
+        "   • Node certificates: 1 ({})",
+        hex::encode(&node_public_key_from_token)
+    );
     println!("   • Storage encryption: ✅");
     println!("   • State persistence: ✅");
 
     Ok(())
-} 
+}

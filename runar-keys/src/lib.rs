@@ -20,13 +20,13 @@
 //!     └── Used for all QUIC/TLS operations
 //! ```
 
-pub mod error;
 pub mod certificate;
+pub mod error;
 pub mod mobile;
 pub mod node;
 
 // Re-export key types for convenience
-pub use error::{KeyError, Result};
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
+pub use error::{KeyError, Result};
 pub use mobile::MobileKeyManager;
-pub use node::NodeKeyManager; 
+pub use node::NodeKeyManager;
