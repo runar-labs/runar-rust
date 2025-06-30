@@ -360,7 +360,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers1 {
             let context = Arc::new(EventContext::new(
                 &topic1,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -372,7 +372,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers2 {
             let context = Arc::new(EventContext::new(
                 &topic2,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -384,7 +384,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers3 {
             let context = Arc::new(EventContext::new(
                 &topic3,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -396,7 +396,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers4 {
             let context = Arc::new(EventContext::new(
                 &topic4,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -408,7 +408,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers5 {
             let context = Arc::new(EventContext::new(
                 &topic5,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -506,7 +506,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers {
             let context = Arc::new(EventContext::new(
                 &topic,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;

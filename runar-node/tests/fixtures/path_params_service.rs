@@ -94,6 +94,9 @@ impl AbstractService for PathParamsService {
     fn network_id(&self) -> Option<String> {
         self.network_id.clone()
     }
+    fn set_network_id(&mut self, network_id: String) {
+        self.network_id = Some(network_id);
+    }
 
     async fn init(&self, context: LifecycleContext) -> Result<()> {
         // Log the service information being initialized

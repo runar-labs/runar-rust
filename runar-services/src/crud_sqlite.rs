@@ -525,6 +525,9 @@ impl AbstractService for CrudSqliteService {
     fn network_id(&self) -> Option<String> {
         self.network_id.clone()
     }
+    fn set_network_id(&mut self, network_id: String) {
+        self.network_id = Some(network_id);
+    }
 
     fn description(&self) -> &str {
         &self.description

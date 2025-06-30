@@ -242,9 +242,11 @@ impl AbstractService for RegistryService {
         "Registry service for service discovery and metadata"
     }
 
+    // internal services is not bound to any specificy network
     fn network_id(&self) -> Option<String> {
         None
     }
+    fn set_network_id(&mut self, _network_id: String) {}
 
     /// Initialize the Registry Service by registering all handlers
     ///

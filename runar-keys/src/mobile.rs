@@ -49,6 +49,15 @@ impl MobileKeyManager {
         }
     }
 
+    pub fn new_with_state(state: MobileKeyManagerData) -> Self {
+        Self {
+            key_manager: KeyManager::from_data(state.key_manager_data),
+            profile_counter: state.profile_counter,
+            profile_key_to_index: state.profile_key_to_index,
+            user_public_key: state.user_public_key,
+        }
+    }
+
     /// Generate a new seed
     pub fn generate_seed(&mut self) -> &[u8; 32] {
         self.key_manager.generate_seed()
@@ -140,9 +149,12 @@ impl MobileKeyManager {
             .ok_or_else(|| KeyError::KeyNotFound("User CA key not found".to_string()))?;
 
         // Create a NodeMessage containing both the certificate and CA public key
+        let mut ca_public_key_array = [0u8; 32];
+        ca_public_key_array.copy_from_slice(ca_key.public_key());
+
         let node_message = NodeMessage {
             certificate: certificate.clone(),
-            ca_public_key: ca_key.public_key().to_vec(),
+            ca_public_key: ca_public_key_array,
         };
 
         // Get the node's encryption key from storage
@@ -189,14 +201,6 @@ impl MobileKeyManager {
             profile_key_to_index: self.profile_key_to_index.clone(),
             user_public_key: self.user_public_key.clone(),
         }
-    }
-
-    /// Import the mobile key manager state from persistence
-    pub fn import_state(&mut self, data: MobileKeyManagerData) {
-        self.key_manager.import_keys(data.key_manager_data);
-        self.profile_counter = data.profile_counter;
-        self.profile_key_to_index = data.profile_key_to_index;
-        self.user_public_key = data.user_public_key;
     }
 
     /// Create an encrypted network keys message for secure transmission to a node

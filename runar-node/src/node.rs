@@ -4,12 +4,13 @@
 // The Node is responsible for managing the service registry, handling requests, and
 // coordinating event publishing and subscriptions.
 //
-
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use hex;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
+use runar_keys::{MobileKeyManager, NodeKeyManager, NodeKeyManagerData};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -34,18 +35,19 @@ use crate::config::LoggingConfig;
 use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
 
 use crate::routing::TopicPath;
+use crate::services::keys_service::KeysService;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
 use crate::services::registry_service::RegistryService;
 use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
 use crate::services::service_registry::{ServiceEntry, ServiceRegistry};
-use crate::services::EventContext; // Explicit import for EventContext
 use crate::services::NodeDelegate;
 use crate::services::{
     ActionHandler, /* EventContext, NodeDelegate, */ EventCallback, EventRegistrationOptions,
     PublishOptions, RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
+use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
 use runar_common::types::AsArcValue;
 
@@ -68,28 +70,108 @@ pub struct NodeConfig {
 
     /// Logging configuration options
     pub logging_config: Option<LoggingConfig>,
+
+    key_manager_state: Option<Vec<u8>>,
+
     //FIX: move this to the network config.. local sercvies shuold not have timeout checks.
     /// Request timeout in milliseconds
     pub request_timeout_ms: u64,
 }
 
 impl NodeConfig {
-    /// Create a new configuration with the specified node ID and network ID
-    pub fn new(node_id: impl Into<String>, default_network_id: impl Into<String>) -> Self {
+    /// Create a new test configuration with the specified node ID and network ID and a empty node keys manager
+    pub fn new_test_config(
+        node_id: impl Into<String>,
+        default_network_id: impl Into<String>,
+    ) -> Self {
+        //create test credentials
+        let node_keys_manager = NodeKeyManager::new();
+        let key_state = node_keys_manager.export_state();
+
+        let key_state_bytes =
+            bincode::serialize(&key_state).expect("Failed to serialize node state");
+
         Self {
             node_id: node_id.into(),
             default_network_id: default_network_id.into(),
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            request_timeout_ms: 30000,                           // 30 seconds
+            key_manager_state: Some(key_state_bytes),
+            request_timeout_ms: 30000, // 30 seconds
+        }
+    }
+
+    //TODO move these test methods to another objct with only the tests utils..
+    // so this never gets to the final production code
+    pub fn new_network_test_config(
+        node_id: impl Into<String>,
+        default_network_id: impl Into<String>,
+    ) -> Self {
+        //create test credentials
+        //for network tests we need to also need the mobile manger to have the user CA
+        // and be able to validate the certifcates
+
+        let mut mobile = MobileKeyManager::new();
+        mobile.generate_seed();
+
+        // Generate user root key - now returns only the public key
+        let _user_root_public_key = mobile
+            .generate_user_root_key()
+            .expect("Failed to generate user root key");
+
+        // Create a user owned and managed CA
+        let _user_ca_public_key = mobile
+            .generate_user_ca_key()
+            .expect("Failed to generate user CA key");
+
+        let mut node_keys_manager = NodeKeyManager::new();
+        let setup_token = node_keys_manager
+            .generate_setup_token()
+            .expect("Failed to generate setup token");
+
+        // 3 - (mobile side) - received the token and sign the CSR
+        let cert = mobile
+            .process_setup_token(&setup_token)
+            .expect("Failed to process setup token");
+
+        // Extract the node ID from the setup token
+        // In a real-world scenario, the mobile device would have received this in the setup token
+        let node_public_key = hex::encode(&setup_token.node_public_key);
+
+        // Mobile encrypts a message containing both the certificate and CA public key for secure transmission to the node
+        // This ensures only the target node can decrypt the message and has the CA key needed for verification
+        let encrypted_node_msg = mobile
+            .encrypt_message_for_node(&cert, &node_public_key)
+            .expect("Failed to encrypt message");
+
+        node_keys_manager
+            .process_mobile_message(&encrypted_node_msg)
+            .expect("Failed to process encrypted certificate");
+
+        let key_state = node_keys_manager.export_state();
+
+        let key_state_bytes =
+            bincode::serialize(&key_state).expect("Failed to serialize node state");
+
+        //now the node keys manager contain valid keys and certificates and is stored in the
+        //key ring
+
+        Self {
+            node_id: node_id.into(),
+            default_network_id: default_network_id.into(),
+            network_ids: Vec::new(),
+            network_config: None,
+            logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
+            key_manager_state: Some(key_state_bytes),
+            request_timeout_ms: 30000, // 30 seconds
         }
     }
 
     /// Generate a node ID if not provided
     pub fn new_with_generated_id(default_network_id: impl Into<String>) -> Self {
         let node_id = Uuid::new_v4().to_string();
-        Self::new(node_id, default_network_id)
+        Self::new_test_config(node_id, default_network_id)
     }
 
     /// Add network configuration
@@ -113,6 +195,12 @@ impl NodeConfig {
     /// Set the request timeout in milliseconds
     pub fn with_request_timeout(mut self, timeout_ms: u64) -> Self {
         self.request_timeout_ms = timeout_ms;
+        self
+    }
+
+    /// Set the key manager state from serialized bytes
+    pub fn with_key_manager_state(mut self, key_state_bytes: Vec<u8>) -> Self {
+        self.key_manager_state = Some(key_state_bytes);
         self
     }
 }
@@ -189,6 +277,8 @@ pub struct Node {
     pub serializer: Arc<RwLock<SerializerRegistry>>,
 
     pub registry_version: Arc<AtomicI64>,
+
+    keys_manager: Arc<RwLock<NodeKeyManager>>,
 }
 
 // Implementation for Node
@@ -232,9 +322,27 @@ impl Node {
         ));
 
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
-        let peer_id = PeerId::new(node_id.clone());
         let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
-        // Create the node (with network fields now included)
+
+        // at this stage the node credentials must already exist and must be in a secure store
+        let key_manager_state_bytes = config
+            .key_manager_state
+            .clone()
+            .expect("Failed to load node credentials.");
+
+        let key_manager_state: NodeKeyManagerData = bincode::deserialize(&key_manager_state_bytes)
+            .expect("Failed to deserialize node keys state");
+
+        let keys_manager = NodeKeyManager::new_with_state(key_manager_state);
+
+        // **CRITICAL FIX**: Use the real node public key as peer_id, not the simple node_id
+        let node_public_key_bytes = keys_manager.node_public_key().clone();
+        let node_public_key_hex = hex::encode(&node_public_key_bytes);
+        let peer_id = PeerId::new(node_public_key_hex);
+
+        logger.info("Successfully loaded existing node credentials.");
+        logger.info(format!("Node peer ID (public key): {}", peer_id));
+
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: default_network_id,
@@ -254,6 +362,7 @@ impl Node {
                 serializer_logger,
             ))),
             registry_version: Arc::new(AtomicI64::new(0)),
+            keys_manager: Arc::new(tokio::sync::RwLock::new(keys_manager)),
         };
 
         // Register the registry service
@@ -261,9 +370,13 @@ impl Node {
             logger.clone(),
             Arc::new(node.clone()) as Arc<dyn RegistryDelegate>,
         );
-
-        // Add the registry service to the node
         node.add_service(registry_service).await?;
+
+        let keys_service = KeysService::new(
+            logger.clone(),
+            Arc::new(node.clone()) as Arc<dyn KeysDelegate>,
+        );
+        node.add_service(keys_service).await?;
 
         Ok(node)
     }
@@ -279,25 +392,30 @@ impl Node {
     /// INTENTION: Register a service with this node, making its actions available
     /// for requests and allowing it to receive events. This method initializes the
     /// service but does not start it - services are started when the node is started.
-    pub async fn add_service<S: AbstractService + 'static>(&mut self, service: S) -> Result<()> {
-        let service_path = service.path();
-        let service_name = service.name();
+    pub async fn add_service<S: AbstractService + 'static>(
+        &mut self,
+        mut service: S,
+    ) -> Result<()> {
         let default_network_id = self.network_id.to_string();
         let service_network_id = match service.network_id() {
             Some(id) => id,
-            None => default_network_id,
+            None => default_network_id.clone(),
         };
+        service.set_network_id(service_network_id.clone());
+
+        let service_path = service.path();
+        let service_name = service.name();
 
         self.logger.info(format!(
             "Adding service '{}' to node using path {}",
             service_name, service_path
         ));
         self.logger
-            .debug(format!("network id {}", service_network_id));
+            .debug(format!("network id {}", default_network_id));
 
         let registry = Arc::clone(&self.service_registry);
         // Create a proper topic path for the service
-        let service_topic = match crate::routing::TopicPath::new(service_path, &service_network_id)
+        let service_topic = match crate::routing::TopicPath::new(service_path, &default_network_id)
         {
             Ok(tp) => tp,
             Err(e) => {
@@ -657,11 +775,35 @@ impl Node {
                     Ok(())
                 });
 
+                //TODO lets change how QUIC certificates current work
+                //curently they are passed in the options.. but now they should be passsed in the
+                //  QuicTransport::new() call..
+                // 1 remove everythig relate to certs from the QuicTransportOptions
+                // 2 update QuicTransport::new() to accept certs and verifier
+                // 3 make sure the internals of QuicTransportImpl are updated to use the certs and verifier
+                // DO NOT change anytihg else.. focus on QUIC transporter with these new certificates
+                // I have already created the test utils to generate certificates and keys -> new_network_test_config
+                // I have updated the test test_remote_action_call() to use them.. use this test to validate your quic changes..
+                // QUIC shuold ahve only one weay to handle certs.. which is this wauy.. any other wauy shuold be remove. to keep it simple and concise
+                // when we craate the QUIC certs we use localhost.. if that cauases any issue,.. stop adn ask my input.. as I intend to chagne this later.. but dont want ot make too manyu chagnes .. so want this focus on the carts refact.. but if the localhost causes isues then we need to tacle..
+                let (cert_chain, private_key, verifier) = self
+                    .keys_manager
+                    .read()
+                    .await
+                    .get_quic_certs()
+                    .context("Failed to get QUIC certificates")?;
+
+                // Configure QUIC options with certificates and private key from key manager
+                let configured_quic_options = quic_options
+                    .with_certificates(cert_chain)
+                    .with_private_key(private_key)
+                    .with_certificate_verifier(verifier);
+
                 let transport = QuicTransport::new(
                     local_node_info,
                     bind_addr,
                     message_handler,
-                    quic_options,
+                    configured_quic_options,
                     self.logger.clone(),
                 )
                 .map_err(|e| anyhow!("Failed to create QUIC transport: {}", e))?;
@@ -701,59 +843,69 @@ impl Node {
         }
     }
 
-    /// Handle discovery of a new node
+    /// Handle discovered nodes and establish connections using lexicographic ordering
+    ///
+    /// INTENTION: Process discovered peer information and establish connections
+    /// following the rule that only the node with the lexicographically smaller
+    /// peer ID initiates the connection to prevent duplicate connections.
     pub async fn handle_discovered_node(&self, peer_info: PeerInfo) -> Result<()> {
-        // Skip if networking is not enabled
         if !self.supports_networking {
-            self.logger
-                .warn("Received node discovery event but networking is disabled");
             return Ok(());
         }
 
-        // let local_node_info = self.get_local_node_info().await?;
-
-        let peer_public_key = peer_info.public_key.clone();
+        let discovered_peer_id = PeerId::new(peer_info.public_key.clone());
 
         self.logger.info(format!(
             "Discovery listener found node: {}",
-            peer_public_key
+            discovered_peer_id
         ));
 
-        let transport = self.network_transport.read().await;
-        if let Some(transport) = transport.as_ref() {
-            // Check if the transporter is already connected to this peer
-            let is_already_connected = transport
-                .is_connected(PeerId::new(peer_public_key.clone()))
-                .await;
+        // **CRITICAL FIX**: Implement lexicographic ordering to prevent duplicate connections
+        // Only the node with the smaller peer ID should initiate the connection
+        let local_peer_id = &self.peer_id;
+        let should_initiate = local_peer_id.public_key < discovered_peer_id.public_key;
 
-            if is_already_connected {
+        if !should_initiate {
+            self.logger.info(format!(
+                "🚫 [ConnectionOrdering] Not initiating connection to {} - our peer ID ({}) is larger, waiting for them to connect to us",
+                discovered_peer_id, local_peer_id
+            ));
+            return Ok(());
+        }
+
+        self.logger.info(format!(
+            "✅ [ConnectionOrdering] Initiating connection to {} - our peer ID ({}) is smaller",
+            discovered_peer_id, local_peer_id
+        ));
+
+        // Check if we're already connected to this peer
+        let transport_guard = self.network_transport.read().await;
+        if let Some(transport) = transport_guard.as_ref() {
+            if transport.is_connected(discovered_peer_id.clone()).await {
                 self.logger.info(format!(
                     "Already connected to node: {}, ignoring discovery event",
-                    peer_public_key
+                    discovered_peer_id
                 ));
                 return Ok(());
             }
 
-            // Not connected yet, so connect to the peer
-            // The peer node info will be received through the peer_node_info_channel
-            match transport.connect_peer(peer_info.clone()).await {
+            // Attempt to connect to the discovered peer
+            match transport.connect_peer(peer_info).await {
                 Ok(()) => {
                     self.logger
-                        .info(format!("Connected to node: {}", peer_public_key));
-                    // Note: Peer node info is sent through the peer_node_info_channel
-                    // and will be processed by the peer_node_info_listener task
-                    return Ok(());
+                        .info(format!("Connected to node: {}", discovered_peer_id));
                 }
                 Err(e) => {
-                    self.logger.warn(format!(
-                        "Failed to connect to peer {}: {}",
-                        peer_public_key, e
+                    self.logger.error(format!(
+                        "Failed to connect to discovered node {}: {}",
+                        discovered_peer_id, e
                     ));
+                    return Err(anyhow::anyhow!("Connection failed: {}", e));
                 }
             }
         } else {
             self.logger
-                .warn("No transport available to handle discovered node");
+                .warn("No network transport available for connection");
         }
 
         Ok(())
@@ -785,7 +937,7 @@ impl Node {
         }
     }
 
-    // /// Handle a network request
+    /// Handle a network request
     async fn handle_network_request(&self, message: NetworkMessage) -> Result<()> {
         // Skip if networking is not enabled
         if !self.supports_networking {
@@ -794,10 +946,16 @@ impl Node {
             return Ok(());
         }
 
-        self.logger
-            .info(format!("Handling network request from {}", message.source));
+        self.logger.info(format!(
+            "📥 [Node] Handling network request from {} - Type: {}, Payloads: {}",
+            message.source,
+            message.message_type,
+            message.payloads.len()
+        ));
 
         if message.payloads.is_empty() {
+            self.logger
+                .error("❌ [Node] Received request message with no payloads");
             return Err(anyhow!("Received request message with no payloads"));
         }
         let serializer = self.serializer.read().await;
@@ -806,13 +964,20 @@ impl Node {
             let path = payload_item.path.clone();
             let correlation_id = payload_item.correlation_id.clone();
 
+            self.logger.info(format!(
+                "🔄 [Node] Processing request payload - Path: {}, Correlation ID: {}, Size: {} bytes", 
+                path, correlation_id, payload_item.value_bytes.len()
+            ));
+
             // Deserialize the value from bytes
             let params =
                 match serializer.deserialize_value(Arc::from(payload_item.value_bytes.clone())) {
                     Ok(value) => value,
                     Err(e) => {
-                        self.logger
-                            .error(format!("Failed to deserialize request payload: {}", e));
+                        self.logger.error(format!(
+                            "❌ [Node] Failed to deserialize request payload - Path: {}, Error: {}",
+                            path, e
+                        ));
                         return Err(anyhow!("Failed to deserialize request payload: {}", e));
                     }
                 };
@@ -821,17 +986,27 @@ impl Node {
             let local_peer_id = self.peer_id.clone();
 
             // Process the request locally using extracted topic and params
-            self.logger
-                .debug(format!("Processing network request for topic: {}", path));
+            self.logger.info(format!(
+                "⚙️ [Node] Processing local request for path: {} (correlation: {})",
+                path, correlation_id
+            ));
             match self.local_request(path.as_str(), params_option).await {
                 Ok(response) => {
+                    self.logger.info(format!(
+                        "✅ [Node] Local request completed successfully - Path: {}, Correlation: {}", 
+                        path, correlation_id
+                    ));
+
                     // Serialize the response data
                     let serialized_data_result = serializer.serialize_value(&response);
                     let serialized_data = match serialized_data_result {
                         Ok(bytes) => bytes.to_vec(), // Assuming Arc<[u8]> or similar
                         Err(e) => {
                             self.logger
-                                .error(format!("Failed to serialize response in handshake: {}", e));
+                                .error(format!(
+                                    "❌ [Node] Failed to serialize response - Path: {}, Correlation: {}, Error: {}", 
+                                    path, correlation_id, e
+                                ));
                             return Err(anyhow!(
                                 "Failed to serialize response in handshake: {}",
                                 e
@@ -839,11 +1014,18 @@ impl Node {
                         }
                     };
 
+                    self.logger.info(format!(
+                        "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
+                        message.source,
+                        correlation_id,
+                        serialized_data.len()
+                    ));
+
                     // Create a payload item with the serialized response
                     let response_payload = NetworkMessagePayloadItem {
                         path,
                         value_bytes: serialized_data,
-                        correlation_id,
+                        correlation_id: correlation_id.clone(),
                     };
 
                     // Create response message - destination is the original source
@@ -857,7 +1039,10 @@ impl Node {
                     // Check if networking is still enabled before trying to send response
                     if !self.supports_networking {
                         self.logger
-                            .warn("Can't send response - networking is disabled");
+                            .warn(format!(
+                                "⚠️ [Node] Can't send response - networking is disabled (correlation: {})", 
+                                correlation_id
+                            ));
                         return Ok(());
                     }
 
@@ -866,17 +1051,31 @@ impl Node {
                     if let Some(transport) = transport_guard.as_ref() {
                         if let Err(e) = transport.send_message(response_message).await {
                             self.logger
-                                .error(format!("Failed to send response message: {}", e));
+                                .error(format!(
+                                    "❌ [Node] Failed to send response message - To: {}, Correlation: {}, Error: {}", 
+                                    message.source, correlation_id, e
+                                ));
                             // Consider returning error or just logging?
                         } else {
-                            self.logger.debug("Sent response message to remote node");
+                            self.logger.info(format!(
+                                "✅ [Node] Response sent successfully - To: {}, Correlation: {}",
+                                message.source, correlation_id
+                            ));
                         }
                     } else {
                         self.logger
-                            .warn("No network transport available to send response");
+                            .warn(format!(
+                                "⚠️ [Node] No network transport available to send response (correlation: {})", 
+                                correlation_id
+                            ));
                     }
                 }
                 Err(e) => {
+                    self.logger.error(format!(
+                        "❌ [Node] Local request failed - Path: {}, Correlation: {}, Error: {}",
+                        path, correlation_id, e
+                    ));
+
                     // Create a map for the error response
                     let mut error_map = HashMap::new();
                     error_map.insert("error".to_string(), ArcValue::new_primitive(true));
@@ -887,21 +1086,33 @@ impl Node {
                     let error_value = ArcValue::from_map(error_map);
 
                     // Serialize the error value
-                    let serialized_error =
-                        match self.serializer.read().await.serialize_value(&error_value) {
-                            Ok(bytes) => bytes.to_vec(),
-                            Err(e) => {
-                                self.logger
-                                    .error(format!("Failed to serialize error response: {}", e));
-                                return Err(anyhow!("Failed to serialize error response: {}", e));
-                            }
-                        };
+                    let serialized_error = match self
+                        .serializer
+                        .read()
+                        .await
+                        .serialize_value(&error_value)
+                    {
+                        Ok(bytes) => bytes.to_vec(),
+                        Err(e) => {
+                            self.logger
+                                    .error(format!(
+                                        "❌ [Node] Failed to serialize error response - Path: {}, Correlation: {}, Error: {}", 
+                                        path, correlation_id, e
+                                    ));
+                            return Err(anyhow!("Failed to serialize error response: {}", e));
+                        }
+                    };
+
+                    self.logger.info(format!(
+                        "📤 [Node] Sending error response - To: {}, Correlation: {}, Size: {} bytes", 
+                        message.source, correlation_id, serialized_error.len()
+                    ));
 
                     // Create payload item with serialized error
                     let error_payload = NetworkMessagePayloadItem {
                         path,
                         value_bytes: serialized_error,
-                        correlation_id,
+                        correlation_id: correlation_id.clone(),
                     };
 
                     let response_message = NetworkMessage {
@@ -914,7 +1125,10 @@ impl Node {
                     // Check if networking is still enabled before trying to send error response
                     if !self.supports_networking {
                         self.logger
-                            .warn("Can't send error response - networking is disabled");
+                            .warn(format!(
+                                "⚠️ [Node] Can't send error response - networking is disabled (correlation: {})", 
+                                correlation_id
+                            ));
                         return Ok(());
                     }
 
@@ -923,14 +1137,23 @@ impl Node {
                     if let Some(transport) = transport_guard.as_ref() {
                         if let Err(e) = transport.send_message(response_message).await {
                             self.logger
-                                .error(format!("Failed to send error response message: {}", e));
+                                .error(format!(
+                                    "❌ [Node] Failed to send error response message - To: {}, Correlation: {}, Error: {}", 
+                                    message.source, correlation_id, e
+                                ));
                         } else {
                             self.logger
-                                .debug(format!("Sent error response to remote node: {}", e));
+                                .info(format!(
+                                    "✅ [Node] Error response sent successfully - To: {}, Correlation: {}", 
+                                    message.source, correlation_id
+                                ));
                         }
                     } else {
                         self.logger
-                            .warn("No network transport available to send error response");
+                            .warn(format!(
+                                "⚠️ [Node] No network transport available to send error response (correlation: {})", 
+                                correlation_id
+                            ));
                     }
                 }
             }
@@ -1510,11 +1733,12 @@ impl Node {
         // Build capability information for each service
         let mut services = Vec::new();
 
+        let internal_services = ["$registry", "$keys"];
+
         for (service_path, service_entry) in service_paths {
             let service = &service_entry.service;
             // Skip internals services:
-            // -$registry service -
-            if service.path().contains("$registry") {
+            if internal_services.contains(&service.path()) {
                 continue;
             }
 
@@ -1849,6 +2073,17 @@ impl NodeDelegate for Node {
 }
 
 #[async_trait]
+impl KeysDelegate for Node {
+    async fn ensure_symetric_key(&self, key_name: &str) -> Result<ArcValue> {
+        let mut keys_manager = self.keys_manager.write().await;
+        let key_bytes: Vec<u8> = keys_manager
+            .ensure_symetric_key(key_name)
+            .expect("Failed to ensure symmetric key");
+        Ok(ArcValue::new_bytes(key_bytes))
+    }
+}
+
+#[async_trait]
 impl RegistryDelegate for Node {
     /// Get service state
     async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
@@ -1927,6 +2162,7 @@ impl Clone for Node {
             pending_requests: self.pending_requests.clone(),
             serializer: self.serializer.clone(),
             registry_version: self.registry_version.clone(),
+            keys_manager: self.keys_manager.clone(),
         }
     }
 }

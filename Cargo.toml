@@ -9,6 +9,9 @@ members = [
     "runar-gateway",
     "rust-examples/simple",
 ]
+exclude = [
+    "quinn",
+]
 resolver = "2"
 
 [workspace.package]

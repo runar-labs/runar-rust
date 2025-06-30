@@ -1,4 +1,8 @@
-use crate::crypto::{Certificate, EncryptionKeyPair, NetworkKeyMessage, NodeMessage};
+use hex;
+
+use crate::crypto::{
+    Certificate, EncryptionKeyPair, NetworkKeyMessage, NodeMessage, SigningKeyPair,
+};
 use crate::envelope::Envelope;
 use crate::error::{KeyError, Result};
 use crate::manager::{KeyManager, KeyManagerData};
@@ -27,14 +31,12 @@ pub struct NodeKeyManagerData {
 }
 
 /// Node key manager
+#[derive(Debug)]
 pub struct NodeKeyManager {
     /// The underlying key manager
     key_manager: KeyManager,
     /// Node identifier
     node_public_key: Vec<u8>,
-    //TODO review and remove this... node can participate in a multiple networiks not just one
-    // Network identifier (if part of a network)
-    //network_id: Option<String>,
 }
 
 impl Default for NodeKeyManager {
@@ -47,9 +49,13 @@ impl NodeKeyManager {
     /// Create a new node key manager
     pub fn new() -> Self {
         let mut key_manager = KeyManager::new();
-        let node_public_key = key_manager
-            .generate_node_tls_key()
-            .expect("Failed to generate node TLS key");
+
+        // Generate a key pair for the node (certificate will be added later via CSR)
+        let keypair = SigningKeyPair::new();
+        let node_public_key = keypair.public_key().to_vec();
+
+        // Store the key pair
+        key_manager.add_signing_key("node_tls", keypair);
 
         // Generate an encryption key pair for the node
         key_manager
@@ -67,6 +73,17 @@ impl NodeKeyManager {
         }
     }
 
+    pub fn new_with_state(state: NodeKeyManagerData) -> Self {
+        let key_manager = KeyManager::from_data(state.key_manager_data);
+        let node_public_key = key_manager
+            .get_node_public_key()
+            .expect("Failed to get node Public key");
+        Self {
+            key_manager,
+            node_public_key,
+        }
+    }
+
     /// Get the node's encryption public key for secure communication
     pub fn get_encryption_public_key(&self) -> Result<Vec<u8>> {
         let encryption_key = self
@@ -74,7 +91,7 @@ impl NodeKeyManager {
             .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
 
-        Ok(encryption_key.public_key().to_vec())
+        Ok(encryption_key.public_key_bytes().to_vec())
     }
 
     /// Get the node ID
@@ -89,18 +106,16 @@ impl NodeKeyManager {
         let subject = format!("node:{}", hex::encode(&node_public_key));
 
         // Create CSR for the node TLS key
-        let tls_key_id = format!("node_tls_{}", hex::encode(&node_public_key));
+        let tls_key_id = "node_tls".to_string();
         let tls_csr = self.key_manager.create_csr(&subject, &tls_key_id)?;
 
-        // Ensure node has an encryption key pair for secure communication
-        let node_encryption_public_key =
-            if let Some(key) = self.key_manager.get_encryption_key("node_encryption") {
-                key.public_key().to_vec()
-            } else {
-                // Generate a new encryption key pair if one doesn't exist
-                self.key_manager
-                    .generate_encryption_key("node_encryption")?
-            };
+        // Get the node encryption public key - it must exist at this point
+        let encryption_key = self
+            .key_manager
+            .get_encryption_key("node_encryption")
+            .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
+
+        let node_encryption_public_key = encryption_key.public_key_bytes().to_vec();
 
         // Create a setup token
         let token = SetupToken {
@@ -119,26 +134,30 @@ impl NodeKeyManager {
     /// This method decrypts a NodeMessage that was encrypted specifically for this node.
     /// The NodeMessage contains both the certificate and the CA public key needed to verify it.
     pub fn decrypt_node_message(&self, envelope: &Envelope) -> Result<NodeMessage> {
-        // Get the node's encryption key pair
-        let node_encryption_key = self
+        // Get our node encryption key for decryption
+        let encryption_key = self
             .key_manager
             .get_encryption_key("node_encryption")
             .ok_or_else(|| KeyError::KeyNotFound("Node encryption key not found".to_string()))?;
 
-        // Decrypt the envelope
-        let decrypted_bytes = envelope.decrypt(node_encryption_key)?;
+        // Decrypt the envelope using our node encryption key
+        let decrypted_message = envelope.decrypt(encryption_key)?;
 
-        // Deserialize the NodeMessage using bincode for binary deserialization
-        let node_message: NodeMessage = bincode::deserialize(&decrypted_bytes)
-            .map_err(|e| KeyError::SerializationError(e.to_string()))?;
+        // Deserialize the decrypted message as a NodeMessage
+        let node_message: NodeMessage = bincode::deserialize(&decrypted_message).map_err(|e| {
+            KeyError::InvalidOperation(format!("Failed to deserialize node message: {}", e))
+        })?;
 
         Ok(node_message)
     }
 
-    /// Process an encrypted envelope containing a NodeMessage from mobile
+    /// Process a NodeMessage containing a certificate and CA public key from a mobile device
     ///
-    /// This method decrypts the envelope, extracts the NodeMessage (containing certificate and CA public key),
-    /// Validates the certificate using the provided CA public key, and stores it if valid.
+    /// This method:
+    /// 1. Decrypts the envelope using the node's private encryption key
+    /// 2. Validates the certificate using the provided CA public key
+    /// 3. Stores both the certificate and CA public key for future use
+    /// 4. Ensures QUIC certificates are generated for transport compatibility
     pub fn process_mobile_message(&mut self, envelope: &Envelope) -> Result<()> {
         // Try to decrypt as a NodeMessage first (preferred approach)
         let node_message = self.decrypt_node_message(envelope)?;
@@ -161,9 +180,29 @@ impl NodeKeyManager {
         // Validate the certificate using the provided CA public key
         certificate.validate(&ca_verifying_key)?;
 
-        // Store the certificate directly in the key manager
-        // We've already validated it with the CA public key, so we can just store it
-        self.key_manager.store_validated_certificate(certificate)?;
+        // Store the User CA public key for future certificate chain operations
+        let ca_key_pair = SigningKeyPair::from_public_key(&ca_public_key_array)?;
+        self.key_manager.add_signing_key("user_ca", ca_key_pair);
+
+        // Update the certificate subject and issuer to match our expected format
+        let mut cert = certificate;
+        cert.subject = format!("node:{}", hex::encode(&self.node_public_key));
+        cert.issuer = format!("ca:{}", hex::encode(ca_public_key));
+
+        // Store the certificate - store_validated_certificate will handle the QUIC key mapping
+        self.key_manager.store_validated_certificate(cert)?;
+
+        // Verify we can retrieve the certificate for QUIC use
+        match self.key_manager.get_certificate("node_tls_cert") {
+            Some(_stored_cert) => {
+                // Certificate successfully stored and retrievable
+            }
+            None => {
+                return Err(KeyError::CertificateError(
+                    "Certificate not found after storage".to_string(),
+                ));
+            }
+        }
 
         Ok(())
     }
@@ -186,12 +225,12 @@ impl NodeKeyManager {
             .map_err(|e| KeyError::SerializationError(e.to_string()))?;
 
         // Store the network private key
-        let network_private_key = network_key_message.private_key.clone();
+        let network_private_key = network_key_message.private_key.to_vec();
 
         // Also store the network key as an encryption key for future use
         let _network_encryption_key_id = format!(
             "network_encryption_{}",
-            hex::encode(&network_key_message.public_key)
+            hex::encode(network_key_message.public_key)
         );
         // Create an encryption key pair from the network key (if needed)
         // This is commented out for now as we're using the existing store_network_key method
@@ -201,12 +240,15 @@ impl NodeKeyManager {
         // Store the network key using the existing method
         self.store_network_key(&network_key_message.public_key, network_private_key)?;
 
-        // Store the network name
-        // For now, we'll just log it (implementation depends on requirements)
-        println!(
-            "Received network name: {}",
-            network_key_message.network_name
+        // Store the network name with the network key for future reference
+        let network_metadata_key = format!(
+            "network_metadata_{}",
+            hex::encode(network_key_message.public_key)
         );
+
+        // Store network metadata in the key manager using proper encrypted storage
+        self.key_manager_mut()
+            .store_network_metadata(&network_metadata_key, &network_key_message.network_name)?;
 
         Ok(())
     }
@@ -216,11 +258,6 @@ impl NodeKeyManager {
         NodeKeyManagerData {
             key_manager_data: self.key_manager.export_keys(),
         }
-    }
-
-    /// Import the node key manager state from persistence
-    pub fn import_state(&mut self, data: NodeKeyManagerData) {
-        self.key_manager.import_keys(data.key_manager_data);
     }
 
     /// Store a network key
@@ -265,11 +302,6 @@ impl NodeKeyManager {
         envelope.decrypt(network_encryption_key)
     }
 
-    /// Get the underlying key manager
-    pub fn key_manager(&self) -> &KeyManager {
-        &self.key_manager
-    }
-
     /// Get the underlying key manager mutably
     pub fn key_manager_mut(&mut self) -> &mut KeyManager {
         &mut self.key_manager
@@ -277,11 +309,20 @@ impl NodeKeyManager {
 
     /// Get the node's certificate
     pub fn get_node_certificate(&self) -> Result<&Certificate> {
-        let node_pk_str = hex::encode(self.node_public_key());
-        let subject = format!("node:{}", node_pk_str);
         self.key_manager
-            .get_certificate(&subject)
+            .get_certificate("node_tls_cert")
             .ok_or_else(|| KeyError::KeyNotFound("Node certificate not found".to_string()))
+    }
+
+    /// Get QUIC-compatible certificates, private key, and verifier for this node
+    pub fn get_quic_certs(
+        &self,
+    ) -> Result<(
+        Vec<rustls::pki_types::CertificateDer<'static>>,
+        rustls_pki_types::PrivateKeyDer<'static>,
+        std::sync::Arc<dyn rustls::client::danger::ServerCertVerifier>,
+    )> {
+        self.key_manager.get_quic_certs()
     }
 
     /// Encrypt data using the node's symmetric storage key.
@@ -294,5 +335,98 @@ impl NodeKeyManager {
     pub fn decrypt_data(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
         self.key_manager
             .decrypt_with_symmetric_key("node_storage", encrypted_data)
+    }
+
+    /// Ensure a symmetric key exists and return it (create one if it doesn't exist)
+    pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
+        let key = self.key_manager.ensure_symmetric_key(key_name)?;
+        Ok(key.to_bytes().to_vec())
+    }
+
+    pub fn save_credentials(&self) -> Result<()> {
+        let state = self.export_state();
+        let serialized_state = bincode::serialize(&state)?;
+        let serialized_state_hex = hex::encode(serialized_state);
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)?;
+        entry.set_password(&serialized_state_hex)?;
+        Ok(())
+    }
+
+    pub fn load_credentials() -> Result<NodeKeyManager> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)?;
+        let serialized_state_hex = entry.get_password()?;
+        let serialized_state = hex::decode(serialized_state_hex)?;
+        let state: NodeKeyManagerData = bincode::deserialize(&serialized_state)?;
+        let manager = NodeKeyManager::new_with_state(state);
+        Ok(manager)
+    }
+}
+
+const KEYRING_SERVICE: &str = "runar_node";
+const KEYRING_USERNAME: &str = "credentials";
+
+#[cfg(test)]
+mod credentials_tests {
+    use super::*;
+    use keyring::Entry;
+    use std::sync::Mutex;
+
+    // A mutex to ensure that tests that interact with the system keyring run serially.
+    static KEYRING_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn delete_test_credentials() -> Result<()> {
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)?;
+        match entry.delete_password() {
+            Ok(_) => Ok(()),
+            Err(keyring::Error::NoEntry) => Ok(()), // It's ok if it's already gone
+            Err(e) => Err(KeyError::KeyringError(format!(
+                "Failed to delete test credentials: {}",
+                e
+            ))),
+        }
+    }
+
+    #[test]
+    fn test_save_and_load_credentials() {
+        let _guard = KEYRING_MUTEX.lock().unwrap();
+
+        // Setup: Create a new manager
+        let original_manager = NodeKeyManager::new();
+        let original_pub_key = original_manager.node_public_key().to_vec();
+
+        // Action: Save the credentials
+        original_manager
+            .save_credentials()
+            .expect("Failed to save credentials");
+
+        // Action: Load the credentials
+        let loaded_manager =
+            NodeKeyManager::load_credentials().expect("Failed to load credentials");
+
+        // Assert: The loaded manager should have the same public key
+        assert_eq!(
+            original_pub_key.as_slice(),
+            loaded_manager.node_public_key()
+        );
+
+        // Cleanup
+        delete_test_credentials().expect("Failed to delete test credentials");
+    }
+
+    #[test]
+    fn test_load_credentials_not_found() {
+        let _guard = KEYRING_MUTEX.lock().unwrap();
+
+        // Setup: Ensure no credentials exist
+        delete_test_credentials().expect("Failed to delete test credentials before test");
+
+        // Action: Attempt to load credentials
+        let result = NodeKeyManager::load_credentials();
+
+        // Assert: The result should be an error indicating no entry
+        assert!(result.is_err());
+        let error = result.err().unwrap();
+        assert!(matches!(error, KeyError::KeyNotFound(_)));
+        assert!(error.to_string().contains("No credentials found"));
     }
 }
