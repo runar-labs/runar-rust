@@ -5,10 +5,18 @@ edition = "2021"
 
 [dependencies]
 # Core cryptographic libraries
-p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "serde"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "serde", "ecdh"] }
 ecdsa = "0.16"
 pkcs8 = { version = "0.10", features = ["std"] }
 rand = "0.8"
+
+# Proper symmetric encryption (replaces XOR cipher)
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+
+# Key derivation and hashing
+hkdf = "0.12"
+sha2 = "0.10"
 
 # Certificate generation and parsing - OpenSSL for proper CA operations
 openssl = { version = "0.10", features = ["vendored"] }

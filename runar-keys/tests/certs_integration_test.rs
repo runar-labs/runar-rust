@@ -373,6 +373,11 @@ async fn test_enhanced_key_management() -> Result<()> {
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let mut node = NodeKeyManager::new("enhanced-node".to_string(), node_logger)?;
     
+    // Issue certificate for the enhanced node (required for network key encryption)
+    let setup_token = node.generate_csr()?;
+    let cert_message = mobile.process_setup_token(&setup_token)?;
+    node.install_certificate(cert_message)?;
+    
     // Phase 1: User Root Key Management
     println!("\n📱 Phase 1: User Root Key Management");
     let user_root_public_key = mobile.initialize_user_root_key()?;
