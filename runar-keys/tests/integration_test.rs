@@ -7,12 +7,18 @@
 //! 4. QUIC transport configuration
 //! 5. Cross-node validation
 
-use runar_keys_fix::{
+use runar_keys::{
     error::Result,
     mobile::MobileKeyManager,
     node::{NodeKeyManager, CertificateStatus},
     certificate::X509Certificate,
 };
+use runar_common::logging::{Component, Logger};
+use std::sync::Arc;
+
+fn create_test_logger(component: &str) -> Arc<Logger> {
+    Arc::new(Logger::new_root(Component::Custom("Keys"), component))
+}
 
 /// Test the complete certificate workflow from mobile to nodes
 #[tokio::test]
@@ -24,7 +30,8 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     // ==========================================
     println!("\n📱 Phase 1: Initializing Mobile CA");
     
-    let mut mobile_key_manager = MobileKeyManager::new()?;
+    let mobile_logger = create_test_logger("mobile-test");
+    let mut mobile_key_manager = MobileKeyManager::new(mobile_logger)?;
     
     // Initialize user identity
     let user_public_key = mobile_key_manager.initialize_user_identity()?;
@@ -45,8 +52,10 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     println!("\n🖥️  Phase 2: Setting up nodes and generating CSRs");
     
     // Create two nodes for demonstration
-    let mut node1 = NodeKeyManager::new("node-001".to_string())?;
-    let mut node2 = NodeKeyManager::new("node-002".to_string())?;
+    let node1_logger = create_test_logger("node1-test");
+    let node2_logger = create_test_logger("node2-test");
+    let mut node1 = NodeKeyManager::new("node-001".to_string(), node1_logger)?;
+    let mut node2 = NodeKeyManager::new("node-002".to_string(), node2_logger)?;
     
     println!("   ✅ Created nodes: {} and {}", node1.get_node_id(), node2.get_node_id());
     
@@ -186,8 +195,10 @@ async fn test_complete_certificate_workflow() -> Result<()> {
 async fn test_certificate_validation_edge_cases() -> Result<()> {
     println!("🧪 Testing certificate validation edge cases");
     
-    let mut mobile = MobileKeyManager::new()?;
-    let mut node = NodeKeyManager::new("test-node".to_string())?;
+    let mobile_logger = create_test_logger("mobile-edge-test");
+    let node_logger = create_test_logger("node-edge-test");
+    let mut mobile = MobileKeyManager::new(mobile_logger)?;
+    let mut node = NodeKeyManager::new("test-node".to_string(), node_logger)?;
     
     // Use the proper CSR-based certificate workflow
     let setup_token = node.generate_csr()?;
@@ -217,7 +228,8 @@ async fn test_certificate_validation_edge_cases() -> Result<()> {
 async fn test_certificate_authority_operations() -> Result<()> {
     println!("🏛️  Testing Certificate Authority operations");
     
-    let mobile = MobileKeyManager::new()?;
+    let mobile_logger = create_test_logger("mobile-ca-test");
+    let mobile = MobileKeyManager::new(mobile_logger)?;
     let ca_cert = mobile.get_ca_certificate();
     
     // Verify CA certificate properties
@@ -239,13 +251,15 @@ async fn test_certificate_authority_operations() -> Result<()> {
 async fn test_multiple_network_scenario() -> Result<()> {
     println!("🌐 Testing multiple network scenario");
     
-    let mut mobile = MobileKeyManager::new()?;
+    let mobile_logger = create_test_logger("mobile-multi-test");
+    let mut mobile = MobileKeyManager::new(mobile_logger)?;
     
     // Create multiple nodes
     let mut nodes = Vec::new();
     for i in 1..=3 {
         let node_id = format!("node-{:03}", i);
-        let mut node = NodeKeyManager::new(node_id.clone())?;
+        let node_logger = create_test_logger(&format!("node-multi-{}", i));
+        let mut node = NodeKeyManager::new(node_id.clone(), node_logger)?;
         
         // Use the proper CSR-based certificate workflow
         let setup_token = node.generate_csr()?;
@@ -308,7 +322,8 @@ async fn test_certificate_performance() -> Result<()> {
     
     // Measure mobile CA creation
     let ca_start = std::time::Instant::now();
-    let mut mobile = MobileKeyManager::new()?;
+    let mobile_logger = create_test_logger("mobile-perf-test");
+    let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let ca_duration = ca_start.elapsed();
     
     // Measure certificate issuance for multiple nodes
@@ -317,7 +332,8 @@ async fn test_certificate_performance() -> Result<()> {
     
     for i in 1..=NUM_NODES {
         let node_id = format!("perf-node-{:03}", i);
-        let mut node = NodeKeyManager::new(node_id.clone())?;
+        let node_logger = create_test_logger(&format!("node-perf-{}", i));
+        let mut node = NodeKeyManager::new(node_id.clone(), node_logger)?;
         
         // Use the proper CSR-based certificate workflow
         let setup_token = node.generate_csr()?;
@@ -342,6 +358,152 @@ async fn test_certificate_performance() -> Result<()> {
     assert!(cert_duration.as_millis() < 5000, "Certificate issuance should be under 5 seconds for 10 nodes");
     
     println!("   ✅ Performance test passed");
+    
+    Ok(())
+}
+
+/// Test the enhanced key management features including user root keys, profile keys, storage keys, and envelope encryption
+#[tokio::test]
+async fn test_enhanced_key_management() -> Result<()> {
+    println!("🔐 Testing enhanced key management features");
+    
+    let mobile_logger = create_test_logger("mobile-enhanced");
+    let node_logger = create_test_logger("node-enhanced");
+    
+    let mut mobile = MobileKeyManager::new(mobile_logger)?;
+    let mut node = NodeKeyManager::new("enhanced-node".to_string(), node_logger)?;
+    
+    // Phase 1: User Root Key Management
+    println!("\n📱 Phase 1: User Root Key Management");
+    let user_root_public_key = mobile.initialize_user_root_key()?;
+    println!("   ✅ User root key initialized: {} bytes", user_root_public_key.len());
+    
+    // Verify we can retrieve the root public key
+    let retrieved_root_key = mobile.get_user_root_public_key()?;
+    assert_eq!(user_root_public_key, retrieved_root_key);
+    println!("   ✅ User root public key retrieval verified");
+    
+    // Phase 2: User Profile Key Derivation
+    println!("\n👤 Phase 2: User Profile Key Management");
+    let profile1_key = mobile.derive_user_profile_key("personal")?;
+    let profile2_key = mobile.derive_user_profile_key("work")?;
+    let profile3_key = mobile.derive_user_profile_key("family")?;
+    
+    assert_ne!(profile1_key, profile2_key);
+    assert_ne!(profile2_key, profile3_key);
+    assert_ne!(profile1_key, profile3_key);
+    println!("   ✅ Generated 3 unique profile keys (personal, work, family)");
+    
+    // Phase 3: Network Data Keys
+    println!("\n🌐 Phase 3: Network Data Key Management");
+    let network1_key = mobile.generate_network_data_key("home-network")?;
+    let network2_key = mobile.generate_network_data_key("office-network")?;
+    
+    assert_ne!(network1_key, network2_key);
+    println!("   ✅ Generated network data keys for home and office networks");
+    
+    // Phase 4: Node Storage Key
+    println!("\n💾 Phase 4: Node Storage Key Management");
+    let storage_key = node.get_storage_key()?.to_vec(); // Clone to avoid borrow issues
+    assert_eq!(storage_key.len(), 32);
+    println!("   ✅ Node storage key available: {} bytes", storage_key.len());
+    
+    // Test local data encryption/decryption
+    let local_data = b"This is sensitive local data that should be encrypted at rest";
+    let encrypted_local = node.encrypt_local_data(local_data)?;
+    let decrypted_local = node.decrypt_local_data(&encrypted_local)?;
+    assert_eq!(local_data.to_vec(), decrypted_local);
+    println!("   ✅ Local data encryption/decryption successful");
+    
+    // Phase 5: Envelope Key Generation
+    println!("\n📦 Phase 5: Envelope Key Management");
+    let envelope_key1 = mobile.create_envelope_key()?;
+    let envelope_key2 = mobile.create_envelope_key()?;
+    
+    assert_eq!(envelope_key1.len(), 32);
+    assert_eq!(envelope_key2.len(), 32);
+    assert_ne!(envelope_key1, envelope_key2);
+    println!("   ✅ Generated ephemeral envelope keys: {} bytes each", envelope_key1.len());
+    
+    // Phase 6: Envelope Encryption with Multiple Recipients
+    println!("\n🔒 Phase 6: Envelope Encryption Testing");
+    let sensitive_data = b"This is highly sensitive data that needs to be shared securely across the network";
+    
+    // Encrypt for multiple profiles and a network
+    let envelope_data = mobile.encrypt_with_envelope(
+        sensitive_data,
+        "home-network",
+        vec!["personal".to_string(), "work".to_string()]
+    )?;
+    
+    println!("   ✅ Data encrypted with envelope encryption");
+    println!("      Network: {}", envelope_data.network_id);
+    println!("      Profile recipients: {}", envelope_data.profile_encrypted_keys.len());
+    
+    // Phase 7: Decryption with Different Keys
+    println!("\n🔓 Phase 7: Multi-Key Decryption Testing");
+    
+    // Decrypt with personal profile
+    let decrypted_personal = mobile.decrypt_with_profile(&envelope_data, "personal")?;
+    assert_eq!(sensitive_data.to_vec(), decrypted_personal);
+    println!("   ✅ Successfully decrypted with 'personal' profile key");
+    
+    // Decrypt with work profile
+    let decrypted_work = mobile.decrypt_with_profile(&envelope_data, "work")?;
+    assert_eq!(sensitive_data.to_vec(), decrypted_work);
+    println!("   ✅ Successfully decrypted with 'work' profile key");
+    
+    // Decrypt with network key
+    let decrypted_network = mobile.decrypt_with_network(&envelope_data)?;
+    assert_eq!(sensitive_data.to_vec(), decrypted_network);
+    println!("   ✅ Successfully decrypted with 'home-network' key");
+    
+    // Phase 8: Node-side Envelope Operations
+    println!("\n🖥️  Phase 8: Node-side Envelope Operations");
+    
+    // Set up network key on node
+    let network_key_msg = mobile.create_network_key_message("home-network", "enhanced-node")?;
+    node.install_network_key(network_key_msg)?;
+    println!("   ✅ Network key installed on node");
+    
+    // Node creates envelope for sharing
+    let node_data = b"Data created by the node for network sharing";
+    let node_envelope = node.create_envelope_for_network(node_data, "home-network")?;
+    
+    // Mobile can decrypt node's envelope
+    let decrypted_node_data = mobile.decrypt_with_network(&node_envelope)?;
+    assert_eq!(node_data.to_vec(), decrypted_node_data);
+    println!("   ✅ Node envelope creation and mobile decryption successful");
+    
+    // Node can decrypt envelope from mobile
+    let decrypted_by_node = node.decrypt_envelope_data(&envelope_data)?;
+    assert_eq!(sensitive_data.to_vec(), decrypted_by_node);
+    println!("   ✅ Node decryption of mobile envelope successful");
+    
+    // Phase 9: Security Validation
+    println!("\n🛡️  Phase 9: Security Validation");
+    
+    // Try to decrypt with wrong profile (should fail gracefully)
+    let missing_profile_result = mobile.decrypt_with_profile(&envelope_data, "family");
+    assert!(missing_profile_result.is_err());
+    println!("   ✅ Correctly failed to decrypt with non-recipient profile key");
+    
+    // Verify all keys are different
+    assert_ne!(user_root_public_key, profile1_key);
+    assert_ne!(profile1_key, network1_key);
+    assert_ne!(network1_key, envelope_key1);
+    assert_ne!(storage_key, envelope_key1);
+    println!("   ✅ All generated keys are unique");
+    
+    println!("\n🎉 Enhanced key management test completed successfully!");
+    println!("   📊 Summary:");
+    println!("      • User root key: {} bytes", user_root_public_key.len());
+    println!("      • Profile keys generated: 3");
+    println!("      • Network keys generated: 2");
+    println!("      • Storage key size: {} bytes", storage_key.len());
+    println!("      • Envelope keys tested: 2");
+    println!("      • Multi-recipient encryption: ✅");
+    println!("      • Cross-device envelope sharing: ✅");
     
     Ok(())
 } 

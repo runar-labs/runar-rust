@@ -375,7 +375,7 @@ impl CertificateAuthority {
         let cert_der = openssl_cert.to_der()
             .map_err(|e| KeyError::CertificateError(format!("Failed to convert certificate to DER: {}", e)))?;
         
-        println!("✅ Certificate successfully signed with CSR's actual public key");
+                    // Certificate successfully signed with CSR's actual public key - handled by caller logging
         
         // Return as our X509Certificate wrapper
         X509Certificate::from_der(cert_der)
@@ -538,7 +538,7 @@ impl CertificateRequest {
                     "L" => distinguished_name.push(rcgen::DnType::LocalityName, value),
                     "OU" => distinguished_name.push(rcgen::DnType::OrganizationalUnitName, value),
                     _ => {
-                        println!("Warning: Skipping unknown DN component in CSR: {}={}", key, value);
+                        // Skipping unknown DN component in CSR - handled by caller if needed
                     }
                 }
             }
