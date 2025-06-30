@@ -175,11 +175,11 @@ impl MobileKeyManager {
         Ok(public_key)
     }
 
-    /// Generate a network data key for envelope encryption and return the network ID (public key)
+    /// Generate a network data key for envelope encryption and return the network ID (compact Base64 public key)
     pub fn generate_network_data_key(&mut self) -> Result<String> {
         let network_key = EcdsaKeyPair::new()?;
         let public_key = network_key.public_key_bytes();
-        let network_id = hex::encode(&public_key);
+        let network_id = crate::compact_ids::compact_network_id(&public_key);
 
         self.network_data_keys
             .insert(network_id.clone(), network_key);
@@ -541,7 +541,7 @@ impl MobileKeyManager {
         let encrypted_network_key =
             self.encrypt_key_with_ecdsa(&network_private_key, node_public_key)?;
 
-        let node_id = hex::encode(node_public_key);
+        let node_id = crate::compact_ids::compact_node_id(node_public_key);
         self.logger.info(format!(
             "Network key encrypted for node {} with ECIES",
             node_id

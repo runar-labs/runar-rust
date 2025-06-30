@@ -8,6 +8,7 @@
 
 use runar_common::logging::{Component, Logger};
 use runar_keys::{
+    compact_ids,
     error::Result,
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::{CertificateStatus, NodeKeyManager},
@@ -274,7 +275,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // For our certificates, we expect the node public key in the subject
     assert!(
-        subject_str.contains(&hex::encode(&node_public_key_from_token)),
+        subject_str.contains(&compact_ids::compact_node_id(&node_public_key_from_token)),
         "Certificate subject should contain node public key"
     );
 

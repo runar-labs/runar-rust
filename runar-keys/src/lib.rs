@@ -25,6 +25,39 @@ pub mod error;
 pub mod mobile;
 pub mod node;
 
+/// Utility module for compact ID encoding
+pub mod compact_ids {
+    use crate::error::{KeyError, Result};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    /// Encode public key bytes to a compact Base64 URL-safe string
+    pub fn encode_compact_id(public_key: &[u8]) -> String {
+        URL_SAFE_NO_PAD.encode(public_key)
+    }
+
+    /// Decode compact Base64 URL-safe string back to public key bytes
+    pub fn decode_compact_id(compact_id: &str) -> Result<Vec<u8>> {
+        URL_SAFE_NO_PAD
+            .decode(compact_id)
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to decode compact ID: {}", e)))
+    }
+
+    /// Generate a compact node ID from public key bytes
+    pub fn compact_node_id(public_key: &[u8]) -> String {
+        encode_compact_id(public_key)
+    }
+
+    /// Generate a compact network ID from public key bytes  
+    pub fn compact_network_id(public_key: &[u8]) -> String {
+        encode_compact_id(public_key)
+    }
+
+    /// Extract public key from compact ID
+    pub fn public_key_from_compact_id(compact_id: &str) -> Result<Vec<u8>> {
+        decode_compact_id(compact_id)
+    }
+}
+
 // Re-export key types for convenience
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
 pub use error::{KeyError, Result};

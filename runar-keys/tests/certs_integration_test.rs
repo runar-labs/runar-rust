@@ -310,10 +310,12 @@ async fn test_multiple_network_scenario() -> Result<()> {
         let network_id = mobile.generate_network_data_key()?;
         network_ids.push(network_id);
     }
+
+    // Distribute network keys to all nodes for each network
     for network_id in &network_ids {
-        // Distribute network keys to all nodes
         for node in &mut nodes {
-            let network_key_msg = mobile.create_network_key_message(network_id, &node.get_node_public_key())?;
+            let network_key_msg =
+                mobile.create_network_key_message(network_id, &node.get_node_public_key())?;
             node.install_network_key(network_key_msg)?;
         }
     }
@@ -450,6 +452,8 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("\n🌐 Phase 3: Network Data Key Management");
     let network1_key = mobile.generate_network_data_key()?;
     let network2_key = mobile.generate_network_data_key()?;
+    println!("   Network1 ID: {}", network1_key);
+    println!("   Network2 ID: {}", network2_key);
 
     assert_ne!(network1_key, network2_key);
     println!("   ✅ Generated network data keys for home and office networks");
@@ -486,15 +490,30 @@ async fn test_enhanced_key_management() -> Result<()> {
     // Phase 6: Envelope Encryption with Multiple Recipients
     println!("\n🔒 Phase 6: Envelope Encryption Testing");
 
+    // Set up network key on node BEFORE creating envelope
+    println!(
+        "   Installing network key on node for network1: {}",
+        network1_key
+    );
+    let network_key_msg =
+        mobile.create_network_key_message(&network1_key, &node.get_node_public_key())?;
+    node.install_network_key(network_key_msg)?;
+    println!("   ✅ Network key installed on node");
+
     let sensitive_data =
         b"This is highly sensitive data that needs to be shared securely across the network";
 
     // Encrypt for multiple profiles and a network
+    println!("   Encrypting envelope for network: {}", network1_key);
     let envelope_data = mobile.encrypt_with_envelope(
         sensitive_data,
         &network1_key,
         vec!["personal".to_string(), "work".to_string()],
     )?;
+    println!(
+        "   Envelope created for network: {}",
+        envelope_data.network_id
+    );
 
     println!("   ✅ Data encrypted with envelope encryption");
     println!("      Network: {}", envelope_data.network_id);
@@ -521,13 +540,13 @@ async fn test_enhanced_key_management() -> Result<()> {
     assert_eq!(sensitive_data.to_vec(), decrypted_network);
     println!("   ✅ Successfully decrypted with 'home-network' key");
 
+    // Node can decrypt envelope from mobile (now it has the network key)
+    let decrypted_by_node = node.decrypt_envelope_data(&envelope_data)?;
+    assert_eq!(sensitive_data.to_vec(), decrypted_by_node);
+    println!("   ✅ Node decryption of mobile envelope successful");
+
     // Phase 8: Node-side Envelope Operations
     println!("\n🖥️  Phase 8: Node-side Envelope Operations");
-
-    // Set up network key on node
-    let network_key_msg = mobile.create_network_key_message(&network1_key, &node.get_node_public_key())?;
-    node.install_network_key(network_key_msg)?;
-    println!("   ✅ Network key installed on node");
 
     // Node creates envelope for sharing
     let node_data = b"Data created by the node for network sharing";
@@ -537,11 +556,6 @@ async fn test_enhanced_key_management() -> Result<()> {
     let decrypted_node_data = mobile.decrypt_with_network(&node_envelope)?;
     assert_eq!(node_data.to_vec(), decrypted_node_data);
     println!("   ✅ Node envelope creation and mobile decryption successful");
-
-    // Node can decrypt envelope from mobile
-    let decrypted_by_node = node.decrypt_envelope_data(&envelope_data)?;
-    assert_eq!(sensitive_data.to_vec(), decrypted_by_node);
-    println!("   ✅ Node decryption of mobile envelope successful");
 
     // Phase 9: Security Validation
     println!("\n🛡️  Phase 9: Security Validation");

@@ -89,9 +89,9 @@ impl NodeKeyManager {
         self.node_key_pair.public_key_bytes()
     }
 
-    /// Get the node identifier as hex-encoded public key
+    /// Get the node ID (compact Base58 encoding of public key)
     pub fn get_node_id(&self) -> String {
-        hex::encode(self.get_node_public_key())
+        crate::compact_ids::compact_node_id(&self.node_key_pair.public_key_bytes())
     }
 
     /// Generate a 32-byte storage key for local file encryption
@@ -429,7 +429,8 @@ impl NodeKeyManager {
         let network_key_pair = EcdsaKeyPair::from_signing_key(signing_key);
 
         // Store the network key using its public key as identifier
-        let network_public_key = hex::encode(network_key_pair.public_key_bytes());
+        let network_public_key =
+            crate::compact_ids::compact_network_id(&network_key_pair.public_key_bytes());
         self.network_keys
             .insert(network_public_key.clone(), network_key_pair);
 
@@ -533,7 +534,7 @@ impl NodeKeyManager {
         }
     }
 
-    /// Get node statistics
+    /// Get statistics about the node key manager
     pub fn get_statistics(&self) -> NodeKeyManagerStatistics {
         NodeKeyManagerStatistics {
             node_id: self.get_node_id(),
@@ -541,7 +542,7 @@ impl NodeKeyManager {
             has_ca_certificate: self.ca_certificate.is_some(),
             certificate_status: self.get_certificate_status(),
             network_keys_count: self.network_keys.len(),
-            node_public_key: hex::encode(self.get_node_public_key()),
+            node_public_key: crate::compact_ids::compact_node_id(&self.get_node_public_key()),
         }
     }
 

@@ -27,6 +27,7 @@ rustls-pki-types = "1.0"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 hex = "0.4"
+base64 = "0.21"  # For compact Base64 URL-safe encoding of public keys
 
 # Logging framework
 runar_common = { path = "../runar-common" }
