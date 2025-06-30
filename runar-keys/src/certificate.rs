@@ -16,7 +16,8 @@ use openssl::bn::{BigNum, MsbOption};
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private};
-use openssl::x509::{X509Builder, X509Extension, X509NameBuilder, X509Req};
+use openssl::x509::extension::{ExtendedKeyUsage, KeyUsage};
+use openssl::x509::{X509Builder, X509NameBuilder, X509Req};
 
 // Cryptographic support
 use p256::ecdsa::{signature::Verifier, Signature, SigningKey, VerifyingKey};
@@ -401,18 +402,16 @@ impl CertificateAuthority {
         // Add standard X.509v3 extensions for TLS
         cert_builder
             .append_extension(
-                X509Extension::new_nid(
-                    None,
-                    None,
-                    Nid::KEY_USAGE,
-                    "digitalSignature,keyEncipherment",
-                )
-                .map_err(|e| {
-                    KeyError::CertificateError(format!(
-                        "Failed to create key usage extension: {}",
-                        e
-                    ))
-                })?,
+                KeyUsage::new()
+                    .digital_signature()
+                    .key_encipherment()
+                    .build()
+                    .map_err(|e| {
+                        KeyError::CertificateError(format!(
+                            "Failed to create key usage extension: {}",
+                            e
+                        ))
+                    })?,
             )
             .map_err(|e| {
                 KeyError::CertificateError(format!("Failed to add key usage extension: {}", e))
@@ -420,7 +419,10 @@ impl CertificateAuthority {
 
         cert_builder
             .append_extension(
-                X509Extension::new_nid(None, None, Nid::EXT_KEY_USAGE, "serverAuth,clientAuth")
+                ExtendedKeyUsage::new()
+                    .server_auth()
+                    .client_auth()
+                    .build()
                     .map_err(|e| {
                         KeyError::CertificateError(format!(
                             "Failed to create extended key usage extension: {}",

@@ -648,11 +648,10 @@ impl NodeKeyManager {
 
     /// Import state from persistence
     pub fn from_state(state: NodeKeyManagerState, logger: Arc<Logger>) -> Result<Self> {
-        let certificate_validator = if let Some(ca_cert) = &state.ca_certificate {
-            Some(CertificateValidator::new(vec![ca_cert.clone()]))
-        } else {
-            None
-        };
+        let certificate_validator = state
+            .ca_certificate
+            .as_ref()
+            .map(|ca_cert| CertificateValidator::new(vec![ca_cert.clone()]));
 
         let certificate_status =
             if state.node_certificate.is_some() && state.ca_certificate.is_some() {
