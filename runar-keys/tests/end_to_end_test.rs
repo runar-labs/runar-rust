@@ -55,6 +55,9 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // ==========================================
     println!("\n🖥️  NODE SIDE - Setup Mode");
     
+    //TODO we dont a node id that is specifi this way test-node-001 the public key of the node is the node ID.
+    //and tah is what should be used everytheer we need to identify the node. als in the certificate. qwhere he node if was being used befgore.
+
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
     //     and generate a setup handshake token which contains the CSR request and the node public key
     //     which will be presented as QR code.. here in the test we use the token as a string directly.
@@ -63,6 +66,9 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let setup_token = node
         .generate_csr()
         .expect("Failed to generate setup token");
+
+    //TODO before serializeing to string the setup token need to be encrypted using envelope encryption so onlt the mobile side can decrypt it.
+    //then sertalize to string so it cvan be represetned as a QR code.. the mobile side will parse the QR code and decrypt the setup token. 
 
     // Let's serialize the setup token
     let setup_token_bytes = bincode::serialize(&setup_token).expect("Failed to serialize setup token");
@@ -99,6 +105,9 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // ==========================================
     println!("\n🔐 SECURE CERTIFICATE TRANSMISSION");
     
+    //TODO cert_message needs to be encrypted using envelope encryption so only the node can decrypt it
+    //and  node needs to decrypt beore calling install_certificate
+
     // The certificate message is transmitted over a network
     // Here we're simulating that by directly passing the message to the node
     // Serialize certificate message for transmission
@@ -245,6 +254,8 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // ==========================================
     println!("\n🔐 ENHANCED KEY MANAGEMENT TESTING");
 
+    //TOPDO remove the network_id from ther.. network_id will be the public key of the network key created in this step.
+    //we dont want anotehr string to be used to identify the network. he public keu is the best way to identify the network.
     // 5 - (mobile side) - user created a network with a given name - generate a network key
     let network_public_key = mobile
         .generate_network_data_key("network_X")
@@ -254,10 +265,13 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Create network key message for the node
     let network_name = "network_X";
     let node_id = "test-node-001";
+     //TODO remove node_id from create_network_key_message it is  not needed 
+     //here instea od network_name .ç. should be network_id which is the public key of the network key created in the previous
     let network_key_message = mobile
         .create_network_key_message(network_name, node_id)
         .expect("Failed to create network key message");
 
+    //TODO network_key_message should be encrypted using envelope encryption so only the node can decrypt it
     // Serialize the network key message for transmission
     let serialized_network_keys = bincode::serialize(&network_key_message)
         .expect("Failed to serialize network key message");

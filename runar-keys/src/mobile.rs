@@ -191,6 +191,7 @@ impl MobileKeyManager {
         // Encrypt data with envelope key (using AES-GCM for simplicity)
         let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
         
+        //TODO if self.network_data_keys DOES NOT have keuys for the provied network id then we need to return an error.. 
         // Encrypt envelope key for network
         let network_encrypted_key = if let Some(network_key) = self.network_data_keys.get(network_id) {
             Some(self.encrypt_key_with_ecdsa(&envelope_key, network_key)?)
@@ -206,7 +207,7 @@ impl MobileKeyManager {
                 profile_encrypted_keys.insert(profile_id, encrypted_key);
             }
         }
-        
+        //TODO network_encrypted_key shoul dnot be optional
         Ok(EnvelopeEncryptedData {
             encrypted_data,
             network_id: network_id.to_string(),
@@ -239,6 +240,7 @@ impl MobileKeyManager {
         self.decrypt_with_symmetric_key(&envelope_data.encrypted_data, &envelope_key)
     }
     
+    //TODO this is not secure. we need to use a proper symmetric encryption algorithm.
     // Helper methods for symmetric encryption
     fn encrypt_with_symmetric_key(&self, data: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         // For this implementation, we'll use a simple XOR cipher

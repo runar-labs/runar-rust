@@ -58,6 +58,21 @@ pub enum KeyError {
     
     #[error("Certificate not found: {0}")]
     CertificateNotFound(String),
+    
+    #[error("Encryption error: {0}")]
+    EncryptionError(String),
+    
+    #[error("Decryption error: {0}")]
+    DecryptionError(String),
+    
+    #[error("Key derivation error: {0}")]
+    KeyDerivationError(String),
+    
+    #[error("ECDH error: {0}")]
+    EcdhError(String),
+    
+    #[error("Symmetric cipher error: {0}")]
+    SymmetricCipherError(String),
 }
 
 // Convert from rcgen errors
