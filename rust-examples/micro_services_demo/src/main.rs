@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     network_config.transport_options.timeout = Some(Duration::from_secs(30));
 
     let node_config =
-        NodeConfig::new_network_test_config("micro_services_demo_node", "default_network")
+        NodeConfig::new_test_config("micro_services_demo_node", "default_network")
             .with_network_config(network_config)
             .with_logging_config(logging_config)
             .with_additional_networks(vec!["default_network".to_string()])
