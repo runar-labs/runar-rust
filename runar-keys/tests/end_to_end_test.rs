@@ -55,35 +55,40 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // ==========================================
     println!("\n🖥️  NODE SIDE - Setup Mode");
     
-    //TODO we dont a node id that is specifi this way test-node-001 the public key of the node is the node ID.
-    //and tah is what should be used everytheer we need to identify the node. als in the certificate. qwhere he node if was being used befgore.
-
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
     //     and generate a setup handshake token which contains the CSR request and the node public key
     //     which will be presented as QR code.. here in the test we use the token as a string directly.
     let node_logger = create_test_logger("node-e2e");
-    let mut node = NodeKeyManager::new("test-node-001".to_string(), node_logger)?;
+    let mut node = NodeKeyManager::new(node_logger)?;
+    
+    // Get the node public key (node ID) - keys are created in constructor
+    let node_public_key = node.get_node_public_key();
+    println!("   ✅ Node identity created: {}", hex::encode(&node_public_key));
     let setup_token = node
         .generate_csr()
         .expect("Failed to generate setup token");
 
-    //TODO before serializeing to string the setup token need to be encrypted using envelope encryption so onlt the mobile side can decrypt it.
-    //then sertalize to string so it cvan be represetned as a QR code.. the mobile side will parse the QR code and decrypt the setup token. 
-
-    // Let's serialize the setup token
+    // In a real scenario, the node gets the mobile public key (e.g., by scanning a QR code)
+    // and uses it to encrypt the setup token.
     let setup_token_bytes = bincode::serialize(&setup_token).expect("Failed to serialize setup token");
-    let setup_token_str = hex::encode(setup_token_bytes);
-    println!("   ✅ Setup token string: {}", setup_token_str);
+    let encrypted_setup_token = node.encrypt_message_for_mobile(&setup_token_bytes, &user_public_key)
+        .expect("Failed to encrypt setup token for mobile");
+
+    // The encrypted token is then encoded (e.g., into a QR code).
+    let setup_token_str = hex::encode(encrypted_setup_token);
+    println!("   ✅ Encrypted setup token created for QR code");
 
     // ==========================================
     // Mobile scans a Node QR code which contains the setup token
     // ==========================================
     println!("\n📱 MOBILE SIDE - Processing Node Setup Token");
     
-    // setup_token_str represents the QR code
-    // Let's deserialize the setup token
-    let setup_token_bytes_mobile = hex::decode(setup_token_str).expect("Failed to decode setup token");
-    let setup_token_mobile: SetupToken = bincode::deserialize(&setup_token_bytes_mobile)
+    // Mobile decodes the QR code and decrypts the setup token.
+    let encrypted_setup_token_mobile = hex::decode(setup_token_str).expect("Failed to decode setup token");
+    let decrypted_setup_token_bytes = mobile.decrypt_message_from_node(&encrypted_setup_token_mobile)
+        .expect("Failed to decrypt setup token from node");
+
+    let setup_token_mobile: SetupToken = bincode::deserialize(&decrypted_setup_token_bytes)
         .expect("Failed to deserialize setup token");
 
     // 3 - (mobile side) - received the token and sign the CSR
@@ -96,27 +101,25 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("      Issuer: {}", cert_message.node_certificate.issuer());
     println!("      Purpose: {}", cert_message.metadata.purpose);
     
-    // Extract the node ID from the setup token
-    let node_public_key = hex::encode(&setup_token_mobile.node_public_key);
-    println!("   ✅ Node public key: {}", node_public_key);
+    // Extract the node's public key from the now-decrypted setup token
+    let node_public_key_from_token = setup_token_mobile.node_public_key.clone();
+    println!("   ✅ Node public key verified from token: {}", hex::encode(&node_public_key_from_token));
 
     // ==========================================
     // Secure certificate transmission to node
     // ==========================================
     println!("\n🔐 SECURE CERTIFICATE TRANSMISSION");
     
-    //TODO cert_message needs to be encrypted using envelope encryption so only the node can decrypt it
-    //and  node needs to decrypt beore calling install_certificate
-
-    // The certificate message is transmitted over a network
-    // Here we're simulating that by directly passing the message to the node
-    // Serialize certificate message for transmission
+    // The certificate message is serialized and then encrypted for the node using its public key.
     let serialized_cert_msg = bincode::serialize(&cert_message)
         .expect("Failed to serialize certificate message");
+    let encrypted_cert_msg = mobile.encrypt_message_for_node(&serialized_cert_msg, &node_public_key_from_token)
+        .expect("Failed to encrypt certificate message for node");
 
-    // Node side - received the certificate message
-    // Deserialize certificate message
-    let deserialized_cert_msg: NodeCertificateMessage = bincode::deserialize(&serialized_cert_msg)
+    // Node side - receives the encrypted certificate message, decrypts, and installs it.
+    let decrypted_cert_msg_bytes = node.decrypt_message_from_mobile(&encrypted_cert_msg)
+        .expect("Failed to decrypt certificate message from mobile");
+    let deserialized_cert_msg: NodeCertificateMessage = bincode::deserialize(&decrypted_cert_msg_bytes)
         .expect("Failed to deserialize certificate message");
 
     // 4 - (node side) - received the certificate message, validates it, and stores it
@@ -221,9 +224,9 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let subject_str = parsed_cert.subject().to_string();
     println!("      - Subject: {}", subject_str);
     
-    // For our certificates, we expect the node ID in the subject
-    assert!(subject_str.contains("test-node-001"), 
-            "Certificate subject should contain node ID");
+    // For our certificates, we expect the node public key in the subject
+    assert!(subject_str.contains(&hex::encode(&node_public_key_from_token)), 
+            "Certificate subject should contain node public key");
 
     println!("      ✅ Subject validated for node certificate!");
 
@@ -254,25 +257,21 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // ==========================================
     println!("\n🔐 ENHANCED KEY MANAGEMENT TESTING");
 
-    //TOPDO remove the network_id from ther.. network_id will be the public key of the network key created in this step.
-    //we dont want anotehr string to be used to identify the network. he public keu is the best way to identify the network.
-    // 5 - (mobile side) - user created a network with a given name - generate a network key
-    let network_public_key = mobile
-        .generate_network_data_key("network_X")
+    // 5 - (mobile side) - user creates a network - generate a network key
+    // The network ID is now the public key of the network key (no arbitrary strings)
+    let network_id = mobile
+        .generate_network_data_key()
         .expect("Failed to generate network data key");
-    println!("   ✅ Network data key generated: {}", hex::encode(&network_public_key));
+    println!("   ✅ Network data key generated with ID: {}", network_id);
 
     // Create network key message for the node
-    let network_name = "network_X";
-    let node_id = "test-node-001";
-     //TODO remove node_id from create_network_key_message it is  not needed 
-     //here instea od network_name .ç. should be network_id which is the public key of the network key created in the previous
+    // Use the actual network_id (public key) and node's public key
     let network_key_message = mobile
-        .create_network_key_message(network_name, node_id)
+        .create_network_key_message(&network_id, &node_public_key_from_token)
         .expect("Failed to create network key message");
 
-    //TODO network_key_message should be encrypted using envelope encryption so only the node can decrypt it
-    // Serialize the network key message for transmission
+    // The sensitive part of the network_key_message (the key itself) is already encrypted.
+    // We just serialize the container message for transmission.
     let serialized_network_keys = bincode::serialize(&network_key_message)
         .expect("Failed to serialize network key message");
 
@@ -285,7 +284,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         .expect("Failed to install network key");
     println!("   ✅ Network key installed on node");
 
-    // At this point the node is ready to process requests, events and data of the network_X
+    // At this point the node is ready to process requests, events and data of the network
 
     // 7 - (mobile side) - User creates profile keys
     let profile_personal_key = mobile
@@ -305,7 +304,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     //     network can decrypt it.
     let test_data = b"This is a test message that should be encrypted and decrypted";
     let envelope = mobile
-        .encrypt_with_envelope(test_data, "network_X", vec!["personal".to_string(), "work".to_string()])
+        .encrypt_with_envelope(test_data, &network_id, vec!["personal".to_string(), "work".to_string()])
         .expect("Failed to encrypt data with envelope");
     
     println!("   ✅ Data encrypted with envelope encryption");
@@ -384,7 +383,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         .expect("Failed to deserialize node state");
 
     let node_logger_2 = create_test_logger("node-hydrated");
-    let node_hydrated = NodeKeyManager::import_state(deserialized_node_state, node_logger_2)?;
+    let node_hydrated = NodeKeyManager::from_state(deserialized_node_state, node_logger_2)?;
     
     println!("   ✅ Node state successfully serialized and restored");
 
@@ -392,7 +391,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Try encrypting and decrypting data with the hydrated manager
     let test_data_2 = b"This is a second test message after key restoration";
     let envelope_2 = mobile
-        .encrypt_with_envelope(test_data_2, "network_X", vec!["personal".to_string()])
+        .encrypt_with_envelope(test_data_2, &network_id, vec!["personal".to_string()])
         .expect("Mobile failed to encrypt data after restoration");
 
     // Node should be able to decrypt with the network key
@@ -553,8 +552,8 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   • User root key: {} bytes", user_root_public_key.len());
     println!("   • CA public key: {} bytes", user_ca_public_key.len());
     println!("   • Profile keys: 2 (personal, work)");
-    println!("   • Network keys: 1 (network_X)");
-    println!("   • Node certificates: 1 (test-node-001)");
+    println!("   • Network keys: 1 ({})", network_id);
+    println!("   • Node certificates: 1 ({})", hex::encode(&node_public_key_from_token));
     println!("   • Storage encryption: ✅");
     println!("   • State persistence: ✅");
 

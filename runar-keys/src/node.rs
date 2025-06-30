@@ -38,7 +38,7 @@ pub enum CertificateStatus {
 
 /// Node Key Manager for certificate requests and management
 pub struct NodeKeyManager {
-    /// Node's identity key pair
+    /// Node's identity key pair (always present)
     node_key_pair: EcdsaKeyPair,
     /// Node's certificate (if issued by CA)
     node_certificate: Option<X509Certificate>,
@@ -46,12 +46,10 @@ pub struct NodeKeyManager {
     ca_certificate: Option<X509Certificate>,
     /// Certificate validator
     certificate_validator: Option<CertificateValidator>,
-    /// Network keys indexed by network ID
+    /// Network keys indexed by network public key (hex)
     network_keys: HashMap<String, EcdsaKeyPair>,
-    /// Node storage key for local file encryption
-    storage_key: Option<Vec<u8>>,
-    /// Node identifier
-    node_id: String,
+    /// Node storage key for local file encryption (always present)
+    storage_key: Vec<u8>,
     /// Certificate status
     certificate_status: CertificateStatus,
     /// Logger instance
@@ -59,14 +57,16 @@ pub struct NodeKeyManager {
 }
 
 impl NodeKeyManager {
-    /// Create a new Node Key Manager
-    pub fn new(node_id: String, logger: Arc<Logger>) -> Result<Self> {
+    /// Create a new Node Key Manager with fresh keys
+    pub fn new(logger: Arc<Logger>) -> Result<Self> {
+        // Generate node identity key pair
         let node_key_pair = EcdsaKeyPair::new()?;
         
         // Generate node storage key for local encryption
         let storage_key = Self::generate_storage_key();
         
-        logger.info(format!("Node Key Manager initialized for node: {}", node_id));
+        let node_public_key = node_key_pair.public_key_bytes();
+        logger.info(format!("Node Key Manager created with identity: {}", hex::encode(&node_public_key)));
         logger.debug("Node storage key generated for local encryption");
         
         Ok(Self {
@@ -75,11 +75,20 @@ impl NodeKeyManager {
             ca_certificate: None,
             certificate_validator: None,
             network_keys: HashMap::new(),
-            storage_key: Some(storage_key),
-            node_id,
+            storage_key,
             certificate_status: CertificateStatus::None,
             logger,
         })
+    }
+    
+    /// Get the node public key (node ID) - keys are always available
+    pub fn get_node_public_key(&self) -> Vec<u8> {
+        self.node_key_pair.public_key_bytes()
+    }
+    
+    /// Get the node identifier as hex-encoded public key
+    pub fn get_node_id(&self) -> String {
+        hex::encode(self.get_node_public_key())
     }
     
     /// Generate a 32-byte storage key for local file encryption
@@ -91,15 +100,13 @@ impl NodeKeyManager {
     }
     
     /// Get the node storage key for local encryption
-    pub fn get_storage_key(&self) -> Result<&[u8]> {
-        self.storage_key.as_ref()
-            .map(|k| k.as_slice())
-            .ok_or_else(|| KeyError::KeyNotFound("Node storage key not available".to_string()))
+    pub fn get_storage_key(&self) -> &[u8] {
+        &self.storage_key
     }
     
     /// Encrypt local data using the node storage key
     pub fn encrypt_local_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let storage_key = self.get_storage_key()?;
+        let storage_key = self.get_storage_key();
         
         // Use AES-256-GCM for secure local data encryption
         self.encrypt_with_symmetric_key(data, storage_key)
@@ -107,7 +114,7 @@ impl NodeKeyManager {
     
     /// Decrypt local data using the node storage key
     pub fn decrypt_local_data(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
-        let storage_key = self.get_storage_key()?;
+        let storage_key = self.get_storage_key();
         
         // Use AES-256-GCM for secure local data decryption
         self.decrypt_with_symmetric_key(encrypted_data, storage_key)
@@ -137,7 +144,7 @@ impl NodeKeyManager {
         let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
         
         // Encrypt envelope key with network key
-        let encrypted_envelope_key = self.encrypt_key_with_ecdsa(&envelope_key, network_key)?;
+        let encrypted_envelope_key = self.encrypt_key_with_ecdsa(&envelope_key, &network_key.public_key_bytes())?;
         
         Ok(crate::mobile::EnvelopeEncryptedData {
             encrypted_data,
@@ -199,8 +206,8 @@ impl NodeKeyManager {
             .map_err(|e| KeyError::DecryptionError(format!("AES-GCM decryption failed: {}", e)))
     }
     
-    fn encrypt_key_with_ecdsa(&self, key: &[u8], ecdsa_key: &EcdsaKeyPair) -> Result<Vec<u8>> {
-        // ECIES implementation using ECDH + HKDF + AES-GCM
+    /// Internal ECIES encryption using a recipient's public key
+    fn encrypt_key_with_ecdsa(&self, data: &[u8], recipient_public_key_bytes: &[u8]) -> Result<Vec<u8>> {
         use p256::ecdh::EphemeralSecret;
         use p256::PublicKey;
         use p256::elliptic_curve::sec1::ToEncodedPoint;
@@ -212,98 +219,83 @@ impl NodeKeyManager {
         let ephemeral_secret = EphemeralSecret::random(&mut thread_rng());
         let ephemeral_public = ephemeral_secret.public_key();
         
-        // Convert recipient's ECDSA key to ECDH public key
-        let recipient_public_key = PublicKey::from_sec1_bytes(ecdsa_key.verifying_key().to_encoded_point(false).as_bytes())
-            .map_err(|e| KeyError::EcdhError(format!("Failed to convert public key: {}", e)))?;
+        // Convert recipient's public key bytes to PublicKey
+        let recipient_public_key = PublicKey::from_sec1_bytes(recipient_public_key_bytes)
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to parse recipient public key: {}", e)))?;
         
-        // Simplified ECDH using key bytes (same approach as decryption)
-        use sha2::Digest;
-        let ephemeral_key_bytes = ephemeral_public.to_encoded_point(false);
-        let recipient_key_bytes = recipient_public_key.to_encoded_point(false);
-        let mut hasher = Sha256::new();
-        hasher.update(ephemeral_key_bytes.as_bytes());
-        hasher.update(recipient_key_bytes.as_bytes());
-        let shared_secret_bytes = hasher.finalize();
+        // Perform ECDH key exchange
+        let shared_secret = ephemeral_secret.diffie_hellman(&recipient_public_key);
+        let shared_secret_bytes = shared_secret.raw_secret_bytes();
         
         // Derive encryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, &shared_secret_bytes);
+        let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes.as_slice());
         let mut encryption_key = [0u8; 32];
         hk.expand(b"runar-key-encryption", &mut encryption_key)
             .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
         
-        // Encrypt the key using AES-GCM
-        let encrypted_key = self.encrypt_with_symmetric_key(key, &encryption_key)?;
+        // Encrypt the data using AES-GCM
+        let encrypted_data = self.encrypt_with_symmetric_key(data, &encryption_key)?;
         
-        // Return ephemeral public key + encrypted key
+        // Return ephemeral public key + encrypted data
         let ephemeral_public_bytes = ephemeral_public.to_encoded_point(false);
         let mut result = ephemeral_public_bytes.as_bytes().to_vec();
-        result.extend_from_slice(&encrypted_key);
+        result.extend_from_slice(&encrypted_data);
         Ok(result)
     }
-    
-    fn decrypt_key_with_ecdsa(&self, encrypted_key: &[u8], ecdsa_key: &EcdsaKeyPair) -> Result<Vec<u8>> {
-        // ECIES decryption using ECDH + HKDF + AES-GCM
+
+    /// Internal ECIES decryption using our private key
+    fn decrypt_key_with_ecdsa(&self, encrypted_data: &[u8], key_pair: &EcdsaKeyPair) -> Result<Vec<u8>> {
         use p256::PublicKey;
+        use p256::SecretKey;
+        use p256::ecdh::diffie_hellman;
         use hkdf::Hkdf;
         use sha2::Sha256;
         
         // Extract ephemeral public key (65 bytes uncompressed) and encrypted data
-        if encrypted_key.len() < 65 {
-            return Err(KeyError::DecryptionError("Encrypted key too short for ECIES".to_string()));
+        if encrypted_data.len() < 65 {
+            return Err(KeyError::DecryptionError("Encrypted data too short for ECIES".to_string()));
         }
         
-        let ephemeral_public_bytes = &encrypted_key[..65];
-        let encrypted_data = &encrypted_key[65..];
+        let ephemeral_public_bytes = &encrypted_data[..65];
+        let encrypted_payload = &encrypted_data[65..];
         
         // Reconstruct ephemeral public key
         let ephemeral_public = PublicKey::from_sec1_bytes(ephemeral_public_bytes)
-            .map_err(|e| KeyError::EcdhError(format!("Failed to parse ephemeral public key: {}", e)))?;
+            .map_err(|e| KeyError::DecryptionError(format!("Failed to parse ephemeral public key: {}", e)))?;
         
-        // Simplified ECDH using key bytes (same order as encryption)
-        use sha2::Digest;
-        let ephemeral_key_bytes = ephemeral_public_bytes;
-        let our_key_bytes = ecdsa_key.verifying_key().to_encoded_point(false);
-        let mut hasher = Sha256::new();
-        hasher.update(ephemeral_key_bytes);
-        hasher.update(our_key_bytes.as_bytes());
-        let shared_secret_bytes = hasher.finalize();
+        // Use the ECDSA signing key bytes to create a SecretKey for ECDH
+        let secret_key = SecretKey::from_bytes(&key_pair.signing_key().to_bytes())
+            .map_err(|e| KeyError::DecryptionError(format!("Failed to create SecretKey: {}", e)))?;
+        let shared_secret = diffie_hellman(secret_key.to_nonzero_scalar(), ephemeral_public.as_affine());
+        let shared_secret_bytes = shared_secret.raw_secret_bytes();
         
         // Derive encryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, &shared_secret_bytes);
+        let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
         let mut encryption_key = [0u8; 32];
         hk.expand(b"runar-key-encryption", &mut encryption_key)
             .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
         
-        // Decrypt the key using AES-GCM
-        self.decrypt_with_symmetric_key(encrypted_data, &encryption_key)
-    }
-    
-    /// Get the node's public key
-    pub fn get_node_public_key(&self) -> Vec<u8> {
-        self.node_key_pair.public_key_bytes()
-    }
-    
-    /// Get the node identifier
-    pub fn get_node_id(&self) -> &str {
-        &self.node_id
+        // Decrypt the data using AES-GCM
+        self.decrypt_with_symmetric_key(encrypted_payload, &encryption_key)
     }
     
     /// Generate a certificate signing request (CSR)
     pub fn generate_csr(&mut self) -> Result<SetupToken> {
-        let subject = format!("CN={},O=Runar Node,C=US", self.node_id);
+        let node_public_key = self.get_node_public_key();
+        let node_id = self.get_node_id();
+        let subject = format!("CN={},O=Runar Node,C=US", node_id);
         let csr_der = CertificateRequest::create(&self.node_key_pair, &subject)?;
         
         self.certificate_status = CertificateStatus::Pending;
         
         Ok(SetupToken {
-            node_public_key: self.get_node_public_key(),
+            node_public_key,
             csr_der,
-            node_id: self.node_id.clone(),
+            node_id,
         })
     }
 
     /// Get the node key pair for certificate creation
-    /// This is a simplified approach for the demo
     pub fn get_node_key_pair(&self) -> &EcdsaKeyPair {
         &self.node_key_pair
     }
@@ -316,8 +308,9 @@ impl NodeKeyManager {
         // cert_message.node_certificate.validate(&ca_public_key)?;
         
         // Verify the certificate is for this node
-        let _expected_subject = format!("CN={},O=Runar Node,C=US", self.node_id);
-        if !cert_message.node_certificate.subject().contains(&self.node_id) {
+        let node_id = self.get_node_id();
+        let _expected_subject = format!("CN={},O=Runar Node,C=US", node_id);
+        if !cert_message.node_certificate.subject().contains(&node_id) {
             return Err(KeyError::CertificateValidationError(
                 "Certificate subject doesn't match node ID".to_string()
             ));
@@ -385,10 +378,11 @@ impl NodeKeyManager {
         
         let network_key_pair = EcdsaKeyPair::from_signing_key(signing_key);
         
-        // Store the network key
-        self.network_keys.insert(network_key_message.network_id.clone(), network_key_pair);
+        // Store the network key using its public key as identifier
+        let network_public_key = hex::encode(network_key_pair.public_key_bytes());
+        self.network_keys.insert(network_public_key.clone(), network_key_pair);
         
-        self.logger.info(format!("Network key decrypted and installed for network: {}", network_key_message.network_id));
+        self.logger.info(format!("Network key decrypted and installed for network: {}", network_public_key));
         
         Ok(())
     }
@@ -483,7 +477,7 @@ impl NodeKeyManager {
     /// Get node statistics
     pub fn get_statistics(&self) -> NodeKeyManagerStatistics {
         NodeKeyManagerStatistics {
-            node_id: self.node_id.clone(),
+            node_id: self.get_node_id(),
             has_certificate: self.node_certificate.is_some(),
             has_ca_certificate: self.ca_certificate.is_some(),
             certificate_status: self.get_certificate_status(),
@@ -519,6 +513,18 @@ impl NodeKeyManager {
         
         Ok(())
     }
+
+    /// Encrypt a message for the mobile user using their public key (ECIES)
+    pub fn encrypt_message_for_mobile(&self, message: &[u8], mobile_public_key: &[u8]) -> Result<Vec<u8>> {
+        self.logger.debug(format!("Encrypting message for mobile ({} bytes)", message.len()));
+        self.encrypt_key_with_ecdsa(message, mobile_public_key)
+    }
+
+    /// Decrypt a message from the mobile user using the node's private key (ECIES)
+    pub fn decrypt_message_from_mobile(&self, encrypted_message: &[u8]) -> Result<Vec<u8>> {
+        self.logger.debug(format!("Decrypting message from mobile ({} bytes)", encrypted_message.len()));
+        self.decrypt_key_with_ecdsa(encrypted_message, &self.node_key_pair)
+    }
 }
 
 /// Certificate information for the node
@@ -548,8 +554,7 @@ pub struct NodeKeyManagerState {
     node_certificate: Option<X509Certificate>,
     ca_certificate: Option<X509Certificate>,
     network_keys: HashMap<String, EcdsaKeyPair>,
-    storage_key: Option<Vec<u8>>,
-    node_id: String,
+    storage_key: Vec<u8>,
 }
 
 impl NodeKeyManager {
@@ -561,12 +566,11 @@ impl NodeKeyManager {
             ca_certificate: self.ca_certificate.clone(),
             network_keys: self.network_keys.clone(),
             storage_key: self.storage_key.clone(),
-            node_id: self.node_id.clone(),
         }
     }
     
     /// Import state from persistence
-    pub fn import_state(state: NodeKeyManagerState, logger: Arc<Logger>) -> Result<Self> {
+    pub fn from_state(state: NodeKeyManagerState, logger: Arc<Logger>) -> Result<Self> {
         let certificate_validator = if let Some(ca_cert) = &state.ca_certificate {
             Some(CertificateValidator::new(vec![ca_cert.clone()]))
         } else {
@@ -581,7 +585,8 @@ impl NodeKeyManager {
             CertificateStatus::None
         };
         
-        logger.info(format!("Node Key Manager state imported for node: {}", state.node_id));
+        let node_id = hex::encode(state.node_key_pair.public_key_bytes());
+        logger.info(format!("Node Key Manager state imported for node: {}", node_id));
         
         Ok(Self {
             node_key_pair: state.node_key_pair,
@@ -590,7 +595,6 @@ impl NodeKeyManager {
             certificate_validator,
             network_keys: state.network_keys,
             storage_key: state.storage_key,
-            node_id: state.node_id,
             certificate_status,
             logger,
         })

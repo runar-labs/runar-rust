@@ -163,15 +163,16 @@ impl MobileKeyManager {
         Ok(public_key)
     }
     
-    /// Generate a network data key for envelope encryption
-    pub fn generate_network_data_key(&mut self, network_id: &str) -> Result<Vec<u8>> {
+    /// Generate a network data key for envelope encryption and return the network ID (public key)
+    pub fn generate_network_data_key(&mut self) -> Result<String> {
         let network_key = EcdsaKeyPair::new()?;
         let public_key = network_key.public_key_bytes();
+        let network_id = hex::encode(&public_key);
         
-        self.network_data_keys.insert(network_id.to_string(), network_key);
-        self.logger.info(format!("Network data key generated for network: {}", network_id));
+        self.network_data_keys.insert(network_id.clone(), network_key);
+        self.logger.info(format!("Network data key generated with ID: {}", network_id));
         
-        Ok(public_key)
+        Ok(network_id)
     }
     
     /// Create an envelope key for per-object encryption
@@ -200,19 +201,19 @@ impl MobileKeyManager {
         // Generate ephemeral envelope key
         let envelope_key = self.create_envelope_key()?;
         
-        // Encrypt data with envelope key (using AES-GCM for simplicity)
+        // Encrypt data with envelope key (using AES-GCM)
         let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
         
-        // Encrypt envelope key for network (required - error if network key not found)
+        // Encrypt envelope key for network (required)
         let network_key = self.network_data_keys.get(network_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found for network: {}", network_id)))?;
-        let network_encrypted_key = self.encrypt_key_with_ecdsa(&envelope_key, network_key)?;
+        let network_encrypted_key = self.encrypt_key_with_ecdsa(&envelope_key, &network_key.public_key_bytes())?;
         
         // Encrypt envelope key for each profile
         let mut profile_encrypted_keys = HashMap::new();
         for profile_id in profile_ids {
             if let Some(profile_key) = self.user_profile_keys.get(&profile_id) {
-                let encrypted_key = self.encrypt_key_with_ecdsa(&envelope_key, profile_key)?;
+                let encrypted_key = self.encrypt_key_with_ecdsa(&envelope_key, &profile_key.public_key_bytes())?;
                 profile_encrypted_keys.insert(profile_id, encrypted_key);
             }
         }
@@ -242,7 +243,6 @@ impl MobileKeyManager {
         let network_key = self.network_data_keys.get(&envelope_data.network_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {}", envelope_data.network_id)))?;
         
-        // Network encrypted key is now always present (required field)
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
         
         let envelope_key = self.decrypt_key_with_ecdsa(encrypted_envelope_key, network_key)?;
@@ -292,8 +292,8 @@ impl MobileKeyManager {
             .map_err(|e| KeyError::DecryptionError(format!("AES-GCM decryption failed: {}", e)))
     }
     
-    fn encrypt_key_with_ecdsa(&self, key: &[u8], ecdsa_key: &EcdsaKeyPair) -> Result<Vec<u8>> {
-        // ECIES implementation using ECDH + HKDF + AES-GCM
+    /// Internal ECIES encryption using a recipient's public key
+    fn encrypt_key_with_ecdsa(&self, data: &[u8], recipient_public_key_bytes: &[u8]) -> Result<Vec<u8>> {
         use p256::ecdh::EphemeralSecret;
         use p256::PublicKey;
         use p256::elliptic_curve::sec1::ToEncodedPoint;
@@ -305,113 +305,64 @@ impl MobileKeyManager {
         let ephemeral_secret = EphemeralSecret::random(&mut thread_rng());
         let ephemeral_public = ephemeral_secret.public_key();
         
-        // Convert recipient's ECDSA key to ECDH public key
-        let recipient_public_key = PublicKey::from_sec1_bytes(ecdsa_key.verifying_key().to_encoded_point(false).as_bytes())
-            .map_err(|e| KeyError::EcdhError(format!("Failed to convert public key: {}", e)))?;
+        // Convert recipient's public key bytes to PublicKey
+        let recipient_public_key = PublicKey::from_sec1_bytes(recipient_public_key_bytes)
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to parse recipient public key: {}", e)))?;
         
-        // Simplified ECDH using key bytes (same approach as decryption)
-        use sha2::Digest;
-        let ephemeral_key_bytes = ephemeral_public.to_encoded_point(false);
-        let recipient_key_bytes = recipient_public_key.to_encoded_point(false);
-        let mut hasher = Sha256::new();
-        hasher.update(ephemeral_key_bytes.as_bytes());
-        hasher.update(recipient_key_bytes.as_bytes());
-        let shared_secret_bytes = hasher.finalize();
+        // Perform ECDH key exchange
+        let shared_secret = ephemeral_secret.diffie_hellman(&recipient_public_key);
+        let shared_secret_bytes = shared_secret.raw_secret_bytes();
         
         // Derive encryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, &shared_secret_bytes);
+        let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes.as_slice());
         let mut encryption_key = [0u8; 32];
         hk.expand(b"runar-key-encryption", &mut encryption_key)
             .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
         
-        // Encrypt the key using AES-GCM
-        let encrypted_key = self.encrypt_with_symmetric_key(key, &encryption_key)?;
+        // Encrypt the data using AES-GCM
+        let encrypted_data = self.encrypt_with_symmetric_key(data, &encryption_key)?;
         
-        // Return ephemeral public key + encrypted key
+        // Return ephemeral public key + encrypted data
         let ephemeral_public_bytes = ephemeral_public.to_encoded_point(false);
         let mut result = ephemeral_public_bytes.as_bytes().to_vec();
-        result.extend_from_slice(&encrypted_key);
+        result.extend_from_slice(&encrypted_data);
         Ok(result)
     }
     
-    fn decrypt_key_with_ecdsa(&self, encrypted_key: &[u8], ecdsa_key: &EcdsaKeyPair) -> Result<Vec<u8>> {
-        // ECIES decryption using ECDH + HKDF + AES-GCM
+    /// Internal ECIES decryption using our private key
+    fn decrypt_key_with_ecdsa(&self, encrypted_data: &[u8], key_pair: &EcdsaKeyPair) -> Result<Vec<u8>> {
         use p256::PublicKey;
+        use p256::SecretKey;
+        use p256::ecdh::diffie_hellman;
         use hkdf::Hkdf;
         use sha2::Sha256;
         
         // Extract ephemeral public key (65 bytes uncompressed) and encrypted data
-        if encrypted_key.len() < 65 {
-            return Err(KeyError::DecryptionError("Encrypted key too short for ECIES".to_string()));
+        if encrypted_data.len() < 65 {
+            return Err(KeyError::DecryptionError("Encrypted data too short for ECIES".to_string()));
         }
         
-        let ephemeral_public_bytes = &encrypted_key[..65];
-        let encrypted_data = &encrypted_key[65..];
+        let ephemeral_public_bytes = &encrypted_data[..65];
+        let encrypted_payload = &encrypted_data[65..];
         
         // Reconstruct ephemeral public key
         let ephemeral_public = PublicKey::from_sec1_bytes(ephemeral_public_bytes)
-            .map_err(|e| KeyError::EcdhError(format!("Failed to parse ephemeral public key: {}", e)))?;
+            .map_err(|e| KeyError::DecryptionError(format!("Failed to parse ephemeral public key: {}", e)))?;
         
-        // Simplified ECDH using key bytes (same order as encryption)
-        use sha2::Digest;
-        let ephemeral_key_bytes = ephemeral_public_bytes;
-        let our_key_bytes = ecdsa_key.verifying_key().to_encoded_point(false);
-        let mut hasher = Sha256::new();
-        hasher.update(ephemeral_key_bytes);
-        hasher.update(our_key_bytes.as_bytes());
-        let shared_secret_bytes = hasher.finalize();
+        // Use the ECDSA signing key bytes to create a SecretKey for ECDH
+        let secret_key = SecretKey::from_bytes(&key_pair.signing_key().to_bytes())
+            .map_err(|e| KeyError::DecryptionError(format!("Failed to create SecretKey: {}", e)))?;
+        let shared_secret = diffie_hellman(secret_key.to_nonzero_scalar(), ephemeral_public.as_affine());
+        let shared_secret_bytes = shared_secret.raw_secret_bytes();
         
         // Derive encryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, &shared_secret_bytes);
+        let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
         let mut encryption_key = [0u8; 32];
         hk.expand(b"runar-key-encryption", &mut encryption_key)
             .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
         
-        // Decrypt the key using AES-GCM
-        self.decrypt_with_symmetric_key(encrypted_data, &encryption_key)
-    }
-    
-    fn encrypt_key_with_public_key(&self, key: &[u8], public_key: &p256::ecdsa::VerifyingKey) -> Result<Vec<u8>> {
-        // ECIES implementation using ECDH + HKDF + AES-GCM with public key
-        use p256::ecdh::EphemeralSecret;
-        use p256::PublicKey;
-
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
-        use hkdf::Hkdf;
-        use sha2::Sha256;
-        use rand::thread_rng;
-        
-        // Generate ephemeral key pair for ECDH
-        let ephemeral_secret = EphemeralSecret::random(&mut thread_rng());
-        let ephemeral_public = ephemeral_secret.public_key();
-        
-        // Convert VerifyingKey to PublicKey
-        let recipient_public_key = PublicKey::from_sec1_bytes(public_key.to_encoded_point(false).as_bytes())
-            .map_err(|e| KeyError::EcdhError(format!("Failed to convert public key: {}", e)))?;
-        
-        // Simplified ECDH using key bytes (same approach as decryption)
-        use sha2::Digest;
-        let ephemeral_key_bytes = ephemeral_public.to_encoded_point(false);
-        let recipient_key_bytes = recipient_public_key.to_encoded_point(false);
-        let mut hasher = Sha256::new();
-        hasher.update(ephemeral_key_bytes.as_bytes());
-        hasher.update(recipient_key_bytes.as_bytes());
-        let shared_secret_bytes = hasher.finalize();
-        
-        // Derive encryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, &shared_secret_bytes);
-        let mut encryption_key = [0u8; 32];
-        hk.expand(b"runar-key-encryption", &mut encryption_key)
-            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
-        
-        // Encrypt the key using AES-GCM
-        let encrypted_key = self.encrypt_with_symmetric_key(key, &encryption_key)?;
-        
-        // Return ephemeral public key + encrypted key
-        let ephemeral_public_bytes = ephemeral_public.to_encoded_point(false);
-        let mut result = ephemeral_public_bytes.as_bytes().to_vec();
-        result.extend_from_slice(&encrypted_key);
-        Ok(result)
+        // Decrypt the data using AES-GCM
+        self.decrypt_with_symmetric_key(encrypted_payload, &encryption_key)
     }
     
     /// Initialize user identity and generate root keys
@@ -504,28 +455,21 @@ impl MobileKeyManager {
     pub fn create_network_key_message(
         &self,
         network_id: &str,
-        node_id: &str,
+        node_public_key: &[u8],
     ) -> Result<NetworkKeyMessage> {
         let network_key = self.network_data_keys.get(network_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {}", network_id)))?;
         
-        // Get the node's certificate to extract its public key
-        let node_certificate = self.issued_certificates.get(node_id)
-            .ok_or_else(|| KeyError::CertificateNotFound(format!("Certificate not found for node: {}", node_id)))?;
-        
-        // Extract the node's public key from its certificate
-        let node_public_key = node_certificate.public_key()?;
-        
-        // Encrypt the network private key with the node's public key using ECIES
-        let network_public_key = network_key.public_key_bytes();
+        // Encrypt the network's private key for the node
         let network_private_key = network_key.private_key_der()?;
-        let encrypted_network_key = self.encrypt_key_with_public_key(&network_private_key, &node_public_key)?;
+        let encrypted_network_key = self.encrypt_key_with_ecdsa(&network_private_key, node_public_key)?;
         
+        let node_id = hex::encode(node_public_key);
         self.logger.info(format!("Network key encrypted for node {} with ECIES", node_id));
         
         Ok(NetworkKeyMessage {
             network_id: network_id.to_string(),
-            network_public_key,
+            network_public_key: network_key.public_key_bytes(),
             encrypted_network_key,
             key_derivation_info: format!("Network key for node {} (ECIES encrypted)", node_id),
         })
@@ -568,6 +512,20 @@ impl MobileKeyManager {
     /// Generate a user profile key (legacy method name for compatibility)
     pub fn generate_user_profile_key(&mut self, profile_id: &str) -> Result<Vec<u8>> {
         self.derive_user_profile_key(profile_id)
+    }
+
+    /// Encrypt a message for a node using its public key (ECIES)
+    pub fn encrypt_message_for_node(&self, message: &[u8], node_public_key: &[u8]) -> Result<Vec<u8>> {
+        self.logger.debug(format!("Encrypting message for node ({} bytes)", message.len()));
+        self.encrypt_key_with_ecdsa(message, node_public_key)
+    }
+    
+    /// Decrypt a message from a node using the user's root key (ECIES)
+    pub fn decrypt_message_from_node(&self, encrypted_message: &[u8]) -> Result<Vec<u8>> {
+        self.logger.debug(format!("Decrypting message from node ({} bytes)", encrypted_message.len()));
+        let root_key_pair = self.user_root_key.as_ref()
+            .ok_or_else(|| KeyError::KeyNotFound("User root key not initialized".to_string()))?;
+        self.decrypt_key_with_ecdsa(encrypted_message, root_key_pair)
     }
 }
 

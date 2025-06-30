@@ -54,8 +54,8 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     // Create two nodes for demonstration
     let node1_logger = create_test_logger("node1-test");
     let node2_logger = create_test_logger("node2-test");
-    let mut node1 = NodeKeyManager::new("node-001".to_string(), node1_logger)?;
-    let mut node2 = NodeKeyManager::new("node-002".to_string(), node2_logger)?;
+    let mut node1 = NodeKeyManager::new(node1_logger)?;
+    let mut node2 = NodeKeyManager::new(node2_logger)?;
     
     println!("   ✅ Created nodes: {} and {}", node1.get_node_id(), node2.get_node_id());
     
@@ -198,7 +198,8 @@ async fn test_certificate_validation_edge_cases() -> Result<()> {
     let mobile_logger = create_test_logger("mobile-edge-test");
     let node_logger = create_test_logger("node-edge-test");
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
-    let mut node = NodeKeyManager::new("test-node".to_string(), node_logger)?;
+    let mut node = NodeKeyManager::new(node_logger)?;
+    let _node_id = node.initialize_node_keys()?;
     
     // Use the proper CSR-based certificate workflow
     let setup_token = node.generate_csr()?;
