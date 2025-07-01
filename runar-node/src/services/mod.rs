@@ -360,11 +360,7 @@ impl ServiceRequest {
         // Create a path string combining service path and action
         let service_path_string = service_path.into();
         let action_or_event_string = action_or_event.into();
-        let path_string = format!(
-            "{service_path}/{action_or_event}",
-            service_path = service_path_string,
-            action_or_event = action_or_event_string
-        );
+        let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method
         let topic_path =
@@ -406,11 +402,7 @@ impl ServiceRequest {
         // Create a TopicPath from the service path and action
         let service_path_string = service_path.into();
         let action_or_event_string = action_or_event.into();
-        let path_string = format!(
-            "{service_path}/{action_or_event}",
-            service_path = service_path_string,
-            action_or_event = action_or_event_string
-        );
+        let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method
         let topic_path =

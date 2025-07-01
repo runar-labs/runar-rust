@@ -531,7 +531,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     .expect("Failed to parse original certificate");
 
     let original_subject = original_parsed_cert.subject().to_string();
-    println!("   📋 Original certificate subject: '{}'", original_subject);
+    println!("   📋 Original certificate subject: '{original_subject}'");
 
     // Test 2: Get QUIC certificates from HYDRATED node (after serialization/deserialization)
     println!("   Testing QUIC certs AFTER state serialization/hydration...");
@@ -555,7 +555,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     .expect("Failed to parse hydrated certificate");
 
     let hydrated_subject = hydrated_parsed_cert.subject().to_string();
-    println!("   📋 Hydrated certificate subject: '{}'", hydrated_subject);
+    println!("   📋 Hydrated certificate subject: '{hydrated_subject}'");
 
     // Test 3: Compare subjects - this validates serialization works correctly
     println!("   Comparing certificate subjects before and after serialization...");

@@ -9,7 +9,7 @@ The system provides declarative field-level encryption through derive macros, al
 - **User Profile Keys**: Encrypt data that only the user's device can decrypt
 - **Network Keys**: Encrypt data that services running in the same network can decrypt
 
-When these structs cross network boundaries, encryption and decryption happen automatically based on available keys in each context.
+Encryption happens **during serialization** when data crosses network boundaries or when explicitly required by storage annotations. Within the same network context, data remains in plaintext for zero-copy operations.
 
 ## Example Usage
 
@@ -36,6 +36,13 @@ struct Profile {
     // Fields without encryption annotations remain plaintext
     pub created_at: u64,
     pub version: String,
+}
+
+// Data storage action with encryption enforcement
+#[derive(Action)]
+struct StoreProfile {
+    #[runar(always_encrypt)]  // Forces encryption even for local storage
+    pub profile: Profile,
 }
 ```
 
@@ -155,12 +162,27 @@ let service_config = KeyMappingConfig {
 Struct → ArcValue::from_struct() → SerializerRegistry::serialize() → bincode → bytes
 ```
 
-### Enhanced Flow with Encryption
+### **Corrected** Enhanced Flow with Encryption
 ```
-Struct → EncryptedStruct → ArcValue::from_struct() → SerializerRegistry::serialize() → bytes
+Struct → ArcValue::from_struct() → SerializerRegistry::serialize() → EncryptedStruct → bytes
 ```
 
-The encryption happens **before** ArcValue creation, maintaining compatibility with existing serialization.
+**Key Principle**: Encryption happens **just before serialization** in the SerializerRegistry, not when creating the ArcValue. When a struct is wrapped in ArcValue, nothing happens - it remains as-is for zero-copy operations when sending to services in the same network/context. Only when serialization is needed to cross the network (or for storage) should encryption occur.
+
+### Zero-Copy Local Operations
+
+```rust
+// Creating ArcValue - NO encryption happens
+let profile = Profile { /* ... */ };
+let arc_value = ArcValue::from_struct(profile);  // Zero-copy, plaintext
+
+// Local service call in same network - NO encryption
+let result = local_service.process_profile(arc_value).await;  // Direct access
+
+// Network call - encryption happens during serialization
+let bytes = registry.serialize_value(&arc_value)?;  // Encryption occurs HERE
+network.send(bytes).await;
+```
 
 ## Technical Design
 
@@ -440,36 +462,103 @@ fn decrypt_label_group<T: for<'de> Deserialize<'de>>(
 ### 1. Enhanced SerializerRegistry
 
 ```rust
+pub struct SerializerRegistry {
+    serializers: HashMap<String, Box<dyn SerializerFn>>,
+    deserializers: HashMap<String, DeserializerFnWrapper>,
+    /// Key manager for encryption/decryption operations
+    key_manager: Option<Arc<dyn KeyResolver>>,
+    /// Configuration for when to apply encryption
+    encryption_policy: EncryptionPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub struct EncryptionPolicy {
+    /// Force encryption for network serialization
+    pub encrypt_on_network: bool,
+    /// Force encryption for storage operations
+    pub encrypt_on_storage: bool,
+    /// Services/actions that require encryption even locally
+    pub force_encrypt_annotations: HashSet<String>,
+}
+
 impl SerializerRegistry {
-    /// Register an encryptable type with automatic encryption support
-    pub fn register_encryptable<T>(&mut self, resolver: Arc<dyn KeyResolver>) -> Result<()>
+    pub fn with_key_manager(
+        logger: Arc<Logger>,
+        key_manager: Arc<dyn KeyResolver>,
+        policy: EncryptionPolicy,
+    ) -> Self {
+        Self {
+            serializers: HashMap::new(),
+            deserializers: HashMap::new(),
+            key_manager: Some(key_manager),
+            encryption_policy: policy,
+        }
+    }
+    
+    /// Register an encryptable type with context-aware encryption
+    pub fn register_encryptable<T>(&mut self) -> Result<()>
     where
         T: 'static + RunarEncrypt + RunarDecrypt + Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync,
         T::Encrypted: 'static + Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync,
     {
         let type_name = std::any::type_name::<T>();
         
-        // Register custom serializer that encrypts before serialization
+        // Register context-aware serializer
+        let key_manager = self.key_manager.clone();
+        let policy = self.encryption_policy.clone();
+        
         self.serializers.insert(
             type_name.to_string(),
-            Box::new(move |value: &dyn Any| -> Result<Vec<u8>> {
+            Box::new(move |value: &dyn Any, context: &SerializationContext| -> Result<Vec<u8>> {
                 if let Some(typed_value) = value.downcast_ref::<T>() {
-                    let encrypted = typed_value.encrypt_with_resolver(resolver.as_ref())?;
-                    bincode::serialize(&encrypted)
-                        .map_err(|e| anyhow!("Encryption serialization error: {}", e))
+                    // Determine if encryption is needed based on context
+                    let should_encrypt = match context.purpose {
+                        SerializationPurpose::NetworkTransport => policy.encrypt_on_network,
+                        SerializationPurpose::LocalStorage => policy.encrypt_on_storage,
+                        SerializationPurpose::ForceEncrypt => true,
+                        SerializationPurpose::LocalCall => false,
+                    };
+                    
+                    if should_encrypt {
+                        if let Some(ref resolver) = key_manager {
+                            // Encrypt before serialization
+                            let encrypted = typed_value.encrypt_with_resolver(resolver.as_ref())?;
+                            bincode::serialize(&encrypted)
+                                .map_err(|e| anyhow!("Encryption serialization error: {e}"))
+                        } else {
+                            // No key manager - serialize as plaintext with warning
+                            log_warn!("No key manager available for encryption, serializing as plaintext");
+                            bincode::serialize(typed_value)
+                                .map_err(|e| anyhow!("Plaintext serialization error: {e}"))
+                        }
+                    } else {
+                        // Local operation - serialize as plaintext
+                        bincode::serialize(typed_value)
+                            .map_err(|e| anyhow!("Plaintext serialization error: {e}"))
+                    }
                 } else {
-                    Err(anyhow!("Type mismatch during encryption serialization"))
+                    Err(anyhow!("Type mismatch during serialization"))
                 }
             }),
         );
         
-        // Register custom deserializer that decrypts after deserialization
+        // Register context-aware deserializer
         let deserializer = DeserializerFnWrapper::new({
-            let resolver = resolver.clone();
-            move |bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
-                let encrypted: T::Encrypted = bincode::deserialize(bytes)?;
-                let decrypted = encrypted.decrypt_with_resolver(resolver.as_ref())?;
-                Ok(Box::new(decrypted))
+            let key_manager = self.key_manager.clone();
+            move |bytes: &[u8], context: &DeserializationContext| -> Result<Box<dyn Any + Send + Sync>> {
+                // Try encrypted format first, fallback to plaintext
+                if let Ok(encrypted) = bincode::deserialize::<T::Encrypted>(bytes) {
+                    if let Some(ref resolver) = key_manager {
+                        let decrypted = encrypted.decrypt_with_resolver(resolver.as_ref())?;
+                        Ok(Box::new(decrypted))
+                    } else {
+                        Err(anyhow!("Encrypted data received but no key manager available"))
+                    }
+                } else {
+                    // Fallback to plaintext deserialization
+                    let plaintext: T = bincode::deserialize(bytes)?;
+                    Ok(Box::new(plaintext))
+                }
             }
         });
         
@@ -478,86 +567,351 @@ impl SerializerRegistry {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum SerializationPurpose {
+    /// Data being sent over network to another node
+    NetworkTransport,
+    /// Data being stored locally (database, file system)
+    LocalStorage,
+    /// Forced encryption due to annotation (always_encrypt)
+    ForceEncrypt,
+    /// Local service call within same network context
+    LocalCall,
+}
+
+#[derive(Debug, Clone)]
+pub struct SerializationContext {
+    pub purpose: SerializationPurpose,
+    pub target_network: Option<String>,
+    pub source_service: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeserializationContext {
+    pub source_network: Option<String>,
+    pub target_service: Option<String>,
+}
 ```
 
-### 2. Usage in Node Setup
+## Data Storage Annotations and Enforcement
+
+### Storage Action Annotations
 
 ```rust
-// In node initialization
-let mut registry = SerializerRegistry::with_defaults(logger.clone());
+#[derive(Action, Serialize, Deserialize)]
+struct StoreUserProfile {
+    #[runar(always_encrypt)]  // Forces encryption even for local calls
+    pub profile: Profile,
+    pub metadata: String,     // Not encrypted
+}
 
-// Create key resolver with available keys
-let key_resolver = NodeKeyResolver::new(node_key_manager);
+#[derive(Action, Serialize, Deserialize)]
+struct GetUserProfile {
+    pub user_id: String,
+    #[runar(decrypt_on_return)]  // Ensures returned data is decrypted appropriately
+    pub include_sensitive: bool,
+}
 
-// Register encryptable types
-registry.register_encryptable::<Profile>(Arc::new(key_resolver))?;
-registry.register::<User>()?;  // Regular types still work
+// Generated macro implementation
+impl RunarAction for StoreUserProfile {
+    fn requires_encryption(&self) -> bool {
+        true  // Generated based on always_encrypt annotation
+    }
+    
+    fn encryption_context(&self) -> SerializationContext {
+        SerializationContext {
+            purpose: SerializationPurpose::ForceEncrypt,  // Due to annotation
+            target_network: None,
+            source_service: Some(env!("SERVICE_NAME").to_string()),
+        }
+    }
+}
+```
 
-// Use with ArcValue
+### Storage Service Configuration
+
+```rust
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StorageServiceConfig {
+    /// Always encrypt data when storing, even for local operations
+    pub always_encrypt_storage: bool,
+    /// Specific types that must always be encrypted
+    pub force_encrypt_types: Vec<String>,
+    /// Network contexts that require encryption
+    pub encrypt_for_networks: Vec<String>,
+}
+
+// Example storage service configuration
+let storage_config = StorageServiceConfig {
+    always_encrypt_storage: true,  // All stored data encrypted
+    force_encrypt_types: vec!["Profile".to_string(), "UserData".to_string()],
+    encrypt_for_networks: vec!["external_network".to_string()],
+};
+```
+
+## Data Flow Scenarios
+
+### Scenario 1: Cross-Network Profile Transfer
+
+```rust
+// Mobile app creates profile
 let profile = Profile {
     id: "user123".to_string(),
-    name: "John Doe".to_string(),
-    email: "john@example.com".to_string(),
-    age: 30,
-    phone: "+1234567890".to_string(),
-    address: "123 Main St".to_string(),
-    created_at: 1234567890,
-    version: "1.0".to_string(),
+    name: "Alice".to_string(),           // user label
+    email: "alice@example.com".to_string(), // user + system labels  
+    age: 30,                             // user + system labels
+    phone: "+1234567890".to_string(),    // user label
+    address: "123 Main St".to_string(),  // user label
+    created_at: 1234567890,              // plaintext
+    version: "1.0".to_string(),          // plaintext
 };
 
-// When this gets serialized (e.g., for network transmission),
-// encryption happens automatically
+// Step 1: Create ArcValue (NO encryption)
 let arc_value = ArcValue::from_struct(profile);
-let serialized = registry.serialize_value(&arc_value)?;
 
-// When deserialized, decryption happens automatically
-let deserialized = registry.deserialize_value(serialized)?;
-let profile_ref = deserialized.as_struct_ref::<Profile>()?;
+// Step 2: Send to backend service (encryption happens during serialization)
+let network_context = SerializationContext {
+    purpose: SerializationPurpose::NetworkTransport,
+    target_network: Some("backend_network".to_string()),
+    source_service: Some("mobile_app".to_string()),
+};
+
+let encrypted_bytes = registry.serialize_value_with_context(&arc_value, &network_context)?;
+// At this point: name,phone,address→user_key, email,age→user_key+system_key, id,created_at,version→plaintext
+
+// Step 3: Backend receives and deserializes
+let backend_context = DeserializationContext {
+    source_network: Some("mobile_network".to_string()),
+    target_service: Some("backend_service".to_string()),
+};
+
+let received_value = registry.deserialize_value_with_context(&encrypted_bytes, &backend_context)?;
+let backend_profile = received_value.as_struct_ref::<Profile>()?;
+
+// Backend result (has system key, no user key):
+assert_eq!(backend_profile.id, "user123");           // Plaintext - available
+assert_eq!(backend_profile.name, "");                // Empty - no user key
+assert_eq!(backend_profile.email, "alice@example.com"); // Decrypted - has system key
+assert_eq!(backend_profile.age, 30);                 // Decrypted - has system key  
+assert_eq!(backend_profile.phone, "");               // Empty - no user key
+assert_eq!(backend_profile.address, "");             // Empty - no user key
+assert_eq!(backend_profile.created_at, 1234567890);  // Plaintext - available
+assert_eq!(backend_profile.version, "1.0");          // Plaintext - available
 ```
 
-## Configuration Examples
+### Scenario 2: Local Storage with Forced Encryption
 
-### Service Configuration Files
+```rust
+// Backend service stores profile (using storage action)
+let store_action = StoreUserProfile {
+    profile: backend_profile.clone(),  // Profile from previous scenario
+    metadata: "stored_by_backend".to_string(),
+};
 
-Each service/context defines its own label-to-key mapping:
+// Step 1: Action marked with always_encrypt forces encryption context
+let storage_context = SerializationContext {
+    purpose: SerializationPurpose::ForceEncrypt,  // Due to always_encrypt annotation
+    target_network: None,
+    source_service: Some("backend_service".to_string()),
+};
 
-#### Mobile App Configuration
+// Step 2: Serialize for storage (encryption applied even locally)
+let storage_bytes = registry.serialize_value_with_context(&store_action, &storage_context)?;
+
+// Step 3: Store encrypted data in database
+database.store("profiles", "user123", storage_bytes).await?;
+
+// The stored data contains:
+// - profile.email, profile.age → encrypted with system key (backend has this)
+// - profile.name, profile.phone, profile.address → remain empty (backend never had user key)
+// - profile.id, profile.created_at, profile.version → plaintext
+// - metadata → plaintext (no encryption annotation)
+```
+
+### Scenario 3: Service Retrieval and Re-encryption
+
+```rust
+// Later: Another service retrieves stored profile
+let stored_bytes = database.get("profiles", "user123").await?;
+
+// Step 1: Deserialize stored action
+let retrieval_context = DeserializationContext {
+    source_network: None,  // Local storage
+    target_service: Some("analytics_service".to_string()),
+};
+
+let stored_action = registry.deserialize_value_with_context::<StoreUserProfile>(&stored_bytes, &retrieval_context)?;
+
+// Step 2: Analytics service (has system key) can decrypt system fields
+let analytics_profile = &stored_action.profile;
+assert_eq!(analytics_profile.email, "alice@example.com"); // Decrypted - has system key
+assert_eq!(analytics_profile.age, 30);                    // Decrypted - has system key
+assert_eq!(analytics_profile.name, "");                   // Still empty - no user key
+
+// Step 3: Send processed data to external analytics network
+let external_context = SerializationContext {
+    purpose: SerializationPurpose::NetworkTransport,
+    target_network: Some("external_analytics".to_string()),
+    source_service: Some("analytics_service".to_string()),
+};
+
+// Re-encryption happens with different key context for external network
+let external_bytes = registry.serialize_value_with_context(&analytics_profile, &external_context)?;
+```
+
+### Scenario 4: Mobile Retrieval with Full Decryption
+
+```rust
+// Mobile app retrieves user's profile with full access
+let mobile_context = DeserializationContext {
+    source_network: Some("backend_network".to_string()),
+    target_service: Some("mobile_app".to_string()),
+};
+
+// Mobile has both user and system keys
+let mobile_profile = registry.deserialize_value_with_context::<Profile>(&network_bytes, &mobile_context)?;
+
+// Mobile result (has both user and system keys):
+assert_eq!(mobile_profile.id, "user123");
+assert_eq!(mobile_profile.name, "Alice");               // Decrypted - has user key
+assert_eq!(mobile_profile.email, "alice@example.com");  // Decrypted - has both keys
+assert_eq!(mobile_profile.age, 30);                     // Decrypted - has both keys
+assert_eq!(mobile_profile.phone, "+1234567890");        // Decrypted - has user key
+assert_eq!(mobile_profile.address, "123 Main St");      // Decrypted - has user key
+assert_eq!(mobile_profile.created_at, 1234567890);
+assert_eq!(mobile_profile.version, "1.0");
+```
+
+## Configuration for Different Contexts
+
+### Mobile App Context Configuration
 ```json
 {
   "encryption": {
+    "policy": {
+      "encrypt_on_network": true,
+      "encrypt_on_storage": true,
+      "force_encrypt_annotations": ["always_encrypt", "user_sensitive"]
+    },
     "label_mappings": {
       "user": {"UserProfile": "personal"},
-      "work": {"UserProfile": "work_profile"},
-      "system": {"Network": "home_network_abc123"},
-      "backup": {"UserProfile": "backup_profile"}
+      "system": {"Network": "home_network_abc123"}
     }
   }
 }
 ```
 
-#### Backend Service Configuration  
+### Backend Service Context Configuration  
 ```json
 {
   "encryption": {
+    "policy": {
+      "encrypt_on_network": true,
+      "encrypt_on_storage": true,
+      "force_encrypt_annotations": ["always_encrypt", "audit_required"]
+    },
     "label_mappings": {
       "system": {"Network": "home_network_abc123"},
-      "audit": {"Network": "audit_network_def456"},
-      "analytics": {"Network": "analytics_network_ghi789"}
+      "audit": {"Network": "audit_network_def456"}
     }
   }
 }
 ```
 
-#### Service Configuration
+### Storage Service Context Configuration
 ```json
 {
   "encryption": {
+    "policy": {
+      "encrypt_on_network": true,
+      "encrypt_on_storage": true,
+      "force_encrypt_annotations": ["always_encrypt"]
+    },
     "label_mappings": {
       "system": {"Network": "home_network_abc123"},
-      "audit": {"Network": "audit_network_def456"},
-      "analytics": {"Network": "analytics_network_ghi789"}
+      "storage": {"Network": "storage_network_ghi789"}
     }
   }
+}
+```
+
+## Node Integration
+
+### Updated Node Setup with Context-Aware Encryption
+
+```rust
+impl RunarNode {
+    pub fn new_with_encryption(
+        config: NodeConfig,
+        key_manager: Arc<dyn KeyResolver>,
+        encryption_policy: EncryptionPolicy,
+    ) -> Result<Self> {
+        let logger = create_logger(&config.logging);
+        
+        // Create SerializerRegistry with key manager and encryption policy
+        let mut registry = SerializerRegistry::with_key_manager(
+            logger.clone(),
+            key_manager,
+            encryption_policy,
+        );
+        
+        // Register encryptable types
+        registry.register_encryptable::<Profile>()?;
+        registry.register_encryptable::<UserData>()?;
+        
+        // Regular types still work without encryption
+        registry.register::<ServiceMetadata>()?;
+        
+        Ok(RunarNode {
+            config,
+            logger,
+            registry: Arc::new(registry),
+            // ... other fields
+        })
+    }
+    
+    /// Send data over network (triggers encryption during serialization)
+    pub async fn send_to_network<T>(&self, data: T, target_network: &str) -> Result<()>
+    where
+        T: Serialize + Send + Sync + 'static,
+    {
+        let arc_value = ArcValue::from_struct(data);
+        
+        let context = SerializationContext {
+            purpose: SerializationPurpose::NetworkTransport,
+            target_network: Some(target_network.to_string()),
+            source_service: Some(self.config.service_name.clone()),
+        };
+        
+        let bytes = self.registry.serialize_value_with_context(&arc_value, &context)?;
+        self.transport.send(target_network, bytes).await
+    }
+    
+    /// Store data locally (may trigger encryption based on annotations)
+    pub async fn store_local<T>(&self, key: &str, data: T) -> Result<()>
+    where
+        T: Serialize + Send + Sync + 'static + RunarAction,
+    {
+        let arc_value = ArcValue::from_struct(data);
+        
+        let context = if data.requires_encryption() {
+            SerializationContext {
+                purpose: SerializationPurpose::ForceEncrypt,
+                target_network: None,
+                source_service: Some(self.config.service_name.clone()),
+            }
+        } else {
+            SerializationContext {
+                purpose: SerializationPurpose::LocalStorage,
+                target_network: None,
+                source_service: Some(self.config.service_name.clone()),
+            }
+        };
+        
+        let bytes = self.registry.serialize_value_with_context(&arc_value, &context)?;
+        self.storage.store(key, bytes).await
+    }
 }
 ```
 
@@ -719,93 +1073,32 @@ assert_eq!(decrypted.home_network_data, "");   // Empty - no system key
 assert_eq!(decrypted.analytics_data, "usage_metrics"); // Decrypted - has analytics key
 ```
 
-## Efficiency Benefits
+## Performance Characteristics
 
-### 1. Reduced Encryption Overhead
-- **Single encryption per label** instead of per-field
-- **Shared envelope keys** for all fields with same label
-- **Bulk serialization** of related fields together
+### Zero-Copy Local Operations
+- **ArcValue creation**: No encryption overhead
+- **Local service calls**: Direct memory access, no serialization
+- **Same-network calls**: Minimal overhead with plaintext serialization
 
-### 2. Optimized Metadata
-- **One metadata struct per label** instead of per field
-- **Single nonce and algorithm** per label group
-- **Smaller serialized payload** with fewer redundant headers
+### Efficient Network Encryption  
+- **Label-grouped encryption**: Single crypto operation per label
+- **Shared envelope keys**: Bulk encryption of related fields
+- **Context-aware**: Only encrypt when crossing network boundaries
 
-### 3. Performance Improvements
-- **Fewer crypto operations** (one AES-GCM + one ECIES per label)
-- **Better CPU cache usage** with grouped field access
-- **Reduced memory allocations** for metadata structures
+### Smart Storage
+- **Annotation-driven**: Encrypt only when explicitly required
+- **Configurable policies**: Per-service encryption requirements
+- **Graceful degradation**: Services receive only data they can decrypt
 
-## Security Properties
-
-### 1. Key Separation
-- **User data** encrypted with profile keys (mobile-only)
-- **System data** encrypted with network keys (backend accessible)
-
-### 2. Graceful Degradation
-- Missing keys result in empty/default values, not errors
-- Services receive only data they're authorized to decrypt
-- Serialization format remains stable regardless of key availability
-
-### 3. Forward Compatibility
-- New encryption labels can be added without breaking existing code
-- Label mappings can be updated without code changes
-- Plaintext fields remain unaffected
-
-## Implementation Phases
-
-### Phase 1: Core Infrastructure
-- [ ] `EncryptedField` and metadata structures
-- [ ] Basic derive macros for single-schema encryption
-- [ ] Integration with existing runar-keys ECIES/AES-GCM
-
-### Phase 2: ArcValue Integration  
-- [ ] Enhanced `SerializerRegistry` with encryption support
-- [ ] `KeyResolver` trait and implementations
-- [ ] Testing with mobile/node key managers
-
-### Phase 3: Multi-Schema Support
-- [ ] Envelope encryption with multiple recipients
-- [ ] Context-aware decryption with graceful fallbacks
-- [ ] Performance optimization and caching
-
-### Phase 4: Advanced Features
-- [ ] Schema migration support
-- [ ] Field-level TTL and expiration
-- [ ] Audit logging for encryption/decryption events
+## Conclusion
 
 This design leverages the existing runar-keys infrastructure [[memory:6938732877054023747]] while providing a clean, declarative interface for selective field encryption that integrates seamlessly with the ArcValue serialization flow.
 
-The label-grouped approach provides significant efficiency improvements over per-field encryption while maintaining the same declarative syntax and security properties.
+**Key innovations:**
+- **Context-aware encryption**: Encryption happens during serialization, not ArcValue creation
+- **Zero-copy local operations**: Same-network calls remain efficient
+- **Annotation-driven storage**: Force encryption for storage operations
+- **Label-grouped efficiency**: Single crypto operation per access level
+- **Graceful degradation**: Services access only authorized data
 
-
-
-
-
-
-Feedback:
-Current Flow
-Struct → ArcValue::from_struct() → SerializerRegistry::serialize() → bincode → bytes
-
-Enhanced Flow with Encryption
-Struct → EncryptedStruct → ArcValue::from_struct() → SerializerRegistry::serialize() → bytes
-
-Enhanced Flow with Encryption is not correct..
-
-Enctyption shuold happen just before serialization.. when struct is wrapped in a ArcxValut at the momoent nothing shouold happen.;. that ArcValut mighe be send to another service or event handler in the same network/context and nothing shuold happen to the struct. itn shuold be as is. (zero copy or serialization) .. only when serialiazt is neece to cross the network.. that is when encrtuptm needs to happens.. so
-
-Struct → ArcValue::from_struct() → SerializerRegistry::serialize() → EncryptedStruct → bytes
-
-SerializerRegistry could be where we injkect the key manager.. so it can call teh encrtyption methods and access the keys.. it is used to serialize and deserialize the data..
-
-We also need to consider the DAta Storage USe case
-to store data we also need to store the encruypted struct.. not plain
-the actions that store data will be anotated.. to enforce encruption.. 
-
-so the object that is stored has the encrpted data.
-
-There are a few scenarions
-
-Mobile -> service craete prrofile instance with users data, send to another node )(over network) so the data iws encrypted and serialziewd.. when ther data get to the other node. which does not have the user profile keus.. the data that is encrupted with the user profile remaisn encrupted and the data that is system is decrupted.. so services can read them. but when it comes to store in the database.. all thed ata. use and syustem must be encrupted.. if a service later retrieve ehe4 data. then the system fields are again decrupted..
-
-So this is another scenarion. .these data storage service/actions will have a config that says if they data should alwauys get ther encrupted.. even if is a locaql call.. 
+The solution addresses all feedback requirements: encryption occurs in SerializerRegistry during serialization, supports both network transport and storage encryption scenarios, and maintains the zero-copy principle for local operations while providing strong security guarantees for cross-network data sharing.
