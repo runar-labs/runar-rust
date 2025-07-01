@@ -390,8 +390,7 @@ impl QuicTransportImpl {
         };
 
         self.logger.debug(format!(
-            "📝 [QuicTransport] Storing response stream - ID: {}, Peer: {}",
-            correlation_id, peer_id
+            "📝 [QuicTransport] Storing response stream - ID: {correlation_id}, Peer: {peer_id}"
         ));
 
         {
@@ -425,8 +424,7 @@ impl QuicTransportImpl {
         message: NetworkMessage,
     ) -> Result<(), NetworkError> {
         self.logger.debug(format!(
-            "🔄 [QuicTransport] Sending request message to peer {}",
-            peer_id
+            "🔄 [QuicTransport] Sending request message to peer {peer_id}"
         ));
 
         let peer_state = self.get_peer_state(peer_id)?;
@@ -761,12 +759,10 @@ impl QuicTransportImpl {
                         }
                         Err(e) => {
                             self.logger.warn(format!(
-                                "Failed to connect to peer {} at {}: {}",
-                                peer_id, socket_addr, e
+                                "Failed to connect to peer {peer_id} at {socket_addr}: {e}"
                             ));
                             last_error = Some(NetworkError::ConnectionError(format!(
-                                "Failed to establish connection to {}: {}",
-                                socket_addr, e
+                                "Failed to establish connection to {socket_addr}: {e}"
                             )));
                             // Continue to the next address
                         }
@@ -774,12 +770,10 @@ impl QuicTransportImpl {
                 }
                 Err(e) => {
                     self.logger.warn(format!(
-                        "Failed to initiate connection to peer {} at {}: {}",
-                        peer_id, socket_addr, e
+                        "Failed to initiate connection to peer {peer_id} at {socket_addr}: {e}"
                     ));
                     last_error = Some(NetworkError::ConnectionError(format!(
-                        "Failed to initiate connection to {}: {}",
-                        socket_addr, e
+                        "Failed to initiate connection to {socket_addr}: {e}"
                     )));
                     // Continue to the next address
                 }
@@ -789,8 +783,7 @@ impl QuicTransportImpl {
         // If we get here, all connection attempts failed
         Err(last_error.unwrap_or_else(|| {
             NetworkError::ConnectionError(format!(
-                "Failed to connect to peer {} on any address",
-                peer_id
+                "Failed to connect to peer {peer_id} on any address"
             ))
         }))
     }
@@ -811,7 +804,7 @@ impl QuicTransportImpl {
             };
             self.send_message(message).await?;
             self.logger
-                .info(format!("Sent NODE_INFO_UPDATE message to peer {}", peer_id));
+                .info(format!("Sent NODE_INFO_UPDATE message to peer {peer_id}"));
         }
         Ok(())
     }
@@ -836,13 +829,12 @@ impl QuicTransportImpl {
         let peer_id = PeerId::new(discovery_msg.public_key.clone());
 
         self.logger
-            .info(format!("Starting handshake with peer {}", peer_id));
+            .info(format!("Starting handshake with peer {peer_id}"));
 
         // Check if we're connected to this peer
         if !self.connection_pool.is_peer_connected(&peer_id).await {
             return Err(NetworkError::ConnectionError(format!(
-                "Not connected to peer {}, cannot perform handshake",
-                peer_id
+                "Not connected to peer {peer_id}, cannot perform handshake"
             )));
         }
 
@@ -863,7 +855,7 @@ impl QuicTransportImpl {
             payloads: vec![NetworkMessagePayloadItem {
                 path: "".to_string(),
                 value_bytes: bincode::serialize(&self.local_node).map_err(|e| {
-                    NetworkError::MessageError(format!("Failed to serialize node info: {}", e))
+                    NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
                 })?,
                 correlation_id,
             }],
@@ -872,7 +864,7 @@ impl QuicTransportImpl {
         // Send the handshake message
         self.send_message(handshake_message).await?;
         self.logger
-            .info(format!("Sent handshake message to peer {}", peer_id));
+            .info(format!("Sent handshake message to peer {peer_id}"));
 
         // The handshake response will be processed in process_incoming_message
         // and the peer_node_info will be sent through the channel there

@@ -132,8 +132,8 @@ impl RemoteService {
                     Ok(path) => path,
                     Err(e) => {
                         dependencies.logger.error(format!(
-                            "Invalid service path '{}': {}",
-                            service_metadata.name, e
+                            "Invalid service path '{}': {e}",
+                            service_metadata.name
                         ));
                         continue;
                     }
@@ -169,10 +169,10 @@ impl RemoteService {
             remote_services.push(service);
         }
 
-        dependencies.logger.info(format!(
-            "Created {} RemoteService instances",
-            remote_services.len()
-        ));
+        let service_count = remote_services.len();
+        dependencies
+            .logger
+            .info(format!("Created {service_count} RemoteService instances"));
         Ok(remote_services)
     }
 
@@ -221,8 +221,7 @@ impl RemoteService {
                 let request_id = Uuid::new_v4().to_string();
 
                 logger.info(format!(
-                    "🚀 [RemoteService] Starting remote request - Action: {}, Request ID: {}, Target: {}", 
-                    action, request_id, peer_id
+                    "🚀 [RemoteService] Starting remote request - Action: {action}, Request ID: {request_id}, Target: {peer_id}"
                 ));
 
                 // Create a channel for receiving the response
@@ -235,8 +234,7 @@ impl RemoteService {
                     .insert(request_id.clone(), tx);
 
                 logger.debug(format!(
-                    "📝 [RemoteService] Stored response channel for request ID: {}",
-                    request_id
+                    "📝 [RemoteService] Stored response channel for request ID: {request_id}"
                 ));
 
                 let serializer = serializer.read().await;
@@ -249,18 +247,15 @@ impl RemoteService {
                     Ok(bytes) => bytes.to_vec(), // Convert Arc<[u8]> to Vec<u8>
                     Err(e) => {
                         logger.error(format!(
-                            "❌ [RemoteService] Serialization error for request {}: {}",
-                            request_id, e
+                            "❌ [RemoteService] Serialization error for request {request_id}: {e}"
                         ));
-                        return Err(anyhow::anyhow!("Serialization error: {}", e));
+                        return Err(anyhow::anyhow!("Serialization error: {e}"));
                     }
                 };
 
+                let payload_size = payload_vec.len();
                 logger.info(format!(
-                    "📤 [RemoteService] Sending request - ID: {}, Path: {}, Size: {} bytes",
-                    request_id,
-                    action_topic_path,
-                    payload_vec.len()
+                    "📤 [RemoteService] Sending request - ID: {request_id}, Path: {action_topic_path}, Size: {payload_size} bytes"
                 ));
 
                 // Create the network message
@@ -279,29 +274,25 @@ impl RemoteService {
                 if let Some(transport) = &*network_transport.read().await {
                     if let Err(e) = transport.send_message(message).await {
                         logger.error(format!(
-                            "❌ [RemoteService] Failed to send request {}: {}",
-                            request_id, e
+                            "❌ [RemoteService] Failed to send request {request_id}: {e}"
                         ));
                         // Clean up the pending request
                         pending_requests.write().await.remove(&request_id);
-                        return Err(anyhow::anyhow!("Failed to send request: {}", e));
+                        return Err(anyhow::anyhow!("Failed to send request: {e}"));
                     } else {
                         logger.info(format!(
-                            "✅ [RemoteService] Request sent successfully - ID: {}, waiting for response...", 
-                            request_id
+                            "✅ [RemoteService] Request sent successfully - ID: {request_id}, waiting for response..."
                         ));
                     }
                 } else {
                     logger.error(format!(
-                        "❌ [RemoteService] No transport available for request {}",
-                        request_id
+                        "❌ [RemoteService] No transport available for request {request_id}"
                     ));
                     return Err(anyhow::anyhow!("Network transport not available"));
                 }
 
                 logger.info(format!(
-                    "⏳ [RemoteService] Waiting for response - ID: {}, Timeout: {}ms",
-                    request_id, request_timeout_ms
+                    "⏳ [RemoteService] Waiting for response - ID: {request_id}, Timeout: {request_timeout_ms}ms"
                 ));
 
                 // Wait for the response with a timeout
@@ -310,17 +301,15 @@ impl RemoteService {
                 {
                     Ok(Ok(Ok(response))) => {
                         logger.info(format!(
-                            "✅ [RemoteService] Response received successfully - ID: {}",
-                            request_id
+                            "✅ [RemoteService] Response received successfully - ID: {request_id}"
                         ));
                         Ok(response)
                     }
                     Ok(Ok(Err(e))) => {
                         logger.error(format!(
-                            "❌ [RemoteService] Remote service error for request {}: {}",
-                            request_id, e
+                            "❌ [RemoteService] Remote service error for request {request_id}: {e}"
                         ));
-                        Err(anyhow::anyhow!("Remote service error: {}", e))
+                        Err(anyhow::anyhow!("Remote service error: {e}"))
                     }
                     Ok(Err(_)) => {
                         // Clean up the pending request
@@ -371,8 +360,8 @@ impl RemoteService {
                     .await?;
             } else {
                 self.logger.warn(format!(
-                    "Failed to create topic path for action: {}/{}",
-                    self.service_topic, action_name
+                    "Failed to create topic path for action: {}/{action_name}",
+                    self.service_topic
                 ));
             }
         }
@@ -390,8 +379,8 @@ impl RemoteService {
                     .await?;
             } else {
                 self.logger.warn(format!(
-                    "Failed to create topic path for action: {}/{}",
-                    self.service_topic, action_name
+                    "Failed to create topic path for action: {}/{action_name}",
+                    self.service_topic
                 ));
             }
         }
@@ -428,8 +417,8 @@ impl AbstractService for RemoteService {
     async fn init(&self, _context: LifecycleContext) -> Result<()> {
         // Remote services don't need initialization since they're just proxies
         self.logger.info(format!(
-            "Initialized remote service proxy for {}",
-            self.service_topic
+            "Initialized remote service proxy for {service_topic}",
+            service_topic = self.service_topic
         ));
         Ok(())
     }
@@ -437,8 +426,8 @@ impl AbstractService for RemoteService {
     async fn start(&self, _context: LifecycleContext) -> Result<()> {
         // Remote services don't need to be started
         self.logger.info(format!(
-            "Started remote service proxy for {}",
-            self.service_topic
+            "Started remote service proxy for {service_topic}",
+            service_topic = self.service_topic
         ));
         Ok(())
     }
@@ -446,8 +435,8 @@ impl AbstractService for RemoteService {
     async fn stop(&self, _context: LifecycleContext) -> Result<()> {
         // Remote services don't need to be stopped
         self.logger.info(format!(
-            "Stopped remote service proxy for {}",
-            self.service_topic
+            "Stopped remote service proxy for {service_topic}",
+            service_topic = self.service_topic
         ));
         Ok(())
     }

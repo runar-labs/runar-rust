@@ -442,8 +442,8 @@ impl MulticastDiscovery {
                     return;
                 }
                 logger.debug(format!(
-                    "Processing announce message from {}",
-                    discovery_msg.public_key
+                    "Processing announce message from {public_key}",
+                    public_key = discovery_msg.public_key
                 ));
 
                 let peer_public_key = discovery_msg.public_key.clone();
@@ -475,8 +475,8 @@ impl MulticastDiscovery {
                     let local_info_msg = PeerInfo::new(local_peer_public_key, local_addresses);
 
                     logger.debug(format!(
-                        "Auto-responding to new peer announcement with our own info: {}",
-                        local_info_msg.public_key
+                        "Auto-responding to new peer announcement with our own info: {public_key}",
+                        public_key = local_info_msg.public_key
                     ));
                     let response_msg = MulticastMessage::Announce(local_info_msg);
                     if let Ok(data) = bincode::serialize(&response_msg) {
@@ -489,8 +489,7 @@ impl MulticastDiscovery {
                     }
                 } else {
                     logger.debug(format!(
-                        "Skipping auto-response for already known peer: {}",
-                        peer_public_key
+                        "Skipping auto-response for already known peer: {peer_public_key}"
                     ));
                 }
             }
@@ -521,14 +520,14 @@ impl NodeDiscovery for MulticastDiscovery {
             let addr: SocketAddr = options
                 .multicast_group
                 .parse()
-                .map_err(|e| anyhow!("Invalid multicast address format: {}", e))?;
+                .map_err(|e| anyhow!("Invalid multicast address format: {e}"))?;
             (addr.ip(), addr.port())
         } else {
             // Parse as just an IP, use default port
             let ip: Ipv4Addr = options
                 .multicast_group
                 .parse()
-                .map_err(|e| anyhow!("Invalid multicast address: {}", e))?;
+                .map_err(|e| anyhow!("Invalid multicast address: {e}"))?;
             (IpAddr::V4(ip), DEFAULT_MULTICAST_PORT)
         };
 
@@ -581,7 +580,7 @@ impl NodeDiscovery for MulticastDiscovery {
 
         tx.send(MulticastMessage::Announce(discovery_message))
             .await
-            .map_err(|e| anyhow!("Failed to send initial announcement: {}", e))?;
+            .map_err(|e| anyhow!("Failed to send initial announcement: {e}"))?;
 
         let task = self.start_announce_task(tx.clone(), local_info.clone(), interval);
         *self.announce_task.lock().await = Some(task);
@@ -609,10 +608,8 @@ impl NodeDiscovery for MulticastDiscovery {
 
         // Stop announcing if we are
         if let Err(e) = self.stop_announcing().await {
-            self.logger.warn(format!(
-                "Error stopping announcements during shutdown: {}",
-                e
-            ));
+            self.logger
+                .warn(format!("Error stopping announcements during shutdown: {e}"));
         }
 
         Ok(())

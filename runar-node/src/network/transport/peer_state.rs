@@ -68,8 +68,10 @@ impl PeerState {
     pub async fn set_node_info(&self, node_info: NodeInfo) {
         let mut info = self.node_info.write().await;
         *info = Some(node_info);
-        self.logger
-            .info(format!("Node info set for peer {}", self.peer_id));
+        self.logger.info(format!(
+            "Node info set for peer {peer_id}",
+            peer_id = self.peer_id
+        ));
     }
     /// Set the connection for this peer
     ///

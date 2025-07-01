@@ -58,6 +58,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         hex::encode(&user_ca_public_key)
     );
 
+    let user_root_key_len = user_root_public_key.len();
+    let user_ca_key_len = user_ca_public_key.len();
+    println!("   • User root key: {user_root_key_len} bytes");
+    println!("   • CA public key: {user_ca_key_len} bytes");
+
     // ==========================================
     // Node first time use - enter in setup mode
     // ==========================================
@@ -120,6 +125,9 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         "   ✅ Node public key verified from token: {}",
         hex::encode(&node_public_key_from_token)
     );
+
+    let node_cert_hex = hex::encode(&node_public_key_from_token);
+    println!("   • Node certificates: 1 ({node_cert_hex})");
 
     // ==========================================
     // Secure certificate transmission to node
@@ -562,12 +570,12 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     if original_subject == hydrated_subject {
         println!("   ✅ Certificate subjects match - serialization working correctly");
-        println!("      Original:  '{}'", original_subject);
-        println!("      Hydrated:  '{}'", hydrated_subject);
+        println!("      Original:  '{original_subject}'");
+        println!("      Hydrated:  '{hydrated_subject}'");
     } else {
         println!("   ❌ SERIALIZATION BUG DETECTED!");
-        println!("      Original subject:  '{}'", original_subject);
-        println!("      Hydrated subject:  '{}'", hydrated_subject);
+        println!("      Original subject:  '{original_subject}'");
+        println!("      Hydrated subject:  '{hydrated_subject}'");
 
         // This would indicate a serialization issue
         assert_eq!(
@@ -583,14 +591,10 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         println!("   ✅ Certificate DER bytes match exactly");
     } else {
         println!("   ⚠️  Certificate DER bytes differ - new certs generated after hydration");
-        println!(
-            "      Original cert size:  {} bytes",
-            original_quic_config.certificate_chain[0].len()
-        );
-        println!(
-            "      Hydrated cert size:  {} bytes",
-            hydrated_quic_config.certificate_chain[0].len()
-        );
+        let original_cert_size = original_quic_config.certificate_chain[0].len();
+        let hydrated_cert_size = hydrated_quic_config.certificate_chain[0].len();
+        println!("      Original cert size:  {original_cert_size} bytes");
+        println!("      Hydrated cert size:  {hydrated_cert_size} bytes");
     }
 
     // Additional local storage test after hydration
@@ -604,10 +608,8 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         "   Original data: {:?}",
         std::str::from_utf8(file_data_2).unwrap()
     );
-    println!(
-        "   Encrypted data (hex): {}",
-        hex::encode(&encrypted_file_2)
-    );
+    let encrypted_hex = hex::encode(&encrypted_file_2);
+    println!("   Encrypted data (hex): {encrypted_hex}");
     assert_ne!(file_data_2, &encrypted_file_2[..]); // Ensure it's not plaintext
 
     let decrypted_file_2 = node
@@ -646,14 +648,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("🔒 CRYPTOGRAPHIC INTEGRITY VERIFIED!");
     println!("🚀 COMPLETE PKI + KEY MANAGEMENT SYSTEM READY FOR PRODUCTION!");
     println!("📊 Key Statistics:");
-    println!("   • User root key: {} bytes", user_root_public_key.len());
-    println!("   • CA public key: {} bytes", user_ca_public_key.len());
+    println!("   • User root key: {user_root_key_len} bytes");
+    println!("   • CA public key: {user_ca_key_len} bytes");
     println!("   • Profile keys: 2 (personal, work)");
-    println!("   • Network keys: 1 ({})", network_id);
-    println!(
-        "   • Node certificates: 1 ({})",
-        hex::encode(&node_public_key_from_token)
-    );
+    println!("   • Network keys: 1 ({network_id})");
+    println!("   • Node certificates: 1 ({node_cert_hex})");
     println!("   • Storage encryption: ✅");
     println!("   • State persistence: ✅");
 

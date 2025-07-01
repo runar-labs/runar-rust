@@ -48,9 +48,10 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     let ca_certificate_issuer = mobile_key_manager.get_ca_certificate().issuer().to_string();
     let ca_public_key = mobile_key_manager.get_ca_public_key();
     println!("   ✅ CA Certificate generated");
-    println!("      Subject: {}", ca_certificate_subject);
-    println!("      Issuer: {}", ca_certificate_issuer);
-    println!("      CA Public Key: {}", hex::encode(&ca_public_key));
+    println!("      Subject: {ca_certificate_subject}");
+    println!("      Issuer: {ca_certificate_issuer}");
+    let ca_public_key_hex = hex::encode(&ca_public_key);
+    println!("      CA Public Key: {ca_public_key_hex}");
 
     // ==========================================
     // Phase 2: Node Setup and CSR Generation
@@ -143,8 +144,8 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     let node1_cert_info = node1.get_certificate_info().unwrap();
     let node2_cert_info = node2.get_certificate_info().unwrap();
 
-    println!("      Node1 cert info: {:?}", node1_cert_info);
-    println!("      Node2 cert info: {:?}", node2_cert_info);
+    println!("      Node1 cert info: {node1_cert_info:?}");
+    println!("      Node2 cert info: {node2_cert_info:?}");
 
     // ==========================================
     // Phase 5: QUIC Transport Configuration
@@ -156,14 +157,10 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     let node2_quic_config = node2.get_quic_certificate_config()?;
 
     println!("   ✅ QUIC configurations generated");
-    println!(
-        "      Node1 certificate chain length: {}",
-        node1_quic_config.certificate_chain.len()
-    );
-    println!(
-        "      Node2 certificate chain length: {}",
-        node2_quic_config.certificate_chain.len()
-    );
+    let node1_chain_length = node1_quic_config.certificate_chain.len();
+    let node2_chain_length = node2_quic_config.certificate_chain.len();
+    println!("      Node1 certificate chain length: {node1_chain_length}");
+    println!("      Node2 certificate chain length: {node2_chain_length}");
 
     // Verify QUIC configurations
     assert_eq!(node1_quic_config.certificate_chain.len(), 2); // Node cert + CA cert
@@ -383,10 +380,7 @@ async fn test_certificate_performance() -> Result<()> {
 
     println!("   ⏱️  Performance Results:");
     println!("      CA creation: {:?}", ca_duration);
-    println!(
-        "      {} certificates issued in: {:?}",
-        NUM_NODES, cert_duration
-    );
+    println!("      {NUM_NODES} certificates issued in: {cert_duration:?}");
     println!(
         "      Average per certificate: {:?}",
         cert_duration / NUM_NODES as u32
@@ -427,10 +421,8 @@ async fn test_enhanced_key_management() -> Result<()> {
     // Phase 1: User Root Key Management
     println!("\n📱 Phase 1: User Root Key Management");
     let user_root_public_key = mobile.initialize_user_root_key()?;
-    println!(
-        "   ✅ User root key initialized: {} bytes",
-        user_root_public_key.len()
-    );
+    let user_root_key_len = user_root_public_key.len();
+    println!("   ✅ User root key initialized: {user_root_key_len} bytes");
 
     // Verify we can retrieve the root public key
     let retrieved_root_key = mobile.get_user_root_public_key()?;
@@ -452,8 +444,10 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("\n🌐 Phase 3: Network Data Key Management");
     let network1_key = mobile.generate_network_data_key()?;
     let network2_key = mobile.generate_network_data_key()?;
-    println!("   Network1 ID: {}", network1_key);
-    println!("   Network2 ID: {}", network2_key);
+    let network1_id = network1_key.clone();
+    let network2_id = network2_key.clone();
+    println!("   Network1 ID: {network1_id}");
+    println!("   Network2 ID: {network2_id}");
 
     assert_ne!(network1_key, network2_key);
     println!("   ✅ Generated network data keys for home and office networks");
@@ -462,10 +456,8 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("\n💾 Phase 4: Node Storage Key Management");
     let storage_key = node.get_storage_key().to_vec(); // Clone to avoid borrow issues
     assert_eq!(storage_key.len(), 32);
-    println!(
-        "   ✅ Node storage key available: {} bytes",
-        storage_key.len()
-    );
+    let storage_key_size = storage_key.len();
+    println!("   ✅ Node storage key available: {storage_key_size} bytes");
 
     // Test local data encryption/decryption
     let local_data = b"This is sensitive local data that should be encrypted at rest";
@@ -482,19 +474,14 @@ async fn test_enhanced_key_management() -> Result<()> {
     assert_eq!(envelope_key1.len(), 32);
     assert_eq!(envelope_key2.len(), 32);
     assert_ne!(envelope_key1, envelope_key2);
-    println!(
-        "   ✅ Generated ephemeral envelope keys: {} bytes each",
-        envelope_key1.len()
-    );
+    let envelope_key1_len = envelope_key1.len();
+    println!("   ✅ Generated ephemeral envelope keys: {envelope_key1_len} bytes each");
 
     // Phase 6: Envelope Encryption with Multiple Recipients
     println!("\n🔒 Phase 6: Envelope Encryption Testing");
 
     // Set up network key on node BEFORE creating envelope
-    println!(
-        "   Installing network key on node for network1: {}",
-        network1_key
-    );
+    println!("   Installing network key on node for network1: {network1_id}");
     let network_key_msg =
         mobile.create_network_key_message(&network1_key, &node.get_node_public_key())?;
     node.install_network_key(network_key_msg)?;
@@ -504,19 +491,16 @@ async fn test_enhanced_key_management() -> Result<()> {
         b"This is highly sensitive data that needs to be shared securely across the network";
 
     // Encrypt for multiple profiles and a network
-    println!("   Encrypting envelope for network: {}", network1_key);
+    println!("   Encrypting envelope for network: {network1_id}");
     let envelope_data = mobile.encrypt_with_envelope(
         sensitive_data,
         &network1_key,
         vec!["personal".to_string(), "work".to_string()],
     )?;
-    println!(
-        "   Envelope created for network: {}",
-        envelope_data.network_id
-    );
+    let envelope_network_id = &envelope_data.network_id;
+    println!("   Envelope created for network: {envelope_network_id}");
 
     println!("   ✅ Data encrypted with envelope encryption");
-    println!("      Network: {}", envelope_data.network_id);
     println!(
         "      Profile recipients: {}",
         envelope_data.profile_encrypted_keys.len()
@@ -574,13 +558,10 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     println!("\n🎉 Enhanced key management test completed successfully!");
     println!("   📊 Summary:");
-    println!(
-        "      • User root key: {} bytes",
-        user_root_public_key.len()
-    );
+    println!("      • User root key: {user_root_key_len} bytes");
     println!("      • Profile keys generated: 3");
     println!("      • Network keys generated: 2");
-    println!("      • Storage key size: {} bytes", storage_key.len());
+    println!("      • Storage key size: {storage_key_size} bytes");
     println!("      • Envelope keys tested: 2");
     println!("      • Multi-recipient encryption: ✅");
     println!("      • Cross-device envelope sharing: ✅");
