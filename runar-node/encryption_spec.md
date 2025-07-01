@@ -164,14 +164,14 @@ The encryption happens **before** ArcValue creation, maintaining compatibility w
 
 ## Technical Design
 
-### 1. Encrypted Field Container
+### 1. Label-Grouped Encryption Container
 
 ```rust
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct EncryptedField {
-    /// The schema(s) this field was encrypted with
-    pub schemas: Vec<String>,
-    /// Encrypted data payload
+pub struct EncryptedLabelGroup {
+    /// The label this group was encrypted with
+    pub label: String,
+    /// Encrypted data payload containing all fields for this label
     pub data: Vec<u8>,
     /// Encryption metadata (algorithm, nonce, etc.)
     pub metadata: EncryptionMetadata,
@@ -181,20 +181,14 @@ pub struct EncryptedField {
 pub struct EncryptionMetadata {
     pub algorithm: String,      // "AES-GCM-256"
     pub nonce: Vec<u8>,        // 12 bytes for AES-GCM
-    pub key_derivation: String, // "HKDF-SHA256"
+    pub key_derivation: String, // "ECIES-P256"
+    /// Envelope key encrypted for this label
+    pub encrypted_envelope_key: Vec<u8>,
 }
 
-impl EncryptedField {
+impl EncryptedLabelGroup {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
-    }
-    
-    pub fn placeholder() -> Self {
-        Self {
-            schemas: vec![],
-            data: vec![],
-            metadata: EncryptionMetadata::empty(),
-        }
     }
 }
 ```
@@ -243,186 +237,201 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
 ### 3. Generated Struct Transformation
 
-For the Profile example, the macro generates:
+For the Profile example, the macro generates label-specific substruct and containers:
 
 ```rust
+// Generated substruct for user-labeled fields
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProfileUserFields {
+    pub name: String,
+    pub age: i32,
+    pub email: String,
+    pub phone: String,
+    pub address: String,
+}
+
+// Generated substruct for system-labeled fields  
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ProfileSystemFields {
+    pub age: i32,
+    pub email: String,
+}
+
+// Main encrypted struct with label groups
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EncryptedProfile {
-    pub id: String,                           // Plaintext
-    pub name: EncryptedField,                 // user
-    pub age: EncryptedField,                  // user, system  
-    pub email: EncryptedField,                // user, system
-    pub phone: EncryptedField,                // user
-    pub address: EncryptedField,              // user
-    pub created_at: u64,                      // Plaintext
-    pub version: String,                      // Plaintext
+    // Plaintext fields (no encryption labels)
+    pub id: String,
+    pub created_at: u64,
+    pub version: String,
+    
+    // Encrypted label groups
+    pub user_encrypted: Option<EncryptedLabelGroup>,
+    pub system_encrypted: Option<EncryptedLabelGroup>,
 }
 ```
 
-### 4. Encryption Implementation
+### 4. Grouped Encryption Implementation
 
-The macro generates encryption logic using envelope encryption:
+The macro generates encryption logic that groups fields by label:
 
 ```rust
 impl RunarEncrypt for Profile {
     type Encrypted = EncryptedProfile;
     
     fn encrypt_with_resolver(&self, resolver: &dyn KeyResolver) -> Result<Self::Encrypted> {
-        Ok(EncryptedProfile {
+        // Copy plaintext fields as-is
+        let mut encrypted = EncryptedProfile {
             id: self.id.clone(),
             created_at: self.created_at,
             version: self.version.clone(),
-            
-            name: encrypt_field_with_labels(
-                &self.name, 
-                &["user"], 
-                resolver
-            )?,
-            
-            age: encrypt_field_with_labels(
-                &self.age,
-                &["user", "system"],
-                resolver  
-            )?,
-            
-            email: encrypt_field_with_labels(
-                &self.email,
-                &["user", "system"],
-                resolver
-            )?,
-            
-            phone: encrypt_field_with_labels(
-                &self.phone,
-                &["user"],
-                resolver
-            )?,
-            
-            address: encrypt_field_with_labels(
-                &self.address,
-                &["user"], 
-                resolver
-            )?,
-        })
+            user_encrypted: None,
+            system_encrypted: None,
+        };
+        
+        // Encrypt user-labeled fields as a group
+        if resolver.can_resolve("user") {
+            let user_fields = ProfileUserFields {
+                name: self.name.clone(),
+                age: self.age,
+                email: self.email.clone(),
+                phone: self.phone.clone(),
+                address: self.address.clone(),
+            };
+            encrypted.user_encrypted = Some(
+                encrypt_label_group("user", &user_fields, resolver)?
+            );
+        }
+        
+        // Encrypt system-labeled fields as a group
+        if resolver.can_resolve("system") {
+            let system_fields = ProfileSystemFields {
+                age: self.age,
+                email: self.email.clone(),
+            };
+            encrypted.system_encrypted = Some(
+                encrypt_label_group("system", &system_fields, resolver)?
+            );
+        }
+        
+        Ok(encrypted)
     }
 }
 ```
 
-### 5. Label-Based Encryption Function
+### 5. Label Group Encryption Function
 
 ```rust
-fn encrypt_field_with_labels<T: Serialize>(
-    value: &T,
-    labels: &[&str],
+fn encrypt_label_group<T: Serialize>(
+    label: &str,
+    fields_struct: &T,
     resolver: &dyn KeyResolver,
-) -> Result<EncryptedField> {
-    // Serialize the field value
-    let plaintext = bincode::serialize(value)?;
+) -> Result<EncryptedLabelGroup> {
+    // Serialize all fields in this label group
+    let plaintext = bincode::serialize(fields_struct)?;
     
-    // Generate ephemeral envelope key
+    // Generate ephemeral envelope key for this label group
     let envelope_key = generate_envelope_key()?;
     
     // Encrypt data with envelope key
     let (encrypted_data, nonce) = encrypt_with_aes_gcm(&plaintext, &envelope_key)?;
     
-    // For each label, resolve to actual key and encrypt the envelope key
-    let mut encrypted_keys = HashMap::new();
+    // Resolve label to actual key and encrypt the envelope key
+    let key = resolver.resolve_label(label)?
+        .ok_or_else(|| anyhow!("Label '{}' not available in current context", label))?;
     
-    for label in labels {
-        // Use the configurable resolver to map label to actual key
-        if let Ok(Some(key)) = resolver.resolve_label(label) {
-            let encrypted_envelope_key = encrypt_key_with_ecies(&envelope_key, &key.public_key_bytes())?;
-            encrypted_keys.insert(label.to_string(), encrypted_envelope_key);
-        } else {
-            // Label can't be resolved in current context - this is OK
-            // The field will be encrypted but this context can't decrypt it
-            runar_common::logging::debug!("Label '{}' not available in current context", label);
-        }
-    }
+    let encrypted_envelope_key = encrypt_key_with_ecies(&envelope_key, &key.public_key_bytes())?;
     
-    // Store as envelope structure in metadata
+    // Store metadata for this label group
     let metadata = EncryptionMetadata {
         algorithm: "AES-GCM-256".to_string(),
-        nonce: nonce,
+        nonce,
         key_derivation: "ECIES-P256".to_string(),
-        envelope_keys: encrypted_keys,
+        encrypted_envelope_key,
     };
     
-    Ok(EncryptedField {
-        schemas: labels.iter().map(|s| s.to_string()).collect(),
+    Ok(EncryptedLabelGroup {
+        label: label.to_string(),
         data: encrypted_data,
         metadata,
     })
 }
+
+fn generate_envelope_key() -> Result<Vec<u8>> {
+    use rand::RngCore;
+    let mut envelope_key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut envelope_key);
+    Ok(envelope_key.to_vec())
+}
 ```
 
-### 6. Context-Aware Decryption
+### 6. Context-Aware Group Decryption
 
 ```rust
 impl RunarDecrypt for EncryptedProfile {
     type Decrypted = Profile;
     
     fn decrypt_with_resolver(&self, resolver: &dyn KeyResolver) -> Result<Self::Decrypted> {
-        Ok(Profile {
+        // Start with default values
+        let mut profile = Profile {
             id: self.id.clone(),
             created_at: self.created_at,
             version: self.version.clone(),
-            
-            name: decrypt_field_with_resolver(&self.name, resolver)?
-                .unwrap_or_default(),
-                
-            age: decrypt_field_with_resolver(&self.age, resolver)?
-                .unwrap_or(0),
-                
-            email: decrypt_field_with_resolver(&self.email, resolver)?
-                .unwrap_or_default(),
-                
-            phone: decrypt_field_with_resolver(&self.phone, resolver)?
-                .unwrap_or_default(),
-                
-            address: decrypt_field_with_resolver(&self.address, resolver)?
-                .unwrap_or_default(),
-        })
+            name: String::default(),
+            age: 0,
+            email: String::default(),
+            phone: String::default(),
+            address: String::default(),
+        };
+        
+        // Try to decrypt user fields group
+        if let Some(ref user_encrypted) = self.user_encrypted {
+            if let Ok(user_fields) = decrypt_label_group::<ProfileUserFields>(user_encrypted, resolver) {
+                profile.name = user_fields.name;
+                profile.age = user_fields.age;
+                profile.email = user_fields.email;
+                profile.phone = user_fields.phone;
+                profile.address = user_fields.address;
+            }
+        }
+        
+        // Try to decrypt system fields group (may override some fields from user group)
+        if let Some(ref system_encrypted) = self.system_encrypted {
+            if let Ok(system_fields) = decrypt_label_group::<ProfileSystemFields>(system_encrypted, resolver) {
+                profile.age = system_fields.age;
+                profile.email = system_fields.email;
+            }
+        }
+        
+        Ok(profile)
     }
 }
 
-fn decrypt_field_with_resolver<T: for<'de> Deserialize<'de>>(
-    encrypted_field: &EncryptedField,
+fn decrypt_label_group<T: for<'de> Deserialize<'de>>(
+    encrypted_group: &EncryptedLabelGroup,
     resolver: &dyn KeyResolver,
-) -> Result<Option<T>> {
-    if encrypted_field.is_empty() {
-        return Ok(None);
+) -> Result<T> {
+    if encrypted_group.is_empty() {
+        return Err(anyhow!("Empty encrypted group"));
     }
     
-    // Try each label until we find one we can decrypt
-    for label in &encrypted_field.schemas {
-        // Use the configurable resolver to map label to actual key
-        if let Ok(Some(key)) = resolver.resolve_label(label) {
-            if let Some(encrypted_envelope_key) = encrypted_field.metadata.envelope_keys.get(label) {
-                // Decrypt envelope key using ECIES
-                if let Ok(envelope_key) = decrypt_key_with_ecies(encrypted_envelope_key, key) {
-                    // Decrypt data using AES-GCM
-                    let plaintext = decrypt_with_aes_gcm(
-                        &encrypted_field.data,
-                        &encrypted_field.metadata.nonce,
-                        &envelope_key
-                    )?;
-                    
-                    // Deserialize the decrypted data
-                    let value: T = bincode::deserialize(&plaintext)?;
-                    return Ok(Some(value));
-                }
-            }
-        }
-        // If label can't be resolved or decryption fails, try next label
-    }
+    // Resolve label to actual key
+    let key = resolver.resolve_label(&encrypted_group.label)?
+        .ok_or_else(|| anyhow!("Label '{}' not available in current context", encrypted_group.label))?;
     
-    // No available keys for decryption in current context
-    runar_common::logging::debug!(
-        "Unable to decrypt field with labels: {:?}. Available labels: {:?}", 
-        encrypted_field.schemas,
-        resolver.available_labels()
-    );
-    Ok(None)
+    // Decrypt envelope key using ECIES
+    let envelope_key = decrypt_key_with_ecies(&encrypted_group.metadata.encrypted_envelope_key, key)?;
+    
+    // Decrypt data using AES-GCM
+    let plaintext = decrypt_with_aes_gcm(
+        &encrypted_group.data,
+        &encrypted_group.metadata.nonce,
+        &envelope_key
+    )?;
+    
+    // Deserialize the entire fields struct
+    let fields_struct: T = bincode::deserialize(&plaintext)?;
+    Ok(fields_struct)
 }
 ```
 
@@ -655,11 +664,13 @@ let encrypted = profile.encrypt_with_resolver(&mobile_resolver)?;
 // Backend receives the encrypted data and deserializes
 let decrypted: UserProfile = encrypted.decrypt_with_resolver(&backend_resolver)?;
 
-// Backend can only decrypt system-labeled fields
+// Backend can only decrypt system-labeled fields (as one efficient group)
 assert_eq!(decrypted.id, "user123");           // Plaintext - always available
 assert_eq!(decrypted.name, "");                // Empty - no user key 
 assert_eq!(decrypted.email, "alice@example.com"); // Decrypted - has system key
 assert_eq!(decrypted.last_login, 1234567890);  // Decrypted - has system key
+
+// Note: Only ONE decryption operation happened for all system fields together
 ```
 
 #### Another Service Context
@@ -708,12 +719,28 @@ assert_eq!(decrypted.home_network_data, "");   // Empty - no system key
 assert_eq!(decrypted.analytics_data, "usage_metrics"); // Decrypted - has analytics key
 ```
 
+## Efficiency Benefits
+
+### 1. Reduced Encryption Overhead
+- **Single encryption per label** instead of per-field
+- **Shared envelope keys** for all fields with same label
+- **Bulk serialization** of related fields together
+
+### 2. Optimized Metadata
+- **One metadata struct per label** instead of per field
+- **Single nonce and algorithm** per label group
+- **Smaller serialized payload** with fewer redundant headers
+
+### 3. Performance Improvements
+- **Fewer crypto operations** (one AES-GCM + one ECIES per label)
+- **Better CPU cache usage** with grouped field access
+- **Reduced memory allocations** for metadata structures
+
 ## Security Properties
 
 ### 1. Key Separation
 - **User data** encrypted with profile keys (mobile-only)
 - **System data** encrypted with network keys (backend accessible)
-- **Node data** encrypted with storage keys (local-only)
 
 ### 2. Graceful Degradation
 - Missing keys result in empty/default values, not errors
@@ -721,8 +748,8 @@ assert_eq!(decrypted.analytics_data, "usage_metrics"); // Decrypted - has analyt
 - Serialization format remains stable regardless of key availability
 
 ### 3. Forward Compatibility
-- New encryption schemas can be added without breaking existing code
-- Multiple encryption schemas per field enable migration scenarios
+- New encryption labels can be added without breaking existing code
+- Label mappings can be updated without code changes
 - Plaintext fields remain unaffected
 
 ## Implementation Phases
@@ -749,14 +776,22 @@ assert_eq!(decrypted.analytics_data, "usage_metrics"); // Decrypted - has analyt
 
 This design leverages the existing runar-keys infrastructure [[memory:6938732877054023747]] while providing a clean, declarative interface for selective field encryption that integrates seamlessly with the ArcValue serialization flow.
 
+The label-grouped approach provides significant efficiency improvements over per-field encryption while maintaining the same declarative syntax and security properties.
+
+
+
+
 
 
 Feedback:
-1) what about we group the fields by label and create a <name>Encrypted struct for each label so we can encrypte an decrypt them all together.. instead as per field. That would refuce redundant metadata and also speed up things since is one encruypte per label. instead of per field.
+Current Flow
+Struct → ArcValue::from_struct() → SerializerRegistry::serialize() → bincode → bytes
 
+Enhanced Flow with Encryption
+Struct → EncryptedStruct → ArcValue::from_struct() → SerializerRegistry::serialize() → bytes
 
+Enhanced Flow with Encryption is not correct..
 
+Enctypt6in8 shuold happen just before serialization.. when struct is wrapped in a ArcxValut at the momoent nothing shouold happen.;. that ArcValut mighe be send to another service or event handler in the same network/context and nothing shuold happen to the struct. itn shuold be as is. (zero copy or serialization) .. only when serialiazt is neece to cross the network.. that is when encrtuptm needs to happens.. so
 
-
-
-
+Struct → ArcValue::from_struct() → SerializerRegistry::serialize() → EncryptedStruct → bytes

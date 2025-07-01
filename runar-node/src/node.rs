@@ -322,8 +322,7 @@ impl Node {
         network_ids.dedup();
 
         logger.info(format!(
-            "Initializing node '{}' in network '{}'...",
-            node_id, default_network_id
+            "Initializing node '{node_id}' in network '{default_network_id}'...",
         ));
 
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
@@ -412,8 +411,7 @@ impl Node {
         let service_name = service.name();
 
         self.logger.info(format!(
-            "Adding service '{}' to node using path {}",
-            service_name, service_path
+            "Adding service '{service_name}' to node using path {service_path}",
         ));
         self.logger
             .debug(format!("network id {default_network_id}"));
@@ -450,13 +448,12 @@ impl Node {
         // Initialize the service using the context
         if let Err(e) = service.init(init_context).await {
             self.logger.error(format!(
-                "Failed to initialize service: {}, error: {}",
-                service_name, e
+                "Failed to initialize service: {service_name}, error: {e}",
             ));
             registry
                 .update_service_state(&service_topic, ServiceState::Error)
                 .await?;
-            return Err(anyhow!("Failed to initialize service: {}", e));
+            return Err(anyhow!("Failed to initialize service: {e}"));
         }
         registry
             .update_service_state(&service_topic, ServiceState::Initialized)
@@ -780,17 +777,6 @@ impl Node {
                     Ok(())
                 });
 
-                //TODO lets change how QUIC certificates current work
-                //curently they are passed in the options.. but now they should be passsed in the
-                //  QuicTransport::new() call..
-                // 1 remove everythig relate to certs from the QuicTransportOptions
-                // 2 update QuicTransport::new() to accept certs and verifier
-                // 3 make sure the internals of QuicTransportImpl are updated to use the certs and verifier
-                // DO NOT change anytihg else.. focus on QUIC transporter with these new certificates
-                // I have already created the test utils to generate certificates and keys -> new_network_test_config
-                // I have updated the test test_remote_action_call() to use them.. use this test to validate your quic changes..
-                // QUIC shuold ahve only one weay to handle certs.. which is this wauy.. any other wauy shuold be remove. to keep it simple and concise
-                // when we craate the QUIC certs we use localhost.. if that cauases any issue,.. stop adn ask my input.. as I intend to chagne this later.. but dont want ot make too manyu chagnes .. so want this focus on the carts refact.. but if the localhost causes isues then we need to tacle..
                 let cert_config = self
                     .keys_manager
                     .read()
@@ -861,8 +847,7 @@ impl Node {
         let discovered_peer_id = PeerId::new(peer_info.public_key.clone());
 
         self.logger.info(format!(
-            "Discovery listener found node: {}",
-            discovered_peer_id
+            "Discovery listener found node: {discovered_peer_id}",
         ));
 
         // **CRITICAL FIX**: Implement lexicographic ordering to prevent duplicate connections
@@ -872,15 +857,13 @@ impl Node {
 
         if !should_initiate {
             self.logger.info(format!(
-                "🚫 [ConnectionOrdering] Not initiating connection to {} - our peer ID ({}) is larger, waiting for them to connect to us",
-                discovered_peer_id, local_peer_id
+                "🚫 [ConnectionOrdering] Not initiating connection to {discovered_peer_id} - our peer ID ({local_peer_id}) is larger, waiting for them to connect to us",
             ));
             return Ok(());
         }
 
         self.logger.info(format!(
-            "✅ [ConnectionOrdering] Initiating connection to {} - our peer ID ({}) is smaller",
-            discovered_peer_id, local_peer_id
+            "✅ [ConnectionOrdering] Initiating connection to {discovered_peer_id} - our peer ID ({local_peer_id}) is smaller",
         ));
 
         // Check if we're already connected to this peer
@@ -888,8 +871,7 @@ impl Node {
         if let Some(transport) = transport_guard.as_ref() {
             if transport.is_connected(discovered_peer_id.clone()).await {
                 self.logger.info(format!(
-                    "Already connected to node: {}, ignoring discovery event",
-                    discovered_peer_id
+                    "Already connected to node: {discovered_peer_id}, ignoring discovery event",
                 ));
                 return Ok(());
             }
@@ -902,10 +884,9 @@ impl Node {
                 }
                 Err(e) => {
                     self.logger.error(format!(
-                        "Failed to connect to discovered node {}: {}",
-                        discovered_peer_id, e
+                        "Failed to connect to discovered node {discovered_peer_id}: {e}",
                     ));
-                    return Err(anyhow::anyhow!("Connection failed: {}", e));
+                    return Err(anyhow::anyhow!("Connection failed: {e}"));
                 }
             }
         } else {
@@ -935,8 +916,10 @@ impl Node {
             "Event" => self.handle_network_event(message).await,
             // "Discovery" => self.handle_network_discovery(message).await,
             _ => {
-                self.logger
-                    .warn(format!("Unknown message type: {}", message.message_type));
+                self.logger.warn(format!(
+                    "Unknown message type: {message_type}",
+                    message_type = message.message_type
+                ));
                 Ok(())
             }
         }
@@ -1073,8 +1056,7 @@ impl Node {
                 }
                 Err(e) => {
                     self.logger.error(format!(
-                        "❌ [Node] Local request failed - Path: {}, Correlation: {}, Error: {}",
-                        path, correlation_id, e
+                        "❌ [Node] Local request failed - Path: {path}, Correlation: {correlation_id}, Error: {e}",
                     ));
 
                     // Create a map for the error response
@@ -1097,16 +1079,15 @@ impl Node {
                         Err(e) => {
                             self.logger
                                     .error(format!(
-                                        "❌ [Node] Failed to serialize error response - Path: {}, Correlation: {}, Error: {}", 
-                                        path, correlation_id, e
+                                        "❌ [Node] Failed to serialize error response - Path: {path}, Correlation: {correlation_id}, Error: {e}", 
                                     ));
-                            return Err(anyhow!("Failed to serialize error response: {}", e));
+                            return Err(anyhow!("Failed to serialize error response: {e}"));
                         }
                     };
 
                     self.logger.info(format!(
-                        "📤 [Node] Sending error response - To: {}, Correlation: {}, Size: {} bytes", 
-                        message.source, correlation_id, serialized_error.len()
+                        "📤 [Node] Sending error response - To: {source}, Correlation: {correlation_id}, Size: {size} bytes", 
+                        source=message.source, size=serialized_error.len()
                     ));
 
                     // Create payload item with serialized error
@@ -1139,14 +1120,14 @@ impl Node {
                         if let Err(e) = transport.send_message(response_message).await {
                             self.logger
                                 .error(format!(
-                                    "❌ [Node] Failed to send error response message - To: {}, Correlation: {}, Error: {}", 
-                                    message.source, correlation_id, e
+                                    "❌ [Node] Failed to send error response message - To: {source}, Correlation: {correlation_id}, Error: {e}", 
+                                    source=message.source
                                 ));
                         } else {
                             self.logger
                                 .info(format!(
-                                    "✅ [Node] Error response sent successfully - To: {}, Correlation: {}", 
-                                    message.source, correlation_id
+                                    "✅ [Node] Error response sent successfully - To: {source}, Correlation: {correlation_id}", 
+                                    source=message.source
                                 ));
                         }
                     } else {
@@ -1336,13 +1317,7 @@ impl Node {
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
             Ok(tp) => tp,
-            Err(e) => {
-                return Err(anyhow!(
-                    "Failed to parse topic path: {} : {}",
-                    path_string,
-                    e
-                ))
-            }
+            Err(e) => return Err(anyhow!("Failed to parse topic path: {path_string} : {e}",)),
         };
 
         self.logger
@@ -1394,13 +1369,7 @@ impl Node {
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
             Ok(tp) => tp,
-            Err(e) => {
-                return Err(anyhow!(
-                    "Failed to parse topic path: {} : {}",
-                    path_string,
-                    e
-                ))
-            }
+            Err(e) => return Err(anyhow!("Failed to parse topic path: {path_string} : {e}",)),
         };
 
         self.logger
@@ -1477,7 +1446,7 @@ impl Node {
         }
 
         // No handler found
-        Err(anyhow!("No handler found for action: {}", topic_path))
+        Err(anyhow!("No handler found for action: {topic_path}"))
     }
 
     /// Publish with options - Helper method to implement the publish_with_options functionality
@@ -1491,7 +1460,7 @@ impl Node {
         // Check for valid topic path
         let topic_path = match TopicPath::new(&topic_string, &self.network_id) {
             Ok(tp) => tp,
-            Err(e) => return Err(anyhow!("Invalid topic path: {}", e)),
+            Err(e) => return Err(anyhow!("Invalid topic path: {e}")),
         };
 
         // Publish to local subscribers
@@ -1575,9 +1544,9 @@ impl Node {
     async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
         let capabilities = node_info.services.clone();
         self.logger.info(format!(
-            "Processing {} capabilities from node {}",
-            capabilities.len(),
-            node_info.peer_id
+            "Processing {count} capabilities from node {peer_id}",
+            count = capabilities.len(),
+            peer_id = node_info.peer_id
         ));
 
         // Check if capabilities is empty
@@ -1624,9 +1593,8 @@ impl Node {
                 .await
             {
                 self.logger.error(format!(
-                    "Failed to register remote service '{}': {}",
-                    service.path(),
-                    e
+                    "Failed to register remote service '{path}': {e}",
+                    path = service.path()
                 ));
                 continue; // Skip initialization if registration fails
             }
@@ -1649,17 +1617,16 @@ impl Node {
             // Initialize the service - this triggers handler registration via the context
             if let Err(e) = service.init(context).await {
                 self.logger.error(format!(
-                    "Failed to initialize remote service '{}' (handler registration): {}",
-                    service.path(),
-                    e
+                    "Failed to initialize remote service '{path}' (handler registration): {e}",
+                    path = service.path()
                 ));
             }
         }
 
         self.logger.info(format!(
-            "Successfully processed {} remote services from node {}",
-            remote_services.len(),
-            node_info.peer_id
+            "Successfully processed {count} remote services from node {peer_id}",
+            count = remote_services.len(),
+            peer_id = node_info.peer_id
         ));
 
         Ok(remote_services)
@@ -1705,8 +1672,8 @@ impl Node {
         let local_node_info = self.get_local_node_info().await?;
 
         self.logger.info(format!(
-            "Notifying node change - version: {}",
-            local_node_info.version
+            "Notifying node change - version: {version}",
+            version = local_node_info.version
         ));
 
         let transport_guard = self.network_transport.read().await;
@@ -1754,8 +1721,10 @@ impl Node {
         }
 
         // Log all capabilities collected
-        self.logger
-            .info(format!("Collected {} services metadata", services.len()));
+        self.logger.info(format!(
+            "Collected {count} services metadata",
+            count = services.len()
+        ));
         Ok(services)
     }
 
@@ -1901,8 +1870,8 @@ impl Node {
                     match receiver.recv().await {
                         Ok(peer_node_info) => {
                             logger.info(format!(
-                                "Received peer node info from {}",
-                                peer_node_info.peer_id
+                                "Received peer node info from {peer_id}",
+                                peer_id = peer_node_info.peer_id
                             ));
 
                             // Process the peer node info
@@ -1916,8 +1885,7 @@ impl Node {
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                             logger.warn(format!(
-                                "Peer node info receiver lagged, skipped {} messages",
-                                skipped
+                                "Peer node info receiver lagged, skipped {skipped} messages",
                             ));
                             // Continue receiving messages
                         }
@@ -1931,7 +1899,7 @@ impl Node {
             transport
                 .start()
                 .await
-                .map_err(|e| anyhow!("Failed to initialize transport: {}", e))?;
+                .map_err(|e| anyhow!("Failed to initialize transport: {e}"))?;
 
             return Ok(());
         }
@@ -1995,8 +1963,8 @@ impl NodeDelegate for Node {
         // This will be combined with `self.network_id` to form the full TopicPath for registry storage.
         let topic_path = TopicPath::new(&topic, &self.network_id)
             .map_err(|e| anyhow!(
-                "Invalid topic string for subscribe_with_options: {}. Topic: '{}', Network ID: '{}'", 
-                e, topic, self.network_id
+                "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'", 
+                network_id=self.network_id
             ))?;
 
         // Construct EventMetadata from EventRegistrationOptions.
@@ -2008,9 +1976,8 @@ impl NodeDelegate for Node {
         };
 
         self.logger.info(format!(
-            "Node: subscribe_with_options called for topic_path '{}', metadata.path '{}'",
-            topic_path.as_str(),
-            event_metadata.path
+            "Node: subscribe_with_options called for topic_path '{topic_path}', metadata.path '{metadata_path}'",
+            topic_path=topic_path.as_str(), metadata_path=event_metadata.path
         ));
 
         let subscription_id = self
@@ -2042,7 +2009,7 @@ impl NodeDelegate for Node {
                     self.logger.error(format!(
                         "Failed to unsubscribe locally from  with id {id}: {e}"
                     ));
-                    return Err(anyhow!("Failed to unsubscribe locally: {}", e));
+                    return Err(anyhow!("Failed to unsubscribe locally: {e}"));
                 }
             }
             //if started... need to increment  -> registry_version

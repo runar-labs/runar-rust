@@ -326,8 +326,7 @@ impl RemoteService {
                         // Clean up the pending request
                         pending_requests.write().await.remove(&request_id);
                         logger.error(format!(
-                            "❌ [RemoteService] Response channel closed for request {}",
-                            request_id
+                            "❌ [RemoteService] Response channel closed for request {request_id}",
                         ));
                         Err(anyhow::anyhow!("Response channel closed"))
                     }
@@ -335,8 +334,7 @@ impl RemoteService {
                         // Clean up the pending request
                         pending_requests.write().await.remove(&request_id);
                         logger.error(format!(
-                            "⏰ [RemoteService] Request timeout after {}ms - ID: {}",
-                            request_timeout_ms, request_id
+                            "⏰ [RemoteService] Request timeout after {request_timeout_ms}ms - ID: {request_id}",
                         ));
                         Err(anyhow::anyhow!("Request timeout"))
                     }

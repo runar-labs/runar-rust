@@ -134,8 +134,7 @@ impl MulticastDiscovery {
         // Create UDP socket with proper configuration
         let socket = Self::create_multicast_socket(socket_addr, &logger).await?;
         logger.info(format!(
-            "Successfully created multicast socket with address: {}",
-            socket_addr
+            "Successfully created multicast socket with address: {socket_addr}",
         ));
 
         // Create a Network component logger
@@ -247,8 +246,7 @@ impl MulticastDiscovery {
                 match socket.recv_from(&mut buf).await {
                     Ok((len, src)) => {
                         logger.debug(format!(
-                            "Received multicast message from {}, size: {}",
-                            src, len
+                            "Received multicast message from {src}, size: {len}",
                         ));
                         match bincode::deserialize::<MulticastMessage>(&buf[..len]) {
                             Ok(message) => {

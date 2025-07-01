@@ -151,7 +151,10 @@ impl EventContext {
             topic_string
         } else if topic_string.contains('/') {
             // Has service/topic but no network ID
-            format!("{}:{}", self.topic_path.network_id(), topic_string)
+            format!(
+                "{network_id}:{topic_string}",
+                network_id = self.topic_path.network_id()
+            )
         } else {
             // Simple topic name - add service path and network ID
             format!(
@@ -190,7 +193,10 @@ impl EventContext {
             path_string
         } else if path_string.contains('/') {
             // Has service/action but no network ID
-            format!("{}:{}", self.topic_path.network_id(), path_string)
+            format!(
+                "{network_id}:{path_string}",
+                network_id = self.topic_path.network_id()
+            )
         } else {
             // Simple action name - add both service path and network ID
             format!(

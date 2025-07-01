@@ -215,7 +215,11 @@ impl LifecycleContext {
         let action_name_string = action_name.into();
 
         // Create a topic path for this action
-        let action_path = format!("{}/{}", self.service_path, action_name_string);
+        let action_path = format!(
+            "{service_path}/{action_name}",
+            service_path = self.service_path,
+            action_name = action_name_string
+        );
 
         // Debug logs for action registration
         self.logger.debug(format!(
@@ -224,7 +228,7 @@ impl LifecycleContext {
         ));
 
         let topic_path: TopicPath = TopicPath::new(&action_path, &self.network_id)
-            .map_err(|e| anyhow!("Invalid action path: {}", e))?;
+            .map_err(|e| anyhow!("Invalid action path: {e}"))?;
 
         // More detailed debug after TopicPath creation
         self.logger
@@ -271,9 +275,13 @@ impl LifecycleContext {
         let delegate = &self.node_delegate;
 
         // Create a topic path for this action
-        let action_path = format!("{}/{}", self.service_path, action_name_string);
+        let action_path = format!(
+            "{service_path}/{action_name}",
+            service_path = self.service_path,
+            action_name = action_name_string
+        );
         let topic_path = TopicPath::new(&action_path, &self.network_id)
-            .map_err(|e| anyhow!("Invalid action path: {}", e))?;
+            .map_err(|e| anyhow!("Invalid action path: {e}"))?;
 
         // Register the action with the provided options
         delegate
@@ -352,7 +360,11 @@ impl ServiceRequest {
         // Create a path string combining service path and action
         let service_path_string = service_path.into();
         let action_or_event_string = action_or_event.into();
-        let path_string = format!("{}/{}", service_path_string, action_or_event_string);
+        let path_string = format!(
+            "{service_path}/{action_or_event}",
+            service_path = service_path_string,
+            action_or_event = action_or_event_string
+        );
 
         // Parse the path using the context's network_id method
         let topic_path =
@@ -394,7 +406,11 @@ impl ServiceRequest {
         // Create a TopicPath from the service path and action
         let service_path_string = service_path.into();
         let action_or_event_string = action_or_event.into();
-        let path_string = format!("{}/{}", service_path_string, action_or_event_string);
+        let path_string = format!(
+            "{service_path}/{action_or_event}",
+            service_path = service_path_string,
+            action_or_event = action_or_event_string
+        );
 
         // Parse the path using the context's network_id method
         let topic_path =
