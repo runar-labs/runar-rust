@@ -39,7 +39,7 @@ pub mod compact_ids {
     pub fn decode_compact_id(compact_id: &str) -> Result<Vec<u8>> {
         URL_SAFE_NO_PAD
             .decode(compact_id)
-            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to decode compact ID: {}", e)))
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to decode compact ID: {e}")))
     }
 
     /// Generate a compact node ID from public key bytes
