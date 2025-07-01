@@ -182,9 +182,8 @@ impl MobileKeyManager {
 
         self.network_data_keys
             .insert(network_id.clone(), network_key);
-        self.logger.info(format!(
-            "Network data key generated with ID: {network_id}"
-        ));
+        self.logger
+            .info(format!("Network data key generated with ID: {network_id}"));
 
         Ok(network_id)
     }
@@ -249,17 +248,16 @@ impl MobileKeyManager {
         envelope_data: &EnvelopeEncryptedData,
         profile_id: &str,
     ) -> Result<Vec<u8>> {
-        let profile_key = self.user_profile_keys.get(profile_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Profile key not found: {profile_id}"))
-        })?;
+        let profile_key = self
+            .user_profile_keys
+            .get(profile_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Profile key not found: {profile_id}")))?;
 
         let encrypted_envelope_key = envelope_data
             .profile_encrypted_keys
             .get(profile_id)
             .ok_or_else(|| {
-                KeyError::KeyNotFound(format!(
-                    "Envelope key not found for profile: {profile_id}"
-                ))
+                KeyError::KeyNotFound(format!("Envelope key not found for profile: {profile_id}"))
             })?;
 
         let envelope_key = self.decrypt_key_with_ecdsa(encrypted_envelope_key, profile_key)?;
@@ -272,11 +270,7 @@ impl MobileKeyManager {
         let network_key = self
             .network_data_keys
             .get(&network_id)
-            .ok_or_else(|| {
-                KeyError::KeyNotFound(format!(
-                    "Network key not found: {network_id}"
-                ))
-            })?;
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
 
@@ -295,9 +289,8 @@ impl MobileKeyManager {
             ));
         }
 
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}"))
-        })?;
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}")))?;
         let mut nonce = [0u8; 12];
         thread_rng().fill_bytes(&mut nonce);
 
@@ -326,9 +319,8 @@ impl MobileKeyManager {
             ));
         }
 
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}"))
-        })?;
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}")))?;
         let nonce = &encrypted_data[..12];
         let ciphertext = &encrypted_data[12..];
 
@@ -450,9 +442,8 @@ impl MobileKeyManager {
         setup_token: &SetupToken,
     ) -> Result<NodeCertificateMessage> {
         let node_id = &setup_token.node_id;
-        self.logger.info(format!(
-            "Processing setup token for node: {node_id}"
-        ));
+        self.logger
+            .info(format!("Processing setup token for node: {node_id}"));
 
         // Validate the CSR format
         if setup_token.csr_der.is_empty() {
@@ -529,9 +520,10 @@ impl MobileKeyManager {
         network_id: &str,
         node_public_key: &[u8],
     ) -> Result<NetworkKeyMessage> {
-        let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Network key not found: {network_id}"))
-        })?;
+        let network_key = self
+            .network_data_keys
+            .get(network_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
         // Encrypt the network's private key for the node
         let network_private_key = network_key.private_key_der()?;
@@ -598,9 +590,8 @@ impl MobileKeyManager {
         node_public_key: &[u8],
     ) -> Result<Vec<u8>> {
         let message_len = message.len();
-        self.logger.debug(format!(
-            "Encrypting message for node ({message_len} bytes)"
-        ));
+        self.logger
+            .debug(format!("Encrypting message for node ({message_len} bytes)"));
         self.encrypt_key_with_ecdsa(message, node_public_key)
     }
 

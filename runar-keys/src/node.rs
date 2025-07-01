@@ -157,11 +157,7 @@ impl NodeKeyManager {
         let network_key = self
             .network_keys
             .get(network_id)
-            .ok_or_else(|| {
-                KeyError::KeyNotFound(format!(
-                    "Network key not found: {network_id}"
-                ))
-            })?;
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
         // Network encrypted key is now always present (required field)
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
@@ -176,9 +172,10 @@ impl NodeKeyManager {
         data: &[u8],
         network_id: &str,
     ) -> Result<crate::mobile::EnvelopeEncryptedData> {
-        let network_key = self.network_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Network key not found: {network_id}"))
-        })?;
+        let network_key = self
+            .network_keys
+            .get(network_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
         // Generate ephemeral envelope key
         let envelope_key = self.generate_envelope_key()?;
@@ -218,9 +215,8 @@ impl NodeKeyManager {
             ));
         }
 
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}"))
-        })?;
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}")))?;
         let mut nonce = [0u8; 12];
         thread_rng().fill_bytes(&mut nonce);
 
@@ -249,9 +245,8 @@ impl NodeKeyManager {
             ));
         }
 
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}"))
-        })?;
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .map_err(|e| KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}")))?;
         let nonce = &encrypted_data[..12];
         let ciphertext = &encrypted_data[12..];
 
@@ -351,7 +346,7 @@ impl NodeKeyManager {
     pub fn generate_csr(&mut self) -> Result<SetupToken> {
         let node_public_key = self.get_node_public_key();
         let node_id = self.get_node_id();
-        let subject = format!("CN={node_id},O=Runar Node,C=US" );
+        let subject = format!("CN={node_id},O=Runar Node,C=US");
         let csr_der = CertificateRequest::create(&self.node_key_pair, &subject)?;
 
         self.certificate_status = CertificateStatus::Pending;
@@ -473,9 +468,10 @@ impl NodeKeyManager {
 
     /// Encrypt data for network transmission
     pub fn encrypt_for_network(&self, data: &[u8], network_id: &str) -> Result<Vec<u8>> {
-        let network_key = self.network_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Network key not found: {network_id}"))
-        })?;
+        let network_key = self
+            .network_keys
+            .get(network_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
         // Use the network key's private key bytes as symmetric encryption key
         let network_private_key = network_key.private_key_der().map_err(|e| {
@@ -495,9 +491,10 @@ impl NodeKeyManager {
 
     /// Decrypt network data
     pub fn decrypt_network_data(&self, encrypted_data: &[u8], network_id: &str) -> Result<Vec<u8>> {
-        let network_key = self.network_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Network key not found: {network_id}"))
-        })?;
+        let network_key = self
+            .network_keys
+            .get(network_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
         // Use the network key's private key bytes as symmetric decryption key
         let network_private_key = network_key.private_key_der().map_err(|e| {
