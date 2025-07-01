@@ -432,18 +432,17 @@ impl QuicTransportImpl {
         let peer_state = self.get_peer_state(peer_id)?;
         if !peer_state.is_connected().await {
             return Err(NetworkError::ConnectionError(format!(
-                "Peer {} is not connected",
-                peer_id
+                "Peer {peer_id} is not connected"
             )));
         }
 
         // Get bidirectional stream for request-response
         let connection = peer_state.get_connection().await.ok_or_else(|| {
-            NetworkError::ConnectionError(format!("No connection to peer {}", peer_id))
+            NetworkError::ConnectionError(format!("No connection to peer {peer_id}"))
         })?;
 
         let (mut send_stream, recv_stream) = connection.open_bi().await.map_err(|e| {
-            NetworkError::ConnectionError(format!("Failed to open bidirectional stream: {}", e))
+            NetworkError::ConnectionError(format!("Failed to open bidirectional stream: {e}"))
         })?;
 
         // Extract correlation ID for concurrent processing
@@ -479,8 +478,7 @@ impl QuicTransportImpl {
         // Close the bidirectional streams since we won't use them
         send_stream.finish().map_err(|e| {
             NetworkError::MessageError(format!(
-                "Failed to finish unused bidirectional send stream: {}",
-                e
+                "Failed to finish unused bidirectional send stream: {e}"
             ))
         })?;
         drop(recv_stream); // Don't need the bidirectional recv stream
@@ -512,18 +510,17 @@ impl QuicTransportImpl {
         let peer_state = self.get_peer_state(peer_id)?;
         if !peer_state.is_connected().await {
             return Err(NetworkError::ConnectionError(format!(
-                "Peer {} is not connected",
-                peer_id
+                "Peer {peer_id} is not connected"
             )));
         }
 
         // Get unidirectional stream for one-way messages
         let connection = peer_state.get_connection().await.ok_or_else(|| {
-            NetworkError::ConnectionError(format!("No connection to peer {}", peer_id))
+            NetworkError::ConnectionError(format!("No connection to peer {peer_id}"))
         })?;
 
         let mut stream = connection.open_uni().await.map_err(|e| {
-            NetworkError::ConnectionError(format!("Failed to open unidirectional stream: {}", e))
+            NetworkError::ConnectionError(format!("Failed to open unidirectional stream: {e}"))
         })?;
 
         // Send the message and finish the stream immediately
@@ -531,7 +528,7 @@ impl QuicTransportImpl {
             .await?;
 
         stream.finish().map_err(|e| {
-            NetworkError::MessageError(format!("Failed to finish unidirectional stream: {}", e))
+            NetworkError::MessageError(format!("Failed to finish unidirectional stream: {e}"))
         })?;
 
         self.logger.debug(format!(
@@ -610,7 +607,7 @@ impl QuicTransportImpl {
     fn get_peer_state(&self, peer_id: &PeerId) -> Result<Arc<PeerState>, NetworkError> {
         self.connection_pool
             .get_peer(peer_id)
-            .ok_or_else(|| NetworkError::ConnectionError(format!("Peer {} not found", peer_id)))
+            .ok_or_else(|| NetworkError::ConnectionError(format!("Peer {peer_id} not found")))
     }
 
     /// Helper method to write a message to any stream type
@@ -626,19 +623,18 @@ impl QuicTransportImpl {
         use tokio::io::AsyncWriteExt;
 
         // Serialize the message
-        let serialized_message = bincode::serialize(message).map_err(|e| {
-            NetworkError::MessageError(format!("Failed to serialize message: {}", e))
-        })?;
+        let serialized_message = bincode::serialize(message)
+            .map_err(|e| NetworkError::MessageError(format!("Failed to serialize message: {e}")))?;
 
         // Write message length first (4 bytes)
         let len_bytes = (serialized_message.len() as u32).to_be_bytes();
         stream.write_all(&len_bytes).await.map_err(|e| {
-            NetworkError::MessageError(format!("Failed to write message length: {}", e))
+            NetworkError::MessageError(format!("Failed to write message length: {e}"))
         })?;
 
         // Write the serialized message
         stream.write_all(&serialized_message).await.map_err(|e| {
-            NetworkError::MessageError(format!("Failed to write message data: {}", e))
+            NetworkError::MessageError(format!("Failed to write message data: {e}"))
         })?;
 
         self.logger.debug(format!(
@@ -1305,7 +1301,7 @@ impl QuicTransportImpl {
                     .await;
             } else {
                 logger.warn(format!(
-                    "❌ [QuicTransport] No connection available for peer {} in spawn_message_receiver",
+                    "❌ [QuicTransport] No connection available for peer {}",
                     peer_id_clone
                 ));
             }

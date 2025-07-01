@@ -271,7 +271,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Extract subject common name
     let subject_str = parsed_cert.subject().to_string();
-    println!("      - Subject: {}", subject_str);
+    println!("      - Subject: {subject_str}");
 
     // For our certificates, we expect the node public key in the subject
     assert!(
@@ -316,7 +316,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let network_id = mobile
         .generate_network_data_key()
         .expect("Failed to generate network data key");
-    println!("   ✅ Network data key generated with ID: {}", network_id);
+    println!("   ✅ Network data key generated with ID: {network_id}");
 
     // Create network key message for the node
     // Use the actual network_id (public key) and node's public key

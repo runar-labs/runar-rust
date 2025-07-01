@@ -291,7 +291,7 @@ async fn test_multiple_network_scenario() -> Result<()> {
     // Create multiple nodes
     let mut nodes = Vec::new();
     for i in 1..=3 {
-        let node_logger = create_test_logger(&format!("node-multi-{}", i));
+        let node_logger = create_test_logger(&format!("node-multi-{i}"));
         let mut node = NodeKeyManager::new(node_logger)?;
 
         // Use the proper CSR-based certificate workflow
@@ -324,7 +324,7 @@ async fn test_multiple_network_scenario() -> Result<()> {
 
     // Test cross-node validation in each network
     for network_id in &network_ids {
-        let test_data = format!("Test data for {}", network_id);
+        let test_data = format!("Test data for {network_id}");
         // Each node encrypts data for the network
         for node in &nodes {
             let encrypted = node.encrypt_for_network(test_data.as_bytes(), network_id)?;
@@ -366,7 +366,7 @@ async fn test_certificate_performance() -> Result<()> {
     const NUM_NODES: usize = 10;
 
     for i in 1..=NUM_NODES {
-        let node_logger = create_test_logger(&format!("node-perf-{}", i));
+        let node_logger = create_test_logger(&format!("node-perf-{i}"));
         let mut node = NodeKeyManager::new(node_logger)?;
 
         // Use the proper CSR-based certificate workflow
