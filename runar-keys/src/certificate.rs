@@ -67,7 +67,7 @@ impl EcdsaKeyPair {
         self.signing_key
             .to_pkcs8_der()
             .map(|der| der.as_bytes().to_vec())
-            .map_err(|e| KeyError::InvalidKeyFormat(format!("PKCS#8 encoding error: {}", e)))
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("PKCS#8 encoding error: {e}")))
     }
 
     /// Get public key in DER format
@@ -76,7 +76,7 @@ impl EcdsaKeyPair {
             .to_public_key_der()
             .map(|der| der.as_bytes().to_vec())
             .map_err(|e| {
-                KeyError::InvalidKeyFormat(format!("Public key DER encoding error: {}", e))
+                KeyError::InvalidKeyFormat(format!("Public key DER encoding error: {e}"))
             })
     }
 
@@ -84,7 +84,7 @@ impl EcdsaKeyPair {
     pub fn to_rcgen_key_pair(&self) -> Result<KeyPair> {
         let private_key_der = self.private_key_der()?;
         KeyPair::from_der(&private_key_der).map_err(|e| {
-            KeyError::InvalidKeyFormat(format!("rcgen KeyPair conversion error: {}", e))
+            KeyError::InvalidKeyFormat(format!("rcgen KeyPair conversion error: {e}"))
         })
     }
 
@@ -111,7 +111,7 @@ impl Serialize for EcdsaKeyPair {
         S: serde::Serializer,
     {
         let private_key_der = self.private_key_der().map_err(|e| {
-            serde::ser::Error::custom(format!("Failed to serialize private key: {}", e))
+            serde::ser::Error::custom(format!("Failed to serialize private key: {e}"))
         })?;
 
         private_key_der.serialize(serializer)
@@ -126,7 +126,7 @@ impl<'de> Deserialize<'de> for EcdsaKeyPair {
         let private_key_der: Vec<u8> = Vec::deserialize(deserializer)?;
 
         let signing_key = SigningKey::from_pkcs8_der(&private_key_der).map_err(|e| {
-            serde::de::Error::custom(format!("Failed to deserialize private key: {}", e))
+            serde::de::Error::custom(format!("Failed to deserialize private key: {e}"))
         })?;
 
         Ok(Self::from_signing_key(signing_key))
@@ -149,7 +149,7 @@ impl X509Certificate {
     pub fn from_der(der_bytes: Vec<u8>) -> Result<Self> {
         let (_, parsed_cert) = x509_parser::certificate::X509Certificate::from_der(&der_bytes)
             .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to parse certificate: {}", e))
+                KeyError::CertificateError(format!("Failed to parse certificate: {e}"))
             })?;
 
         let subject = parsed_cert.subject().to_string();
@@ -186,7 +186,7 @@ impl X509Certificate {
     pub fn parsed(&self) -> Result<x509_parser::certificate::X509Certificate> {
         let (_, cert) = x509_parser::certificate::X509Certificate::from_der(&self.der_bytes)
             .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to parse certificate: {}", e))
+                KeyError::CertificateError(format!("Failed to parse certificate: {e}"))
             })?;
         Ok(cert)
     }
@@ -217,7 +217,7 @@ impl X509Certificate {
             EncodedPoint::from_affine_coordinates(&x_bytes.into(), &y_bytes.into(), false);
 
         VerifyingKey::from_encoded_point(&encoded_point).map_err(|e| {
-            KeyError::InvalidKeyFormat(format!("Failed to create verifying key: {}", e))
+            KeyError::InvalidKeyFormat(format!("Failed to create verifying key: {e}"))
         })
     }
 
@@ -247,7 +247,7 @@ impl X509Certificate {
         // Extract signature from certificate
         let signature_bytes = &parsed.signature_value.data;
         let signature = Signature::from_der(signature_bytes).map_err(|e| {
-            KeyError::CertificateValidationError(format!("Invalid signature format: {}", e))
+            KeyError::CertificateValidationError(format!("Invalid signature format: {e}"))
         })?;
 
         // Extract the signed data (TBS certificate)
@@ -258,8 +258,7 @@ impl X509Certificate {
             .verify(tbs_certificate, &signature)
             .map_err(|e| {
                 KeyError::CertificateValidationError(format!(
-                    "Signature verification failed: {}",
-                    e
+                    "Signature verification failed: {e}" 
                 ))
             })?;
 
@@ -283,7 +282,7 @@ impl<'de> Deserialize<'de> for X509Certificate {
     {
         let der_bytes: Vec<u8> = Vec::deserialize(deserializer)?;
         Self::from_der(der_bytes).map_err(|e| {
-            serde::de::Error::custom(format!("Failed to deserialize certificate: {}", e))
+            serde::de::Error::custom(format!("Failed to deserialize certificate: {e}"))
         })
     }
 }
@@ -333,11 +332,11 @@ impl CertificateAuthority {
     ) -> Result<X509Certificate> {
         // Parse the CSR using OpenSSL (this properly extracts the public key)
         let req = X509Req::from_der(csr_der)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to parse CSR: {}", e)))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to parse CSR: {e}")))?;
 
         // Extract the public key directly from the CSR
         let req_public_key = req.public_key().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to extract public key from CSR: {}", e))
+            KeyError::CertificateError(format!("Failed to extract public key from CSR: {e}"))
         })?;
 
         // Convert our CA private key to OpenSSL format
@@ -345,58 +344,58 @@ impl CertificateAuthority {
 
         // Create the certificate using OpenSSL's proper CA operations
         let mut cert_builder = X509Builder::new().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create certificate builder: {}", e))
+            KeyError::CertificateError(format!("Failed to create certificate builder: {e}"))
         })?;
 
         // Set the public key from the CSR (this is the key step that was broken before!)
         cert_builder
             .set_pubkey(&req_public_key)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set public key: {}", e)))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set public key: {e}")))?;
 
         // Set subject name from the CSR
         cert_builder
             .set_subject_name(req.subject_name())
             .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to set subject name: {}", e))
+                KeyError::CertificateError(format!("Failed to set subject name: {e}"))
             })?;
 
         // Set issuer name (CA)
         let ca_name = self.create_ca_name()?;
         cert_builder
             .set_issuer_name(&ca_name)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set issuer name: {}", e)))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set issuer name: {e}")))?;
 
         // Set validity period
         let not_before = openssl::asn1::Asn1Time::days_from_now(0).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create not_before time: {}", e))
+            KeyError::CertificateError(format!("Failed to create not_before time: {e}"))
         })?;
         let not_after = openssl::asn1::Asn1Time::days_from_now(validity_days).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create not_after time: {}", e))
+            KeyError::CertificateError(format!("Failed to create not_after time: {e}"))
         })?;
 
         cert_builder
             .set_not_before(&not_before)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set not_before: {}", e)))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set not_before: {e}")))?;
         cert_builder
             .set_not_after(&not_after)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set not_after: {}", e)))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set not_after: {e}")))?;
 
         // Set serial number (in production this would be from a database)
         let serial_number = {
             let mut bn = BigNum::new().map_err(|e| {
-                KeyError::CertificateError(format!("Failed to create BigNum: {}", e))
+                KeyError::CertificateError(format!("Failed to create BigNum: {e}"))
             })?;
             bn.rand(64, MsbOption::MAYBE_ZERO, false).map_err(|e| {
-                KeyError::CertificateError(format!("Failed to generate random serial: {}", e))
+                KeyError::CertificateError(format!("Failed to generate random serial: {e}"))
             })?;
             bn.to_asn1_integer().map_err(|e| {
-                KeyError::CertificateError(format!("Failed to convert serial to ASN1: {}", e))
+                KeyError::CertificateError(format!("Failed to convert serial to ASN1: {e}"))
             })?
         };
         cert_builder
             .set_serial_number(&serial_number)
             .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to set serial number: {}", e))
+                KeyError::CertificateError(format!("Failed to set serial number: {e}"))
             })?;
 
         // Add standard X.509v3 extensions for TLS
@@ -408,13 +407,12 @@ impl CertificateAuthority {
                     .build()
                     .map_err(|e| {
                         KeyError::CertificateError(format!(
-                            "Failed to create key usage extension: {}",
-                            e
+                            "Failed to create key usage extension: {e}"
                         ))
                     })?,
             )
             .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to add key usage extension: {}", e))
+                KeyError::CertificateError(format!("Failed to add key usage extension: {e}"))
             })?;
 
         cert_builder
@@ -425,15 +423,13 @@ impl CertificateAuthority {
                     .build()
                     .map_err(|e| {
                         KeyError::CertificateError(format!(
-                            "Failed to create extended key usage extension: {}",
-                            e
+                            "Failed to create extended key usage extension: {e}"
                         ))
                     })?,
             )
             .map_err(|e| {
                 KeyError::CertificateError(format!(
-                    "Failed to add extended key usage extension: {}",
-                    e
+                    "Failed to add extended key usage extension: {e}"
                 ))
             })?;
 
@@ -441,7 +437,7 @@ impl CertificateAuthority {
         cert_builder
             .sign(&ca_private_key, MessageDigest::sha256())
             .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to sign certificate: {}", e))
+                KeyError::CertificateError(format!("Failed to sign certificate: {e}"))
             })?;
 
         // Build the final certificate
@@ -449,7 +445,7 @@ impl CertificateAuthority {
 
         // Convert to DER format
         let cert_der = openssl_cert.to_der().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to convert certificate to DER: {}", e))
+            KeyError::CertificateError(format!("Failed to convert certificate to DER: {e}"))
         })?;
 
         // Certificate successfully signed with CSR's actual public key - handled by caller logging
@@ -465,27 +461,27 @@ impl CertificateAuthority {
 
         // Create OpenSSL PKey from the DER data
         PKey::private_key_from_der(&private_key_der).map_err(|e| {
-            KeyError::InvalidKeyFormat(format!("Failed to convert key to OpenSSL format: {}", e))
+            KeyError::InvalidKeyFormat(format!("Failed to convert key to OpenSSL format: {e}"))
         })
     }
 
     /// Create the CA name for certificate issuer
     fn create_ca_name(&self) -> Result<openssl::x509::X509Name> {
         let mut name_builder = X509NameBuilder::new().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create name builder: {}", e))
+            KeyError::CertificateError(format!("Failed to create name builder: {e}"))
         })?;
 
         name_builder
             .append_entry_by_nid(Nid::COUNTRYNAME, "US")
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set country: {}", e)))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set country: {e}")))?;
         name_builder
             .append_entry_by_nid(Nid::ORGANIZATIONNAME, "Runar")
             .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to set organization: {}", e))
+                KeyError::CertificateError(format!("Failed to set organization: {e}"))
             })?;
         name_builder
             .append_entry_by_nid(Nid::COMMONNAME, "Runar User CA")
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set common name: {}", e)))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set common name: {e}")))?;
 
         Ok(name_builder.build())
     }
