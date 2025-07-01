@@ -140,8 +140,8 @@ fn test_template_path_key() {
     let match_value_path = TopicPath::new(match_value, network_id).expect("Valid path");
 
     // Print for debugging
-    println!("Template path: {}", template_path);
-    println!("Match value path: {}", match_value_path);
+    println!("Template path: {template_path}");
+    println!("Match value path: {match_value_path}");
 
     // Calculate hash values
     let mut hasher1 = DefaultHasher::new();
@@ -152,8 +152,8 @@ fn test_template_path_key() {
     match_value_path.hash(&mut hasher2);
     let match_value_hash = hasher2.finish();
 
-    println!("Template path hash: {:x}", template_hash);
-    println!("Match value hash: {:x}", match_value_hash);
+    println!("Template path hash: {template_hash:x}");
+    println!("Match value hash: {match_value_hash:x}");
     println!("Hash equality: {}", template_hash == match_value_hash);
 
     // Note: In the current implementation, these hashes are different and

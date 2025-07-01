@@ -98,7 +98,7 @@ impl MathService {
         }
 
         // Use the passed context for logging
-        ctx.debug(format!("Adding {} + {}", a, b));
+        ctx.debug(format!("Adding {a} + {b}"));
 
         // Perform the addition
         let result = a + b;
@@ -117,7 +117,7 @@ impl MathService {
         *counter += 1;
 
         // Use the passed context for logging
-        ctx.debug(format!("Subtracting {} - {}", a, b));
+        ctx.debug(format!("Subtracting {a} - {b}"));
 
         // Perform the subtraction
         a - b
@@ -130,7 +130,7 @@ impl MathService {
         *counter += 1;
 
         // Use the passed context for logging
-        ctx.debug(format!("Multiplying {} * {}", a, b));
+        ctx.debug(format!("Multiplying {a} * {b}"));
 
         // Perform the multiplication
         a * b
@@ -144,7 +144,7 @@ impl MathService {
     fn divide(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Check for division by zero
         if b == 0.0 {
-            ctx.error(format!("Division by zero attempted: {} / {}", a, b));
+            ctx.error(format!("Division by zero attempted: {a} / {b}"));
             return Err(anyhow!("Division by zero"));
         }
 
@@ -153,7 +153,7 @@ impl MathService {
         *counter += 1;
 
         // Use the passed context for logging
-        ctx.debug(format!("Dividing {} / {}", a, b));
+        ctx.debug(format!("Dividing {a} / {b}"));
 
         // Perform the division
         Ok(a / b)
@@ -194,7 +194,7 @@ impl MathService {
             }
         };
         let result = self.add(a, b, &context).await;
-        context.info(format!("Addition successful: {} + {} = {}", a, b, result));
+        context.info(format!("Addition successful: {a} + {b} = {result}"));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -225,10 +225,7 @@ impl MathService {
             }
         };
         let result = self.subtract(a, b, &context);
-        context.info(format!(
-            "Subtraction successful: {} - {} = {}",
-            a, b, result
-        ));
+        context.info(format!("Subtraction successful: {a} - {b} = {result}",));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -259,10 +256,7 @@ impl MathService {
             }
         };
         let result = self.multiply(a, b, &context);
-        context.info(format!(
-            "Multiplication successful: {} * {} = {}",
-            a, b, result
-        ));
+        context.info(format!("Multiplication successful: {a} * {b} = {result}",));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -294,12 +288,12 @@ impl MathService {
         };
         match self.divide(a, b, &context) {
             Ok(result) => {
-                context.info(format!("Division successful: {} / {} = {}", a, b, result));
+                context.info(format!("Division successful: {a} / {b} = {result}"));
                 Ok(ArcValue::new_primitive(result))
             }
             Err(e) => {
-                context.error(format!("Division error: {}", e));
-                Err(anyhow!(format!("Division error: {}", e)))
+                context.error(format!("Division error: {e}"));
+                Err(anyhow!(format!("Division error: {e}")))
             }
         }
     }
@@ -341,7 +335,10 @@ impl AbstractService for MathService {
         let owned_self = self.clone();
 
         // Register add action
-        context.info(format!("Registering 'add' action for path: {}", self.path));
+        context.info(format!(
+            "Registering 'add' action for path: {path}",
+            path = self.path
+        ));
         context
             .register_action(
                 "add",

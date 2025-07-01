@@ -190,7 +190,7 @@ async fn test_register_and_get_action_handler() {
         let action_name = "add".to_string();
 
         // Create a TopicPath for the action
-        let action_path = format!("{}/{}", service_path, action_name);
+        let action_path = format!("{service_path}/{action_name}");
         let topic_path = TopicPath::new(&action_path, "net1").unwrap();
 
         // Create a handler
@@ -870,7 +870,7 @@ async fn test_get_actions_metadata() {
 
         // Create a wildcard path to match all actions under this service
         let service_path_str = service_path.service_path();
-        let wildcard_path = format!("{}/*", service_path_str);
+        let wildcard_path = format!("{service_path_str}/*");
         let search_path =
             TopicPath::new(&wildcard_path, service_path.network_id().as_str()).unwrap();
 

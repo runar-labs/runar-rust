@@ -239,7 +239,7 @@ mod topic_path_tests {
 
         // Simulate how paths should be handled
         let path = TopicPath::new(
-            &format!("test_network:{}/{}", service_path, action_path),
+            &format!("test_network:{service_path}/{action_path}"),
             "default",
         )
         .expect("Valid path");

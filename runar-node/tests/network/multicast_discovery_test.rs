@@ -20,7 +20,7 @@ use tokio::sync::oneshot;
 
 async fn create_test_discovery(network_id: &str, node_id: &str) -> Result<MulticastDiscovery> {
     let options = DiscoveryOptions {
-        multicast_group: format!("{}:45678", DEFAULT_MULTICAST_ADDR),
+        multicast_group: format!("{addr}:45678", addr = DEFAULT_MULTICAST_ADDR),
         announce_interval: Duration::from_secs(1), // Use shorter interval for tests
         ..DiscoveryOptions::default()
     };

@@ -122,7 +122,7 @@ async fn test_registry_service_get_service_info() {
             .request("$registry/services/list", None::<()>)
             .await
             .unwrap();
-        test_logger.debug(format!("Available services: {:?}", list_response));
+        test_logger.debug(format!("Available services: {list_response:?}"));
 
         // Use the request method to query the registry service for the math service
         // Note: We should use the correct parameter path format
@@ -130,16 +130,16 @@ async fn test_registry_service_get_service_info() {
             .request("$registry/services/math", None::<()>)
             .await
             .unwrap();
-        test_logger.debug(format!("Service info response: {:?}", response));
+        test_logger.debug(format!("Service info response: {response:?}"));
 
         // Dump the complete response data for debugging
         // 'response' is already ServiceMetadata, so no need for 'if let Some'
-        test_logger.debug(format!("Response data type: {:?}", response));
+        test_logger.debug(format!("Response data type: {response:?}"));
         // .as_type::<ServiceMetadata>() is no longer needed
         // let mut value_clone = data.clone(); // Not needed if using response directly
         // let service_metadata = value_clone... // response is already the correct type
 
-        test_logger.debug(format!("ServiceMetadata: {:?}", response));
+        test_logger.debug(format!("ServiceMetadata: {response:?}"));
         // Example assertions:
         assert_eq!(response.service_path, "math");
         assert_eq!(response.name, "Math Service");
@@ -182,7 +182,7 @@ async fn test_registry_service_get_service_state() {
         let response: ServiceState = node
             .request("$registry/services/math/state", None::<()>)
             .await?;
-        test_logger.debug(format!("Initial service state response: {:?}", response));
+        test_logger.debug(format!("Initial service state response: {response:?}"));
 
         // Parse the response to verify it contains service state
         assert_eq!(
@@ -194,7 +194,7 @@ async fn test_registry_service_get_service_state() {
         let response: Result<ServiceState> = node
             .request("$registry/services/not_exisstent/state", None::<()>)
             .await;
-        test_logger.debug(format!("Service state after start: {:?}", response));
+        test_logger.debug(format!("Service state after start: {response:?}"));
         Ok::<(), anyhow::Error>(())
     })
     .await
@@ -238,11 +238,11 @@ async fn test_registry_service_missing_parameter() {
         match response {
             Ok(resp) => {
                 // If it returns a response, it should have an error status code
-                test_logger.debug(format!("Response for missing parameter: {:?}", resp));
+                test_logger.debug(format!("Response for missing parameter: {resp:?}"));
             }
             Err(e) => {
                 // If it returns an error, that's also acceptable - service not found
-                test_logger.debug(format!("Error for missing parameter: {:?}", e));
+                test_logger.debug(format!("Error for missing parameter: {e:?}"));
                 // Request properly failed, error logged above
             }
         }
@@ -255,11 +255,11 @@ async fn test_registry_service_missing_parameter() {
         match state_response {
             Ok(resp) => {
                 // If it returns a response, it should have an error status code
-                test_logger.debug(format!("Response for invalid state path: {:?}", resp));
+                test_logger.debug(format!("Response for invalid state path: {resp:?}"));
             }
             Err(e) => {
                 // If it returns an error, that's also acceptable - service not found
-                test_logger.debug(format!("Error for invalid state path: {:?}", e));
+                test_logger.debug(format!("Error for invalid state path: {e:?}"));
                 // Request properly failed, error logged above
             }
         }

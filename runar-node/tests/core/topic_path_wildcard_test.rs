@@ -169,15 +169,15 @@ mod topic_path_wildcard_tests {
         // Look up each possible template pattern
         for template in possible_templates {
             if let Some(handler) = handlers.get(&template) {
-                println!("Found handler for template: {}", template);
-                println!("Handler: {}", handler);
+                println!("Found handler for template: {template}");
+                println!("Handler: {handler}");
                 // Found a matching handler, use it
                 return;
             }
         }
 
         // No matching template found
-        panic!("No matching template found for {}", concrete_path);
+        panic!("No matching template found for {concrete_path}");
     }
 
     /// Generate all possible template patterns that could match a concrete path
@@ -246,8 +246,8 @@ mod topic_path_wildcard_tests {
         let mut found_handler = false;
         for pattern in possible_patterns {
             if let Some(handler) = handlers.get(&pattern) {
-                println!("Found handler for wildcard pattern: {}", pattern);
-                println!("Handler: {}", handler);
+                println!("Found handler for wildcard pattern: {pattern}");
+                println!("Handler: {handler}");
                 found_handler = true;
                 break;
             }
@@ -255,8 +255,7 @@ mod topic_path_wildcard_tests {
 
         assert!(
             found_handler,
-            "No matching wildcard handler found for {}",
-            concrete_path
+            "No matching wildcard handler found for {concrete_path}",
         );
     }
 

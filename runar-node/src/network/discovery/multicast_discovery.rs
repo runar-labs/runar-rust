@@ -272,11 +272,11 @@ impl MulticastDiscovery {
                                 }
                             }
                             Err(e) => logger
-                                .error(format!("Failed to deserialize multicast message: {}", e)),
+                                .error(format!("Failed to deserialize multicast message: {e}")),
                         }
                     }
                     Err(e) => {
-                        logger.error(format!("Failed to receive multicast message: {}", e));
+                        logger.error(format!("Failed to receive multicast message: {e}"));
                         // Brief pause to avoid tight loop on error
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
@@ -305,7 +305,10 @@ impl MulticastDiscovery {
                 ticker.tick().await;
 
                 // Send announcement
-                logger.debug(format!("Sending announcement for node {}", info.peer_id));
+                logger.debug(format!(
+                    "Sending announcement for node {peer_id}",
+                    peer_id = info.peer_id
+                ));
                 if tx
                     .send(MulticastMessage::Announce(discovery_message.clone()))
                     .await
@@ -395,10 +398,10 @@ impl MulticastDiscovery {
                             data.len()
                         ));
                         if let Err(e) = socket.send_to(&data, target_addr).await {
-                            logger.error(format!("Failed to send multicast message: {}", e));
+                            logger.error(format!("Failed to send multicast message: {e}"));
                         }
                     }
-                    Err(e) => logger.error(format!("Failed to serialize multicast message: {}", e)),
+                    Err(e) => logger.error(format!("Failed to serialize multicast message: {e}")),
                 }
             }
         });
@@ -481,7 +484,7 @@ impl MulticastDiscovery {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         // Respond directly to the sender
                         if let Err(e) = socket.send_to(&data, src).await {
-                            logger.error(format!("Failed to send auto-response to {}: {}", src, e));
+                            logger.error(format!("Failed to send auto-response to {src}: {e}"));
                         }
                     }
                 } else {
@@ -493,7 +496,7 @@ impl MulticastDiscovery {
             }
             // Goodbye: Remove node
             MulticastMessage::Goodbye(identifier) => {
-                logger.debug(format!("Processing goodbye message from {}", identifier));
+                logger.debug(format!("Processing goodbye message from {identifier}"));
                 let key = identifier.to_string();
                 let mut nodes_write = nodes.write().await;
                 nodes_write.remove(&key);
@@ -533,7 +536,7 @@ impl NodeDiscovery for MulticastDiscovery {
         let socket_addr = SocketAddr::new(multicast_addr, port);
         *self.multicast_addr.lock().await = socket_addr;
         self.logger
-            .info(format!("Using multicast address: {}", socket_addr));
+            .info(format!("Using multicast address: {socket_addr}"));
 
         // Tasks are already initialized in the constructor, no need to duplicate here
 
@@ -550,8 +553,10 @@ impl NodeDiscovery for MulticastDiscovery {
                 ))
             }
         };
-        self.logger
-            .info(format!("Starting to announce node: {}", local_info.peer_id));
+        self.logger.info(format!(
+            "Starting to announce node: {peer_id}",
+            peer_id = local_info.peer_id
+        ));
 
         let tx_opt = self.tx.lock().await;
         let tx = match tx_opt.as_ref() {

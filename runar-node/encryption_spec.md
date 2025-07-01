@@ -792,6 +792,20 @@ Struct → EncryptedStruct → ArcValue::from_struct() → SerializerRegistry::s
 
 Enhanced Flow with Encryption is not correct..
 
-Enctypt6in8 shuold happen just before serialization.. when struct is wrapped in a ArcxValut at the momoent nothing shouold happen.;. that ArcValut mighe be send to another service or event handler in the same network/context and nothing shuold happen to the struct. itn shuold be as is. (zero copy or serialization) .. only when serialiazt is neece to cross the network.. that is when encrtuptm needs to happens.. so
+Enctyption shuold happen just before serialization.. when struct is wrapped in a ArcxValut at the momoent nothing shouold happen.;. that ArcValut mighe be send to another service or event handler in the same network/context and nothing shuold happen to the struct. itn shuold be as is. (zero copy or serialization) .. only when serialiazt is neece to cross the network.. that is when encrtuptm needs to happens.. so
 
 Struct → ArcValue::from_struct() → SerializerRegistry::serialize() → EncryptedStruct → bytes
+
+SerializerRegistry could be where we injkect the key manager.. so it can call teh encrtyption methods and access the keys.. it is used to serialize and deserialize the data..
+
+We also need to consider the DAta Storage USe case
+to store data we also need to store the encruypted struct.. not plain
+the actions that store data will be anotated.. to enforce encruption.. 
+
+so the object that is stored has the encrpted data.
+
+There are a few scenarions
+
+Mobile -> service craete prrofile instance with users data, send to another node )(over network) so the data iws encrypted and serialziewd.. when ther data get to the other node. which does not have the user profile keus.. the data that is encrupted with the user profile remaisn encrupted and the data that is system is decrupted.. so services can read them. but when it comes to store in the database.. all thed ata. use and syustem must be encrupted.. if a service later retrieve ehe4 data. then the system fields are again decrupted..
+
+So this is another scenarion. .these data storage service/actions will have a config that says if they data should alwauys get ther encrupted.. even if is a locaql call.. 
