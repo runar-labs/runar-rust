@@ -91,6 +91,6 @@ impl From<x509_parser::error::X509Error> for KeyError {
 
 impl From<x509_parser::nom::Err<x509_parser::error::X509Error>> for KeyError {
     fn from(err: x509_parser::nom::Err<x509_parser::error::X509Error>) -> Self {
-        KeyError::X509ParserError(format!("Parse error: {}", err))
+        KeyError::X509ParserError(format!("Parse error: {err}" ))
     }
 }

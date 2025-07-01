@@ -152,14 +152,14 @@ impl MobileKeyManager {
         let root_key_bytes = root_key.private_key_der()?;
         let hk = Hkdf::<Sha256>::new(None, &root_key_bytes);
 
-        let info = format!("runar-profile-{}", profile_id);
+        let info = format!("runar-profile-{profile_id}");
         let mut derived_key = [0u8; 32];
         hk.expand(info.as_bytes(), &mut derived_key)
-            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
+            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
 
         // Create ECDSA key from derived bytes
         let signing_key = SigningKey::from_bytes((&derived_key).into()).map_err(|e| {
-            KeyError::KeyDerivationError(format!("Failed to create signing key: {}", e))
+            KeyError::KeyDerivationError(format!("Failed to create signing key: {e}"))
         })?;
 
         let profile_key = EcdsaKeyPair::from_signing_key(signing_key);
@@ -168,8 +168,7 @@ impl MobileKeyManager {
         self.user_profile_keys
             .insert(profile_id.to_string(), profile_key);
         self.logger.info(format!(
-            "User profile key derived using HKDF for profile: {}",
-            profile_id
+            "User profile key derived using HKDF for profile: {profile_id}"
         ));
 
         Ok(public_key)
@@ -184,8 +183,7 @@ impl MobileKeyManager {
         self.network_data_keys
             .insert(network_id.clone(), network_key);
         self.logger.info(format!(
-            "Network data key generated with ID: {}",
-            network_id
+            "Network data key generated with ID: {network_id}"
         ));
 
         Ok(network_id)
@@ -222,7 +220,7 @@ impl MobileKeyManager {
 
         // Encrypt envelope key for network (required)
         let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Network key not found for network: {}", network_id))
+            KeyError::KeyNotFound(format!("Network key not found for network: {network_id}"))
         })?;
         let network_encrypted_key =
             self.encrypt_key_with_ecdsa(&envelope_key, &network_key.public_key_bytes())?;
@@ -252,7 +250,7 @@ impl MobileKeyManager {
         profile_id: &str,
     ) -> Result<Vec<u8>> {
         let profile_key = self.user_profile_keys.get(profile_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Profile key not found: {}", profile_id))
+            KeyError::KeyNotFound(format!("Profile key not found: {profile_id}"))
         })?;
 
         let encrypted_envelope_key = envelope_data
@@ -260,8 +258,7 @@ impl MobileKeyManager {
             .get(profile_id)
             .ok_or_else(|| {
                 KeyError::KeyNotFound(format!(
-                    "Envelope key not found for profile: {}",
-                    profile_id
+                    "Envelope key not found for profile: {profile_id}"
                 ))
             })?;
 
@@ -271,13 +268,13 @@ impl MobileKeyManager {
 
     /// Decrypt envelope-encrypted data using network key
     pub fn decrypt_with_network(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
+        let network_id = envelope_data.network_id.clone();
         let network_key = self
             .network_data_keys
-            .get(&envelope_data.network_id)
+            .get(&network_id)
             .ok_or_else(|| {
                 KeyError::KeyNotFound(format!(
-                    "Network key not found: {}",
-                    envelope_data.network_id
+                    "Network key not found: {network_id}"
                 ))
             })?;
 
@@ -299,14 +296,14 @@ impl MobileKeyManager {
         }
 
         let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            KeyError::SymmetricCipherError(format!("Failed to create cipher: {}", e))
+            KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}"))
         })?;
         let mut nonce = [0u8; 12];
         thread_rng().fill_bytes(&mut nonce);
 
         let ciphertext = cipher
             .encrypt(Nonce::from_slice(&nonce), data)
-            .map_err(|e| KeyError::EncryptionError(format!("AES-GCM encryption failed: {}", e)))?;
+            .map_err(|e| KeyError::EncryptionError(format!("AES-GCM encryption failed: {e}")))?;
 
         // Prepend nonce to ciphertext
         let mut result = nonce.to_vec();
@@ -330,14 +327,14 @@ impl MobileKeyManager {
         }
 
         let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
-            KeyError::SymmetricCipherError(format!("Failed to create cipher: {}", e))
+            KeyError::SymmetricCipherError(format!("Failed to create cipher: {e}"))
         })?;
         let nonce = &encrypted_data[..12];
         let ciphertext = &encrypted_data[12..];
 
         cipher
             .decrypt(Nonce::from_slice(nonce), ciphertext)
-            .map_err(|e| KeyError::DecryptionError(format!("AES-GCM decryption failed: {}", e)))
+            .map_err(|e| KeyError::DecryptionError(format!("AES-GCM decryption failed: {e}")))
     }
 
     /// Internal ECIES encryption using a recipient's public key
@@ -360,7 +357,7 @@ impl MobileKeyManager {
         // Convert recipient's public key bytes to PublicKey
         let recipient_public_key =
             PublicKey::from_sec1_bytes(recipient_public_key_bytes).map_err(|e| {
-                KeyError::InvalidKeyFormat(format!("Failed to parse recipient public key: {}", e))
+                KeyError::InvalidKeyFormat(format!("Failed to parse recipient public key: {e}"))
             })?;
 
         // Perform ECDH key exchange
@@ -371,7 +368,7 @@ impl MobileKeyManager {
         let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes.as_slice());
         let mut encryption_key = [0u8; 32];
         hk.expand(b"runar-key-encryption", &mut encryption_key)
-            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
+            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
 
         // Encrypt the data using AES-GCM
         let encrypted_data = self.encrypt_with_symmetric_key(data, &encryption_key)?;
@@ -407,12 +404,12 @@ impl MobileKeyManager {
 
         // Reconstruct ephemeral public key
         let ephemeral_public = PublicKey::from_sec1_bytes(ephemeral_public_bytes).map_err(|e| {
-            KeyError::DecryptionError(format!("Failed to parse ephemeral public key: {}", e))
+            KeyError::DecryptionError(format!("Failed to parse ephemeral public key: {e}"))
         })?;
 
         // Use the ECDSA signing key bytes to create a SecretKey for ECDH
         let secret_key = SecretKey::from_bytes(&key_pair.signing_key().to_bytes())
-            .map_err(|e| KeyError::DecryptionError(format!("Failed to create SecretKey: {}", e)))?;
+            .map_err(|e| KeyError::DecryptionError(format!("Failed to create SecretKey: {e}")))?;
         let shared_secret =
             diffie_hellman(secret_key.to_nonzero_scalar(), ephemeral_public.as_affine());
         let shared_secret_bytes = shared_secret.raw_secret_bytes();
@@ -421,7 +418,7 @@ impl MobileKeyManager {
         let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
         let mut encryption_key = [0u8; 32];
         hk.expand(b"runar-key-encryption", &mut encryption_key)
-            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {}", e)))?;
+            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
 
         // Decrypt the data using AES-GCM
         self.decrypt_with_symmetric_key(encrypted_payload, &encryption_key)
@@ -452,9 +449,9 @@ impl MobileKeyManager {
         &mut self,
         setup_token: &SetupToken,
     ) -> Result<NodeCertificateMessage> {
+        let node_id = &setup_token.node_id;
         self.logger.info(format!(
-            "Processing setup token for node: {}",
-            setup_token.node_id
+            "Processing setup token for node: {node_id}"
         ));
 
         // Validate the CSR format
@@ -473,7 +470,7 @@ impl MobileKeyManager {
         // and create a certificate using the create_signed_certificate method.
         // In a production system, this would properly extract and use the public key from the CSR.
 
-        let _subject = format!("CN={},O=Runar Node,C=US", setup_token.node_id);
+        let _subject = format!("CN={node_id},O=Runar Node,C=US");
         let validity_days = 365; // 1 year validity
 
         // Create certificate using node's key pair (extracted from CSR in a real implementation)
@@ -495,7 +492,7 @@ impl MobileKeyManager {
         let metadata = CertificateMetadata {
             issued_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| KeyError::InvalidOperation(format!("System time error: {}", e)))?
+                .map_err(|e| KeyError::InvalidOperation(format!("System time error: {e}")))?
                 .as_secs(),
             validity_days,
             purpose: "Node TLS Certificate".to_string(),
@@ -533,7 +530,7 @@ impl MobileKeyManager {
         node_public_key: &[u8],
     ) -> Result<NetworkKeyMessage> {
         let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Network key not found: {}", network_id))
+            KeyError::KeyNotFound(format!("Network key not found: {network_id}"))
         })?;
 
         // Encrypt the network's private key for the node
@@ -543,15 +540,14 @@ impl MobileKeyManager {
 
         let node_id = crate::compact_ids::compact_node_id(node_public_key);
         self.logger.info(format!(
-            "Network key encrypted for node {} with ECIES",
-            node_id
+            "Network key encrypted for node {node_id} with ECIES"
         ));
 
         Ok(NetworkKeyMessage {
             network_id: network_id.to_string(),
             network_public_key: network_key.public_key_bytes(),
             encrypted_network_key,
-            key_derivation_info: format!("Network key for node {} (ECIES encrypted)", node_id),
+            key_derivation_info: format!("Network key for node {node_id} (ECIES encrypted)"),
         })
     }
 
@@ -601,18 +597,18 @@ impl MobileKeyManager {
         message: &[u8],
         node_public_key: &[u8],
     ) -> Result<Vec<u8>> {
+        let message_len = message.len();
         self.logger.debug(format!(
-            "Encrypting message for node ({} bytes)",
-            message.len()
+            "Encrypting message for node ({message_len} bytes)"
         ));
         self.encrypt_key_with_ecdsa(message, node_public_key)
     }
 
     /// Decrypt a message from a node using the user's root key (ECIES)
     pub fn decrypt_message_from_node(&self, encrypted_message: &[u8]) -> Result<Vec<u8>> {
+        let encrypted_message_len = encrypted_message.len();
         self.logger.debug(format!(
-            "Decrypting message from node ({} bytes)",
-            encrypted_message.len()
+            "Decrypting message from node ({encrypted_message_len} bytes)"
         ));
         let root_key_pair = self
             .user_root_key
