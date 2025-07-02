@@ -190,13 +190,13 @@ async fn test_register_and_get_action_handler() {
         let action_name = "add".to_string();
 
         // Create a TopicPath for the action
-        let action_path = format!("{}/{}", service_path, action_name);
+        let action_path = format!("{service_path}/{action_name}");
         let topic_path = TopicPath::new(&action_path, "net1").unwrap();
 
         // Create a handler
         let handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Handler called with params: {:?}", params);
+                println!("Add handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
@@ -249,21 +249,21 @@ async fn test_multiple_action_handlers() {
         // Create handlers for each action
         let add_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Add handler called with params: {:?}", params);
+                println!("Add handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
 
         let subtract_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Subtract handler called with params: {:?}", params);
+                println!("Subtract handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
 
         let concat_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Concat handler called with params: {:?}", params);
+                println!("Concat handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
@@ -347,7 +347,7 @@ async fn test_action_handler_network_isolation() {
 
         println!("VERIFICATION 2: Testing handler execution with proper context");
         let node: Arc<Node> = Arc::new(
-            Node::new(NodeConfig::new("test-node", "default"))
+            Node::new(NodeConfig::new_test_config("test-node", "default"))
                 .await
                 .unwrap(),
         );
@@ -397,7 +397,7 @@ async fn test_action_handler_network_isolation() {
 
         println!("\nVERIFICATION 4: Context validation is still good practice");
         let node: Arc<Node> = Arc::new(
-            Node::new(NodeConfig::new("test-node", "default"))
+            Node::new(NodeConfig::new_test_config("test-node", "default"))
                 .await
                 .unwrap(),
         );
@@ -419,7 +419,7 @@ async fn test_action_handler_network_isolation() {
     .await
     {
         Ok(_) => (),
-        Err(e) => panic!("Test timed out: {}", e),
+        Err(e) => panic!("Test timed out: {e}"),
     }
 }
 
@@ -543,7 +543,7 @@ async fn test_path_template_parameters() {
                     .cloned()
                     .unwrap_or_else(|| "unknown".to_string());
 
-                println!("Service info handler called for service: {}", service_path);
+                println!("Service info handler called for service: {service_path}");
 
                 // Validate that the parameter was captured
                 if service_path == "unknown" {
@@ -562,7 +562,7 @@ async fn test_path_template_parameters() {
                     .cloned()
                     .unwrap_or_else(|| "unknown".to_string());
 
-                println!("Service state handler called for service: {}", service_path);
+                println!("Service state handler called for service: {service_path}");
 
                 // Validate that the parameter was captured
                 if service_path == "unknown" {
@@ -588,8 +588,7 @@ async fn test_path_template_parameters() {
                     .unwrap_or_else(|| "unknown".to_string());
 
                 println!(
-                    "Action handler called for service_type: {}, action_name: {}",
-                    service_type, action_name
+                    "Action handler called for service_type: {service_type}, action_name: {action_name}"
                 );
 
                 // Validate that all parameters were captured
@@ -733,7 +732,7 @@ async fn test_multiple_network_ids() {
     let network2_path = TopicPath::new("network2:math/add", "default").unwrap();
 
     let node = Arc::new(
-        Node::new(NodeConfig::new("test-node", "default"))
+        Node::new(NodeConfig::new_test_config("test-node", "default"))
             .await
             .unwrap(),
     );
@@ -749,8 +748,7 @@ async fn test_multiple_network_ids() {
 
         Box::pin(async move {
             Ok(ArcValue::new_primitive(format!(
-                "Response from {}",
-                network_id
+                "Response from {network_id}"
             )))
         })
     });
@@ -761,8 +759,7 @@ async fn test_multiple_network_ids() {
 
         Box::pin(async move {
             Ok(ArcValue::new_primitive(format!(
-                "Response from {}",
-                network_id
+                "Response from {network_id}"
             )))
         })
     });
@@ -870,7 +867,7 @@ async fn test_get_actions_metadata() {
 
         // Create a wildcard path to match all actions under this service
         let service_path_str = service_path.service_path();
-        let wildcard_path = format!("{}/*", service_path_str);
+        let wildcard_path = format!("{service_path_str}/*");
         let search_path =
             TopicPath::new(&wildcard_path, service_path.network_id().as_str()).unwrap();
 

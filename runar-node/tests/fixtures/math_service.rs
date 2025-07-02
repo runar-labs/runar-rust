@@ -98,7 +98,7 @@ impl MathService {
         }
 
         // Use the passed context for logging
-        ctx.debug(format!("Adding {} + {}", a, b));
+        ctx.debug(format!("Adding {a} + {b}"));
 
         // Perform the addition
         let result = a + b;
@@ -117,7 +117,7 @@ impl MathService {
         *counter += 1;
 
         // Use the passed context for logging
-        ctx.debug(format!("Subtracting {} - {}", a, b));
+        ctx.debug(format!("Subtracting {a} - {b}"));
 
         // Perform the subtraction
         a - b
@@ -130,7 +130,7 @@ impl MathService {
         *counter += 1;
 
         // Use the passed context for logging
-        ctx.debug(format!("Multiplying {} * {}", a, b));
+        ctx.debug(format!("Multiplying {a} * {b}"));
 
         // Perform the multiplication
         a * b
@@ -144,7 +144,7 @@ impl MathService {
     fn divide(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Check for division by zero
         if b == 0.0 {
-            ctx.error(format!("Division by zero attempted: {} / {}", a, b));
+            ctx.error(format!("Division by zero attempted: {a} / {b}"));
             return Err(anyhow!("Division by zero"));
         }
 
@@ -153,7 +153,7 @@ impl MathService {
         *counter += 1;
 
         // Use the passed context for logging
-        ctx.debug(format!("Dividing {} / {}", a, b));
+        ctx.debug(format!("Dividing {a} / {b}"));
 
         // Perform the division
         Ok(a / b)
@@ -189,12 +189,12 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
         let result = self.add(a, b, &context).await;
-        context.info(format!("Addition successful: {} + {} = {}", a, b, result));
+        context.info(format!("Addition successful: {a} + {b} = {result}"));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -220,15 +220,12 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
         let result = self.subtract(a, b, &context);
-        context.info(format!(
-            "Subtraction successful: {} - {} = {}",
-            a, b, result
-        ));
+        context.info(format!("Subtraction successful: {a} - {b} = {result}",));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -254,15 +251,12 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
         let result = self.multiply(a, b, &context);
-        context.info(format!(
-            "Multiplication successful: {} * {} = {}",
-            a, b, result
-        ));
+        context.info(format!("Multiplication successful: {a} * {b} = {result}",));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -288,18 +282,18 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
         match self.divide(a, b, &context) {
             Ok(result) => {
-                context.info(format!("Division successful: {} / {} = {}", a, b, result));
+                context.info(format!("Division successful: {a} / {b} = {result}"));
                 Ok(ArcValue::new_primitive(result))
             }
             Err(e) => {
-                context.error(format!("Division error: {}", e));
-                Err(anyhow!(format!("Division error: {}", e)))
+                context.error(format!("Division error: {e}"));
+                Err(anyhow!(format!("Division error: {e}")))
             }
         }
     }
@@ -326,6 +320,9 @@ impl AbstractService for MathService {
     fn network_id(&self) -> Option<String> {
         self.network_id.clone()
     }
+    fn set_network_id(&mut self, network_id: String) {
+        self.network_id = Some(network_id);
+    }
 
     async fn init(&self, context: LifecycleContext) -> Result<()> {
         // Log the service information being initialized
@@ -338,7 +335,10 @@ impl AbstractService for MathService {
         let owned_self = self.clone();
 
         // Register add action
-        context.info(format!("Registering 'add' action for path: {}", self.path));
+        context.info(format!(
+            "Registering 'add' action for path: {path}",
+            path = self.path
+        ));
         context
             .register_action(
                 "add",
@@ -446,8 +446,7 @@ impl AbstractService for MathService {
                 Box::new(move |event_ctx, payload| {
                     Box::pin(async move {
                         event_ctx.info(format!(
-                            "MathService received 'config/updated' event with payload: {:?}",
-                            payload
+                            "MathService received 'config/updated' event with payload: {payload:?}"
                         ));
                         // In a real scenario, _service_clone could be used to update internal state
                         Ok(())

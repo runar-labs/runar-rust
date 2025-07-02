@@ -105,15 +105,12 @@ mod tests {
             let matching_result = matches.iter().find(|m| m.content == expected_handler);
             assert!(
                 matching_result.is_some(),
-                "No match found with handler '{}' for {}",
-                expected_handler,
-                topic_str
+                "No match found with handler '{expected_handler}' for {topic_str}",
             );
             let m = matching_result.unwrap();
             assert_eq!(
                 m.params, expected_params,
-                "Parameter mismatch for handler '{}'",
-                expected_handler
+                "Parameter mismatch for handler '{expected_handler}'",
             );
         }
 

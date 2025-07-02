@@ -134,8 +134,7 @@ impl MulticastDiscovery {
         // Create UDP socket with proper configuration
         let socket = Self::create_multicast_socket(socket_addr, &logger).await?;
         logger.info(format!(
-            "Successfully created multicast socket with address: {}",
-            socket_addr
+            "Successfully created multicast socket with address: {socket_addr}",
         ));
 
         // Create a Network component logger
@@ -247,8 +246,7 @@ impl MulticastDiscovery {
                 match socket.recv_from(&mut buf).await {
                     Ok((len, src)) => {
                         logger.debug(format!(
-                            "Received multicast message from {}, size: {}",
-                            src, len
+                            "Received multicast message from {src}, size: {len}",
                         ));
                         match bincode::deserialize::<MulticastMessage>(&buf[..len]) {
                             Ok(message) => {
@@ -274,11 +272,11 @@ impl MulticastDiscovery {
                                 }
                             }
                             Err(e) => logger
-                                .error(format!("Failed to deserialize multicast message: {}", e)),
+                                .error(format!("Failed to deserialize multicast message: {e}")),
                         }
                     }
                     Err(e) => {
-                        logger.error(format!("Failed to receive multicast message: {}", e));
+                        logger.error(format!("Failed to receive multicast message: {e}"));
                         // Brief pause to avoid tight loop on error
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
@@ -307,7 +305,10 @@ impl MulticastDiscovery {
                 ticker.tick().await;
 
                 // Send announcement
-                logger.debug(format!("Sending announcement for node {}", info.peer_id));
+                logger.debug(format!(
+                    "Sending announcement for node {peer_id}",
+                    peer_id = info.peer_id
+                ));
                 if tx
                     .send(MulticastMessage::Announce(discovery_message.clone()))
                     .await
@@ -397,10 +398,10 @@ impl MulticastDiscovery {
                             data.len()
                         ));
                         if let Err(e) = socket.send_to(&data, target_addr).await {
-                            logger.error(format!("Failed to send multicast message: {}", e));
+                            logger.error(format!("Failed to send multicast message: {e}"));
                         }
                     }
-                    Err(e) => logger.error(format!("Failed to serialize multicast message: {}", e)),
+                    Err(e) => logger.error(format!("Failed to serialize multicast message: {e}")),
                 }
             }
         });
@@ -441,8 +442,8 @@ impl MulticastDiscovery {
                     return;
                 }
                 logger.debug(format!(
-                    "Processing announce message from {}",
-                    discovery_msg.public_key
+                    "Processing announce message from {public_key}",
+                    public_key = discovery_msg.public_key
                 ));
 
                 let peer_public_key = discovery_msg.public_key.clone();
@@ -474,8 +475,8 @@ impl MulticastDiscovery {
                     let local_info_msg = PeerInfo::new(local_peer_public_key, local_addresses);
 
                     logger.debug(format!(
-                        "Auto-responding to new peer announcement with our own info: {}",
-                        local_info_msg.public_key
+                        "Auto-responding to new peer announcement with our own info: {public_key}",
+                        public_key = local_info_msg.public_key
                     ));
                     let response_msg = MulticastMessage::Announce(local_info_msg);
                     if let Ok(data) = bincode::serialize(&response_msg) {
@@ -483,19 +484,18 @@ impl MulticastDiscovery {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         // Respond directly to the sender
                         if let Err(e) = socket.send_to(&data, src).await {
-                            logger.error(format!("Failed to send auto-response to {}: {}", src, e));
+                            logger.error(format!("Failed to send auto-response to {src}: {e}"));
                         }
                     }
                 } else {
                     logger.debug(format!(
-                        "Skipping auto-response for already known peer: {}",
-                        peer_public_key
+                        "Skipping auto-response for already known peer: {peer_public_key}"
                     ));
                 }
             }
             // Goodbye: Remove node
             MulticastMessage::Goodbye(identifier) => {
-                logger.debug(format!("Processing goodbye message from {}", identifier));
+                logger.debug(format!("Processing goodbye message from {identifier}"));
                 let key = identifier.to_string();
                 let mut nodes_write = nodes.write().await;
                 nodes_write.remove(&key);
@@ -508,8 +508,7 @@ impl MulticastDiscovery {
 impl NodeDiscovery for MulticastDiscovery {
     async fn init(&self, options: DiscoveryOptions) -> Result<()> {
         self.logger.info(format!(
-            "Initializing MulticastDiscovery with options: {:?}",
-            options
+            "Initializing MulticastDiscovery with options: {options:?}"
         ));
         // Update options
         *self.options.write().await = options.clone();
@@ -520,14 +519,14 @@ impl NodeDiscovery for MulticastDiscovery {
             let addr: SocketAddr = options
                 .multicast_group
                 .parse()
-                .map_err(|e| anyhow!("Invalid multicast address format: {}", e))?;
+                .map_err(|e| anyhow!("Invalid multicast address format: {e}"))?;
             (addr.ip(), addr.port())
         } else {
             // Parse as just an IP, use default port
             let ip: Ipv4Addr = options
                 .multicast_group
                 .parse()
-                .map_err(|e| anyhow!("Invalid multicast address: {}", e))?;
+                .map_err(|e| anyhow!("Invalid multicast address: {e}"))?;
             (IpAddr::V4(ip), DEFAULT_MULTICAST_PORT)
         };
 
@@ -535,7 +534,7 @@ impl NodeDiscovery for MulticastDiscovery {
         let socket_addr = SocketAddr::new(multicast_addr, port);
         *self.multicast_addr.lock().await = socket_addr;
         self.logger
-            .info(format!("Using multicast address: {}", socket_addr));
+            .info(format!("Using multicast address: {socket_addr}"));
 
         // Tasks are already initialized in the constructor, no need to duplicate here
 
@@ -552,8 +551,10 @@ impl NodeDiscovery for MulticastDiscovery {
                 ))
             }
         };
-        self.logger
-            .info(format!("Starting to announce node: {}", local_info.peer_id));
+        self.logger.info(format!(
+            "Starting to announce node: {peer_id}",
+            peer_id = local_info.peer_id
+        ));
 
         let tx_opt = self.tx.lock().await;
         let tx = match tx_opt.as_ref() {
@@ -578,7 +579,7 @@ impl NodeDiscovery for MulticastDiscovery {
 
         tx.send(MulticastMessage::Announce(discovery_message))
             .await
-            .map_err(|e| anyhow!("Failed to send initial announcement: {}", e))?;
+            .map_err(|e| anyhow!("Failed to send initial announcement: {e}"))?;
 
         let task = self.start_announce_task(tx.clone(), local_info.clone(), interval);
         *self.announce_task.lock().await = Some(task);
@@ -606,10 +607,8 @@ impl NodeDiscovery for MulticastDiscovery {
 
         // Stop announcing if we are
         if let Err(e) = self.stop_announcing().await {
-            self.logger.warn(format!(
-                "Error stopping announcements during shutdown: {}",
-                e
-            ));
+            self.logger
+                .warn(format!("Error stopping announcements during shutdown: {e}"));
         }
 
         Ok(())

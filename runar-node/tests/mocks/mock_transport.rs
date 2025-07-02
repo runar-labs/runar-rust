@@ -55,7 +55,7 @@ impl NetworkTransport for MockNetworkTransport {
     
     async fn connect(&self, node_info: &NodeInfo) -> Result<()> {
         // Just log the connection attempt
-        self.logger.info(format!("Mock connecting to node: {}", node_info.identifier));
+        self.logger.info(format!("Mock connecting to node: {identifier}", identifier=node_info.identifier));
         Ok(())
     }
     

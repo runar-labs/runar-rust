@@ -19,6 +19,7 @@
 // Module declarations
 pub mod abstract_service;
 pub mod event_context;
+pub mod keys_service;
 pub mod load_balancing;
 pub mod registry_service;
 pub mod remote_service;
@@ -160,14 +161,16 @@ impl LifecycleContext {
         let full_path = if path_string.contains(':') {
             path_string
         } else if path_string.contains('/') {
-            format!("{}:{}", self.network_id, path_string)
+            format!("{0}:{1}", self.network_id, path_string)
         } else {
-            format!("{}:{}/{}", self.network_id, self.service_path, path_string)
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, path_string
+            )
         };
 
         self.logger.debug(format!(
-            "LifecycleContext making request to processed path: {}",
-            full_path
+            "LifecycleContext making request to processed path: {full_path}"
         ));
         self.node_delegate.request::<P, T>(full_path, payload).await
     }
@@ -185,14 +188,16 @@ impl LifecycleContext {
         let full_topic = if topic_string.contains(':') {
             topic_string
         } else if topic_string.contains('/') {
-            format!("{}:{}", self.network_id, topic_string)
+            format!("{0}:{1}", self.network_id, topic_string)
         } else {
-            format!("{}:{}/{}", self.network_id, self.service_path, topic_string)
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
         };
 
         self.logger.debug(format!(
-            "LifecycleContext publishing to processed topic: {}",
-            full_topic
+            "LifecycleContext publishing to processed topic: {full_topic}"
         ));
         self.node_delegate.publish(full_topic, data).await
     }
@@ -210,7 +215,11 @@ impl LifecycleContext {
         let action_name_string = action_name.into();
 
         // Create a topic path for this action
-        let action_path = format!("{}/{}", self.service_path, action_name_string);
+        let action_path = format!(
+            "{service_path}/{action_name}",
+            service_path = self.service_path,
+            action_name = action_name_string
+        );
 
         // Debug logs for action registration
         self.logger.debug(format!(
@@ -219,7 +228,7 @@ impl LifecycleContext {
         ));
 
         let topic_path: TopicPath = TopicPath::new(&action_path, &self.network_id)
-            .map_err(|e| anyhow!("Invalid action path: {}", e))?;
+            .map_err(|e| anyhow!("Invalid action path: {e}"))?;
 
         // More detailed debug after TopicPath creation
         self.logger
@@ -266,9 +275,13 @@ impl LifecycleContext {
         let delegate = &self.node_delegate;
 
         // Create a topic path for this action
-        let action_path = format!("{}/{}", self.service_path, action_name_string);
+        let action_path = format!(
+            "{service_path}/{action_name}",
+            service_path = self.service_path,
+            action_name = action_name_string
+        );
         let topic_path = TopicPath::new(&action_path, &self.network_id)
-            .map_err(|e| anyhow!("Invalid action path: {}", e))?;
+            .map_err(|e| anyhow!("Invalid action path: {e}"))?;
 
         // Register the action with the provided options
         delegate
@@ -728,6 +741,17 @@ pub trait NodeDelegate: Send + Sync {
         handler: ActionHandler,
         metadata: Option<ActionMetadata>,
     ) -> Result<()>;
+}
+
+/// Registry Delegate trait for keys service operations
+///
+/// INTENTION: Provide a dedicated interface for the Keys Service
+/// to interact with the core keys management without creating circular references.
+/// This follows the same pattern as NodeDelegate but provides only
+/// the functionality needed by keys operations.
+#[async_trait::async_trait]
+pub trait KeysDelegate: Send + Sync {
+    async fn ensure_symetric_key(&self, key_name: &str) -> Result<ArcValue>;
 }
 
 /// Registry Delegate trait for registry service operations

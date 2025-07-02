@@ -1,18 +1,65 @@
-pub mod crypto;
-pub mod envelope;
+//! Runar Keys Fix - Production-Ready Certificate System
+//!
+//! A robust, standards-compliant certificate management system for the Runar network.
+//! This implementation replaces the existing custom certificate system with proper
+//! X.509 certificates and a unified ECDSA P-256 cryptographic foundation.
+//!
+//! ## Key Features
+//!
+//! - **Standard X.509 Certificates**: Full compliance with PKI standards
+//! - **Unified Cryptography**: Single ECDSA P-256 algorithm throughout
+//! - **Proper CA Hierarchy**: Mobile CA signs all node certificates
+//! - **QUIC Compatibility**: Certificates work seamlessly with QUIC transport
+//! - **Production Quality**: Comprehensive validation and error handling
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Mobile User CA (Self-signed root)
+//! └── Node TLS Certificate (signed by Mobile CA)
+//!     └── Used for all QUIC/TLS operations
+//! ```
+
+pub mod certificate;
 pub mod error;
-pub mod key_derivation;
-pub mod manager;
 pub mod mobile;
-pub mod network;
 pub mod node;
 
-// Re-export main components for easier access
-pub use crypto::*;
-pub use envelope::*;
-pub use error::*;
-pub use key_derivation::*;
-pub use manager::*;
-pub use mobile::*;
-pub use network::*;
-pub use node::*;
+/// Utility module for compact ID encoding
+pub mod compact_ids {
+    use crate::error::{KeyError, Result};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    /// Encode public key bytes to a compact Base64 URL-safe string
+    pub fn encode_compact_id(public_key: &[u8]) -> String {
+        URL_SAFE_NO_PAD.encode(public_key)
+    }
+
+    /// Decode compact Base64 URL-safe string back to public key bytes
+    pub fn decode_compact_id(compact_id: &str) -> Result<Vec<u8>> {
+        URL_SAFE_NO_PAD
+            .decode(compact_id)
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to decode compact ID: {e}")))
+    }
+
+    /// Generate a compact node ID from public key bytes
+    pub fn compact_node_id(public_key: &[u8]) -> String {
+        encode_compact_id(public_key)
+    }
+
+    /// Generate a compact network ID from public key bytes  
+    pub fn compact_network_id(public_key: &[u8]) -> String {
+        encode_compact_id(public_key)
+    }
+
+    /// Extract public key from compact ID
+    pub fn public_key_from_compact_id(compact_id: &str) -> Result<Vec<u8>> {
+        decode_compact_id(compact_id)
+    }
+}
+
+// Re-export key types for convenience
+pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
+pub use error::{KeyError, Result};
+pub use mobile::MobileKeyManager;
+pub use node::NodeKeyManager;

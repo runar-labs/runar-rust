@@ -744,8 +744,7 @@ impl ServiceRegistry {
                         subscription_id
                     ));
                 } else {
-                    // This case might happen if the subscription was already removed concurrently
-                    let msg = format!("Subscription handler not found for topic path {} and ID {}, although ID was mapped. Potential race condition?", topic_path.as_str(), subscription_id);
+                    let msg = format!("Subscription handler not found for topic path {topic_path} and ID {subscription_id}, although ID was mapped. Potential race condition?");
                     self.logger.warn(msg.clone());
                     return Err(anyhow!(msg));
                 }
@@ -781,11 +780,8 @@ impl ServiceRegistry {
                 }
                 Ok(())
             } else {
-                // No subscriptions found for this topic
                 let msg = format!(
-                    "No subscriptions found for topic path {} and ID {}",
-                    topic_path.as_str(),
-                    subscription_id
+                    "No subscriptions found for topic path {topic_path} and ID {subscription_id}",
                 );
                 self.logger.warn(msg.clone());
                 Err(anyhow!(msg))
@@ -857,17 +853,13 @@ impl ServiceRegistry {
                     ));
                     Ok(())
                 } else {
-                    // This case might happen if the subscription was already removed concurrently
-                    let msg = format!("Subscription handler not found for remote topic path {} and ID {}, although ID was mapped. Potential race condition?", topic_path.as_str(), subscription_id);
+                    let msg = format!("Subscription handler not found for remote topic path {topic_path} and ID {subscription_id}, although ID was mapped. Potential race condition?");
                     self.logger.warn(msg.clone());
                     Err(anyhow!(msg))
                 }
             } else {
-                // No subscriptions found for this topic
                 let msg = format!(
-                    "No subscriptions found for remote topic path {} and ID {}",
-                    topic_path.as_str(),
-                    subscription_id
+                    "No subscriptions found for remote topic path {topic_path} and ID {subscription_id}",
                 );
                 self.logger.warn(msg.clone());
                 Err(anyhow!(msg))
@@ -902,7 +894,7 @@ impl ServiceRegistry {
                 continue;
             }
 
-            let search_path = format!("{}/*", &path_str);
+            let search_path = format!("{path_str}/*");
             // Use the network_id from the service_entry's topic_path, which was set by the Node during add_service
             let network_id_string = service_entry.service_topic.network_id().to_string();
             let service_topic_path =
@@ -964,7 +956,7 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
         if !matches.is_empty() {
             let service_entry = &matches[0].content;
             let service = service_entry.service.clone();
-            let search_path = format!("{}/*", &service.path());
+            let search_path = format!("{service_path}/*", service_path = service.path());
             let network_id_string = topic_path.network_id();
             let service_topic_path =
                 TopicPath::new(search_path.as_str(), &network_id_string).unwrap();

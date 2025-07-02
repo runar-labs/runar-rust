@@ -1,0 +1,10 @@
+---
+description: 
+globs: *.rs
+alwaysApply: false
+---
+after making changes make sure the file compiles and all clippy warnings are fixed.
+
+run cargo clippy -p runar_node --all-targets --all-features -- -D warnings
+
+sometimes you need to change multiuplçe files (changin an API) so after chaning the groupod of files so the same. make sure compiles and clippy errors are addressed.

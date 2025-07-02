@@ -2,44 +2,46 @@
 name = "runar-keys"
 version = "0.1.0"
 edition = "2021"
-authors = ["Runar Team"]
-description = "Runar Keys"
-license = "MIT"
 
 [dependencies]
-async-trait = "0.1"
-rusqlite = { version = "0.31.0", features = ["bundled-sqlcipher"] }
-anyhow = "1.0"
+# Core cryptographic libraries
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "serde", "ecdh"] }
+ecdsa = "0.16"
+pkcs8 = { version = "0.10", features = ["std"] }
+rand = "0.8"
+
+# Proper symmetric encryption (replaces XOR cipher)
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+
+# Key derivation and hashing
+hkdf = "0.12"
+sha2 = "0.10"
+
+# Certificate generation and parsing - OpenSSL for proper CA operations
+openssl = { version = "0.10", features = ["vendored"] }
+rcgen = "0.12"  # Still needed for CSR generation and self-signed CA certs
+x509-parser = { version = "0.16", features = ["verify"] }
+rustls-pki-types = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+hex = "0.4"
+base64 = "0.21"  # For compact Base64 URL-safe encoding of public keys
+
+# Logging framework
+runar_common = { path = "../runar-common" }
+
+# Error handling
 thiserror = "1.0"
-bincode = "1.3"
-serde = { version = "1.0", features = ["derive"] } # for crud_sqlite.rs
-uuid = { version = "1.8", features = ["v4", "serde"] } # Added for crud_sqlite.rs
-futures = "0.3"
-tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
-runar_common = { path = "../runar-common", features = ["abstract_service"] }
-runar_node = { path = "../runar-node" }
 
-# Cryptography dependencies for runar-keys POC
-ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "std"] } # For Ed25519 operations, version 2.x is common
-ed25519-hd-key = "^0.3.0" # As specified in keys-management.md (check for latest compatible version)
-sha2 = "0.10" # For SHA-256 hashing
-rand = "0.8" # For random data generation
-hex = "0.4" # For hex encoding/decoding of keys/signatures
+# Async runtime for tests
+tokio = { version = "1.0", features = ["full"] }
 
-# ECDH and Symmetric Encryption
-x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
-chacha20poly1305 = "0.10.1"
-aead = "0.5.2"
-
-# Symmetric encryption dependencies
-hkdf = "0.12" # For HKDF
-aes-gcm = "0.10" # For AES-GCM encryption
-serde_json = "1.0" # For JSON serialization/deserialization
-
+# Optional dependencies for testing
 [dev-dependencies]
-tempfile = "3.10"
-tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "test-util"] }
-runar_common = { path = "../runar-common", features = ["abstract_service"] }
-runar_macros = { path = "../runar-macros" }
-serde_json = "1.0"
-# These are required for integration tests in tests/rusqlite_examples.rs
+tempfile = "3.0"
+bincode = "1.3"
+
+[features]
+default = [] 

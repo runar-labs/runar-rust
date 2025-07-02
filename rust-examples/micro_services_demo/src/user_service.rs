@@ -28,10 +28,7 @@ impl UserService {
         _ctx: &RequestContext,
     ) -> Result<ArcValue> {
         // Placeholder implementation
-        println!(
-            "UserService: Called create_user with username: {}, email: {}",
-            username, email
-        );
+        println!("UserService: Called create_user with username: {username}, email: {email}");
         Ok(ArcValue::from_struct(User {
             id: "user_123".to_string(), // Dummy ID
             username,

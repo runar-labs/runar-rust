@@ -93,24 +93,23 @@ impl GatwayService {
             router.route(
                 &full_path,
                 get(move |State(ctx): State<LifecycleContext>| async move {
-                    let req_path = format!("{}/{}", service_path_clone, action_name_clone);
+                    let req_path = format!("{service_path_clone}/{action_name_clone}");
                     let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                     match ctx.request::<(), ArcValue>(req_path, None).await {
                         Ok(mut arc_value) => {
                             let json_value = arc_value
                                 .to_json_value()
                                 .expect("Failed to convert ArcValue to JSON");
-                            ctx.debug(format!("Response: {}", json_value));
+                            ctx.debug(format!("Response: {json_value}"));
                             (StatusCode::OK, AxumJson(json_value)).into_response()
                         }
                         Err(e) => {
                             ctx.error(format!(
-                                "Error calling action: '{}': {}",
-                                req_path_for_json_err, e
+                                "Error calling action: '{req_path_for_json_err}': {e}"
                             ));
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Service request error: {}", e),
+                                format!("Service request error: {e}"),
                             )
                                 .into_response()
                         }
@@ -125,11 +124,10 @@ impl GatwayService {
                     move |State(ctx): State<LifecycleContext>,
                           AxumJson(payload): AxumJson<JsonValue>| async move {
                         ctx.debug(format!(
-                            "handling post request for action: {} with payload: {}",
-                            &action_name_clone, &payload
+                            "handling post request for action: {action_name_clone} with payload: {payload}"
                         ));
 
-                        let req_path = format!("{}/{}", service_path_clone, action_name_clone);
+                        let req_path = format!("{service_path_clone}/{action_name_clone}");
                         let request_arc_value = ArcValue::from_json(payload);
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
@@ -141,17 +139,16 @@ impl GatwayService {
                             .await
                         {
                             Ok(json_value) => {
-                                ctx.debug(format!("Response: {}", json_value));
+                                ctx.debug(format!("Response: {json_value}"));
                                 (StatusCode::OK, AxumJson(json_value)).into_response()
                             }
                             Err(e) => {
                                 ctx.error(format!(
-                                    "Error calling action: '{}': {}",
-                                    req_path_for_json_err, e
+                                    "Error calling action: '{req_path_for_json_err}': {e}"
                                 ));
                                 (
                                     StatusCode::INTERNAL_SERVER_ERROR,
-                                    format!("Service request error: {}", e),
+                                    format!("Service request error: {e}"),
                                 )
                                     .into_response()
                             }
@@ -185,10 +182,14 @@ impl AbstractService for GatwayService {
         self.network_id.clone()
     }
 
+    fn set_network_id(&mut self, network_id: String) {
+        self.network_id = Some(network_id);
+    }
+
     async fn init(&self, context: LifecycleContext) -> Result<()> {
         context.info(format!(
-            "Initializing GatwayService '{}' (path: '{}', version: '{}') listening on {}",
-            self.name, self.path, self.version, self.listen_addr
+            "Initializing GatwayService '{name}' (path: '{path}', version: '{version}') listening on {listen_addr}",
+            name=self.name, path=self.path, version=self.version, listen_addr=self.listen_addr
         ));
 
         // Subscribe to service additions. Dynamic route updates are not yet implemented
@@ -209,8 +210,7 @@ impl AbstractService for GatwayService {
                                 // TODO: Implement dynamic route updates if required
                             } else {
                                 event_ctx.warn(format!(
-                        "GatwayService '{}' received $registry/service/added event with no value",
-                        service_name_clone
+                        "GatwayService '{service_name_clone}' received $registry/service/added event with no value"
                     ));
                             }
                             Ok(())
@@ -224,7 +224,10 @@ impl AbstractService for GatwayService {
         // Removed placeholder 'add' action registration.
         // The Gateway's role is to expose other services, not provide its own actions.
 
-        context.info(format!("GatwayService '{}' initialized.", self.name));
+        context.info(format!(
+            "GatwayService '{name}' initialized.",
+            name = self.name
+        ));
         Ok(())
     }
 
@@ -240,8 +243,8 @@ impl AbstractService for GatwayService {
         );
 
         context.info(format!(
-            "GatwayService '{}': Loading services and building routes...",
-            self.name
+            "GatwayService '{name}': Loading services and building routes...",
+            name = self.name
         ));
 
         match context
@@ -256,16 +259,13 @@ impl AbstractService for GatwayService {
                         continue;
                     }
                     context.info(format!(
-                        "GatwayService '{}': Processing service '{}' (path: '{}') with {} actions",
-                        self.name,
-                        service_meta.name,
-                        service_meta.service_path,
-                        service_meta.actions.len()
+                        "GatwayService '{name}': Processing service '{service_name}' (path: '{service_path}') with {actions_len} actions",
+                        name=self.name, service_name=service_meta.name, service_path=service_meta.service_path, actions_len=service_meta.actions.len()
                     ));
                     for action_meta in service_meta.actions.iter() {
                         context.info(format!(
-                            "GatwayService '{}': Adding route for action '{}/{}'",
-                            self.name, service_meta.service_path, action_meta.name
+                            "GatwayService '{name}': Adding route for action '{service_path}/{action_name}'",
+                            name=self.name, service_path=service_meta.service_path, action_name=action_meta.name
                         ));
                         router =
                             self.add_route_to_router(router.clone(), &service_meta, action_meta);
@@ -274,8 +274,9 @@ impl AbstractService for GatwayService {
             }
             Err(e) => {
                 let err_msg = format!(
-                    "GatwayService '{}': Failed to list services from registry: {}",
-                    self.name, e
+                    "GatwayService '{name}': Failed to list services from registry: {e}",
+                    name = self.name,
+                    e = e
                 );
                 context.error(err_msg.clone());
                 return Err(anyhow!(err_msg));
@@ -287,8 +288,9 @@ impl AbstractService for GatwayService {
 
         let addr = self.listen_addr;
         context.info(format!(
-            "GatwayService '{}' starting HTTP server on {}",
-            self.name, addr
+            "GatwayService '{name}' starting HTTP server on {addr}",
+            name = self.name,
+            addr = addr
         ));
 
         let server_name_for_shutdown = self.name.clone();
@@ -301,22 +303,21 @@ impl AbstractService for GatwayService {
             .with_graceful_shutdown(async move {
                 rx.await.ok();
                 println!(
-                    "GatwayService '{}' HTTP server shutting down gracefully.",
-                    server_name_for_shutdown
+                    "GatwayService '{server_name_for_shutdown}' HTTP server shutting down gracefully.",
                 );
             })
             .await
             .unwrap_or_else(|e| {
                 eprintln!(
-                    "GatwayService '{}' HTTP server error: {}",
-                    server_name_for_error, e
+                    "GatwayService '{server_name_for_error}' HTTP server error: {e}",
                 );
             });
         });
 
         context.info(format!(
-            "GatwayService '{}' HTTP server started and listening on {}",
-            self.name, addr
+            "GatwayService '{name}' HTTP server started and listening on {addr}",
+            name = self.name,
+            addr = addr
         ));
         Ok(())
     }
@@ -324,22 +325,22 @@ impl AbstractService for GatwayService {
     async fn stop(&self, context: LifecycleContext) -> Result<()> {
         if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
             context.info(format!(
-                "GatwayService '{}': Sending shutdown signal to HTTP server...",
-                self.name
+                "GatwayService '{name}': Sending shutdown signal to HTTP server...",
+                name = self.name
             ));
             if tx.send(()).is_err() {
                 context.warn(format!(
-                    "GatwayService '{}': Failed to send shutdown signal, receiver already dropped.",
-                    self.name
+                    "GatwayService '{name}': Failed to send shutdown signal, receiver already dropped.",
+                    name=self.name
                 ));
             }
         } else {
             context.warn(format!(
-                "GatwayService '{}': Shutdown signal sender not found or already taken.",
-                self.name
+                "GatwayService '{name}': Shutdown signal sender not found or already taken.",
+                name = self.name
             ));
         }
-        context.info(format!("GatwayService '{}' stopped.", self.name));
+        context.info(format!("GatwayService '{name}' stopped.", name = self.name));
         Ok(())
     }
 }

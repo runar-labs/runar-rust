@@ -169,15 +169,15 @@ mod topic_path_wildcard_tests {
         // Look up each possible template pattern
         for template in possible_templates {
             if let Some(handler) = handlers.get(&template) {
-                println!("Found handler for template: {}", template);
-                println!("Handler: {}", handler);
+                println!("Found handler for template: {template}");
+                println!("Handler: {handler}");
                 // Found a matching handler, use it
                 return;
             }
         }
 
         // No matching template found
-        panic!("No matching template found for {}", concrete_path);
+        panic!("No matching template found for {concrete_path}");
     }
 
     /// Generate all possible template patterns that could match a concrete path
@@ -199,17 +199,14 @@ mod topic_path_wildcard_tests {
             if segments.len() >= 4 && segments[0] == "services" && segments[2] == "actions" {
                 // Create services/{service_path}/actions/{action} pattern
                 let network_id = concrete_path.split(':').next().unwrap_or("main");
-                let template = format!(
-                    "{}:services/{{service_path}}/actions/{{action}}",
-                    network_id
-                );
+                let template = format!("{network_id}:services/{{service_path}}/actions/{{action}}");
                 templates.push(template);
             }
 
             if segments.len() >= 3 && segments[0] == "services" {
                 // Create services/*/state pattern (wildcard)
                 let network_id = concrete_path.split(':').next().unwrap_or("main");
-                let template = format!("{}:services/*/state", network_id);
+                let template = format!("{network_id}:services/*/state");
                 templates.push(template);
             }
         }
@@ -246,8 +243,8 @@ mod topic_path_wildcard_tests {
         let mut found_handler = false;
         for pattern in possible_patterns {
             if let Some(handler) = handlers.get(&pattern) {
-                println!("Found handler for wildcard pattern: {}", pattern);
-                println!("Handler: {}", handler);
+                println!("Found handler for wildcard pattern: {pattern}");
+                println!("Handler: {handler}");
                 found_handler = true;
                 break;
             }
@@ -255,8 +252,7 @@ mod topic_path_wildcard_tests {
 
         assert!(
             found_handler,
-            "No matching wildcard handler found for {}",
-            concrete_path
+            "No matching wildcard handler found for {concrete_path}",
         );
     }
 
@@ -281,7 +277,7 @@ mod topic_path_wildcard_tests {
                     patterns.push(wildcard_middle);
 
                     // Add a multi-segment wildcard pattern
-                    patterns.push(format!("{}:services/>", network_prefix));
+                    patterns.push(format!("{network_prefix}:services/>"));
                 }
             }
         }
@@ -360,7 +356,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers1 {
             let context = Arc::new(EventContext::new(
                 &topic1,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -372,7 +368,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers2 {
             let context = Arc::new(EventContext::new(
                 &topic2,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -384,7 +380,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers3 {
             let context = Arc::new(EventContext::new(
                 &topic3,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -396,7 +392,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers4 {
             let context = Arc::new(EventContext::new(
                 &topic4,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -408,7 +404,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers5 {
             let context = Arc::new(EventContext::new(
                 &topic5,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -506,7 +502,7 @@ mod service_registry_wildcard_tests {
         for (_, handler) in handlers {
             let context = Arc::new(EventContext::new(
                 &topic,
-                Arc::new(Node::new(NodeConfig::new("test-node", "default")).await?),
+                Arc::new(Node::new(NodeConfig::new_test_config("test-node", "default")).await?),
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;

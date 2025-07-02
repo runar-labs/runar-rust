@@ -95,7 +95,7 @@ impl NetworkTransport for MockTransport {
         self.sent_messages.write().await.push(message.clone());
         if let Some(sink) = &self.message_sink {
             if let Err(e) = sink.send(message).await {
-                self.logger.error(format!("MockTransport: Failed to send message to sink: {}", e));
+                self.logger.error(format!("MockTransport: Failed to send message to sink: {e}"));
             }
         }
         Ok(())

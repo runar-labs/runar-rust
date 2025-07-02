@@ -9,6 +9,7 @@ use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::ArcValue;
 use runar_macros::{action, publish, service, subscribe};
 use runar_node::services::{EventContext, RequestContext};
+use runar_node::AbstractService;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc}; // Added for metadata testing
 
@@ -21,6 +22,7 @@ struct MyData {
     float_field: f64,
     vector_field: Vec<i32>,
     map_field: HashMap<String, i32>,
+    network_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -107,7 +109,7 @@ impl TestService {
     #[action(path = "my_data")]
     async fn get_my_data(&self, id: i32, ctx: &RequestContext) -> Result<MyData> {
         // Log using the context
-        ctx.debug(format!("get_my_data id: {}", id));
+        ctx.debug(format!("get_my_data id: {id}"));
 
         let total_res: f64 = ctx
             .request(
@@ -129,6 +131,7 @@ impl TestService {
             float_field: total,
             vector_field: vec![1, 2, 3],
             map_field: HashMap::new(),
+            network_id: self.network_id(),
         };
         ctx.publish("my_data_changed", Some(ArcValue::from_struct(data.clone())))
             .await?;
@@ -163,7 +166,7 @@ impl TestService {
 
     #[subscribe(path = "math/added")]
     async fn on_added(&self, total: f64, ctx: &EventContext) -> Result<()> {
-        ctx.debug(format!("on_added: {}", total));
+        ctx.debug(format!("on_added: {total}"));
 
         let mut lock = self.store.lock().await;
         let existing = lock.get("added");
@@ -202,7 +205,7 @@ impl TestService {
 
     #[subscribe(path = "math/age_changed")]
     async fn on_age_changed(&self, new_age: i32, ctx: &EventContext) -> Result<()> {
-        ctx.debug(format!("age_changed: {}", new_age));
+        ctx.debug(format!("age_changed: {new_age}"));
 
         let mut lock = self.store.lock().await;
         let existing = lock.get("age_changed");
@@ -223,7 +226,7 @@ impl TestService {
     #[action]
     async fn add(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Adding {} + {}", a, b));
+        ctx.debug(format!("Adding {a} + {b}"));
         // Return the result
         Ok(a + b)
     }
@@ -232,7 +235,7 @@ impl TestService {
     #[action]
     async fn subtract(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Subtracting {} - {}", a, b));
+        ctx.debug(format!("Subtracting {a} - {b}"));
 
         // Return the result
         Ok(a - b)
@@ -242,7 +245,7 @@ impl TestService {
     #[action("multiply_numbers")]
     async fn multiply(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Multiplying {} * {}", a, b));
+        ctx.debug(format!("Multiplying {a} * {b}"));
 
         // Return the result
         Ok(a * b)
@@ -252,7 +255,7 @@ impl TestService {
     #[action]
     async fn divide(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Dividing {} / {}", a, b));
+        ctx.debug(format!("Dividing {a} / {b}"));
 
         // Check for division by zero
         if b == 0.0 {
@@ -303,8 +306,8 @@ mod tests {
         let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
 
         // Create a node with a test network ID
-        let mut config =
-            NodeConfig::new("test-node", "test_network").with_logging_config(logging_config);
+        let mut config = NodeConfig::new_test_config("test-node", "test_network")
+            .with_logging_config(logging_config);
         // Disable networking
         config.network_config = None;
         let mut node = Node::new(config).await.unwrap();
@@ -468,6 +471,7 @@ mod tests {
                 float_field: 1500.0,
                 vector_field: vec![1, 2, 3],
                 map_field: HashMap::new(),
+                network_id: Some("test_network".to_string()),
             }
         );
 

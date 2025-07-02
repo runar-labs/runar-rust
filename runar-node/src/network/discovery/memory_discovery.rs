@@ -142,7 +142,7 @@ impl MemoryDiscovery {
         }
 
         self.logger
-            .debug(format!("Added node to registry: {}", node_key));
+            .debug(format!("Added node to registry: {node_key}"));
 
         let peer_info = PeerInfo {
             public_key: node_info.peer_id.public_key.clone(),
@@ -166,8 +166,7 @@ impl MemoryDiscovery {
 impl NodeDiscovery for MemoryDiscovery {
     async fn init(&self, options: DiscoveryOptions) -> Result<()> {
         self.logger.info(format!(
-            "Initializing MemoryDiscovery with options: {:?}",
-            options
+            "Initializing MemoryDiscovery with options: {options:?}"
         ));
 
         *self.options.write().unwrap() = Some(options.clone());

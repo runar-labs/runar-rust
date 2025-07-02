@@ -66,7 +66,7 @@ impl PathParamsService {
         let param_values: HashMap<String, String> = context.path_params.clone();
 
         // Log the parameters we extracted
-        context.info(format!("Extracted parameters: {:?}", param_values));
+        context.info(format!("Extracted parameters: {param_values:?}"));
 
         // Return the parameters
         Ok(ArcValue::from_map(param_values))
@@ -93,6 +93,9 @@ impl AbstractService for PathParamsService {
 
     fn network_id(&self) -> Option<String> {
         self.network_id.clone()
+    }
+    fn set_network_id(&mut self, network_id: String) {
+        self.network_id = Some(network_id);
     }
 
     async fn init(&self, context: LifecycleContext) -> Result<()> {
