@@ -739,3 +739,21 @@ let decrypted = node_keystore.decrypt_envelope_data(&envelope)?;
 ```
 
 The design eliminates all the complexity around policies, storage, and node integration that was confusing the scope, focusing purely on the macro system and SerializerRegistry integration that forms the foundation for selective field encryption.
+
+## Registration & Usage Update (2025-07)
+
+**Registration**: Encryptable types must now be registered explicitly:
+
+```rust
+registry.register_encryptable::<Profile>()?;
+registry.register::<Metadata>()?; // plaintext type
+```
+
+**Deserialisation helper**: To obtain the concrete value directly (with automatic decryption) use
+
+```rust
+let profile: Profile = registry.deserialize_bytes_to(&bytes)?;
+```
+
+This bypasses the lazy `ArcValue` layer and guarantees that the custom deserialiser (which handles
+`EncryptedProfile` → `Profile`) is invoked.

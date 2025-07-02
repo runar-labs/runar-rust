@@ -159,8 +159,13 @@ impl NodeKeyManager {
             .get(network_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
-        // Network encrypted key is now always present (required field)
+        // Ensure the encrypted envelope key is present
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
+        if encrypted_envelope_key.is_empty() {
+            return Err(KeyError::DecryptionError(
+                "Envelope missing network_encrypted_key".to_string(),
+            ));
+        }
 
         let envelope_key = self.decrypt_key_with_ecdsa(encrypted_envelope_key, network_key)?;
         self.decrypt_with_symmetric_key(&envelope_data.encrypted_data, &envelope_key)
@@ -623,6 +628,40 @@ impl NodeKeyManager {
         ));
         self.decrypt_key_with_ecdsa(encrypted_message, &self.node_key_pair)
     }
+
+    // ---------------------------------------------------------------------
+    // Compatibility API: mirror MobileKeyManager::encrypt_with_envelope
+    // ---------------------------------------------------------------------
+    /// Create an envelope‐encrypted payload. For the node side we only
+    /// support network recipients – any supplied `profile_ids` will be
+    /// ignored. This signature exists solely to allow generic code (e.g.
+    /// serializer key-store adapter) to call the same method on both key
+    /// manager types without `cfg` branching.
+    pub fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        network_id: &str,
+        _profile_ids: Vec<String>,
+    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
+        // Nodes only support network-wide encryption.
+        self.create_envelope_for_network(data, network_id)
+    }
+
+    /// Envelope-encrypt for a recipient network public key.
+    pub fn encrypt_for_public_key(
+        &self,
+        data: &[u8],
+        public_key: &[u8],
+    ) -> Result<crate::mobile::EnvelopeEncryptedData> {
+        let network_id = crate::compact_ids::compact_network_id(public_key);
+        self.encrypt_with_envelope(data, &network_id, Vec::new())
+    }
+
+    /// Check if the manager holds the private key for the given network public key.
+    pub fn has_public_key(&self, public_key: &[u8]) -> bool {
+        let network_id = crate::compact_ids::compact_network_id(public_key);
+        self.network_keys.contains_key(&network_id)
+    }
 }
 
 /// Certificate information for the node
@@ -701,5 +740,31 @@ impl NodeKeyManager {
             certificate_status,
             logger,
         })
+    }
+}
+
+impl crate::EnvelopeCrypto for NodeKeyManager {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        network_id: &str,
+        _profile_ids: Vec<String>,
+    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
+        // Nodes only support network-wide encryption.
+        self.create_envelope_for_network(data, network_id)
+    }
+
+    fn decrypt_envelope_data(
+        &self,
+        env: &crate::mobile::EnvelopeEncryptedData,
+    ) -> crate::Result<Vec<u8>> {
+        // Guard: ensure the encrypted key is present
+        if env.network_encrypted_key.is_empty() {
+            return Err(crate::error::KeyError::DecryptionError(
+                "Envelope missing network_encrypted_key".into(),
+            ));
+        }
+
+        NodeKeyManager::decrypt_envelope_data(self, env)
     }
 }

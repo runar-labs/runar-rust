@@ -63,3 +63,20 @@ pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificat
 pub use error::{KeyError, Result};
 pub use mobile::MobileKeyManager;
 pub use node::NodeKeyManager;
+
+// ---------------------------------------------------------------------------
+// Common envelope crypto abstraction (shared with serializer)
+// ---------------------------------------------------------------------------
+use crate::mobile::EnvelopeEncryptedData;
+
+/// High-level envelope encryption / decryption used by higher layers.
+pub trait EnvelopeCrypto: Send + Sync {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        network_id: &str,
+        profile_ids: Vec<String>,
+    ) -> Result<EnvelopeEncryptedData>;
+
+    fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> Result<Vec<u8>>;
+}

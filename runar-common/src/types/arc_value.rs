@@ -77,6 +77,8 @@ pub struct LazyDataWithOffset {
     pub start_offset: usize,
     /// End offset of the relevant data within the buffer
     pub end_offset: usize,
+    /// Optional deserializer captured from SerializerRegistry (encryption-aware)
+    pub deserializer: Option<crate::types::arc_value::DeserializerFnWrapper>,
     // NOTE: We no longer store the deserializer function here, as we use direct bincode
 }
 
@@ -295,6 +297,22 @@ impl SerializerRegistry {
         Ok(())
     }
 
+    /// Register a custom serializer with a specific type name
+    pub fn register_custom_serializer(
+        &mut self,
+        type_name: &str,
+        serializer: SerializationFnInner,
+    ) -> Result<()> {
+        if self.is_sealed {
+            return Err(anyhow!(
+                "Cannot register new types after registry is sealed"
+            ));
+        }
+
+        self.serializers.insert(type_name.to_string(), serializer);
+        Ok(())
+    }
+
     /// Serialize a value using the appropriate registered handler
     pub fn serialize(&self, value: &dyn Any, type_name: &str) -> Result<Vec<u8>> {
         if let Some(serializer) = self.serializers.get(type_name) {
@@ -388,6 +406,7 @@ impl SerializerRegistry {
                 original_buffer: bytes_arc.clone(), // Clone the Arc (cheap)
                 start_offset: data_start_offset,
                 end_offset: data_end_offset,
+                deserializer: None, // Default to None, specific constructors will populate
             };
 
             // Store Arc<LazyDataWithOffset> in value, keeping original category
@@ -989,20 +1008,16 @@ impl ArcValue {
                     }
 
                     let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
-                    let deserialized_map: HashMap<K, V> =
-                        bincode::deserialize(data_slice).map_err(|e| {
-                            // Note: Consider if actual_value should be put back into self.value on deserialize error.
-                            // Original code didn't, so maintaining that behavior for now.
-                            anyhow!(
-                                "Failed to deserialize lazy map data for type '{}' into HashMap<{}, {}>: {}",
-                                type_name_clone,
-                                std::any::type_name::<K>(),
-                                std::any::type_name::<V>(),
-                                e
-                            )
-                        })?;
+                    let deserialized_map: HashMap<K, V> = bincode::deserialize(data_slice).map_err(|e| {
+                        anyhow!(
+                            "Failed to deserialize lazy map data for type '{}' into HashMap<{}, {}>: {}",
+                            type_name_clone,
+                            std::any::type_name::<K>(),
+                            std::any::type_name::<V>(),
+                            e
+                        )
+                    })?;
 
-                    // Replace internal lazy value with the eager one
                     *actual_value = ErasedArc::new(Arc::new(deserialized_map));
                 }
                 // Explicitly assign and return
@@ -1071,16 +1086,32 @@ impl ArcValue {
                     }
 
                     let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
-                    let deserialized_struct: T = bincode::deserialize(data_slice).map_err(|e| {
-                        anyhow!(
-                            "Failed to deserialize lazy struct data for type '{}' into {}: {}",
-                            type_name_clone,
-                            std::any::type_name::<T>(),
-                            e
-                        )
-                    })?;
+                    // First try plain bincode into the requested T
+                    if let Ok(deserialized_struct) = bincode::deserialize::<T>(data_slice) {
+                        *actual_value = ErasedArc::new(Arc::new(deserialized_struct));
+                    } else {
+                        // Fallback: use the captured deserializer wrapper (may decrypt)
+                        let lazy_data_arc = actual_value.get_lazy_data()?;
+                        if let Some(wrapper) = &lazy_data_arc.deserializer {
+                            let boxed = wrapper
+                                .call(data_slice)
+                                .map_err(|e| anyhow!("Lazy deserializer error: {e}"))?;
 
-                    *actual_value = ErasedArc::new(Arc::new(deserialized_struct));
+                            let concrete = boxed.downcast::<T>().map_err(|_| {
+                                anyhow!(
+                                    "Lazy deserializer returned unexpected type (expected {})",
+                                    std::any::type_name::<T>()
+                                )
+                            })?;
+
+                            *actual_value = ErasedArc::new(Arc::new(*concrete));
+                        } else {
+                            return Err(anyhow!(
+                                "No deserializer available for lazy struct type {}",
+                                type_name_clone
+                            ));
+                        }
+                    }
                 }
                 // Explicitly assign and return
                 actual_value.as_arc::<T>().map_err(|e| {

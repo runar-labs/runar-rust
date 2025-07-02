@@ -2377,6 +2377,7 @@ name = "runar-keys"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "anyhow",
  "base64 0.21.7",
  "bincode",
  "chacha20poly1305",
@@ -2396,6 +2397,29 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "x509-parser",
+]
+
+[[package]]
+name = "runar-serializer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "log",
+ "runar-keys",
+ "runar-serializer-macros",
+ "runar_common",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runar-serializer-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
 ]
 
 [[package]]
