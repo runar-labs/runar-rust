@@ -1093,11 +1093,23 @@ impl ArcValue {
                         // Fallback: use the captured deserializer wrapper (may decrypt)
                         let lazy_data_arc = actual_value.get_lazy_data()?;
                         if let Some(wrapper) = &lazy_data_arc.deserializer {
-                            if let Ok(any_box) = wrapper.call(data_slice) {
-                                if let Ok(concrete) = any_box.downcast::<T>() {
-                                    *actual_value = ErasedArc::new(Arc::new(*concrete));
-                                }
-                            }
+                            let boxed = wrapper
+                                .call(data_slice)
+                                .map_err(|e| anyhow!("Lazy deserializer error: {e}"))?;
+
+                            let concrete = boxed.downcast::<T>().map_err(|_| {
+                                anyhow!(
+                                    "Lazy deserializer returned unexpected type (expected {})",
+                                    std::any::type_name::<T>()
+                                )
+                            })?;
+
+                            *actual_value = ErasedArc::new(Arc::new(*concrete));
+                        } else {
+                            return Err(anyhow!(
+                                "No deserializer available for lazy struct type {}",
+                                type_name_clone
+                            ));
                         }
                     }
                 }

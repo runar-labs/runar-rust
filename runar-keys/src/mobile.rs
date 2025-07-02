@@ -567,8 +567,12 @@ impl MobileKeyManager {
     /// Encrypt data for a specific profile (legacy method for compatibility)
     pub fn encrypt_for_profile(&self, data: &[u8], profile_id: &str) -> Result<Vec<u8>> {
         // Use envelope encryption with just this profile
-        let envelope_data =
-            self.encrypt_with_envelope(data, "default", vec![profile_id.to_string()])?;
+        let envelope_data = MobileKeyManager::encrypt_with_envelope(
+            self,
+            data,
+            "default",
+            vec![profile_id.to_string()],
+        )?;
         // Return just the encrypted data for compatibility
         Ok(envelope_data.encrypted_data)
     }
@@ -576,7 +580,8 @@ impl MobileKeyManager {
     /// Encrypt data for a network (legacy method for compatibility)  
     pub fn encrypt_for_network(&self, data: &[u8], network_id: &str) -> Result<Vec<u8>> {
         // Use envelope encryption with just this network
-        let envelope_data = self.encrypt_with_envelope(data, network_id, vec![])?;
+        let envelope_data =
+            MobileKeyManager::encrypt_with_envelope(self, data, network_id, vec![])?;
         // Return just the encrypted data for compatibility
         Ok(envelope_data.encrypted_data)
     }
@@ -619,7 +624,7 @@ impl crate::EnvelopeCrypto for MobileKeyManager {
         network_id: &str,
         profile_ids: Vec<String>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        self.encrypt_with_envelope(data, network_id, profile_ids)
+        MobileKeyManager::encrypt_with_envelope(self, data, network_id, profile_ids)
     }
 
     fn decrypt_envelope_data(

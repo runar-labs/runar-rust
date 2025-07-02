@@ -637,14 +637,12 @@ impl NodeKeyManager {
         data: &[u8],
         network_id: &str,
         profile_ids: Vec<String>,
-    ) -> Result<crate::mobile::EnvelopeEncryptedData> {
+    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         if !profile_ids.is_empty() {
-            return Err(KeyError::InvalidOperation(
-                "NodeKeyManager cannot encrypt for profile recipients".to_string(),
+            return Err(crate::error::KeyError::InvalidOperation(
+                "Node cannot encrypt for profile recipients".into(),
             ));
         }
-
-        // Delegate to the existing helper (network-only)
         self.create_envelope_for_network(data, network_id)
     }
 
@@ -756,7 +754,8 @@ impl crate::EnvelopeCrypto for NodeKeyManager {
                 "Node cannot encrypt for profile recipients".into(),
             ));
         }
-        self.encrypt_with_envelope(data, network_id, profile_ids)
+        // Call the inherent method explicitly to avoid infinite recursion
+        NodeKeyManager::encrypt_with_envelope(self, data, network_id, profile_ids)
     }
 
     fn decrypt_envelope_data(
