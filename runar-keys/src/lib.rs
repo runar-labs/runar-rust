@@ -22,6 +22,7 @@
 
 pub mod certificate;
 pub mod error;
+pub mod keystore;
 pub mod mobile;
 pub mod node;
 
@@ -61,5 +62,6 @@ pub mod compact_ids {
 // Re-export key types for convenience
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
 pub use error::{KeyError, Result};
+pub use keystore::{EncryptedEnvelope, EncryptedKey, KeyStore};
 pub use mobile::MobileKeyManager;
 pub use node::NodeKeyManager;

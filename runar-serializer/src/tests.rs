@@ -1,0 +1,179 @@
+use crate as runar_serializer;
+use crate::*;
+use anyhow::Result;
+use runar_common::logging::{Component, Logger};
+use runar_common::types::ArcValue;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+// Real key managers from runar-keys
+use runar_keys::{compact_ids, mobile::MobileKeyManager, node::NodeKeyManager};
+
+// Test structs
+#[derive(Encrypt, serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
+pub struct TestProfile {
+    pub id: String,
+    #[runar(user)]
+    pub name: String,
+    #[runar(user, system)]
+    pub email: String,
+    #[runar(system)]
+    pub admin_notes: String,
+    pub created_at: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
+struct PlainData {
+    pub value: String,
+    pub count: u32,
+}
+
+#[test]
+fn test_end_to_end_encryption_real_keystores() -> Result<()> {
+    // Logger
+    let logger = Arc::new(Logger::new_root(Component::System, "serializer-e2e"));
+
+    // ---------------- Mobile Setup ----------------
+    let mut mobile_mgr = MobileKeyManager::new(logger.clone())?;
+    mobile_mgr.initialize_user_root_key()?;
+
+    // Derive a profile key and network key
+    let profile_pk = mobile_mgr.derive_user_profile_key("user")?;
+    let network_id = mobile_mgr.generate_network_data_key()?;
+    let network_pub = compact_ids::public_key_from_compact_id(&network_id)?;
+
+    // ---------------- Node Setup ----------------
+    let mut node_mgr = NodeKeyManager::new(logger.clone())?;
+
+    // Provide network key to node
+    let nk_msg =
+        mobile_mgr.create_network_key_message(&network_id, &node_mgr.get_node_public_key())?;
+    node_mgr.install_network_key(nk_msg)?;
+
+    // ---------------- Label Resolvers ----------------
+    let mobile_label_config = KeyMappingConfig {
+        label_mappings: HashMap::from([
+            ("user".to_string(), profile_pk.clone()),
+            ("system".to_string(), network_pub.clone()),
+        ]),
+    };
+    let node_label_config = KeyMappingConfig {
+        label_mappings: HashMap::from([("system".to_string(), network_pub.clone())]),
+    };
+
+    let mobile_resolver = ConfigurableLabelResolver::new(mobile_label_config);
+    let node_resolver = ConfigurableLabelResolver::new(node_label_config);
+
+    // ---------------- Serializer Registries ----------------
+    let mut mobile_registry = SerializerRegistry::with_keystore(
+        logger.clone(),
+        Arc::new(mobile_mgr),
+        Arc::new(mobile_resolver),
+    );
+    mobile_registry.register_encryptable::<TestProfile>()?;
+    mobile_registry.register::<PlainData>()?;
+
+    let mut node_registry = SerializerRegistry::with_keystore(
+        logger.clone(),
+        Arc::new(node_mgr),
+        Arc::new(node_resolver),
+    );
+    node_registry.register_encryptable::<TestProfile>()?;
+    node_registry.register::<PlainData>()?;
+
+    // ---------------- Test Data ----------------
+    let profile = TestProfile {
+        id: "user123".to_string(),
+        name: "Alice".to_string(),
+        email: "alice@example.com".to_string(),
+        admin_notes: "VIP user".to_string(),
+        created_at: 1234567890,
+    };
+
+    let plain_data = PlainData {
+        value: "test".to_string(),
+        count: 42,
+    };
+
+    // Serialize on mobile (encryption occurs)
+    let mobile_arc = ArcValue::from_struct(profile.clone());
+    let serialized_bytes = mobile_registry.serialize_value(&mobile_arc)?;
+
+    // Deserialize on mobile – should recover full data
+    let roundtrip_profile: TestProfile = mobile_registry.deserialize_bytes_to(&serialized_bytes)?;
+    assert_eq!(roundtrip_profile, profile);
+
+    // Deserialize on node – only system fields decrypted
+    let node_profile: TestProfile = node_registry.deserialize_bytes_to(&serialized_bytes)?;
+    assert_eq!(node_profile.id, "user123");
+    assert_eq!(node_profile.name, "Alice");
+    assert_eq!(node_profile.email, "alice@example.com");
+    assert_eq!(node_profile.admin_notes, "VIP user");
+    assert_eq!(node_profile.created_at, 1234567890);
+
+    // Plain data path
+    let plain_arc = ArcValue::from_struct(plain_data.clone());
+    let plain_bytes = mobile_registry.serialize_value(&plain_arc)?;
+    let plain_roundtrip: PlainData = node_registry.deserialize_bytes_to(&plain_bytes)?;
+    assert_eq!(plain_roundtrip, plain_data);
+
+    Ok(())
+}
+
+#[test]
+fn test_label_resolver() {
+    let config = KeyMappingConfig {
+        label_mappings: HashMap::from([
+            ("user".to_string(), vec![0x01, 0x02, 0x03]),
+            ("system".to_string(), vec![0x04, 0x05, 0x06]),
+        ]),
+    };
+
+    let resolver = ConfigurableLabelResolver::new(config);
+
+    assert!(resolver.can_resolve("user"));
+    assert!(resolver.can_resolve("system"));
+    assert!(!resolver.can_resolve("unknown"));
+
+    assert_eq!(
+        resolver.resolve_label("user").unwrap(),
+        Some(vec![0x01, 0x02, 0x03])
+    );
+    assert_eq!(
+        resolver.resolve_label("system").unwrap(),
+        Some(vec![0x04, 0x05, 0x06])
+    );
+    assert_eq!(resolver.resolve_label("unknown").unwrap(), None);
+
+    let available = resolver.available_labels();
+    assert!(available.contains(&"user".to_string()));
+    assert!(available.contains(&"system".to_string()));
+    assert_eq!(available.len(), 2);
+}
+
+#[test]
+fn test_encrypted_label_group() {
+    let group = EncryptedLabelGroup {
+        label: "test".to_string(),
+        envelope: EncryptedEnvelope {
+            encrypted_data: vec![1, 2, 3],
+            encrypted_keys: vec![],
+            nonce: vec![],
+            algorithm: "test".to_string(),
+        },
+    };
+
+    assert!(!group.is_empty());
+
+    let empty_group = EncryptedLabelGroup {
+        label: "test".to_string(),
+        envelope: EncryptedEnvelope {
+            encrypted_data: vec![],
+            encrypted_keys: vec![],
+            nonce: vec![],
+            algorithm: "test".to_string(),
+        },
+    };
+
+    assert!(empty_group.is_empty());
+}

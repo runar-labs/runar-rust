@@ -607,6 +607,61 @@ impl MobileKeyManager {
             .ok_or_else(|| KeyError::KeyNotFound("User root key not initialized".to_string()))?;
         self.decrypt_key_with_ecdsa(encrypted_message, root_key_pair)
     }
+
+    /// Encrypt data for an arbitrary recipient identified solely by their
+    /// public key. The method determines whether the key belongs to a network
+    /// or a profile internally and delegates to the appropriate helper.
+    pub fn encrypt_for_public_key(
+        &self,
+        data: &[u8],
+        public_key: &[u8],
+    ) -> Result<EnvelopeEncryptedData> {
+        // First, attempt as network key using its compact ID
+        let network_id = crate::compact_ids::compact_network_id(public_key);
+        if let Ok(env) = self.encrypt_with_envelope(data, &network_id, Vec::new()) {
+            return Ok(env);
+        }
+
+        // If not a network key, attempt to locate a matching profile key
+        let profile_id_opt = self.user_profile_keys.iter().find_map(|(pid, kp)| {
+            if kp.public_key_bytes() == public_key {
+                Some(pid.clone())
+            } else {
+                None
+            }
+        });
+
+        if let Some(profile_id) = profile_id_opt {
+            // Use the first available network key as anchor for the envelope
+            let anchor_network_id = self
+                .network_data_keys
+                .keys()
+                .next()
+                .ok_or_else(|| KeyError::KeyNotFound("No network keys available".to_string()))?
+                .clone();
+            return self.encrypt_with_envelope(data, &anchor_network_id, vec![profile_id]);
+        }
+
+        Err(KeyError::KeyNotFound(
+            "Recipient public key not found".to_string(),
+        ))
+    }
+
+    /// Determine whether this key manager holds the private key corresponding
+    /// to the given public key.
+    pub fn has_public_key(&self, public_key: &[u8]) -> bool {
+        // Check profile keys
+        if self
+            .user_profile_keys
+            .values()
+            .any(|k| k.public_key_bytes() == public_key)
+        {
+            return true;
+        }
+        // Check network keys
+        let network_id = crate::compact_ids::compact_network_id(public_key);
+        self.network_data_keys.contains_key(&network_id)
+    }
 }
 
 /// Statistics about the mobile key manager

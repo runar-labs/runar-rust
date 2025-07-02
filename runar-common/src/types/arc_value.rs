@@ -295,6 +295,22 @@ impl SerializerRegistry {
         Ok(())
     }
 
+    /// Register a custom serializer with a specific type name
+    pub fn register_custom_serializer(
+        &mut self,
+        type_name: &str,
+        serializer: SerializationFnInner,
+    ) -> Result<()> {
+        if self.is_sealed {
+            return Err(anyhow!(
+                "Cannot register new types after registry is sealed"
+            ));
+        }
+
+        self.serializers.insert(type_name.to_string(), serializer);
+        Ok(())
+    }
+
     /// Serialize a value using the appropriate registered handler
     pub fn serialize(&self, value: &dyn Any, type_name: &str) -> Result<Vec<u8>> {
         if let Some(serializer) = self.serializers.get(type_name) {

@@ -8,6 +8,8 @@ members = [
     "runar-keys",
     "runar-gateway",
     "rust-examples/simple",
+    "runar-serializer",
+    "runar-serializer-macros",
 ]
 exclude = [
     "quinn",
