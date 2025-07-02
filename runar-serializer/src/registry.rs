@@ -341,4 +341,19 @@ impl SerializerRegistry {
     fn is_encryptable_type_by_name(&self, _type_name: &str) -> bool {
         false // Detection now handled by explicit registration
     }
+
+    /// Decrypt an `EncryptedLabelGroup` into its plain struct using the registry's keystore.
+    pub fn decrypt_label_group<T>(
+        &self,
+        group: &crate::encryption::EncryptedLabelGroup,
+    ) -> Result<T>
+    where
+        T: for<'de> serde::Deserialize<'de>,
+    {
+        let ks = self
+            .keystore
+            .as_ref()
+            .ok_or_else(|| anyhow!("SerializerRegistry has no keystore configured"))?;
+        crate::encryption::decrypt_label_group::<T>(group, ks.as_ref())
+    }
 }

@@ -14,20 +14,47 @@ pub use runar_keys::EnvelopeCrypto;
 pub type KeyStore = dyn EnvelopeCrypto;
 
 // ---------------------------------------------------------------------------
+// Key-scope modelling
+// ---------------------------------------------------------------------------
+
+/// Determines how an envelope key should be encrypted for a given label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KeyScope {
+    /// Encrypt with the network key so all nodes in the network can decrypt.
+    Network,
+    /// Encrypt with one or more user-profile keys so only specific profiles can decrypt.
+    Profile,
+}
+
+/// Information required to perform envelope encryption for a label.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelKeyInfo {
+    /// The public key bytes used for envelope key encryption.
+    pub public_key: Vec<u8>,
+    /// The key-encryption scope.
+    pub scope: KeyScope,
+}
+
+// ---------------------------------------------------------------------------
 // Label-to-PublicKey mapping utilities
 // ---------------------------------------------------------------------------
 
 /// Label-to-PublicKey mapping configuration
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KeyMappingConfig {
-    /// Maps abstract labels to actual public key identifiers
-    pub label_mappings: HashMap<String, Vec<u8>>, // label -> public_key_bytes
+    /// Maps labels to public-key & scope information.
+    pub label_mappings: HashMap<String, LabelKeyInfo>,
 }
 
 /// Label resolver interface for mapping labels to public keys
 pub trait LabelResolver: Send + Sync {
-    /// Resolve a label to public key bytes
-    fn resolve_label(&self, label: &str) -> Result<Option<Vec<u8>>>;
+    /// Resolve a label to key-info (public key + scope).
+    fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>>;
+
+    /// Legacy helper: resolve just the public key bytes.
+    fn resolve_label(&self, label: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.resolve_label_info(label)?.map(|info| info.public_key))
+    }
 
     /// Get available labels in current context
     fn available_labels(&self) -> Vec<String>;
@@ -49,7 +76,7 @@ impl ConfigurableLabelResolver {
 }
 
 impl LabelResolver for ConfigurableLabelResolver {
-    fn resolve_label(&self, label: &str) -> Result<Option<Vec<u8>>> {
+    fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
         Ok(self.config.label_mappings.get(label).cloned())
     }
 

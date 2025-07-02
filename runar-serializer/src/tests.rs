@@ -17,12 +17,15 @@ use runar_keys::{
 #[derive(Encrypt, serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct TestProfile {
     pub id: String,
-    #[runar(user)]
+    #[runar(user, system, search)]
     pub name: String,
-    #[runar(user, system)]
+    #[runar(user, system, search)]
     pub email: String,
-    #[runar(system)]
-    pub admin_notes: String,
+
+    #[runar(user)]
+    pub user_private: String,
+
+    #[runar(user, system, search)]
     pub created_at: u64,
 }
 
@@ -37,32 +40,73 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
     // Logger
     let logger = Arc::new(Logger::new_root(Component::System, "serializer-e2e"));
 
-    // ---------------- Mobile Setup ----------------
-    let mut mobile_mgr = MobileKeyManager::new(logger.clone())?;
-    mobile_mgr.initialize_user_root_key()?;
+    // Build & initialise mobile key manager before wrapping in Arc
+    let mut mobile_mgr_raw = MobileKeyManager::new(logger.clone())?;
+    mobile_mgr_raw.initialize_user_root_key()?;
 
-    // Derive a profile key and network key
-    let profile_pk = mobile_mgr.derive_user_profile_key("user")?;
-    let network_id = mobile_mgr.generate_network_data_key()?;
+    // Derive keys required for tests before Arc wrapping
+    let profile_pk = mobile_mgr_raw.derive_user_profile_key("user")?;
+    let network_id = mobile_mgr_raw.generate_network_data_key()?;
     let network_pub = compact_ids::public_key_from_compact_id(&network_id)?;
 
+    // Wrap in Arc after setup
+    let mobile_mgr = Arc::new(mobile_mgr_raw);
+
     // ---------------- Node Setup ----------------
-    let mut node_mgr = NodeKeyManager::new(logger.clone())?;
+    let mut node_mgr_raw = NodeKeyManager::new(logger.clone())?;
 
     // Provide network key to node
     let nk_msg =
-        mobile_mgr.create_network_key_message(&network_id, &node_mgr.get_node_public_key())?;
-    node_mgr.install_network_key(nk_msg)?;
+        mobile_mgr.create_network_key_message(&network_id, &node_mgr_raw.get_node_public_key())?;
+    node_mgr_raw.install_network_key(nk_msg)?;
+
+    let node_mgr = Arc::new(node_mgr_raw);
 
     // ---------------- Label Resolvers ----------------
+    use runar_serializer::traits::{KeyScope, LabelKeyInfo};
+
     let mobile_label_config = KeyMappingConfig {
         label_mappings: HashMap::from([
-            ("user".to_string(), profile_pk.clone()),
-            ("system".to_string(), network_pub.clone()),
+            (
+                "user".to_string(),
+                LabelKeyInfo {
+                    public_key: profile_pk.clone(),
+                    scope: KeyScope::Profile,
+                },
+            ),
+            (
+                "system".to_string(),
+                LabelKeyInfo {
+                    public_key: network_pub.clone(),
+                    scope: KeyScope::Network,
+                },
+            ),
+            (
+                "search".to_string(),
+                LabelKeyInfo {
+                    public_key: network_pub.clone(),
+                    scope: KeyScope::Network,
+                },
+            ),
         ]),
     };
     let node_label_config = KeyMappingConfig {
-        label_mappings: HashMap::from([("system".to_string(), network_pub.clone())]),
+        label_mappings: HashMap::from([
+            (
+                "system".to_string(),
+                LabelKeyInfo {
+                    public_key: network_pub.clone(),
+                    scope: KeyScope::Network,
+                },
+            ),
+            (
+                "search".to_string(),
+                LabelKeyInfo {
+                    public_key: network_pub.clone(),
+                    scope: KeyScope::Network,
+                },
+            ),
+        ]),
     };
 
     let mobile_resolver = ConfigurableLabelResolver::new(mobile_label_config);
@@ -71,7 +115,7 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
     // ---------------- Serializer Registries ----------------
     let mut mobile_registry = SerializerRegistry::with_keystore(
         logger.clone(),
-        Arc::new(mobile_mgr),
+        mobile_mgr.clone(),
         Arc::new(mobile_resolver),
     );
     mobile_registry.register_encryptable::<TestProfile>()?;
@@ -79,7 +123,7 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
 
     let mut node_registry = SerializerRegistry::with_keystore(
         logger.clone(),
-        Arc::new(node_mgr),
+        node_mgr.clone(),
         Arc::new(node_resolver),
     );
     node_registry.register_encryptable::<TestProfile>()?;
@@ -90,7 +134,7 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
         id: "user123".to_string(),
         name: "Alice".to_string(),
         email: "alice@example.com".to_string(),
-        admin_notes: "VIP user".to_string(),
+        user_private: "VIP user".to_string(),
         created_at: 1234567890,
     };
 
@@ -112,9 +156,9 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
     let node_profile = node_val.as_struct_ref::<TestProfile>()?;
     assert_eq!(node_profile.id, "user123");
     // Node should NOT be able to decrypt user-only fields
-    assert_eq!(node_profile.name, "");
+    assert_eq!(node_profile.name, "Alice");
     assert_eq!(node_profile.email, "alice@example.com");
-    assert_eq!(node_profile.admin_notes, "VIP user");
+    assert_eq!(node_profile.user_private, "");
     assert_eq!(node_profile.created_at, 1234567890);
 
     // Plain data path (still using lazy)
@@ -143,15 +187,42 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
     assert!(enc_profile.user_encrypted.is_some());
     assert!(enc_profile.system_encrypted.is_some());
 
+    // the data storage layer will store the EncryptedTestProfile
+    //but it also needs to know which fields can be used for search (in additio to the ID which is always searchable)
+    //in this example abote. the label search is mapped for data store searched fields.. so the data storage layer
+    // will use this struct to nkow which fields to use as searcheable fields.
+    assert!(enc_profile.search_encrypted.is_some());
+    //so we also need to be able to decrypt a
+    let search_group = enc_profile.search_encrypted.as_ref().unwrap();
+    let search_decrypted: TestProfileSearchFields =
+        node_registry.decrypt_label_group(search_group)?;
+    assert_eq!(search_decrypted.name, "Alice");
+    assert_eq!(search_decrypted.email, "alice@example.com");
+    assert_eq!(search_decrypted.created_at, 1234567890);
+
     Ok(())
 }
 
 #[test]
 fn test_label_resolver() {
+    use runar_serializer::traits::{KeyScope, LabelKeyInfo};
+
     let config = KeyMappingConfig {
         label_mappings: HashMap::from([
-            ("user".to_string(), vec![0x01, 0x02, 0x03]),
-            ("system".to_string(), vec![0x04, 0x05, 0x06]),
+            (
+                "user".to_string(),
+                LabelKeyInfo {
+                    public_key: vec![0x01, 0x02, 0x03],
+                    scope: KeyScope::Profile,
+                },
+            ),
+            (
+                "system".to_string(),
+                LabelKeyInfo {
+                    public_key: vec![0x04, 0x05, 0x06],
+                    scope: KeyScope::Network,
+                },
+            ),
         ]),
     };
 

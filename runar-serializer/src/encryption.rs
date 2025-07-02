@@ -1,4 +1,4 @@
-use crate::traits::{EnvelopeEncryptedData, KeyStore, LabelResolver};
+use crate::traits::{EnvelopeEncryptedData, KeyScope, KeyStore, LabelResolver};
 use anyhow::{anyhow, Result};
 use bincode;
 use runar_keys::compact_ids;
@@ -29,18 +29,18 @@ pub fn encrypt_label_group<T: Serialize>(
     // Serialize the fields within this label group
     let plaintext = bincode::serialize(fields_struct)?;
 
-    // Resolve the label to a concrete public-key reference
-    let public_key = resolver
-        .resolve_label(label)?
+    // Resolve the label to key info (public key + scope)
+    let info = resolver
+        .resolve_label_info(label)?
         .ok_or_else(|| anyhow!("Label '{label}' not available in current context"))?;
 
-    // Determine envelope encryption parameters
-    let (network_id, profile_ids): (String, Vec<String>) = if label == "system" {
-        // System-level data => encrypt with the network key only
-        (compact_ids::compact_network_id(&public_key), Vec::new())
-    } else {
-        // User / other label => encrypt only for the associated profile(s)
-        (String::new(), vec![label.to_string()])
+    // Determine envelope encryption parameters based on scope
+    let (network_id, profile_ids): (String, Vec<String>) = match info.scope {
+        KeyScope::Network => (
+            compact_ids::compact_network_id(&info.public_key),
+            Vec::new(),
+        ),
+        KeyScope::Profile => (String::new(), vec![label.to_string()]),
     };
 
     let envelope = keystore.encrypt_with_envelope(&plaintext, &network_id, profile_ids)?;
