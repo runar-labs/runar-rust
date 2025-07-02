@@ -751,7 +751,7 @@ pub trait NodeDelegate: Send + Sync {
 /// the functionality needed by keys operations.
 #[async_trait::async_trait]
 pub trait KeysDelegate: Send + Sync {
-    async fn ensure_symetric_key(&self, key_name: &str) -> Result<ArcValue>;
+    async fn ensure_symmetric_key(&self, key_name: &str) -> Result<ArcValue>;
 }
 
 /// Registry Delegate trait for registry service operations

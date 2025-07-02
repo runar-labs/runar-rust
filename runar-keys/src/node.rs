@@ -113,7 +113,7 @@ impl NodeKeyManager {
     }
 
     /// Ensure a symmetric key exists with the given name, creating it if it doesn't exist
-    pub fn ensure_symetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
+    pub fn ensure_symmetric_key(&mut self, key_name: &str) -> Result<Vec<u8>> {
         if let Some(key) = self.symmetric_keys.get(key_name) {
             return Ok(key.clone());
         }

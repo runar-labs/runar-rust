@@ -37,13 +37,13 @@ impl KeysService {
         }
     }
 
-    /// Register the ensure_symetric_key action
-    async fn register_ensure_symetric_key_action(&self, context: &LifecycleContext) -> Result<()> {
+    /// Register the ensure_symmetric_key action
+    async fn register_ensure_symmetric_key_action(&self, context: &LifecycleContext) -> Result<()> {
         let self_clone = self.clone();
 
         context
             .register_action(
-                "ensure_symetric_key",
+                "ensure_symmetric_key",
                 Arc::new(move |params, ctx| {
                     let inner_self = self_clone.clone();
                     let key_name: String = params
@@ -51,23 +51,25 @@ impl KeysService {
                         .as_type()
                         .expect("key_name parameter must be a string");
                     Box::pin(
-                        async move { inner_self.handle_ensure_symetric_key(key_name, ctx).await },
+                        async move { inner_self.handle_ensure_symmetric_key(key_name, ctx).await },
                     )
                 }),
             )
             .await?;
-        context.logger.debug("Registered services/list action");
+        context
+            .logger
+            .debug("Registered ensure_symmetric_key action");
         Ok(())
     }
 
-    /// Handler for listing all services
-    async fn handle_ensure_symetric_key(
+    /// Handler for ensuring symmetric key exists
+    async fn handle_ensure_symmetric_key(
         &self,
         key_name: String,
         ctx: RequestContext,
     ) -> Result<ArcValue> {
-        ctx.logger.debug("ensure_symetric_key");
-        self.keys_delegate.ensure_symetric_key(&key_name).await
+        ctx.logger.debug("ensure_symmetric_key");
+        self.keys_delegate.ensure_symmetric_key(&key_name).await
     }
 }
 
@@ -108,11 +110,11 @@ impl AbstractService for KeysService {
             .logger
             .debug("Registering keys Service action handlers");
 
-        // Services list does not require parameters
-        self.register_ensure_symetric_key_action(&context).await?;
+        // Register symmetric key action
+        self.register_ensure_symmetric_key_action(&context).await?;
         context
             .logger
-            .debug("Registered handler for listing all services");
+            .debug("Registered handler for ensure_symmetric_key action");
 
         context.logger.info("Keys Service initialization complete");
 

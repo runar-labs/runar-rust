@@ -579,13 +579,13 @@ fn test_symmetric_key_management() {
 
     // Test symmetric key management
     let key1 = node_manager
-        .ensure_symetric_key("service_a")
+        .ensure_symmetric_key("service_a")
         .expect("Failed to create key");
     let key2 = node_manager
-        .ensure_symetric_key("service_b")
+        .ensure_symmetric_key("service_b")
         .expect("Failed to create key");
     let key1_retrieved = node_manager
-        .ensure_symetric_key("service_a")
+        .ensure_symmetric_key("service_a")
         .expect("Failed to retrieve key");
 
     // Keys should be different for different services

@@ -814,9 +814,9 @@ impl AbstractService for SqliteService {
         let mut encryption_key: Option<Vec<u8>> = None;
 
         if self.config.encryption {
-            context.info("SqliteService encryption enabled - requesting symetric key.");
-            // request a symetric key for this service,
-            // if one exists it will be returned, if not one will be created, stored amd returned
+            context.info("SqliteService encryption enabled - requesting symmetric key.");
+            // request a symmetric key for this service,
+            // if one exists it will be returned, if not one will be created, stored and returned
             let key_name = format!(
                 "sqlite_{}_{}_{}",
                 self.path,
@@ -824,7 +824,7 @@ impl AbstractService for SqliteService {
                 self.network_id.as_ref().expect("network_id is required")
             );
             let key: Vec<u8> = context
-                .request("$keys/ensure_symetric_key", Some(key_name))
+                .request("$keys/ensure_symmetric_key", Some(key_name))
                 .await?;
             encryption_key = Some(key);
         } else {
