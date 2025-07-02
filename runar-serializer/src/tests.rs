@@ -103,23 +103,45 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
     let mobile_arc = ArcValue::from_struct(profile.clone());
     let serialized_bytes = mobile_registry.serialize_value(&mobile_arc)?;
 
-    // Deserialize on mobile – should recover full data
-    let roundtrip_profile: TestProfile = mobile_registry.deserialize_bytes_to(&serialized_bytes)?;
-    assert_eq!(roundtrip_profile, profile);
+    // ---------------- Lazy ArcValue deserialization ----------------
+    let mut mobile_val = mobile_registry.deserialize_value(serialized_bytes.clone())?;
+    let roundtrip_profile = mobile_val.as_struct_ref::<TestProfile>()?;
+    assert_eq!(&*roundtrip_profile, &profile);
 
-    // Deserialize on node – only system fields decrypted
-    let node_profile: TestProfile = node_registry.deserialize_bytes_to(&serialized_bytes)?;
+    let mut node_val = node_registry.deserialize_value(serialized_bytes.clone())?;
+    let node_profile = node_val.as_struct_ref::<TestProfile>()?;
     assert_eq!(node_profile.id, "user123");
+    // Node should NOT be able to decrypt user-only fields
     assert_eq!(node_profile.name, "");
     assert_eq!(node_profile.email, "alice@example.com");
     assert_eq!(node_profile.admin_notes, "VIP user");
     assert_eq!(node_profile.created_at, 1234567890);
 
-    // Plain data path
+    // Plain data path (still using lazy)
     let plain_arc = ArcValue::from_struct(plain_data.clone());
     let plain_bytes = mobile_registry.serialize_value(&plain_arc)?;
-    let plain_roundtrip: PlainData = node_registry.deserialize_bytes_to(&plain_bytes)?;
-    assert_eq!(plain_roundtrip, plain_data);
+    let mut plain_val = node_registry.deserialize_value(plain_bytes)?;
+    let plain_roundtrip = plain_val.as_struct_ref::<PlainData>()?;
+    assert_eq!(&*plain_roundtrip, &plain_data);
+
+    // -----------------------------------------------------------
+    //  Validate that we can also obtain the *encrypted* variant
+    //  lazily from the same ArcValue bytes.
+    // -----------------------------------------------------------
+
+    // Mobile side: the encrypted struct must be available and must contain
+    // both label groups.
+    let mut mobile_val_enc = mobile_registry.deserialize_value(serialized_bytes.clone())?;
+    let enc_profile = mobile_val_enc.as_struct_ref::<EncryptedTestProfile>()?;
+    assert!(enc_profile.user_encrypted.is_some());
+    assert!(enc_profile.system_encrypted.is_some());
+
+    // Node side: the encrypted struct must be available and must contain
+    // both label groups.
+    let mut node_val_enc = node_registry.deserialize_value(serialized_bytes.clone())?;
+    let enc_profile = node_val_enc.as_struct_ref::<EncryptedTestProfile>()?;
+    assert!(enc_profile.user_encrypted.is_some());
+    assert!(enc_profile.system_encrypted.is_some());
 
     Ok(())
 }
