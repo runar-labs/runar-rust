@@ -196,7 +196,7 @@ async fn test_register_and_get_action_handler() {
         // Create a handler
         let handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Handler called with params: {:?}", params);
+                println!("Add handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
@@ -249,21 +249,21 @@ async fn test_multiple_action_handlers() {
         // Create handlers for each action
         let add_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Add handler called with params: {:?}", params);
+                println!("Add handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
 
         let subtract_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Subtract handler called with params: {:?}", params);
+                println!("Subtract handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
 
         let concat_handler: ActionHandler = Arc::new(|params, _context| {
             Box::pin(async move {
-                println!("Concat handler called with params: {:?}", params);
+                println!("Concat handler called with params: {params:?}");
                 Ok(ArcValue::null())
             })
         });
@@ -419,7 +419,7 @@ async fn test_action_handler_network_isolation() {
     .await
     {
         Ok(_) => (),
-        Err(e) => panic!("Test timed out: {}", e),
+        Err(e) => panic!("Test timed out: {e}"),
     }
 }
 
@@ -543,7 +543,7 @@ async fn test_path_template_parameters() {
                     .cloned()
                     .unwrap_or_else(|| "unknown".to_string());
 
-                println!("Service info handler called for service: {}", service_path);
+                println!("Service info handler called for service: {service_path}");
 
                 // Validate that the parameter was captured
                 if service_path == "unknown" {
@@ -562,7 +562,7 @@ async fn test_path_template_parameters() {
                     .cloned()
                     .unwrap_or_else(|| "unknown".to_string());
 
-                println!("Service state handler called for service: {}", service_path);
+                println!("Service state handler called for service: {service_path}");
 
                 // Validate that the parameter was captured
                 if service_path == "unknown" {
@@ -588,8 +588,7 @@ async fn test_path_template_parameters() {
                     .unwrap_or_else(|| "unknown".to_string());
 
                 println!(
-                    "Action handler called for service_type: {}, action_name: {}",
-                    service_type, action_name
+                    "Action handler called for service_type: {service_type}, action_name: {action_name}"
                 );
 
                 // Validate that all parameters were captured
@@ -749,8 +748,7 @@ async fn test_multiple_network_ids() {
 
         Box::pin(async move {
             Ok(ArcValue::new_primitive(format!(
-                "Response from {}",
-                network_id
+                "Response from {network_id}"
             )))
         })
     });
@@ -761,8 +759,7 @@ async fn test_multiple_network_ids() {
 
         Box::pin(async move {
             Ok(ArcValue::new_primitive(format!(
-                "Response from {}",
-                network_id
+                "Response from {network_id}"
             )))
         })
     });

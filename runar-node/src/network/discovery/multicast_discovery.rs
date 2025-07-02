@@ -508,8 +508,7 @@ impl MulticastDiscovery {
 impl NodeDiscovery for MulticastDiscovery {
     async fn init(&self, options: DiscoveryOptions) -> Result<()> {
         self.logger.info(format!(
-            "Initializing MulticastDiscovery with options: {:?}",
-            options
+            "Initializing MulticastDiscovery with options: {options:?}"
         ));
         // Update options
         *self.options.write().await = options.clone();

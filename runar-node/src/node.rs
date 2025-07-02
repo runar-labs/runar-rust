@@ -221,7 +221,7 @@ impl std::fmt::Display for NodeConfig {
 
         // Add network configuration details if available
         if let Some(network_config) = &self.network_config {
-            write!(f, " {}", network_config)?;
+            write!(f, " {network_config}")?;
         }
 
         Ok(())
@@ -531,8 +531,7 @@ impl Node {
             // Start the service using the context
             if let Err(e) = service.start(start_context).await {
                 self.logger.error(format!(
-                    "Failed to start service: {}, error: {}",
-                    service_topic, e
+                    "Failed to start service: {service_topic}, error: {e}"
                 ));
                 registry
                     .update_service_state(&service_topic, ServiceState::Error)
@@ -608,8 +607,7 @@ impl Node {
             // Stop the service using the context
             if let Err(e) = service.stop(stop_context).await {
                 self.logger.error(format!(
-                    "Failed to stop service: {}, error: {}",
-                    service_topic, e
+                    "Failed to stop service: {service_topic}, error: {e}"
                 ));
                 continue;
             }
@@ -707,9 +705,8 @@ impl Node {
                         Box::pin(async move {
                             if let Err(e) = node_arc.handle_discovered_node(peer_info).await {
                                 node_arc.logger.error(format!(
-                                    "Failed to handle node discovered by {} provider: {}",
-                                    provider_type_clone, e
-                                ));
+                        "Failed to handle node discovered by {provider_type_clone} provider: {e}"
+                    ));
                             }
                         })
                     }))
@@ -717,8 +714,7 @@ impl Node {
 
                 // Start announcing on this provider
                 self.logger.info(format!(
-                    "Starting to announce on {:?} discovery provider",
-                    provider_type
+                    "Starting to announce on {provider_type:?} discovery provider"
                 ));
                 discovery_provider.start_announcing().await?;
 
@@ -958,25 +954,24 @@ impl Node {
             ));
 
             // Deserialize the value from bytes
-            let params =
-                match serializer.deserialize_value(Arc::from(payload_item.value_bytes.clone())) {
-                    Ok(value) => value,
-                    Err(e) => {
-                        self.logger.error(format!(
-                            "❌ [Node] Failed to deserialize request payload - Path: {}, Error: {}",
-                            path, e
+            let params = match serializer
+                .deserialize_value(Arc::from(payload_item.value_bytes.clone()))
+            {
+                Ok(value) => value,
+                Err(e) => {
+                    self.logger.error(format!(
+                            "❌ [Node] Failed to deserialize request payload - Path: {path}, Error: {e}"
                         ));
-                        return Err(anyhow!("Failed to deserialize request payload: {}", e));
-                    }
-                };
+                    return Err(anyhow!("Failed to deserialize request payload: {}", e));
+                }
+            };
             let params_option = if params.is_null() { None } else { Some(params) };
 
             let local_peer_id = self.peer_id.clone();
 
             // Process the request locally using extracted topic and params
             self.logger.info(format!(
-                "⚙️ [Node] Processing local request for path: {} (correlation: {})",
-                path, correlation_id
+                "⚙️ [Node] Processing local request for path: {path} (correlation: {correlation_id})"
             ));
             match self.local_request(path.as_str(), params_option).await {
                 Ok(response) => {
@@ -1107,10 +1102,9 @@ impl Node {
                     // Check if networking is still enabled before trying to send error response
                     if !self.supports_networking {
                         self.logger
-                            .warn(format!(
-                                "⚠️ [Node] Can't send error response - networking is disabled (correlation: {})", 
-                                correlation_id
-                            ));
+                                        .warn(format!(
+                "⚠️ [Node] Can't send error response - networking is disabled (correlation: {correlation_id})"
+            ));
                         return Ok(());
                     }
 
@@ -1132,10 +1126,9 @@ impl Node {
                         }
                     } else {
                         self.logger
-                            .warn(format!(
-                                "⚠️ [Node] No network transport available to send error response (correlation: {})", 
-                                correlation_id
-                            ));
+                                        .warn(format!(
+                "⚠️ [Node] No network transport available to send error response (correlation: {correlation_id})"
+            ));
                     }
                 }
             }
@@ -1165,8 +1158,7 @@ impl Node {
 
             // Only process if we have an actual correlation ID
             self.logger.debug(format!(
-                "Processing response for topic {}, correlation ID: {}",
-                topic, correlation_id
+                "Processing response for topic {topic}, correlation ID: {correlation_id}"
             ));
 
             // Find any pending response handlers
@@ -1174,8 +1166,7 @@ impl Node {
                 self.pending_requests.write().await.remove(correlation_id)
             {
                 self.logger.debug(format!(
-                    "Found response handler for correlation ID: {}",
-                    correlation_id
+                    "Found response handler for correlation ID: {correlation_id}"
                 ));
 
                 // Deserialize the payload data
@@ -1191,9 +1182,8 @@ impl Node {
                             .send(Err(anyhow!("Failed to deserialize response: {}", e)))
                         {
                             self.logger.error(format!(
-                                "Failed to send error response for correlation ID {}: {:?}",
-                                correlation_id, send_err
-                            ));
+                            "Failed to send error response for correlation ID {correlation_id}: {send_err:?}"
+                        ));
                         }
                         continue; // Continue to the next payload_item in the message
                     }
@@ -1204,19 +1194,16 @@ impl Node {
                 // serializer.deserialize_value should produce ArcValue::null().
                 match pending_request_sender.send(Ok(payload_data)) {
                     Ok(_) => self.logger.debug(format!(
-                        "Successfully sent response for correlation ID: {}",
-                        correlation_id
+                        "Successfully sent response for correlation ID: {correlation_id}"
                     )),
                     Err(e) => self.logger.error(format!(
-                        "Failed to send response data for correlation ID {}: {:?}",
-                        correlation_id, e
+                        "Failed to send response data for correlation ID {correlation_id}: {e:?}"
                     )),
                 } // Closes match pending_request_sender.send(Ok(payload_data))
             } else {
                 // This is the else for `if let Some(pending_request_sender)`
                 self.logger.warn(format!(
-                    "No response handler found for correlation ID: {}",
-                    correlation_id
+                    "No response handler found for correlation ID: {correlation_id}"
                 ));
             } // Closes else block for if let Some
         } // Closes for payload_item in &message.payloads

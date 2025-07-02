@@ -20,7 +20,7 @@ use tokio::sync::oneshot;
 
 async fn create_test_discovery(network_id: &str, node_id: &str) -> Result<MulticastDiscovery> {
     let options = DiscoveryOptions {
-        multicast_group: format!("{addr}:45678", addr = DEFAULT_MULTICAST_ADDR),
+        multicast_group: format!("{DEFAULT_MULTICAST_ADDR}:45678"),
         announce_interval: Duration::from_secs(1), // Use shorter interval for tests
         ..DiscoveryOptions::default()
     };
@@ -98,7 +98,7 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                     if peer_info.public_key.contains("node-2") {
                         // Send the peer info to our channel
                         if let Err(e) = tx.send(peer_info).await {
-                            eprintln!("Channel send error: {}", e);
+                            eprintln!("Channel send error: {e}");
                         }
 
                         // Signal that we've received a discovery
@@ -120,7 +120,7 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                     if peer_info.public_key.contains("node-1") {
                         // Send the peer info to our channel
                         if let Err(e) = tx.send(peer_info).await {
-                            eprintln!("Channel send error: {}", e);
+                            eprintln!("Channel send error: {e}");
                         }
 
                         // Signal that we've received a discovery
@@ -154,8 +154,8 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
             .is_ok();
 
         // Print discovery results for debugging
-        println!("Node1 found Node2: {}", node1_found_node2);
-        println!("Node2 found Node1: {}", node2_found_node1);
+        println!("Node1 found Node2: {node1_found_node2}");
+        println!("Node2 found Node1: {node2_found_node1}");
 
         // We may not always see the other node due to UDP packet loss or timing issues
         // So we log the findings but don't fail the test if not found

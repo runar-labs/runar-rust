@@ -457,8 +457,7 @@ impl QuicTransportImpl {
         let _correlation_id_clone = correlation_id.clone();
 
         self.logger.debug(format!(
-            "🔄 [QuicTransport] Starting concurrent request/response for correlation ID: {}",
-            correlation_id
+            "🔄 [QuicTransport] Starting concurrent request/response for correlation ID: {correlation_id}"
         ));
 
         // **ARCHITECTURAL FIX**: Use unidirectional streams instead of bidirectional
@@ -485,8 +484,7 @@ impl QuicTransportImpl {
         self.send_oneway_message(peer_id, message).await?;
 
         self.logger.debug(format!(
-            "✅ [QuicTransport] Request sent via unidirectional stream - Correlation ID: {} (response will come via separate unidirectional stream)",
-            correlation_id
+            "✅ [QuicTransport] Request sent via unidirectional stream - Correlation ID: {correlation_id} (response will come via separate unidirectional stream)"
         ));
 
         Ok(())
@@ -501,8 +499,7 @@ impl QuicTransportImpl {
         message: NetworkMessage,
     ) -> Result<(), NetworkError> {
         self.logger.debug(format!(
-            "📡 [QuicTransport] Sending one-way message to peer {}",
-            peer_id
+            "📡 [QuicTransport] Sending one-way message to peer {peer_id}"
         ));
 
         let peer_state = self.get_peer_state(peer_id)?;
@@ -530,8 +527,7 @@ impl QuicTransportImpl {
         })?;
 
         self.logger.debug(format!(
-            "✅ [QuicTransport] One-way message sent and stream finished for peer {}",
-            peer_id
+            "✅ [QuicTransport] One-way message sent and stream finished for peer {peer_id}"
         ));
 
         Ok(())
@@ -547,8 +543,7 @@ impl QuicTransportImpl {
         message: NetworkMessage,
     ) -> Result<(), NetworkError> {
         self.logger.debug(format!(
-            "↩️ [QuicTransport] Sending response message to peer {}",
-            peer_id
+            "↩️ [QuicTransport] Sending response message to peer {peer_id}"
         ));
 
         // Extract correlation ID from the first payload
@@ -567,8 +562,7 @@ impl QuicTransportImpl {
         self.send_oneway_message(peer_id, message).await?;
 
         self.logger.debug(format!(
-            "✅ [QuicTransport] Response sent via unidirectional stream - Correlation ID: {}",
-            correlation_id
+            "✅ [QuicTransport] Response sent via unidirectional stream - Correlation ID: {correlation_id}"
         ));
 
         Ok(())
@@ -585,8 +579,7 @@ impl QuicTransportImpl {
         correlation_id: String,
     ) -> Result<(), NetworkError> {
         self.logger.debug(format!(
-            "🎧 [QuicTransport] Handling response stream for correlation ID: {}",
-            correlation_id
+            "🎧 [QuicTransport] Handling response stream for correlation ID: {correlation_id}"
         ));
 
         // Use the existing receive_message infrastructure to handle the response
@@ -594,8 +587,7 @@ impl QuicTransportImpl {
         self.receive_message(peer_id, recv_stream, None).await?;
 
         self.logger.debug(format!(
-            "✅ [QuicTransport] Response stream handled successfully for correlation ID: {}",
-            correlation_id
+            "✅ [QuicTransport] Response stream handled successfully for correlation ID: {correlation_id}"
         ));
 
         Ok(())
@@ -672,7 +664,7 @@ impl QuicTransportImpl {
         // Check if we're already connected to this peer
         if self.connection_pool.is_peer_connected(&peer_id).await {
             self.logger
-                .info(format!("Already connected to peer {}", peer_id));
+                .info(format!("Already connected to peer {peer_id}"));
 
             // Return a dummy task that does nothing
             let task = tokio::spawn(async {});
@@ -698,10 +690,9 @@ impl QuicTransportImpl {
                 Ok(addr) => addr,
                 Err(e) => {
                     self.logger
-                        .warn(format!("Invalid address {}: {}", peer_addr, e));
+                        .warn(format!("Invalid address {peer_addr}: {e}"));
                     last_error = Some(NetworkError::ConnectionError(format!(
-                        "Invalid address {}: {}",
-                        peer_addr, e
+                        "Invalid address {peer_addr}: {e}"
                     )));
                     continue; // Try the next address
                 }
@@ -709,7 +700,7 @@ impl QuicTransportImpl {
 
             // Connect to the peer
             self.logger
-                .info(format!("Connecting to peer {} at {}", peer_id, socket_addr));
+                .info(format!("Connecting to peer {peer_id} at {socket_addr}"));
 
             // Print detailed connection information for debugging
             self.logger.info(format!(
@@ -728,7 +719,7 @@ impl QuicTransportImpl {
                     match connecting.await {
                         Ok(connection) => {
                             self.logger
-                                .info(format!("Connected to peer {} at {}", peer_id, socket_addr));
+                                .info(format!("Connected to peer {peer_id} at {socket_addr}"));
 
                             // Get or create the peer state
                             let peer_state = self.connection_pool.get_or_create_peer(
@@ -751,8 +742,7 @@ impl QuicTransportImpl {
                             let is_connected =
                                 self.connection_pool.is_peer_connected(&peer_id).await;
                             self.logger.info(format!(
-                                "Connection verification for {}: {}",
-                                peer_id, is_connected
+                                "Connection verification for {peer_id}: {is_connected}"
                             ));
 
                             return Ok(task);
@@ -880,11 +870,6 @@ impl QuicTransportImpl {
         self: &Arc<Self>,
         message: NetworkMessage,
     ) -> Result<(), NetworkError> {
-        self.logger.debug(format!(
-            "Processing message from {}, type: {}",
-            message.source, message.message_type
-        ));
-
         // Special handling for handshake messages
         if message.message_type == "NODE_INFO_HANDSHAKE"
             || message.message_type == "NODE_INFO_HANDSHAKE_RESPONSE"
@@ -920,8 +905,7 @@ impl QuicTransportImpl {
                                         value_bytes: bincode::serialize(&self.local_node).map_err(
                                             |e| {
                                                 NetworkError::MessageError(format!(
-                                                    "Failed to serialize node info: {}",
-                                                    e
+                                                    "Failed to serialize node info: {e}"
                                                 ))
                                             },
                                         )?,
@@ -961,8 +945,7 @@ impl QuicTransportImpl {
         match self.message_handler.read() {
             Ok(handler) => {
                 if let Err(e) = handler(message.clone()) {
-                    self.logger
-                        .error(format!("Error in message handler: {}", e));
+                    self.logger.error(format!("Error in message handler: {e}"));
                 }
                 Ok(())
             }
@@ -985,7 +968,7 @@ impl QuicTransportImpl {
         let remote_addr = connection.remote_address();
 
         self.logger
-            .info(format!("New incoming connection from {}", remote_addr));
+            .info(format!("New incoming connection from {remote_addr}"));
 
         // **CRITICAL FIX**: Don't create any peer state until we know the real peer ID
         // Spawn a task that waits for the handshake message to identify the peer
@@ -1008,16 +991,14 @@ impl QuicTransportImpl {
 
         tokio::spawn(async move {
             logger.debug(format!(
-                "🔍 [QuicTransport] Waiting for peer identification from {}",
-                remote_addr
+                "🔍 [QuicTransport] Waiting for peer identification from {remote_addr}"
             ));
 
             // **STEP 1**: Wait for the first unidirectional stream (should be handshake)
             match connection.accept_uni().await {
                 Ok(recv_stream) => {
                     logger.debug(format!(
-                        "🔄 [QuicTransport] Receiving handshake message from {}",
-                        remote_addr
+                        "🔄 [QuicTransport] Receiving handshake message from {remote_addr}"
                     ));
 
                     // **STEP 2**: Read and parse the handshake message to get real peer ID
@@ -1028,8 +1009,7 @@ impl QuicTransportImpl {
                                 let real_peer_id = message.source.clone();
 
                                 logger.info(format!(
-                                    "✅ [QuicTransport] Identified peer: {} from {}",
-                                    real_peer_id, remote_addr
+                                    "✅ [QuicTransport] Identified peer: {real_peer_id} from {remote_addr}"
                                 ));
 
                                 // **STEP 4**: Check if we already have a connection to this peer
@@ -1039,8 +1019,7 @@ impl QuicTransportImpl {
                                     .await
                                 {
                                     logger.warn(format!(
-                                        "⚠️  [QuicTransport] Peer {} already has active connection, closing duplicate from {}",
-                                        real_peer_id, remote_addr
+                                        "⚠️  [QuicTransport] Peer {real_peer_id} already has active connection, closing duplicate from {remote_addr}"
                                     ));
 
                                     // Close this duplicate connection gracefully
@@ -1048,8 +1027,7 @@ impl QuicTransportImpl {
                                 } else {
                                     // **STEP 5**: This is the primary connection - establish proper peer state
                                     logger.info(format!(
-                                        "🎯 [QuicTransport] Establishing primary connection for peer {} from {}",
-                                        real_peer_id, remote_addr
+                                        "🎯 [QuicTransport] Establishing primary connection for peer {real_peer_id} from {remote_addr}"
                                     ));
 
                                     // Create peer state with the real peer ID
@@ -1067,14 +1045,13 @@ impl QuicTransportImpl {
                                     if let Err(e) =
                                         inner_arc.process_incoming_message(message).await
                                     {
-                                        logger.error(format!("Error processing handshake: {}", e));
+                                        logger.error(format!("Error processing handshake: {e}"));
                                         return;
                                     }
 
                                     // **STEP 7**: Start the persistent message receiver for this peer
                                     logger.info(format!(
-                                        "🔄 [QuicTransport] Starting message receiver for peer {}",
-                                        real_peer_id
+                                        "🔄 [QuicTransport] Starting message receiver for peer {real_peer_id}"
                                     ));
 
                                     // The message receiver will handle the connection from now on
@@ -1096,8 +1073,7 @@ impl QuicTransportImpl {
                         }
                         Err(e) => {
                             logger.error(format!(
-                                "❌ [QuicTransport] Failed to read handshake from {}: {}",
-                                remote_addr, e
+                                "❌ [QuicTransport] Failed to read handshake from {remote_addr}: {e}"
                             ));
                             connection.close(3u32.into(), b"Handshake failed");
                         }
@@ -1105,8 +1081,7 @@ impl QuicTransportImpl {
                 }
                 Err(e) => {
                     logger.error(format!(
-                        "❌ [QuicTransport] Failed to accept handshake stream from {}: {}",
-                        remote_addr, e
+                        "❌ [QuicTransport] Failed to accept handshake stream from {remote_addr}: {e}"
                     ));
                 }
             }
@@ -1123,15 +1098,14 @@ impl QuicTransportImpl {
         // Read message length (4 bytes)
         let mut len_bytes = [0u8; 4];
         recv_stream.read_exact(&mut len_bytes).await.map_err(|e| {
-            NetworkError::MessageError(format!("Failed to read handshake message length: {}", e))
+            NetworkError::MessageError(format!("Failed to read handshake message length: {e}"))
         })?;
 
         let message_len = u32::from_be_bytes(len_bytes) as usize;
         if message_len > 1024 * 1024 {
             // 1MB limit
             return Err(NetworkError::MessageError(format!(
-                "Handshake message too large: {} bytes",
-                message_len
+                "Handshake message too large: {message_len} bytes"
             )));
         }
 
@@ -1141,12 +1115,12 @@ impl QuicTransportImpl {
             .read_exact(&mut message_data)
             .await
             .map_err(|e| {
-                NetworkError::MessageError(format!("Failed to read handshake message data: {}", e))
+                NetworkError::MessageError(format!("Failed to read handshake message data: {e}"))
             })?;
 
         // Deserialize the message
         bincode::deserialize(&message_data).map_err(|e| {
-            NetworkError::MessageError(format!("Failed to deserialize handshake message: {}", e))
+            NetworkError::MessageError(format!("Failed to deserialize handshake message: {e}"))
         })
     }
 
@@ -1166,8 +1140,7 @@ impl QuicTransportImpl {
         // Spawn the message receiver as a background task
         tokio::spawn(async move {
             logger.info(format!(
-                "🔄 [QuicTransport] Starting persistent message receiver for peer {}",
-                peer_id_clone
+                "🔄 [QuicTransport] Starting persistent message receiver for peer {peer_id_clone}"
             ));
 
             // **QUIC BEST PRACTICE**: Keep connection alive and process multiple streams
@@ -1175,9 +1148,8 @@ impl QuicTransportImpl {
                 // **CRITICAL FIX**: Check connection health first
                 if let Some(close_reason) = connection.close_reason() {
                     logger.info(format!(
-                        "🔚 [QuicTransport] Connection to peer {} closed: {:?}",
-                        peer_id_clone, close_reason
-                    ));
+                            "🔚 [QuicTransport] Connection to peer {peer_id_clone} closed: {close_reason:?}"
+                        ));
                     break;
                 }
 
@@ -1188,8 +1160,7 @@ impl QuicTransportImpl {
                         match uni_result {
                             Ok(recv_stream) => {
                                 logger.debug(format!(
-                                    "🔄 [QuicTransport] Accepting unidirectional stream from peer {}",
-                                    peer_id_clone
+                                    "🔄 [QuicTransport] Accepting unidirectional stream from peer {peer_id_clone}"
                                 ));
 
                                 // Process unidirectional message (no send stream for response)
@@ -1198,17 +1169,16 @@ impl QuicTransportImpl {
                                     .await
                                 {
                                     logger.error(format!(
-                                        "Error receiving unidirectional message from {}: {}",
-                                        peer_id_clone, e
+                                        "Error receiving unidirectional message from {peer_id_clone}: {e}"
                                     ));
                                 }
                             }
                             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                                logger.info(format!("Connection closed by peer {}", peer_id_clone));
+                                logger.info(format!("Connection closed by peer {peer_id_clone}"));
                                 break;
                             }
                             Err(e) => {
-                                logger.error(format!("Unidirectional connection error from {}: {}", peer_id_clone, e));
+                                logger.error(format!("Unidirectional connection error from {peer_id_clone}: {e}"));
                                 break;
                             }
                         }
@@ -1218,8 +1188,7 @@ impl QuicTransportImpl {
                         match bi_result {
                             Ok((send_stream, recv_stream)) => {
                                 logger.debug(format!(
-                                    "🔄 [QuicTransport] Accepting bidirectional stream from peer {}",
-                                    peer_id_clone
+                                    "🔄 [QuicTransport] Accepting bidirectional stream from peer {peer_id_clone}"
                                 ));
 
                                 // Process bidirectional message with send stream for responses
@@ -1228,17 +1197,16 @@ impl QuicTransportImpl {
                                     .await
                                 {
                                     logger.error(format!(
-                                        "Error receiving bidirectional message from {}: {}",
-                                        peer_id_clone, e
+                                        "Error receiving bidirectional message from {peer_id_clone}: {e}"
                                     ));
                                 }
                             }
                             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                                logger.info(format!("Connection closed by peer {}", peer_id_clone));
+                                logger.info(format!("Connection closed by peer {peer_id_clone}"));
                                 break;
                             }
                             Err(e) => {
-                                logger.error(format!("Bidirectional connection error from {}: {}", peer_id_clone, e));
+                                logger.error(format!("Bidirectional connection error from {peer_id_clone}: {e}"));
                                 break;
                             }
                         }
@@ -1251,8 +1219,7 @@ impl QuicTransportImpl {
                         // Check connection health
                         if !peer_state.is_connected().await {
                             logger.warn(format!(
-                                "⚠️  [QuicTransport] Connection health check failed for peer {}",
-                                peer_id_clone
+                                "⚠️  [QuicTransport] Connection health check failed for peer {peer_id_clone}"
                             ));
                             break;
                         }
@@ -1261,8 +1228,7 @@ impl QuicTransportImpl {
             }
 
             logger.info(format!(
-                "🔚 [QuicTransport] Message receiver stopped for peer {}",
-                peer_id_clone
+                "🔚 [QuicTransport] Message receiver stopped for peer {peer_id_clone}"
             ));
 
             // Clean up peer state when connection ends
@@ -1293,8 +1259,7 @@ impl QuicTransportImpl {
                     .await;
             } else {
                 logger.warn(format!(
-                    "❌ [QuicTransport] No connection available for peer {}",
-                    peer_id_clone
+                    "❌ [QuicTransport] No connection available for peer {peer_id_clone}"
                 ));
             }
         })
@@ -1311,22 +1276,20 @@ impl QuicTransportImpl {
         send_stream: Option<quinn::SendStream>,
     ) -> Result<(), NetworkError> {
         self.logger.debug(format!(
-            "📥 [QuicTransport] Processing message from peer {}",
-            peer_id
+            "📥 [QuicTransport] Processing message from peer {peer_id}"
         ));
 
         // Read message length (4 bytes)
         let mut len_bytes = [0u8; 4];
         recv_stream.read_exact(&mut len_bytes).await.map_err(|e| {
-            NetworkError::MessageError(format!("Failed to read message length: {}", e))
+            NetworkError::MessageError(format!("Failed to read message length: {e}"))
         })?;
 
         let message_len = u32::from_be_bytes(len_bytes) as usize;
         if message_len > 1024 * 1024 {
             // 1MB limit
             return Err(NetworkError::MessageError(format!(
-                "Message too large: {} bytes",
-                message_len
+                "Message too large: {message_len} bytes"
             )));
         }
 
@@ -1335,13 +1298,11 @@ impl QuicTransportImpl {
         recv_stream
             .read_exact(&mut message_data)
             .await
-            .map_err(|e| {
-                NetworkError::MessageError(format!("Failed to read message data: {}", e))
-            })?;
+            .map_err(|e| NetworkError::MessageError(format!("Failed to read message data: {e}")))?;
 
         // Deserialize the message
         let message: NetworkMessage = bincode::deserialize(&message_data).map_err(|e| {
-            NetworkError::MessageError(format!("Failed to deserialize message: {}", e))
+            NetworkError::MessageError(format!("Failed to deserialize message: {e}"))
         })?;
 
         self.logger.debug(format!(
@@ -1390,8 +1351,7 @@ impl QuicTransportImpl {
     #[allow(dead_code)]
     async fn get_response_stream(&self, correlation_id: &str) -> Option<BidirectionalStream> {
         self.logger.debug(format!(
-            "🔍 [QuicTransport] Looking for response stream for correlation ID: {}",
-            correlation_id
+            "🔍 [QuicTransport] Looking for response stream for correlation ID: {correlation_id}"
         ));
 
         let stream = {
@@ -1405,13 +1365,11 @@ impl QuicTransportImpl {
             correlations.remove(correlation_id);
 
             self.logger.debug(format!(
-                "✅ [QuicTransport] Found and removed response stream for correlation ID: {}",
-                correlation_id
+                "✅ [QuicTransport] Found and removed response stream for correlation ID: {correlation_id}"
             ));
         } else {
             self.logger.warn(format!(
-                "❌ [QuicTransport] No response stream found for correlation ID: {}",
-                correlation_id
+                "❌ [QuicTransport] No response stream found for correlation ID: {correlation_id}"
             ));
         }
 
@@ -1503,13 +1461,12 @@ impl QuicTransportImpl {
         let transport_config = Arc::new(transport_config);
 
         // Create server configuration using Quinn 0.11.x API with custom transport config
-        let mut server_config = ServerConfig::with_single_cert(
-            certificates.clone(),
-            private_key.clone_key(),
-        )
-        .map_err(|e| {
-            NetworkError::ConfigurationError(format!("Failed to create server config: {}", e))
-        })?;
+        let mut server_config =
+            ServerConfig::with_single_cert(certificates.clone(), private_key.clone_key()).map_err(
+                |e| {
+                    NetworkError::ConfigurationError(format!("Failed to create server config: {e}"))
+                },
+            )?;
 
         // Apply the transport config to server
         server_config.transport_config(transport_config.clone());
@@ -1524,8 +1481,7 @@ impl QuicTransportImpl {
             quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config).map_err(
                 |e| {
                     NetworkError::ConfigurationError(format!(
-                        "Failed to convert rustls config: {}",
-                        e
+                        "Failed to convert rustls config: {e}"
                     ))
                 },
             )?,
@@ -1552,8 +1508,10 @@ impl QuicTransportImpl {
             return Ok(());
         }
 
-        self.logger
-            .info(format!("Starting QUIC transport on {}", self.bind_addr));
+        self.logger.info(format!(
+            "Starting QUIC transport on {bind_addr}",
+            bind_addr = self.bind_addr
+        ));
 
         // Create configurations for the QUIC endpoint
         let (server_config, client_config) = self.create_quinn_configs()?;
@@ -1562,11 +1520,10 @@ impl QuicTransportImpl {
         let bind_addr =
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), self.bind_addr.port());
         self.logger
-            .info(format!("Creating endpoint bound to {}", bind_addr));
+            .info(format!("Creating endpoint bound to {bind_addr}"));
 
-        let mut endpoint = Endpoint::server(server_config, bind_addr).map_err(|e| {
-            NetworkError::TransportError(format!("Failed to create endpoint: {}", e))
-        })?;
+        let mut endpoint = Endpoint::server(server_config, bind_addr)
+            .map_err(|e| NetworkError::TransportError(format!("Failed to create endpoint: {e}")))?;
 
         endpoint.set_default_client_config(client_config);
 
@@ -1607,11 +1564,11 @@ impl QuicTransportImpl {
                                 match inner_arc.handle_new_connection(connection).await {
                                     Ok(_) => {}
                                     Err(e) => {
-                                        logger.error(format!("Error handling connection: {}", e))
+                                        logger.error(format!("Error handling connection: {e}"))
                                     }
                                 }
                             }
-                            Err(e) => logger.error(format!("Error accepting connection: {}", e)),
+                            Err(e) => logger.error(format!("Error accepting connection: {e}")),
                         }
                     });
                 }
@@ -1735,8 +1692,7 @@ impl QuicTransportImpl {
     ) -> Result<(), NetworkError> {
         // This is similar to the logic in receive_message but specifically for response streams
         self.logger.debug(format!(
-            "🔄 [QuicTransport] Processing response stream for correlation ID: {}",
-            correlation_id
+            "🔄 [QuicTransport] Processing response stream for correlation ID: {correlation_id}"
         ));
 
         // Use the existing receive_message infrastructure to handle the response
@@ -1761,8 +1717,7 @@ impl QuicTransportImpl {
         logger: &Arc<Logger>,
     ) -> Result<NetworkMessage, NetworkError> {
         logger.debug(format!(
-            "📖 [QuicTransport] Reading response from stream for correlation ID: {}",
-            correlation_id
+            "📖 [QuicTransport] Reading response from stream for correlation ID: {correlation_id}"
         ));
 
         // Read message length (4 bytes)
@@ -1772,8 +1727,7 @@ impl QuicTransportImpl {
             Err(e) => {
                 // Handle Quinn-specific errors - ReadExactError doesn't have kind() method
                 return Err(NetworkError::MessageError(format!(
-                    "Failed to read response length for {}: {}",
-                    correlation_id, e
+                    "Failed to read response length for {correlation_id}: {e}"
                 )));
             }
         }
@@ -1782,9 +1736,8 @@ impl QuicTransportImpl {
         if message_len > 1024 * 1024 {
             // 1MB limit
             return Err(NetworkError::MessageError(format!(
-                "Response message too large: {} bytes for correlation ID: {}",
-                message_len, correlation_id
-            )));
+                  "Response message too large: {message_len} bytes for correlation ID: {correlation_id}"
+              )));
         }
 
         // Read the message data
@@ -1794,16 +1747,14 @@ impl QuicTransportImpl {
             .await
             .map_err(|e| {
                 NetworkError::MessageError(format!(
-                    "Failed to read response data for {}: {}",
-                    correlation_id, e
+                    "Failed to read response data for {correlation_id}: {e}"
                 ))
             })?;
 
         // Deserialize the response message
         let message: NetworkMessage = bincode::deserialize(&message_data).map_err(|e| {
             NetworkError::MessageError(format!(
-                "Failed to deserialize response for {}: {}",
-                correlation_id, e
+                "Failed to deserialize response for {correlation_id}: {e}"
             ))
         })?;
 
@@ -1851,10 +1802,8 @@ impl NetworkTransport for QuicTransport {
                 match self.inner.handshake_peer(discovery_msg).await {
                     Ok(()) => Ok(()),
                     Err(e) => {
-                        self.logger.error(format!(
-                            "Handshake failed after successful connection: {}",
-                            e
-                        ));
+                        self.logger
+                            .error(format!("Handshake failed after successful connection: {e}"));
                         Err(e)
                     }
                 }

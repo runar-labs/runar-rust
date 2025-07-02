@@ -174,8 +174,7 @@ impl PeerState {
                     ));
 
                     Err(NetworkError::ConnectionError(format!(
-                        "Failed to open stream: {}",
-                        e
+                        "Failed to open stream: {e}"
                     )))
                 }
             }

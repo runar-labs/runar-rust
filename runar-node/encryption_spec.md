@@ -417,6 +417,8 @@ impl RunarDecrypt for EncryptedProfile {
             }
         }
         
+    //Feedback.. sicne the last one overrrives. we shuold do network decruption fiest and user profile later. so it takes precedence..
+
         // Try to decrypt system fields group (may override some fields from user group)
         if let Some(ref system_encrypted) = self.system_encrypted {
             if let Ok(system_fields) = decrypt_label_group::<ProfileSystemFields>(system_encrypted, resolver) {
@@ -428,6 +430,8 @@ impl RunarDecrypt for EncryptedProfile {
         Ok(profile)
     }
 }
+
+
 
 fn decrypt_label_group<T: for<'de> Deserialize<'de>>(
     encrypted_group: &EncryptedLabelGroup,
@@ -471,6 +475,11 @@ pub struct SerializerRegistry {
     encryption_policy: EncryptionPolicy,
 }
 
+// Feedback
+//we dont need this object EncryptionPolicy
+//the rule is simple.. during serialization if the object in question 
+// has the proper traits e.g. was anotated with the macros.. then
+//encryption and decruption will take place.. alwyas.. and we do not n eed a exetrnal policy like this
 #[derive(Debug, Clone)]
 pub struct EncryptionPolicy {
     /// Force encryption for network serialization
@@ -511,6 +520,8 @@ impl SerializerRegistry {
             type_name.to_string(),
             Box::new(move |value: &dyn Any, context: &SerializationContext| -> Result<Vec<u8>> {
                 if let Some(typed_value) = value.downcast_ref::<T>() {
+                    //Feedback.. as mentioned befgore we dont have a poplicuy like this
+                    //the check neede is the obojct anotated iwth our amcros.. ifg yes then alwaus encruypt.. adn alwau decrupt.. 
                     // Determine if encryption is needed based on context
                     let should_encrypt = match context.purpose {
                         SerializationPurpose::NetworkTransport => policy.encrypt_on_network,
@@ -567,7 +578,11 @@ impl SerializerRegistry {
         Ok(())
     }
 }
-
+//feedback
+//we dont need this eithyer..
+//we never need to do this distinicipo. again LocalStorage is compelte separte andwhols not feature anywhere in this DOC>> compelte remove any notion of LocalStorage from there to avoid this kiund of conffusion..
+//if serializat is either for netowrk transpor ot local call is irrelegvant.. the bejhavioounri the same and we dont need anyd distinction..  currently a local call never calls the serializat
+// so after thjis wors we will cahg tehe node flows to decided if for a local call it will cal lthe serialiat or not.. so this is a decisdion makde externaly. this design does notn eed to concert about it at all. the serialiat needs to be simples.. and alçwaus encruypt if the objecvt is anotated with our macros.
 #[derive(Debug, Clone)]
 pub enum SerializationPurpose {
     /// Data being sent over network to another node
@@ -596,6 +611,8 @@ pub struct DeserializationContext {
 
 ## Data Storage Annotations and Enforcement
 
+//Feedback.. we dont need this.. as mentioned in the previou s ffedback seciotyn. the confir got actions is external t this design.. here we shuold focus only in the serializart and macros... so we can test them in isolation..
+//the actions will be done externalu at the node level..
 ### Storage Action Annotations
 
 ```rust
@@ -1092,13 +1109,20 @@ assert_eq!(decrypted.analytics_data, "usage_metrics"); // Decrypted - has analyt
 
 ## Conclusion
 
-This design leverages the existing runar-keys infrastructure [[memory:6938732877054023747]] while providing a clean, declarative interface for selective field encryption that integrates seamlessly with the ArcValue serialization flow.
+Feedback on implemention plan
 
-**Key innovations:**
-- **Context-aware encryption**: Encryption happens during serialization, not ArcValue creation
-- **Zero-copy local operations**: Same-network calls remain efficient
-- **Annotation-driven storage**: Force encryption for storage operations
-- **Label-grouped efficiency**: Single crypto operation per access level
-- **Graceful degradation**: Services access only authorized data
+Phase 1 - Focus on macros and the SerializerRegistry .. so we can have a end to end test that:
 
-The solution addresses all feedback requirements: encryption occurs in SerializerRegistry during serialization, supports both network transport and storage encryption scenarios, and maintains the zero-copy principle for local operations while providing strong security guarantees for cross-network data sharing.
+define structs using teh macros and also plain structs 
+create a SerializerRegistry and provide the key mnaqnager Arc refercence to it..
+once  SerializerRegistry for the mobile side.. with a mobile key store
+and one SerializerRegistry for the node side.. with a node key store
+and we call the mobile SerializerRegistry to serialize the structs 
+it shuold be encrypted as specicified.
+ and if we decrypt iun the mobile side.. ew get all the data avialable..
+
+ then we try to decrypt with on the node side.. which only has network keys.. and only tyhe data that is mapped to be decrypte with netowrk  is propoerly done so..
+
+ this shows how data can gbe encrypted on the mobile side and only network shared data can be decrypted on th other side..  like we did for runar-keys. 
+ 
+ This llaewds us to develop and test these primitives and dataflows in isolation .. to later we integrate into the node..

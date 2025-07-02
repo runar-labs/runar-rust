@@ -189,7 +189,7 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
@@ -220,7 +220,7 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
@@ -251,7 +251,7 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
@@ -282,7 +282,7 @@ impl MathService {
                 (a, b)
             }
             Err(e) => {
-                context.error(format!("Parameter extraction error: {}", e));
+                context.error(format!("Parameter extraction error: {e}"));
                 return Err(anyhow!(format!("Parameter extraction error: {}", e)));
             }
         };
@@ -446,8 +446,7 @@ impl AbstractService for MathService {
                 Box::new(move |event_ctx, payload| {
                     Box::pin(async move {
                         event_ctx.info(format!(
-                            "MathService received 'config/updated' event with payload: {:?}",
-                            payload
+                            "MathService received 'config/updated' event with payload: {payload:?}"
                         ));
                         // In a real scenario, _service_clone could be used to update internal state
                         Ok(())

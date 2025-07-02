@@ -243,8 +243,8 @@ async fn test_remote_action_call() -> Result<()> {
         })
         .with_key_manager_state(node2_key_state_bytes);
 
-    logger.info(format!("Node1 config: {}", node1_config));
-    logger.info(format!("Node2 config: {}", node2_config));
+    logger.info(format!("Node1 config: {node1_config}"));
+    logger.info(format!("Node2 config: {node2_config}"));
 
     // ==========================================
     // STEP 10: Start Node 1
@@ -319,12 +319,12 @@ async fn test_remote_action_call() -> Result<()> {
     // Manually trigger discovery for both nodes (node1 discovers node2, node2 discovers node1)
     match node1.handle_discovered_node(node2_peer_info.clone()).await {
         Ok(()) => logger.info("✅ Node1 successfully discovered Node2 via manual fallback"),
-        Err(e) => logger.warn(format!("⚠️  Node1 manual discovery failed: {}", e)),
+        Err(e) => logger.warn(format!("⚠️  Node1 manual discovery failed: {e}")),
     }
 
     match node2.handle_discovered_node(node1_peer_info.clone()).await {
         Ok(()) => logger.info("✅ Node2 successfully discovered Node1 via manual fallback"),
-        Err(e) => logger.warn(format!("⚠️  Node2 manual discovery failed: {}", e)),
+        Err(e) => logger.warn(format!("⚠️  Node2 manual discovery failed: {e}")),
     }
 
     // Wait additional time for connections to establish and handshakes to complete
@@ -346,8 +346,7 @@ async fn test_remote_action_call() -> Result<()> {
     let response: f64 = node2.request("math1/add", Some(add_params)).await?;
     assert_eq!(response, 8.0);
     logger.info(format!(
-        "✅ Secure add operation succeeded: 5 + 3 = {}",
-        response
+        "✅ Secure add operation succeeded: 5 + 3 = {response}"
     ));
 
     // Test 2: Call math2/multiply service (on node2) from node1
@@ -362,8 +361,7 @@ async fn test_remote_action_call() -> Result<()> {
         .await?;
     assert_eq!(response, 28.0);
     logger.info(format!(
-        "✅ Secure multiply operation succeeded: 4 * 7 = {}",
-        response
+        "✅ Secure multiply operation succeeded: 4 * 7 = {response}"
     ));
 
     // ==========================================
@@ -390,8 +388,7 @@ async fn test_remote_action_call() -> Result<()> {
     let response: f64 = node2.request("math3/add", Some(add_params)).await?;
     assert_eq!(response, 15.0);
     logger.info(format!(
-        "✅ Dynamic service call succeeded: 10 + 5 = {}",
-        response
+        "✅ Dynamic service call succeeded: 10 + 5 = {response}"
     ));
 
     // ==========================================
@@ -409,10 +406,7 @@ async fn test_remote_action_call() -> Result<()> {
         .request("math1/subtract", Some(subtract_params))
         .await?;
     assert_eq!(response, 12.0);
-    logger.info(format!(
-        "✅ Secure subtract operation: 20 - 8 = {}",
-        response
-    ));
+    logger.info(format!("✅ Secure subtract operation: 20 - 8 = {response}"));
 
     // Test divide operation on math2
     let divide_params = ArcValue::new_map(hmap! {
@@ -422,7 +416,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     let response: f64 = node1.request("math2/divide", Some(divide_params)).await?;
     assert_eq!(response, 5.0);
-    logger.info(format!("✅ Secure divide operation: 15 / 3 = {}", response));
+    logger.info(format!("✅ Secure divide operation: 15 / 3 = {response}"));
 
     // ==========================================
     // STEP 17: Cleanup

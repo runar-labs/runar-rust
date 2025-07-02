@@ -66,7 +66,7 @@ impl PathParamsService {
         let param_values: HashMap<String, String> = context.path_params.clone();
 
         // Log the parameters we extracted
-        context.info(format!("Extracted parameters: {:?}", param_values));
+        context.info(format!("Extracted parameters: {param_values:?}"));
 
         // Return the parameters
         Ok(ArcValue::from_map(param_values))

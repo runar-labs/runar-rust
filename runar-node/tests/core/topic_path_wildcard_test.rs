@@ -199,17 +199,14 @@ mod topic_path_wildcard_tests {
             if segments.len() >= 4 && segments[0] == "services" && segments[2] == "actions" {
                 // Create services/{service_path}/actions/{action} pattern
                 let network_id = concrete_path.split(':').next().unwrap_or("main");
-                let template = format!(
-                    "{}:services/{{service_path}}/actions/{{action}}",
-                    network_id
-                );
+                let template = format!("{network_id}:services/{{service_path}}/actions/{{action}}");
                 templates.push(template);
             }
 
             if segments.len() >= 3 && segments[0] == "services" {
                 // Create services/*/state pattern (wildcard)
                 let network_id = concrete_path.split(':').next().unwrap_or("main");
-                let template = format!("{}:services/*/state", network_id);
+                let template = format!("{network_id}:services/*/state");
                 templates.push(template);
             }
         }
@@ -280,7 +277,7 @@ mod topic_path_wildcard_tests {
                     patterns.push(wildcard_middle);
 
                     // Add a multi-segment wildcard pattern
-                    patterns.push(format!("{}:services/>", network_prefix));
+                    patterns.push(format!("{network_prefix}:services/>"));
                 }
             }
         }

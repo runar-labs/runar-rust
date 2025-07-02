@@ -164,14 +164,8 @@ async fn test_quic_transport_complete_api_validation(
     let node1_public_key_hex = hex::encode(&node1_public_key_bytes);
     let node2_public_key_hex = hex::encode(&node2_public_key_bytes);
 
-    println!(
-        "✅ [QUIC Transport API] Node 1 public key: {}",
-        node1_public_key_hex
-    );
-    println!(
-        "✅ [QUIC Transport API] Node 2 public key: {}",
-        node2_public_key_hex
-    );
+    println!("✅ [QUIC Transport API] Node 1 public key: {node1_public_key_hex}");
+    println!("✅ [QUIC Transport API] Node 2 public key: {node2_public_key_hex}");
 
     // ==================================================
     // STEP 6: Create Message Tracking for Validation
@@ -376,8 +370,7 @@ async fn test_quic_transport_complete_api_validation(
     let t1_connected = transport1.is_connected(node2_info.peer_id.clone()).await;
     let t2_connected = transport2.is_connected(node1_info.peer_id.clone()).await;
     println!(
-        "🔗 [QUIC Transport API] Connection status: T1→T2={}, T2→T1={}",
-        t1_connected, t2_connected
+        "🔗 [QUIC Transport API] Connection status: T1→T2={t1_connected}, T2→T1={t2_connected}"
     );
 
     // **FIXED**: Only one direction should be connected due to lexicographic ordering
@@ -607,8 +600,8 @@ async fn test_quic_transport_complete_api_validation(
     let b_connected_to_a = transport2.is_connected(node1_info.peer_id.clone()).await;
 
     logger.info("\n🔗 CONNECTION STATUS:");
-    logger.info(format!("  - Node A → Node B: {}", a_connected_to_b));
-    logger.info(format!("  - Node B → Node A: {}", b_connected_to_a));
+    logger.info(format!("  - Node A → Node B: {a_connected_to_b}"));
+    logger.info(format!("  - Node B → Node A: {b_connected_to_a}"));
 
     // ==================================================
     // STEP 15: Validation and Assertions
@@ -633,8 +626,7 @@ async fn test_quic_transport_complete_api_validation(
     // Validate bidirectional patterns
     logger.info("  📊 Message type distribution:");
     logger.info(format!(
-        "    - Node A: {} requests, {} responses, {} events",
-        request_count, response_count, event_count
+        "    - Node A: {request_count} requests, {response_count} responses, {event_count} events"
     ));
 
     if request_count > 0 || response_count > 0 {
