@@ -23,10 +23,7 @@ impl ProfileService {
     #[action(name = "get_profile")]
     pub async fn get_profile(&self, user_id: String, _ctx: &RequestContext) -> Result<ArcValue> {
         // Placeholder implementation
-        println!(
-            "ProfileService: Called get_profile for user_id: {}",
-            user_id
-        );
+        println!("ProfileService: Called get_profile for user_id: {user_id}");
         Ok(ArcValue::from_struct(Profile {
             id: "profile_456".to_string(), // Dummy ID
             user_id,

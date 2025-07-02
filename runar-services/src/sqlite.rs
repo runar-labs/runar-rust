@@ -94,7 +94,7 @@ impl SqliteWorker {
         symmetric_key: Option<Vec<u8>>, // Direct symmetric key bytes for encryption
     ) -> Result<Self, String> {
         let connection = Connection::open(db_path.clone()).map_err(|e| {
-            let err_msg = format!("Failed to open SQLite connection to '{}': {}", db_path, e);
+            let err_msg = format!("Failed to open SQLite connection to '{db_path}': {e}");
             logger.error(&err_msg);
             err_msg
         })?;
@@ -109,7 +109,7 @@ impl SqliteWorker {
             connection
                 .pragma_update(None, "key", &hex_key)
                 .map_err(|e| {
-                    let err_msg = format!("Failed to set database key: {}", e);
+                    let err_msg = format!("Failed to set database key: {e}");
                     logger.error(&err_msg);
                     err_msg
                 })?;
@@ -261,7 +261,7 @@ fn apply_schema_internal(
     }
 
     conn.execute_batch(&ddl_batch).map_err(|e| {
-        let err_msg = format!("Failed to apply schema batch: {}. DDL:\n{}", e, ddl_batch);
+        let err_msg = format!("Failed to apply schema batch: {e}. DDL:\n{ddl_batch}");
         logger.error(&err_msg);
         err_msg
     })
@@ -281,17 +281,16 @@ fn execute_internal(
         Ok(rusqlite_params) => {
             let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
                 rusqlite_params.iter().map(|b| b.as_ref()).collect();
-            logger.debug(format!("Executing SQL: {} with params: {:?}", sql, params));
+            logger.debug(format!("Executing SQL: {sql} with params: {params:?}"));
             conn.execute(sql, params_from_iter(params_for_iter))
                 .map_err(|e| {
-                    let err_msg = format!("Failed to execute SQL '{}': {}", sql, e);
+                    let err_msg = format!("Failed to execute SQL '{sql}': {e}");
                     logger.error(&err_msg);
                     err_msg
                 })
         }
         Err(e) => Err(format!(
-            "Failed to convert Value params to SQL params: {}", // Updated error message
-            e
+            "Failed to convert Value params to SQL params: {e}", // Updated error message
         )),
     }
 }
@@ -310,8 +309,7 @@ fn query_internal(
         Ok(p) => p,
         Err(e) => {
             return Err(format!(
-                "Failed to convert Value params to SQL params for query: {}", // Updated error message
-                e
+                "Failed to convert Value params to SQL params for query: {e}", // Updated error message
             ));
         }
     };
@@ -320,11 +318,10 @@ fn query_internal(
         rusqlite_params.iter().map(|b| b.as_ref()).collect();
 
     logger.debug(format!(
-        "Preparing SQL query: {} with params: {:?}",
-        sql, params
+        "Preparing SQL query: {sql} with params: {params:?}",
     ));
     let mut stmt = conn.prepare(sql).map_err(|e| {
-        let err_msg = format!("Error preparing statement for SQL '{}': {}", sql, e);
+        let err_msg = format!("Error preparing statement for SQL '{sql}': {e}");
         logger.error(&err_msg);
         err_msg
     })?;
@@ -335,8 +332,7 @@ fn query_internal(
         .collect();
 
     logger.debug(format!(
-        "Executing SQL query: {} with params: {:?}",
-        sql, params
+        "Executing SQL query: {sql} with params: {params:?}",
     ));
     let rows_iter = stmt
         .query_map(params_from_iter(params_for_iter.into_iter()), |row| {
@@ -347,7 +343,7 @@ fn query_internal(
             Ok(map) // Ok for rusqlite::Result for this row
         })
         .map_err(|e| {
-            let err_msg = format!("Error executing query '{}': {}", sql, e);
+            let err_msg = format!("Error executing query '{sql}': {e}");
             logger.error(&err_msg);
             err_msg
         })?;
@@ -355,7 +351,7 @@ fn query_internal(
     rows_iter
         .collect::<RusqliteResult<Vec<HashMap<String, Value>>>>()
         .map_err(|e| {
-            let err_msg = format!("Error collecting query results for '{}': {}", sql, e);
+            let err_msg = format!("Error collecting query results for '{sql}': {e}");
             logger.error(&err_msg);
             err_msg
         })
@@ -630,7 +626,7 @@ impl SqliteService {
             let guard = self
                 .worker_tx
                 .read()
-                .map_err(|e| format!("Failed to acquire read lock on worker_tx: {}", e))?;
+                .map_err(|e| format!("Failed to acquire read lock on worker_tx: {e}"))?;
             // Clone the Option<Sender> out of the guard to release the lock ASAP
             // mpsc::Sender is Clone.
             guard.clone()
@@ -648,11 +644,11 @@ impl SqliteService {
             cloned_sender // Use the cloned sender
                 .send(command)
                 .await
-                .map_err(|e| format!("Failed to send command to SqliteWorker: {}", e))?;
+                .map_err(|e| format!("Failed to send command to SqliteWorker: {e}"))?;
 
             match reply_rx.await {
                 Ok(result) => result,
-                Err(e) => Err(format!("Failed to receive reply from SqliteWorker: {}", e)),
+                Err(e) => Err(format!("Failed to receive reply from SqliteWorker: {e}")),
             }
         } else {
             Err(
@@ -856,10 +852,8 @@ impl AbstractService for SqliteService {
                     }
                     Err(e) => {
                         // If new fails, ready_tx is dropped, and the await below will fail.
-                        logger_clone_for_thread.error(format!(
-                            "Failed to initialize SqliteWorker in thread: {}",
-                            e
-                        ));
+                        logger_clone_for_thread
+                            .error(format!("Failed to initialize SqliteWorker in thread: {e}",));
                     }
                 }
             });
@@ -885,7 +879,7 @@ impl AbstractService for SqliteService {
         context.info(format!("Stopping SqliteService: {}", self.name));
         match self.send_command(|reply_tx| SqliteWorkerCommand::Shutdown { reply_to: reply_tx }).await {
             Ok(_) => context.info(format!("SqliteService '{}' worker acknowledged shutdown.", self.name)),
-            Err(e) => context.error(format!("Error sending Shutdown to SqliteService '{}' worker: {}. Worker might have already terminated.", self.name, e)),
+            Err(e) => context.error(format!("Error sending Shutdown to SqliteService '{}' worker: {e}. Worker might have already terminated.", self.name)),
         }
         // The channel will be dropped, and the worker thread should exit gracefully.
         Ok(())

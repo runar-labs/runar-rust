@@ -379,13 +379,13 @@ async fn test_certificate_performance() -> Result<()> {
     let total_duration = start.elapsed();
 
     println!("   ⏱️  Performance Results:");
-    println!("      CA creation: {:?}", ca_duration);
+    println!("      CA creation: {ca_duration:?}");
     println!("      {NUM_NODES} certificates issued in: {cert_duration:?}");
     println!(
         "      Average per certificate: {:?}",
         cert_duration / NUM_NODES as u32
     );
-    println!("      Total test time: {:?}", total_duration);
+    println!("      Total test time: {total_duration:?}");
 
     // Performance assertions (these are reasonable expectations)
     assert!(

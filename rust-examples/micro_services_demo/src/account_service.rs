@@ -27,10 +27,7 @@ impl AccountService {
         _ctx: &RequestContext,
     ) -> Result<ArcValue> {
         // Placeholder implementation
-        println!(
-            "AccountService: Called get_account_balance for account_id: {}",
-            account_id
-        );
+        println!("AccountService: Called get_account_balance for account_id: {account_id}");
         Ok(ArcValue::new_primitive(1234.56f64)) // Dummy balance
     }
 
@@ -43,10 +40,7 @@ impl AccountService {
         initial_balance: f64,
         _ctx: &RequestContext,
     ) -> Result<Account> {
-        println!(
-            "AccountService: Creating account for user_id: {} with type: {} and balance: {}",
-            user_id, account_type, initial_balance
-        );
+        println!("AccountService: Creating account for user_id: {user_id} with type: {account_type} and balance: {initial_balance}");
         Ok(Account {
             id: "acc_789".to_string(), // Dummy ID
             user_id,

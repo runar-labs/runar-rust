@@ -30,10 +30,7 @@ impl OrderService {
     ) -> Result<ArcValue> {
         // Placeholder implementation
         let _total_price = quantity as f64 * 10.0; // Dummy price calculation
-        println!(
-            "OrderService: Called create_order for user_id: {}, product_id: {}, quantity: {}",
-            user_id, product_id, quantity
-        );
+        println!("OrderService: Called create_order for user_id: {user_id}, product_id: {product_id}, quantity: {quantity}");
         Ok(ArcValue::from_struct(Order {
             id: "order_789".to_string(), // Dummy ID
             user_id,

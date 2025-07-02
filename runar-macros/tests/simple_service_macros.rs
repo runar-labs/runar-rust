@@ -109,7 +109,7 @@ impl TestService {
     #[action(path = "my_data")]
     async fn get_my_data(&self, id: i32, ctx: &RequestContext) -> Result<MyData> {
         // Log using the context
-        ctx.debug(format!("get_my_data id: {}", id));
+        ctx.debug(format!("get_my_data id: {id}"));
 
         let total_res: f64 = ctx
             .request(
@@ -166,7 +166,7 @@ impl TestService {
 
     #[subscribe(path = "math/added")]
     async fn on_added(&self, total: f64, ctx: &EventContext) -> Result<()> {
-        ctx.debug(format!("on_added: {}", total));
+        ctx.debug(format!("on_added: {total}"));
 
         let mut lock = self.store.lock().await;
         let existing = lock.get("added");
@@ -205,7 +205,7 @@ impl TestService {
 
     #[subscribe(path = "math/age_changed")]
     async fn on_age_changed(&self, new_age: i32, ctx: &EventContext) -> Result<()> {
-        ctx.debug(format!("age_changed: {}", new_age));
+        ctx.debug(format!("age_changed: {new_age}"));
 
         let mut lock = self.store.lock().await;
         let existing = lock.get("age_changed");
@@ -226,7 +226,7 @@ impl TestService {
     #[action]
     async fn add(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Adding {} + {}", a, b));
+        ctx.debug(format!("Adding {a} + {b}"));
         // Return the result
         Ok(a + b)
     }
@@ -235,7 +235,7 @@ impl TestService {
     #[action]
     async fn subtract(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Subtracting {} - {}", a, b));
+        ctx.debug(format!("Subtracting {a} - {b}"));
 
         // Return the result
         Ok(a - b)
@@ -245,7 +245,7 @@ impl TestService {
     #[action("multiply_numbers")]
     async fn multiply(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Multiplying {} * {}", a, b));
+        ctx.debug(format!("Multiplying {a} * {b}"));
 
         // Return the result
         Ok(a * b)
@@ -255,7 +255,7 @@ impl TestService {
     #[action]
     async fn divide(&self, a: f64, b: f64, ctx: &RequestContext) -> Result<f64> {
         // Log using the context
-        ctx.debug(format!("Dividing {} / {}", a, b));
+        ctx.debug(format!("Dividing {a} / {b}"));
 
         // Check for division by zero
         if b == 0.0 {

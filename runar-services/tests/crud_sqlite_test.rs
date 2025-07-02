@@ -197,7 +197,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
 
     let insert_resp_av: InsertOneResponse = node
         .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_req_auto),
         )
         .await?;
@@ -205,7 +205,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
     let insert_response_auto = insert_resp_av; // Made mutable
     let generated_id = insert_response_auto.inserted_id.clone(); // inserted_id is already a String
     assert!(!generated_id.is_empty(), "Generated ID should not be empty");
-    println!("Inserted document with auto-generated ID: {}", generated_id);
+    println!("Inserted document with auto-generated ID: {generated_id}");
 
     // 2. Find the inserted document by its generated ID
     let mut filter_auto_id_map: HashMap<String, ArcValue> = HashMap::new();
@@ -221,7 +221,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
 
     let find_resp_av: FindOneResponse = node
         .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_auto),
         )
         .await?;
@@ -242,10 +242,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
     let mut age_av = found_doc_auto.get("age").unwrap().clone();
     let age_val_arc = age_av.as_type_ref::<i64>()?;
     assert_eq!(*age_val_arc, 30i64);
-    println!(
-        "Successfully found document by auto-generated ID: {:?}",
-        found_doc_auto
-    );
+    println!("Successfully found document by auto-generated ID: {found_doc_auto:?}");
 
     // 3. Insert a document with a predefined ID
     let predefined_id = "user-bob-001".to_string();
@@ -272,13 +269,13 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
 
     let insert_resp_pre_av: InsertOneResponse = node
         .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_req_pre),
         )
         .await?;
     let insert_response_pre = insert_resp_pre_av;
     assert_eq!(insert_response_pre.inserted_id, predefined_id);
-    println!("Inserted document with predefined ID: {}", predefined_id);
+    println!("Inserted document with predefined ID: {predefined_id}");
 
     // 4. Find the document with the predefined ID
     let mut filter_pre_id_map: HashMap<String, ArcValue> = HashMap::new();
@@ -294,7 +291,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
 
     let find_resp_pre_av: FindOneResponse = node
         .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_pre),
         )
         .await?;
@@ -311,10 +308,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
     let mut email_av_pre = found_doc_pre.get("email").unwrap().clone();
     let email_str_arc_pre = email_av_pre.as_type_ref::<String>()?;
     assert_eq!(*email_str_arc_pre, "bob@example.com");
-    println!(
-        "Successfully found document by predefined ID: {:?}",
-        found_doc_pre
-    );
+    println!("Successfully found document by predefined ID: {found_doc_pre:?}");
 
     // 5. Attempt to find a non-existent document
     let non_existent_id = "user-does-not-exist-404".to_string();
@@ -331,7 +325,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
 
     let find_response_non_existent: FindOneResponse = node
         .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_non_existent),
         )
         .await?;
@@ -340,10 +334,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         find_response_non_existent.document.is_none(),
         "Document with non_existent_id should not be found"
     );
-    println!(
-        "Correctly found no document for non-existent ID: {}",
-        non_existent_id
-    );
+    println!("Correctly found no document for non-existent ID: {non_existent_id}");
 
     Ok(())
 }
@@ -370,13 +361,13 @@ async fn test_insert_into_different_collections() -> Result<()> {
     let arc_insert_order_req = ArcValue::from_struct(insert_order_req);
     let order_resp_av: InsertOneResponse = node
         .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_order_req),
         )
         .await?;
     let order_insert_resp = order_resp_av;
     let order_id = order_insert_resp.inserted_id.clone();
-    println!("Inserted order with ID: {}", order_id);
+    println!("Inserted order with ID: {order_id}");
 
     // Insert into 'products' collection
     let mut product_doc_map: HashMap<String, ArcValue> = HashMap::new();
@@ -394,14 +385,14 @@ async fn test_insert_into_different_collections() -> Result<()> {
     let arc_insert_product_req = ArcValue::from_struct(insert_product_req);
     let product_resp_av: InsertOneResponse = node
         .request(
-            &format!("{}/insertOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_product_req),
         )
         .await?;
     let product_insert_resp = product_resp_av;
 
     let product_id = product_insert_resp.inserted_id.clone();
-    println!("Inserted product with ID: {}", product_id);
+    println!("Inserted product with ID: {product_id}");
 
     // Find the order
     let mut filter_order_map: HashMap<String, ArcValue> = HashMap::new();
@@ -413,7 +404,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
     let arc_find_order_req = ArcValue::from_struct(find_order_req);
     let find_order_resp_av: FindOneResponse = node
         .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_order_req),
         )
         .await?;
@@ -442,7 +433,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
     let arc_find_product_req = ArcValue::from_struct(find_product_req);
     let find_product_resp_av: FindOneResponse = node
         .request(
-            &format!("{}/findOne", CRUD_SERVICE_PATH),
+            &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_product_req),
         )
         .await?;

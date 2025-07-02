@@ -125,8 +125,7 @@ impl CrudSqliteService {
                                 // Already a bool, do nothing
                             } else {
                                 context.warn(format!(
-                                    "Field '{}' in collection '{}' is schema type Boolean, but ArcValue is Primitive but not i64 or bool: {:?}. Leaving as is.",
-                                    field_name, collection_name, arc_value
+                                    "Field '{field_name}' in collection '{collection_name}' is schema type Boolean, but ArcValue is Primitive but not i64 or bool: {arc_value:?}. Leaving as is.",
                                 ));
                             }
                         }
@@ -135,8 +134,7 @@ impl CrudSqliteService {
                         }
                         _ => {
                             context.warn(format!(
-                                "Field '{}' in collection '{}' is schema type Boolean, but ArcValue is not Primitive or Null: {:?}. Leaving as is.",
-                                field_name, collection_name, arc_value
+                                "Field '{field_name}' in collection '{collection_name}' is schema type Boolean, but ArcValue is not Primitive or Null: {arc_value:?}. Leaving as is.",
                             ));
                         }
                     }
@@ -282,20 +280,19 @@ impl CrudSqliteService {
 
             if !type_match {
                 let provided_type_name_for_error = arc_value.value.as_ref().map_or_else(
-                    || format!("N/A (value is None, category: {:?})", provided_category),
+                    || format!("N/A (value is None, category: {provided_category:?})"),
                     |v| v.type_name().to_string(),
                 );
                 let error_message = format!(
-                    "Type mismatch or inconsistent state for field '{}': schema expects DB type {:?}. Received category {:?} with specific type '{}'.",
-                    field_name, expected_db_type, provided_category, provided_type_name_for_error
+                    "Type mismatch or inconsistent state for field '{field_name}': schema expects DB type {expected_db_type:?}. Received category {provided_category:?} with specific type '{provided_type_name_for_error}'.",
                 );
                 context.error(&error_message);
                 return Err(anyhow!(error_message));
             }
 
-            column_names.push(format!("\"{}\"", field_name)); // Quote column names
+            column_names.push(format!("\"{field_name}\"")); // Quote column names
             let sqlite_val = Self::arc_value_to_sqlite_value(arc_value).with_context(|| {
-                format!("Failed to convert field '{}' to SqliteValue", field_name)
+                format!("Failed to convert field '{field_name}' to SqliteValue")
             })?;
             value_params.push(sqlite_val);
         }
@@ -315,8 +312,7 @@ impl CrudSqliteService {
         );
 
         context.debug(format!(
-            "Executing INSERT SQL: {} with params: {:?}",
-            sql, value_params
+            "Executing INSERT SQL: {sql} with params: {value_params:?}",
         ));
 
         let sql_query = SqlQuery {
@@ -408,12 +404,9 @@ impl CrudSqliteService {
                 context.error(&err_msg);
                 return Err(anyhow!(err_msg));
             }
-            where_clauses.push(format!("\"{}\" = ?", field_name));
+            where_clauses.push(format!("\"{field_name}\" = ?"));
             let sqlite_val = Self::arc_value_to_sqlite_value(arc_value).with_context(|| {
-                format!(
-                    "Failed to convert filter field '{}' to SqliteValue",
-                    field_name
-                )
+                format!("Failed to convert filter field '{field_name}' to SqliteValue",)
             })?;
             value_params.push(sqlite_val);
         }
@@ -444,8 +437,7 @@ impl CrudSqliteService {
         let request_payload_for_sqlite = ArcValue::from_struct(_sql_query_struct);
 
         context.debug(format!(
-            "Sending request to SqliteService at '{}' with payload for SQL: {}",
-            action_path, sql_for_logging
+            "Sending request to SqliteService at '{action_path}' with payload for SQL: {sql_for_logging}",
         ));
 
         // Make the actual request to SqliteService
@@ -487,9 +479,8 @@ impl CrudSqliteService {
                 }
                 Err(e) => {
                     context.error(format!(
-                        "Failed to convert found document ArcValue to map for FindOneResponse: {}. Doc AV: {:?}",
-                        e, document_arc_value_map
-                    ));
+                "Failed to convert found document ArcValue to map for FindOneResponse: {e}. Doc AV: {document_arc_value_map:?}",
+            ));
                     Err(anyhow!(
                         "Failed to convert document ArcValue to map for FindOneResponse: {}",
                         e

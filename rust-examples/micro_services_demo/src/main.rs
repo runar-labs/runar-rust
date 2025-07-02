@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
         .request("users/create_user", Some(ArcValue::new_map(user_params)))
         .await?;
     if let Some(user) = created_user {
-        println!("UserService response: Created User: {:?}", user);
+        println!("UserService response: Created User: {user:?}");
 
         // 2. Call ProfileService: get_profile (using the created user's ID)
         let mut profile_params = HashMap::new();
@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         if let Some(profile) = user_profile {
-            println!("ProfileService response: Got Profile: {:?}", profile);
+            println!("ProfileService response: Got Profile: {profile:?}");
         }
 
         // 3. Call AccountService: get_account_balance
@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         if let Some(bal) = balance {
-            println!("AccountService response: Account Balance: {}", bal);
+            println!("AccountService response: Account Balance: {bal}");
         }
 
         // 4. Call OrderService: create_order
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
             .request("orders/create_order", Some(ArcValue::new_map(order_params)))
             .await?;
         if let Some(order) = new_order {
-            println!("OrderService response: Created Order: {:?}", order);
+            println!("OrderService response: Created Order: {order:?}");
         }
     } else {
         println!("UserService: Failed to create user.");
