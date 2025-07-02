@@ -159,8 +159,13 @@ impl NodeKeyManager {
             .get(network_id)
             .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
 
-        // Network encrypted key is now always present (required field)
+        // Ensure the encrypted envelope key is present
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
+        if encrypted_envelope_key.is_empty() {
+            return Err(KeyError::DecryptionError(
+                "Envelope missing network_encrypted_key".to_string(),
+            ));
+        }
 
         let envelope_key = self.decrypt_key_with_ecdsa(encrypted_envelope_key, network_key)?;
         self.decrypt_with_symmetric_key(&envelope_data.encrypted_data, &envelope_key)
@@ -636,13 +641,9 @@ impl NodeKeyManager {
         &self,
         data: &[u8],
         network_id: &str,
-        profile_ids: Vec<String>,
+        _profile_ids: Vec<String>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        if !profile_ids.is_empty() {
-            return Err(crate::error::KeyError::InvalidOperation(
-                "Node cannot encrypt for profile recipients".into(),
-            ));
-        }
+        // Nodes only support network-wide encryption.
         self.create_envelope_for_network(data, network_id)
     }
 
@@ -747,21 +748,23 @@ impl crate::EnvelopeCrypto for NodeKeyManager {
         &self,
         data: &[u8],
         network_id: &str,
-        profile_ids: Vec<String>,
+        _profile_ids: Vec<String>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        if !profile_ids.is_empty() {
-            return Err(crate::error::KeyError::InvalidOperation(
-                "Node cannot encrypt for profile recipients".into(),
-            ));
-        }
-        // Call the inherent method explicitly to avoid infinite recursion
-        NodeKeyManager::encrypt_with_envelope(self, data, network_id, profile_ids)
+        // Nodes only support network-wide encryption.
+        self.create_envelope_for_network(data, network_id)
     }
 
     fn decrypt_envelope_data(
         &self,
         env: &crate::mobile::EnvelopeEncryptedData,
     ) -> crate::Result<Vec<u8>> {
-        self.decrypt_envelope_data(env)
+        // Guard: ensure the encrypted key is present
+        if env.network_encrypted_key.is_empty() {
+            return Err(crate::error::KeyError::DecryptionError(
+                "Envelope missing network_encrypted_key".into(),
+            ));
+        }
+
+        NodeKeyManager::decrypt_envelope_data(self, env)
     }
 }
