@@ -2,9 +2,20 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// Re-export common keystore traits & structs from runar-keys so downstream
-// code can simply `use runar_serializer::traits::*;`.
-pub use runar_keys::keystore::{EncryptedEnvelope, EncryptedKey, KeyStore};
+// ---------------------------------------------------------------------------
+// Re-exports from runar-keys for envelope encryption integration
+// ---------------------------------------------------------------------------
+pub use runar_keys::mobile::EnvelopeEncryptedData;
+pub use runar_keys::EnvelopeCrypto;
+
+// Trait-object alias so existing code that expects `&dyn KeyStore` continues to
+// compile while delegating to the real `EnvelopeCrypto` implementation.
+// This avoids another custom abstraction layer.
+pub type KeyStore = dyn EnvelopeCrypto;
+
+// ---------------------------------------------------------------------------
+// Label-to-PublicKey mapping utilities
+// ---------------------------------------------------------------------------
 
 /// Label-to-PublicKey mapping configuration
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -60,7 +71,7 @@ pub trait RunarEncrypt: RunarEncryptable {
 
     fn encrypt_with_keystore(
         &self,
-        keystore: &dyn KeyStore,
+        keystore: &KeyStore,
         resolver: &dyn LabelResolver,
     ) -> Result<Self::Encrypted>;
 }
@@ -69,5 +80,5 @@ pub trait RunarEncrypt: RunarEncryptable {
 pub trait RunarDecrypt {
     type Decrypted: RunarEncrypt<Encrypted = Self>;
 
-    fn decrypt_with_keystore(&self, keystore: &dyn KeyStore) -> Result<Self::Decrypted>;
+    fn decrypt_with_keystore(&self, keystore: &KeyStore) -> Result<Self::Decrypted>;
 }

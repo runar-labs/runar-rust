@@ -7,7 +7,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 // Real key managers from runar-keys
-use runar_keys::{compact_ids, mobile::MobileKeyManager, node::NodeKeyManager};
+use runar_keys::{
+    compact_ids,
+    mobile::{EnvelopeEncryptedData, MobileKeyManager},
+    node::NodeKeyManager,
+};
 
 // Test structs
 #[derive(Encrypt, serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
@@ -106,7 +110,7 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
     // Deserialize on node – only system fields decrypted
     let node_profile: TestProfile = node_registry.deserialize_bytes_to(&serialized_bytes)?;
     assert_eq!(node_profile.id, "user123");
-    assert_eq!(node_profile.name, "Alice");
+    assert_eq!(node_profile.name, "");
     assert_eq!(node_profile.email, "alice@example.com");
     assert_eq!(node_profile.admin_notes, "VIP user");
     assert_eq!(node_profile.created_at, 1234567890);
@@ -155,11 +159,11 @@ fn test_label_resolver() {
 fn test_encrypted_label_group() {
     let group = EncryptedLabelGroup {
         label: "test".to_string(),
-        envelope: EncryptedEnvelope {
+        envelope: EnvelopeEncryptedData {
             encrypted_data: vec![1, 2, 3],
-            encrypted_keys: vec![],
-            nonce: vec![],
-            algorithm: "test".to_string(),
+            network_id: String::new(),
+            network_encrypted_key: Vec::new(),
+            profile_encrypted_keys: std::collections::HashMap::new(),
         },
     };
 
@@ -167,11 +171,11 @@ fn test_encrypted_label_group() {
 
     let empty_group = EncryptedLabelGroup {
         label: "test".to_string(),
-        envelope: EncryptedEnvelope {
+        envelope: EnvelopeEncryptedData {
             encrypted_data: vec![],
-            encrypted_keys: vec![],
-            nonce: vec![],
-            algorithm: "test".to_string(),
+            network_id: String::new(),
+            network_encrypted_key: Vec::new(),
+            profile_encrypted_keys: std::collections::HashMap::new(),
         },
     };
 

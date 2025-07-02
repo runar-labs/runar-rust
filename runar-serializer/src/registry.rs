@@ -15,7 +15,7 @@ pub struct SerializerRegistry {
     /// Base registry from runar-common
     base_registry: BaseSerializerRegistry,
     /// Key store for encryption/decryption operations
-    keystore: Option<Arc<dyn KeyStore>>,
+    keystore: Option<Arc<KeyStore>>,
     /// Label resolver for mapping labels to public keys
     label_resolver: Option<Arc<dyn LabelResolver>>,
 }
@@ -33,7 +33,7 @@ impl SerializerRegistry {
     /// Create a new registry with keystore and label resolver
     pub fn with_keystore(
         logger: Arc<Logger>,
-        keystore: Arc<dyn KeyStore>,
+        keystore: Arc<KeyStore>,
         label_resolver: Arc<dyn LabelResolver>,
     ) -> Self {
         Self {

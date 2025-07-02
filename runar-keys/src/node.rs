@@ -743,3 +743,26 @@ impl NodeKeyManager {
         })
     }
 }
+
+impl crate::EnvelopeCrypto for NodeKeyManager {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        network_id: &str,
+        profile_ids: Vec<String>,
+    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
+        if !profile_ids.is_empty() {
+            return Err(crate::error::KeyError::InvalidOperation(
+                "Node cannot encrypt for profile recipients".into(),
+            ));
+        }
+        self.encrypt_with_envelope(data, network_id, profile_ids)
+    }
+
+    fn decrypt_envelope_data(
+        &self,
+        env: &crate::mobile::EnvelopeEncryptedData,
+    ) -> crate::Result<Vec<u8>> {
+        self.decrypt_envelope_data(env)
+    }
+}

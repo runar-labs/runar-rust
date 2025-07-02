@@ -224,14 +224,14 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
         impl runar_serializer::traits::RunarEncrypt for #struct_name {
             type Encrypted = #encrypted_name;
-            fn encrypt_with_keystore(&self, keystore: &dyn runar_serializer::traits::KeyStore, resolver: &dyn runar_serializer::traits::LabelResolver) -> anyhow::Result<Self::Encrypted> {
+            fn encrypt_with_keystore(&self, keystore: &runar_serializer::traits::KeyStore, resolver: &dyn runar_serializer::traits::LabelResolver) -> anyhow::Result<Self::Encrypted> {
                 #encrypt_impl
             }
         }
 
         impl runar_serializer::traits::RunarDecrypt for #encrypted_name {
             type Decrypted = #struct_name;
-            fn decrypt_with_keystore(&self, keystore: &dyn runar_serializer::traits::KeyStore) -> anyhow::Result<Self::Decrypted> {
+            fn decrypt_with_keystore(&self, keystore: &runar_serializer::traits::KeyStore) -> anyhow::Result<Self::Decrypted> {
                 #decrypt_impl
             }
         }
