@@ -2028,9 +2028,9 @@ impl NodeDelegate for Node {
 
 #[async_trait]
 impl KeysDelegate for Node {
-    async fn ensure_symetric_key(&self, key_name: &str) -> Result<ArcValue> {
+    async fn ensure_symmetric_key(&self, key_name: &str) -> Result<ArcValue> {
         let mut keys_manager = self.keys_manager.write().await;
-        let key = keys_manager.ensure_symetric_key(key_name)?;
+        let key = keys_manager.ensure_symmetric_key(key_name)?;
         Ok(ArcValue::new_bytes(key))
     }
 }
