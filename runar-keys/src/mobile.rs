@@ -277,6 +277,12 @@ impl MobileKeyManager {
 
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
 
+        if encrypted_envelope_key.is_empty() {
+            return Err(KeyError::DecryptionError(
+                "Envelope missing network_encrypted_key".to_string(),
+            ));
+        }
+
         let envelope_key = self.decrypt_key_with_ecdsa(encrypted_envelope_key, network_key)?;
         self.decrypt_with_symmetric_key(&envelope_data.encrypted_data, &envelope_key)
     }
