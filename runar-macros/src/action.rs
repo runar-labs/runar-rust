@@ -590,21 +590,14 @@ fn generate_register_action_method(
 }
 
 /// Generate parameter extraction code to exactly match the reference implementation
-// Helper function to determine if all parameters share a common type
-fn determine_common_type(params: &[(Ident, Type)]) -> Option<Type> {
-    if params.is_empty() {
-        return None;
-    }
-    let first_type = &params[0].1;
-    for (_, param_type) in params.iter().skip(1) {
-        if param_type != first_type {
-            return None; // Heterogeneous
-        }
-    }
-    Some(first_type.clone()) // Homogeneous
-}
-
-/// Generate parameter extraction code
+///
+/// The extractor always assumes the inbound payload (if present) is an
+/// `ArcValue::Map` whose values are `ArcValue`s. It converts each entry to the
+/// concrete parameter type expected by the action method, handling `Option<T>`
+/// parameters gracefully.
+///
+/// Single-parameter actions still benefit from a fallback where the payload can
+/// be a direct primitive or struct value instead of a map.
 fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) -> TokenStream2 {
     let mut extractions = TokenStream2::new();
 
@@ -678,129 +671,68 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
     }
 
     // Multiple parameters (params.len() > 1)
-    // params_value is an ArcValue. The caller ensures it's appropriately set up
-    // (e.g., an empty map representation if original payload was None but all params are Option).
-    let common_type_opt = determine_common_type(params);
-
-    if let Some(common_type_token) = common_type_opt {
-        // Homogeneous case: All parameters have the same type `common_type_token`.
-        extractions.extend(quote! {
-            let params_map_ref = match params_value.as_map_ref::<String, #common_type_token>() {
-                Ok(map_ref) => map_ref,
-                Err(err) => {
-                    ctx.error(format!(
-                        "Action parameters must be provided as a map of type Map<String, {}>, but received an incompatible type. Error: {}",
-                        stringify!(#common_type_token),
-                        err
-                    ));
-                    return Err(anyhow!(format!(
-                        "Invalid payload type for parameters. Expected map of type Map<String, {}>, got incompatible type: {}",
-                        stringify!(#common_type_token),
-                        err
-                    )));
-                }
-            };
-        });
-
-        for (param_ident, param_type) in params {
-            // param_type is effectively common_type_token
-            let param_name_str = param_ident.to_string();
-            let param_type_str_for_check = quote!(#param_type).to_string().replace(" ", "");
-            let is_option_common_type = param_type_str_for_check.starts_with("Option<")
-                || param_type_str_for_check.starts_with("std::option::Option<")
-                || param_type_str_for_check.starts_with("core::option::Option<");
-
-            if is_option_common_type {
-                // Common type is Option<T>. Map is Map<String, Option<T>>.
-                // param_ident needs to be Option<T>.
-                // params_map_ref.get() returns Option<&Option<T>>.
-                // .cloned() on Option<&V> (where V=Option<T>) gives Option<Option<T>>.
-                // .unwrap_or(None) on Option<Option<T>> gives Option<T>.
-                extractions.extend(quote! {
-                    let #param_ident: #param_type = params_map_ref.get(#param_name_str).cloned().unwrap_or(None);
-                });
-            } else {
-                // Common type is T (not an Option). Map is Map<String, T>.
-                // param_ident needs to be T.
-                extractions.extend(quote! {
-                    let #param_ident: #param_type = match params_map_ref.get(#param_name_str) {
-                        Some(val_ref) => val_ref.clone(),
-                        None => {
-                            ctx.error(format!(
-                                "Required parameter '{}' (type '{}') not found in payload for homogeneous map.",
-                                #param_name_str,
-                                stringify!(#param_type)
-                            ));
-                            return Err(anyhow!(format!("Missing required parameter '{}'", #param_name_str)));
-                        }
-                    };
-                });
+    // Always treat the payload as Map<String, ArcValue>. This supports both homogeneous
+    // and heterogeneous value types in a single, predictable path.
+    extractions.extend(quote! {
+        let params_map_ref = match params_value.as_map_ref::<String, runar_common::types::ArcValue>() {
+            Ok(map_ref) => map_ref,
+            Err(err) => {
+                ctx.error(format!(
+                    "Action parameters must be provided as a map (for heterogeneous types, expecting Map<String, ArcValue>), but received an incompatible type. Error: {}",
+                    err
+                ));
+                return Err(anyhow!(format!(
+                    "Invalid payload type for parameters. Expected a map, got incompatible type: {}",
+                    err
+                )));
             }
-        }
-    } else {
-        // Heterogeneous case: Parameters have different types.
-        // Fallback to expecting Map<String, ArcValue>.
-        extractions.extend(quote! {
-            let params_map_ref = match params_value.as_map_ref::<String, runar_common::types::ArcValue>() {
-                Ok(map_ref) => map_ref,
-                Err(err) => {
-                    ctx.error(format!(
-                        "Action parameters must be provided as a map (for heterogeneous types, expecting Map<String, ArcValue>), but received an incompatible type. Error: {}",
-                        err
-                    ));
-                    return Err(anyhow!(format!(
-                        "Invalid payload type for parameters. Expected a map, got incompatible type: {}",
-                        err
-                    )));
-                }
-            };
-        });
+        };
+    });
 
-        for (param_ident, param_type) in params {
-            let param_name_str = param_ident.to_string();
-            let param_type_str_for_check = quote!(#param_type).to_string().replace(" ", "");
-            let is_option_param_type = param_type_str_for_check.starts_with("Option<")
-                || param_type_str_for_check.starts_with("std::option::Option<")
-                || param_type_str_for_check.starts_with("core::option::Option<");
+    for (param_ident, param_type) in params {
+        let param_name_str = param_ident.to_string();
+        let param_type_str_for_check = quote!(#param_type).to_string().replace(" ", "");
+        let is_option_param_type = param_type_str_for_check.starts_with("Option<")
+            || param_type_str_for_check.starts_with("std::option::Option<")
+            || param_type_str_for_check.starts_with("core::option::Option<");
 
-            let per_param_extraction_code = if is_option_param_type {
-                quote! {
-                    let #param_ident: #param_type;
-                    match params_map_ref.get(#param_name_str) {
-                        Some(arc_value_for_param) => {
-                            match arc_value_for_param.clone().as_type::<#param_type>() {
-                                Ok(val_option_t) => {
-                                    #param_ident = val_option_t;
-                                }
-                                Err(err) => {
-                                    ctx.error(format!("Failed to convert value for parameter '{}' to type '{}'. Error: {}", #param_name_str, stringify!(#param_type), err));
-                                    return Err(anyhow!(format!("Type conversion error for parameter '{}': {}", #param_name_str, err)));
-                                }
+        let per_param_extraction_code = if is_option_param_type {
+            quote! {
+                let #param_ident: #param_type;
+                match params_map_ref.get(#param_name_str) {
+                    Some(arc_value_for_param) => {
+                        match arc_value_for_param.clone().as_type::<#param_type>() {
+                            Ok(val_option_t) => {
+                                #param_ident = val_option_t;
+                            }
+                            Err(err) => {
+                                ctx.error(format!("Failed to convert value for parameter '{}' to type '{}'. Error: {}", #param_name_str, stringify!(#param_type), err));
+                                return Err(anyhow!(format!("Type conversion error for parameter '{}': {}", #param_name_str, err)));
                             }
                         }
-                        None => {
-                            #param_ident = None;
-                        }
+                    }
+                    None => {
+                        #param_ident = None;
                     }
                 }
-            } else {
-                quote! {
-                    let #param_ident: #param_type = match params_map_ref.get(#param_name_str) {
-                        Some(arc_value_for_param) => {
-                            arc_value_for_param.clone().as_type::<#param_type>().map_err(|err| {
-                                ctx.error(format!("Failed to convert value for parameter '{}' to type '{}'. Error: {}", #param_name_str, stringify!(#param_type), err));
-                                anyhow!(format!("Type conversion error for parameter '{}': {}", #param_name_str, err))
-                            })?
-                        }
-                        None => {
-                            ctx.error(format!("Required parameter '{}' (type '{}') not found in payload", #param_name_str, stringify!(#param_type)));
-                            return Err(anyhow!(format!("Missing required parameter '{}'", #param_name_str)));
-                        }
-                    };
-                }
-            };
-            extractions.extend(per_param_extraction_code);
-        }
+            }
+        } else {
+            quote! {
+                let #param_ident: #param_type = match params_map_ref.get(#param_name_str) {
+                    Some(arc_value_for_param) => {
+                        arc_value_for_param.clone().as_type::<#param_type>().map_err(|err| {
+                            ctx.error(format!("Failed to convert value for parameter '{}' to type '{}'. Error: {}", #param_name_str, stringify!(#param_type), err));
+                            anyhow!(format!("Type conversion error for parameter '{}': {}", #param_name_str, err))
+                        })?
+                    }
+                    None => {
+                        ctx.error(format!("Required parameter '{}' (type '{}') not found in payload", #param_name_str, stringify!(#param_type)));
+                        return Err(anyhow!(format!("Missing required parameter '{}'", #param_name_str)));
+                    }
+                };
+            }
+        };
+        extractions.extend(per_param_extraction_code);
     }
 
     extractions

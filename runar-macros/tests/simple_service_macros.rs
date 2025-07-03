@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
-use runar_common::types::ArcValue;
+use runar_common::{params, types::ArcValue};
 use runar_macros::{action, publish, service, service_impl, subscribe};
 use runar_node::services::{EventContext, RequestContext};
 use runar_node::AbstractService;
@@ -50,15 +50,17 @@ pub struct TestService {
     store: Arc<Mutex<HashMap<String, ArcValue>>>,
 }
 
+// Macro-generated Clone implementation from #[service] provides deep clone including metadata.
+
 #[service_impl]
 impl TestService {
     fn new(path: impl Into<String>, store: Arc<Mutex<HashMap<String, ArcValue>>>) -> Self {
-        let mut s = Self {
-            store,
+        let mut instance = Self {
+            store: store.clone(),
             ..Default::default()
         };
-        s.set_path(path.into());
-        s
+        instance.set_path(path.into());
+        instance
     }
 
     #[action]
@@ -105,13 +107,7 @@ impl TestService {
         ctx.debug(format!("get_my_data id: {id}"));
 
         let total_res: f64 = ctx
-            .request(
-                "math/add",
-                Some(ArcValue::new_map(HashMap::from([
-                    ("a".to_string(), 1000.0),
-                    ("b".to_string(), 500.0),
-                ]))),
-            )
+            .request("math/add", Some(params! { "a" => 1000.0, "b" => 500.0 }))
             .await?;
         let total = total_res;
 
@@ -286,7 +282,6 @@ impl TestService {
 mod tests {
 
     use super::*;
-    use runar_common::hmap;
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
     use runar_node::Node;
@@ -362,15 +357,9 @@ mod tests {
         //         "Event path was: {}", my_data_auto_event_meta.path);
         // Description for 'my_data_auto' event is also likely empty.
 
-        // Create parameters for the add action
-        let params = ArcValue::new_map(hmap! {
-            "a" => 10.0,
-            "b" => 5.0
-        });
-
-        // Call the add action
+        // Call the add action directly with `params!`.
         let response: f64 = node
-            .request("math/add", Some(params))
+            .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
             .await
             .expect("Failed to call add action");
 
@@ -379,10 +368,7 @@ mod tests {
 
         // Make a request to the subtract action
         // Create parameters for the add action
-        let params = ArcValue::new_map(hmap! {
-            "a" => 10.0,
-            "b" => 5.0
-        });
+        let params = runar_common::params! { "a" => 10.0, "b" => 5.0 };
 
         let response: f64 = node
             .request("math/subtract", Some(params))
@@ -394,10 +380,7 @@ mod tests {
 
         // Make a request to the multiply action (with custom name)
         // Create parameters for the add action
-        let params = ArcValue::new_map(hmap! {
-            "a" => 5.0,
-            "b" => 3.0
-        });
+        let params = runar_common::params! { "a" => 5.0, "b" => 3.0 };
 
         let response: f64 = node
             .request("math/multiply_numbers", Some(params))
@@ -408,10 +391,7 @@ mod tests {
         assert_eq!(response, 15.0);
 
         // Make a request to the divide action with valid parameters
-        let params = ArcValue::new_map(hmap! {
-            "a" => 6.0,
-            "b" => 3.0
-        });
+        let params = runar_common::params! { "a" => 6.0, "b" => 3.0 };
 
         let response: f64 = node
             .request("math/divide", Some(params))
@@ -423,10 +403,7 @@ mod tests {
 
         // Make a request to the divide action with invalid parameters (division by zero)
         // Create parameters for the add action
-        let params = ArcValue::new_map(hmap! {
-            "a" => 6.0,
-            "b" => 0.0
-        });
+        let params = runar_common::params! { "a" => 6.0, "b" => 0.0 };
 
         let response: Result<f64, anyhow::Error> = node.request("math/divide", Some(params)).await;
 

@@ -68,3 +68,40 @@ macro_rules! vjson {
         $crate::types::ValueType::from(serde_json::json!($($json)+))
     };
 }
+
+/// Create an `ArcValue::Map` from key\u2011value pairs.
+///
+/// This macro is intended as a more ergonomic wrapper around the
+/// combination `ArcValue::new_map(hmap!{ ... })` that is commonly
+/// required when invoking service requests. Each value on the right
+/// hand side is automatically wrapped with `ArcValue::new_primitive` so
+/// primitive Rust values such as numbers, booleans or strings can be
+/// written directly.
+///
+/// # Examples
+/// ```ignore
+/// use runar_common::{params, types::ArcValue};
+/// let args = params! { "a" => 1.0, "b" => 2.0 };
+/// // `args` is an `ArcValue::Map` containing the provided key/value pairs.
+/// assert_eq!(args.category, ArcValue::Map.category());
+/// ```
+#[macro_export]
+macro_rules! params {
+    // Empty param map
+    {} => {
+        {
+            use $crate::types::ArcValue;
+            ArcValue::new_map($crate::hmap! {})
+        }
+    };
+
+    // Non-empty param map
+    { $($key:expr => $value:expr),* $(,)? } => {
+        {
+            use $crate::types::ArcValue;
+            ArcValue::new_map($crate::hmap! {
+                $( $key => ArcValue::new_primitive($value) ),*
+            })
+        }
+    };
+}
