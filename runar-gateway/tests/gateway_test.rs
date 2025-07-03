@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use axum::http::StatusCode as HttpStatus;
 use runar_common::types::ArcValue;
 use runar_gateway::GatwayService;
-use runar_macros::{action, service};
+use runar_macros::{action, service, service_impl};
 use runar_node::Node;
 use runar_node::NodeConfig;
 use serde::{Deserialize, Serialize};
@@ -20,20 +20,16 @@ struct MyTestData {
 }
 
 // --- Mock EchoService ---
-#[derive(Clone)]
-struct EchoService {/* No fields needed if stateless and path/name are from macro */}
-
 #[service(
     name = "EchoService",
     path = "echo-service",
     description = "A simple service that echoes messages and pings.",
     version = "1.0.0"
 )]
-impl EchoService {
-    fn new() -> Self {
-        Self {}
-    }
+struct EchoService {/* No fields needed if stateless */}
 
+#[service_impl]
+impl EchoService {
     #[action]
     async fn ping(&self) -> Result<String> {
         Ok("pong".to_string())
@@ -74,7 +70,7 @@ async fn test_gateway_routes() -> Result<()> {
     let mut node = Node::new(node_config).await?;
 
     // 2. Setup and Add EchoService
-    let echo_service = EchoService::new();
+    let echo_service = EchoService::default();
     node.add_service(echo_service).await?;
 
     let echo_service_path = "echo-service";

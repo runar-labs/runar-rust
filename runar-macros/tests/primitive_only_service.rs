@@ -3,13 +3,13 @@
 //! handle an empty set of complex types during code generation.
 
 use anyhow::{anyhow, Result};
-use runar_macros::{action, service};
+use runar_macros::{action, service, service_impl};
 use runar_node::services::RequestContext;
 
-#[derive(Clone)]
+#[service(name = "Primitive Service", path = "primitive")]
 pub struct PrimitiveService;
 
-#[service(name = "Primitive Service", path = "primitive")]
+#[service_impl]
 impl PrimitiveService {
     #[action]
     async fn add(&self, a: i32, b: i32, _ctx: &RequestContext) -> Result<i32> {
@@ -24,6 +24,6 @@ mod tests {
     #[test]
     fn primitive_service_compiles() {
         // The mere presence of this test forces the file to compile.
-        let _svc = PrimitiveService;
+        let _svc = PrimitiveService::default();
     }
 }

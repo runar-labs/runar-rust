@@ -1,4 +1,4 @@
-use runar_macros::{action, gateway, init, main, middleware, route, service};
+use runar_macros::{action, gateway, init, main, middleware, route, service, service_impl};
 use runar_node::{
     anyhow::{self, Result},
     async_trait::async_trait,
@@ -15,7 +15,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 // Define a simple user service
-#[service(name = "user_service")]
+#[derive(Clone)]
+#[service(name = "user_service", path="user_service")]
+#[service_impl]
 pub struct UserService {
     users: Arc<RwLock<HashMap<Uuid, User>>>,
 }
@@ -25,6 +27,7 @@ impl UserService {
     pub async fn new() -> Result<Self> {
         Ok(Self {
             users: Arc::new(RwLock::new(HashMap::new())),
+            ..Default::default()
         })
     }
 }
@@ -103,7 +106,9 @@ impl AuthMiddleware {
 }
 
 // Define the API gateway
-#[service]
+#[derive(Clone)]
+#[service(name="api_gateway", path="gateway")]
+#[service_impl]
 #[gateway(
     host = "0.0.0.0",
     port = 8080,
@@ -115,7 +120,7 @@ pub struct ApiGateway;
 #[init]
 impl ApiGateway {
     pub async fn new() -> Result<Self> {
-        Ok(Self {})
+        Ok(Self { ..Default::default() })
     }
 }
 

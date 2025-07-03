@@ -5,18 +5,23 @@
 extern crate proc_macro;
 
 mod action;
+mod meta_support;
 mod publish;
 mod service;
+mod service_meta;
 mod subscribe;
 mod utils;
 use proc_macro::TokenStream;
 
-/// Service macro for implementing AbstractService
-///
-/// This macro automatically implements the AbstractService trait for a struct
-/// and registers all methods marked with #[action] or #[subscribe].
+/// Struct-level metadata macro (was `service_meta`)
 #[proc_macro_attribute]
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
+    service_meta::service_meta_impl(attr, item)
+}
+
+/// Impl-level macro that wires the service to the runtime (was `service`)
+#[proc_macro_attribute]
+pub fn service_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     service::service_macro(attr, item)
 }
 
