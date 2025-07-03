@@ -24,6 +24,7 @@ serde = { version = "1.0", features = ["derive"] }
 
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 
 # Tokio is required by napi's tokio_rt feature but we leverage workspace version
 # It will be satisfied by workspace dependency resolution. 
