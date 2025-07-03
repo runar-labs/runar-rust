@@ -1,13 +1,12 @@
 use anyhow::{anyhow, Result};
 use runar_common::types::ArcValue;
-use runar_macros::{action, service, service_meta};
+use runar_macros::{action, service, service_impl};
 use runar_node::services::RequestContext;
 
 use crate::models::Order;
 
 // Define the Order service
-#[derive(Clone)]
-#[service_meta(
+#[service(
     name = "Order Service",
     path = "orders",
     description = "Manages customer orders",
@@ -15,12 +14,8 @@ use crate::models::Order;
 )]
 pub struct OrderService;
 
-#[service]
+#[service_impl]
 impl OrderService {
-    pub fn new() -> Self {
-        Self
-    }
-
     #[action(name = "create_order")]
     pub async fn create_order(
         &self,

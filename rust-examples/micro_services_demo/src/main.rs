@@ -52,10 +52,10 @@ async fn main() -> Result<()> {
     println!("Node created successfully.");
 
     // Instantiate services
-    let user_service = UserService::new();
-    let profile_service = ProfileService::new();
-    let account_service = AccountService::new();
-    let order_service = OrderService::new();
+    let user_service = UserService::default();
+    let profile_service = ProfileService::default();
+    let account_service = AccountService::default();
+    let order_service = OrderService::default();
 
     println!("Services instantiated.");
 
