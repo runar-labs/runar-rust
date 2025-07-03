@@ -2,9 +2,9 @@
 
 Runar is a lightweight, high-performance framework for building **end-to-end encrypted, modular, and developer-friendly** applications. Due to its architecture it also makes it easy to build peer-to-peer (P2P) applications.
 
-Runar’s design blends battle-tested cryptography with an ergonomic API surface and mobile-wallet key management, enabling small teams to ship production-grade back-ends without a dedicated DevOps or security department.
+Runar's design blends battle-tested cryptography with an ergonomic API surface and mobile-wallet key management, enabling small teams to ship production-grade back-ends without a dedicated DevOps or security department.
 
-We are currently working on the rust version, but the plans is to support also TypeScript, Python and Golang.
+We are currently working on the Rust version, but the plan is to support also TypeScript, Python and Golang.
 
 ---
 
@@ -12,7 +12,7 @@ We are currently working on the rust version, but the plans is to support also T
 
 * **End-to-End Encryption with Self-Custodied Keys** – Data stays encrypted from producer to consumer. Keys live in user-controlled mobile wallets or hardware (e.g. Ledger), and Runar automates exchange & rotation so developers get Signal-level security with almost zero extra code — and users enjoy password-less crypto they already trust.
 * **Great Developer UX** – Clean request/response APIs, a zero-boilerplate pub/sub system, and sensible defaults mean you can sketch an idea in minutes and iterate fast.
-* **Modular Architecture** – Enable only what you need.  First-party modules include:
+* **Modular Architecture** – Enable only what you need. First-party modules include:
   * **Web Gateway** → REST, GraphQL, and WebSocket endpoints out-of-the-box
   * **Encrypted Storage** → blazing-fast SQLite with transparent encryption
 * **Mobile-first Embedding** – The core can be linked directly into iOS/Android apps, powering fully offline-capable P2P experiences.
@@ -23,7 +23,7 @@ We are currently working on the rust version, but the plans is to support also T
 
 ### Quick Example
 
-Runar’s declarative macros let you expose functionality with just a few lines of code:
+Runar's declarative macros let you expose functionality with just a few lines of code:
 
 ```rust
 use anyhow::{anyhow, Result};
@@ -149,13 +149,16 @@ Same service implementation, same API call – just a different deployment topol
 | Declarative service & action macros | ✅ | `runar-macros` crate (`service`, `action`, `publish`, `subscribe`) |
 | Event-driven pub/sub | ✅ | Built into `runar-node` with topic routing |
 | Typed zero-copy serializer (`ArcValue`) | ✅ | Binary & JSON conversion, runtime type registry |
+| Enhanced serialization with field encryption | ✅ | `runar-serializer` with selective field encryption and envelope encryption |
 | Encrypted SQLite storage | ✅ | CRUD service in `runar-services::sqlite` |
 | HTTP REST gateway | ✅ | Axum-based, auto-exposes registered actions |
 | QUIC P2P transport & discovery | ✅ | Secure QUIC + multicast discovery in `runar-node::network` |
-| Key management & encryption |  🟡 | HD wallets, token & AES helpers in `runar-keys` |
+| Key management & encryption | ✅ | Complete PKI system with X.509 certificates, envelope encryption, and mobile key management |
 | Configurable logging/tracing | ✅ | Structured logs via `runar-node::config` |
-| Mobile embeddings (FFI) | 🟡 | iOS/Android bindings work-in-progress |
-| Web UI dashboard | 🟡 | Experimental `node_webui` SPA |
+| iOS embeddings (FFI) | 🟡 | iOS bindings work-in-progress |
+| Android embeddings (FFI) | 🟡 | Android bindings work-in-progress |
+| Web UI dashboard | 🟡 | Node Setup and Management Screen `node_webui` SPA |
+| Node CLI | ⚪ | Command-line interface for node management |
 | GraphQL & WebSocket gateway | ⚪ | Planned extension of gateway service |
 | Mobile App for Keys management | ⚪ | Planned |
 
@@ -179,7 +182,7 @@ We welcome early contributors who share our vision of **secure, self-hosted soft
 3. Follow the *Documentation-First* workflow (update docs & tests **before** code).
 4. Ensure `cargo test` passes and `cargo fmt` shows no diff.
 
-Not sure where to start?  Check `rust-docs/markdown/development/` for good first issues and the current roadmap.
+Not sure where to start? Check `rust-docs/markdown/development/` for good first issues and the current roadmap.
 
 ---
 
