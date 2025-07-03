@@ -11,8 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # N-API bindings for Rust
-napi = { version = "2", features = ["tokio_rt", "serde-json"] }
-napi-derive = "2"
+napi = { version = "2.16.0", features = ["tokio_rt", "serde-json"] }
+napi-derive = "2.16.0"
 
 # Local Runar crates
 runar_node = { path = "../runar-node" }
