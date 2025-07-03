@@ -1,9 +1,7 @@
 use anyhow::Result;
 use runar_common::types::ArcValue;
 use runar_node::config::{LogLevel, LoggingConfig};
-use runar_node::network::network_config::NetworkConfig;
-use runar_node::network::transport::quic_transport::QuicTransportOptions; // Added for QuicTransportOptions
-                                                                          // TransportOptions was unused, removed.
+// TransportOptions was unused, removed.
 use runar_node::{Node, NodeConfig};
 use std::collections::HashMap;
 // Arc was unused, removed.
@@ -34,19 +32,8 @@ async fn main() -> Result<()> {
         component_levels: HashMap::new(), // Initialize explicitly
     };
 
-    // Configure NetworkConfig using its constructor and builder methods
-    let quic_options = QuicTransportOptions::new();
-    let mut network_config = NetworkConfig::new();
-    network_config.quic_options = Some(quic_options);
-    // Override default transport options if necessary (NetworkConfig::new() sets defaults)
-    // The bind_address is handled by TransportOptions::default() called within NetworkConfig::new()
-    network_config.transport_options.timeout = Some(Duration::from_secs(30));
-
     let node_config = NodeConfig::new_test_config("micro_services_demo_node", "default_network")
-        .with_network_config(network_config)
-        .with_logging_config(logging_config)
-        .with_additional_networks(vec!["default_network".to_string()])
-        .with_request_timeout(30000);
+        .with_logging_config(logging_config);
 
     let mut node = Node::new(node_config).await?;
     println!("Node created successfully.");

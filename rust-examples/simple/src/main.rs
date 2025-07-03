@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use runar_common::{hmap, types::ArcValue};
+use runar_common::{params, types::ArcValue};
 use runar_macros::{action, publish, service, service_impl, subscribe};
 use runar_node::{
     services::{EventContext, RequestContext},
@@ -35,14 +35,14 @@ pub struct StatsService {
 impl StatsService {
     /// Record a value
     #[action]
-    async fn record(&self, value: f64, _ctx: &RequestContext) -> Result<()> {
+    async fn record(&self, value: f64) -> Result<()> {
         self.values.lock().unwrap().push(value);
         Ok(())
     }
 
     /// Return number of recorded values
     #[action]
-    async fn count(&self, _ctx: &RequestContext) -> Result<usize> {
+    async fn count(&self) -> Result<usize> {
         Ok(self.values.lock().unwrap().len())
     }
 
@@ -68,8 +68,9 @@ async fn main() -> Result<()> {
     node.add_service(StatsService::default()).await?;
 
     // call math/add
-    let params = ArcValue::new_map(hmap! { "a" => 1.0, "b" => 2.0 });
-    let sum: f64 = node.request("math/add", Some(params)).await?;
+    let sum: f64 = node
+        .request("math/add", Some(params! { "a" => 1.0, "b" => 2.0 }))
+        .await?;
     assert_eq!(sum, 3.0);
 
     // Query stats count
