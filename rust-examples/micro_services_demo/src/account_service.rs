@@ -1,20 +1,21 @@
 use anyhow::{anyhow, Result};
 use runar_common::types::ArcValue;
-use runar_macros::{action, service};
+use runar_macros::{action, service, service_meta};
 use runar_node::services::RequestContext;
 
 use crate::models::Account;
 
 // Define the Account service
 #[derive(Clone)]
-pub struct AccountService;
-
-#[service(
+#[service_meta(
     name = "Account Service",
     path = "accounts",
     description = "Manages user financial accounts",
     version = "0.1.0"
 )]
+pub struct AccountService;
+
+#[service]
 impl AccountService {
     pub fn new() -> Self {
         Self

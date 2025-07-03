@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use runar_common::{hmap, types::ArcValue};
-use runar_macros::{action, publish, service, subscribe};
+use runar_macros::{action, publish, service, service_meta, subscribe};
 use runar_node::{
     services::{EventContext, RequestContext},
     Node, NodeConfig,
@@ -8,14 +8,15 @@ use runar_node::{
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
-pub struct MathService;
-
-#[service(
+#[service_meta(
     name = "Math Service",
     path = "math",
     description = "Simple arithmetic API",
     version = "0.1.0"
 )]
+pub struct MathService;
+
+#[service]
 impl MathService {
     /// Add two numbers and publish the total to `math/added`.
     #[publish(path = "added")]
@@ -27,6 +28,7 @@ impl MathService {
 }
 
 #[derive(Clone)]
+#[service_meta(path = "stats")]
 pub struct StatsService {
     values: Arc<Mutex<Vec<f64>>>,
 }
@@ -39,7 +41,7 @@ impl Default for StatsService {
     }
 }
 
-#[service(path = "stats")]
+#[service]
 impl StatsService {
     /// Record a value
     #[action]

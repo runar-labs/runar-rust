@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use axum::http::StatusCode as HttpStatus;
 use runar_common::types::ArcValue;
 use runar_gateway::GatwayService;
-use runar_macros::{action, service};
+use runar_macros::{action, service, service_meta};
 use runar_node::Node;
 use runar_node::NodeConfig;
 use serde::{Deserialize, Serialize};
@@ -21,14 +21,15 @@ struct MyTestData {
 
 // --- Mock EchoService ---
 #[derive(Clone)]
-struct EchoService {/* No fields needed if stateless and path/name are from macro */}
-
-#[service(
+#[service_meta(
     name = "EchoService",
     path = "echo-service",
     description = "A simple service that echoes messages and pings.",
     version = "1.0.0"
 )]
+struct EchoService {/* No fields needed if stateless */}
+
+#[service]
 impl EchoService {
     fn new() -> Self {
         Self {}

@@ -1,20 +1,21 @@
 use anyhow::{anyhow, Result};
 use runar_common::types::ArcValue;
-use runar_macros::{action, service};
+use runar_macros::{action, service, service_meta};
 use runar_node::services::RequestContext;
 
 use crate::models::Profile;
 
 // Define the Profile service
 #[derive(Clone)]
-pub struct ProfileService;
-
-#[service(
+#[service_meta(
     name = "Profile Service",
     path = "profiles",
     description = "Manages user profiles",
     version = "0.1.0"
 )]
+pub struct ProfileService;
+
+#[service]
 impl ProfileService {
     pub fn new() -> Self {
         Self

@@ -3,13 +3,14 @@
 //! handle an empty set of complex types during code generation.
 
 use anyhow::{anyhow, Result};
-use runar_macros::{action, service};
+use runar_macros::{action, service, service_meta};
 use runar_node::services::RequestContext;
 
 #[derive(Clone)]
+#[service_meta(name = "Primitive Service", path = "primitive")]
 pub struct PrimitiveService;
 
-#[service(name = "Primitive Service", path = "primitive")]
+#[service]
 impl PrimitiveService {
     #[action]
     async fn add(&self, a: i32, b: i32, _ctx: &RequestContext) -> Result<i32> {

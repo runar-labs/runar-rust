@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::ArcValue;
-use runar_macros::{action, publish, service, subscribe};
+use runar_macros::{action, publish, service, service_meta, subscribe};
 use runar_node::services::{EventContext, RequestContext};
 use runar_node::AbstractService;
 use serde::{Deserialize, Serialize};
@@ -40,25 +40,18 @@ struct User {
 }
 
 // Define a simple math service
-pub struct TestService {
-    store: Arc<Mutex<HashMap<String, ArcValue>>>,
-}
-
-// Implement Clone manually for TestMathService
-impl Clone for TestService {
-    fn clone(&self) -> Self {
-        Self {
-            store: self.store.clone(),
-        }
-    }
-}
-
-#[service(
+#[derive(Clone)]
+#[service_meta(
     name = "Test Service Name",
     path = "math",
     description = "Test Service Description",
     version = "0.0.1"
 )]
+pub struct TestService {
+    store: Arc<Mutex<HashMap<String, ArcValue>>>,
+}
+
+#[service]
 impl TestService {
     fn new(path: impl Into<String>, store: Arc<Mutex<HashMap<String, ArcValue>>>) -> Self {
         let instance = Self {
