@@ -83,10 +83,7 @@ impl SetupServer {
         Ok(certificate_message)
     }
 
-    async fn read_certificate_message(
-        &self,
-        socket: TcpStream,
-    ) -> Result<NodeCertificateMessage> {
+    async fn read_certificate_message(&self, socket: TcpStream) -> Result<NodeCertificateMessage> {
         // Read the message length (4 bytes, big endian)
         let mut length_bytes = [0u8; 4];
         socket
@@ -141,7 +138,6 @@ impl SetupServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[tokio::test]
     async fn test_setup_server() {

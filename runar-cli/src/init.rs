@@ -243,8 +243,7 @@ impl InitCommand {
             .context("Failed to install certificate")?;
 
         let status = node_key_manager.get_certificate_status();
-        self.logger
-            .info(format!("Certificate status: {status:?}"));
+        self.logger.info(format!("Certificate status: {status:?}"));
 
         if status != runar_keys::node::CertificateStatus::Valid {
             return Err(anyhow::anyhow!(

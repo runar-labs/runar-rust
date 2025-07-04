@@ -33,8 +33,8 @@ async fn test_init_command_creation() {
     let config_dir = temp_dir.path().to_path_buf();
     let logger = Arc::new(Logger::new_root(Component::CLI, "test"));
 
-        let _init_cmd = InitCommand::new(config_dir, logger);
-    
+    let _init_cmd = InitCommand::new(config_dir, logger);
+
     // Just test that the command can be created
 }
 
@@ -44,8 +44,8 @@ async fn test_start_command_creation() {
     let config_dir = temp_dir.path().to_path_buf();
     let logger = Arc::new(Logger::new_root(Component::CLI, "test"));
 
-        let _start_cmd = StartCommand::new(config_dir, logger);
-    
+    let _start_cmd = StartCommand::new(config_dir, logger);
+
     // Just test that the command can be created
 }
 

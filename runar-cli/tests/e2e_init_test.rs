@@ -109,7 +109,7 @@ impl MobileSimulator {
         server_address: &str,
         certificate_message: NodeCertificateMessage,
     ) -> Result<()> {
-                  self.logger.info(format!(
+        self.logger.info(format!(
             "📱 Mobile: Connecting to node setup server at {server_address}"
         ));
 
@@ -199,9 +199,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     // ==========================================
     println!("\n📱 STEP 3: Generating QR code");
 
-    let setup_config = {
-        runar_cli::init::SetupConfig::new(hex::encode(&node_public_key))
-    };
+    let setup_config = { runar_cli::init::SetupConfig::new(hex::encode(&node_public_key)) };
 
     let full_setup_token = FullSetupToken {
         setup_token: setup_token.clone(),
