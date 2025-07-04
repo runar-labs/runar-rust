@@ -5,7 +5,6 @@ edition.workspace = true
 authors.workspace = true
 description = "Enhanced serialization with selective field encryption for Runar"
 license.workspace = true
-license-file.workspace = true
 
 [dependencies]
 runar_common = { path = "../runar-common" }

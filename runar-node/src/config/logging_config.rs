@@ -38,6 +38,8 @@ impl From<Component> for ComponentKey {
             Component::System => ComponentKey::System,
             Component::NetworkDiscovery => ComponentKey::Network,
             Component::Custom(name) => ComponentKey::Custom(name.to_string()),
+            Component::CLI => ComponentKey::Custom("CLI".to_string()),
+            Component::Keys => ComponentKey::Custom("Keys".to_string()),
         }
     }
 }

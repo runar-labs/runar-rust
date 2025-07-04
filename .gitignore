@@ -35,3 +35,4 @@ Thumbs.db
 *.tmp
 *.log 
 target_clippy_common**
+cargo-wrapper.sh
