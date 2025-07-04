@@ -5,12 +5,14 @@
 
 pub mod config;
 pub mod init;
+pub mod key_store;
 pub mod setup_server;
 pub mod start;
 
 // Re-export main types for convenience
 pub use config::NodeConfig;
 pub use init::InitCommand;
+pub use key_store::OsKeyStore;
 pub use start::StartCommand;
 
 /// Version information

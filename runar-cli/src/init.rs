@@ -18,6 +18,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::config::{NodeConfig, SetupServerConfig};
+use crate::key_store::OsKeyStore;
 use crate::setup_server::SetupServer;
 
 pub struct InitCommand {
@@ -96,20 +97,25 @@ impl InitCommand {
         // Step 4: Start setup server and wait for mobile
         self.logger
             .info("Step 4: Starting setup server and waiting for mobile device...");
-        let certificate_message = self
+        let setup_data = self
             .wait_for_mobile_setup(&_setup_token, &setup_config)
             .await?;
 
         // Step 5: Install certificate
         self.logger.info("Step 5: Installing certificate...");
-        self.install_certificate(&mut node_key_manager, certificate_message)?;
+        self.install_certificate(&mut node_key_manager, setup_data.certificate_message)?;
 
-        // Step 6: Save configuration and keys
-        self.logger.info("Step 6: Saving configuration and keys...");
-        self.save_configuration(&setup_config, &node_key_manager)?;
+        // Step 6: Install network key
+        self.logger.info("Step 6: Installing network key...");
+        let network_id = setup_data.network_key_message.network_id.clone();
+        self.install_network_key(&mut node_key_manager, setup_data.network_key_message)?;
 
-        // Step 7: Complete initialization
-        self.logger.info("Step 7: Initialization complete!");
+        // Step 7: Save configuration and keys
+        self.logger.info("Step 7: Saving configuration and keys...");
+        self.save_configuration(&setup_config, &node_key_manager, &network_id)?;
+
+        // Step 8: Complete initialization
+        self.logger.info("Step 8: Initialization complete!");
         self.print_success_message(&setup_config);
 
         Ok(())
@@ -132,7 +138,7 @@ impl InitCommand {
             .info(format!("Node identity created: {node_id}"));
         self.logger.debug(format!(
             "Node public key: {}",
-            hex::encode(&node_public_key)
+            compact_ids::compact_node_id(&node_public_key)
         ));
 
         Ok((node_key_manager, _setup_token))
@@ -142,7 +148,7 @@ impl InitCommand {
         let node_public_key = node_key_manager.get_node_public_key();
 
         // Create temporary setup config with unique keys name for OS key store
-        let setup_config = SetupConfig::new(hex::encode(&node_public_key));
+        let setup_config = SetupConfig::new(compact_ids::compact_node_id(&node_public_key));
 
         self.logger.info(format!(
             "Setup configuration created with keys name: {}",
@@ -213,7 +219,7 @@ impl InitCommand {
         &self,
         _setup_token: &SetupToken,
         setup_config: &SetupConfig,
-    ) -> Result<NodeCertificateMessage> {
+    ) -> Result<crate::setup_server::SetupData> {
         let server = SetupServer::new(
             setup_config.get_setup_server().ip.clone(),
             setup_config.get_setup_server().port,
@@ -223,14 +229,14 @@ impl InitCommand {
         println!("🔐 Waiting for mobile device to complete setup...");
         println!("📱 Please scan the QR code with your mobile Runar app");
 
-        let certificate_message = server
-            .wait_for_certificate()
+        let setup_data = server
+            .wait_for_setup_data()
             .await
-            .context("Failed to receive certificate from mobile device")?;
+            .context("Failed to receive setup data from mobile device")?;
 
-        self.logger.info("Certificate received from mobile device");
+        self.logger.info("Setup data received from mobile device");
 
-        Ok(certificate_message)
+        Ok(setup_data)
     }
 
     fn install_certificate(
@@ -256,20 +262,31 @@ impl InitCommand {
         Ok(())
     }
 
+    fn install_network_key(
+        &self,
+        node_key_manager: &mut NodeKeyManager,
+        network_key_message: runar_keys::mobile::NetworkKeyMessage,
+    ) -> Result<()> {
+        node_key_manager
+            .install_network_key(network_key_message)
+            .context("Failed to install network key")?;
+
+        self.logger.info("Network key installed successfully");
+        Ok(())
+    }
+
     fn save_configuration(
         &self,
         setup_config: &SetupConfig,
         node_key_manager: &NodeKeyManager,
+        network_id: &str,
     ) -> Result<()> {
-        // Create final NodeConfig with default network ID
-        let node_public_key = hex::decode(&setup_config.node_public_key)
-            .context("Failed to decode node public key")?;
-        let node_id = compact_ids::compact_node_id(&node_public_key);
-        let default_network_id = format!("network_{}", Uuid::new_v4());
+        // Create final NodeConfig with actual network ID from mobile
+        let node_id = setup_config.node_public_key.clone();
 
         let final_config = NodeConfig::new(
             node_id,
-            default_network_id,
+            network_id.to_string(), // Use actual network ID from mobile
             setup_config.node_public_key.clone(),
             setup_config.setup_server.clone(),
         );
@@ -279,25 +296,25 @@ impl InitCommand {
             .save(&self.config_dir)
             .context("Failed to save configuration file")?;
 
-        // Export and save node state
+        // Export and save node state to OS key store
         let node_state = node_key_manager.export_state();
         let serialized_state =
             bincode::serialize(&node_state).context("Failed to serialize node state")?;
 
-        // In a real implementation, this would be saved to OS key store using setup_config.keys_name
-        // For now, we'll save it to a file (this should be replaced with proper key store)
-        let keys_path = self.config_dir.join("node_keys.bin");
-        std::fs::write(&keys_path, &serialized_state)
-            .with_context(|| format!("Failed to save node keys to {keys_path:?}"))?;
+        // Store keys securely in OS key store
+        let key_store = OsKeyStore::new(self.logger.clone());
+        key_store
+            .store_node_keys(setup_config.get_keys_name(), &serialized_state)
+            .context("Failed to store node keys in OS key store")?;
 
         self.logger
             .info(format!("Configuration saved to {:?}", self.config_dir));
-        self.logger
-            .info(format!("Node keys saved to {keys_path:?}"));
         self.logger.info(format!(
-            "Keys name for OS key store: {}",
-            setup_config.keys_name
+            "Node keys stored securely in OS key store: {}",
+            setup_config.get_keys_name()
         ));
+        self.logger
+            .info(format!("Default network ID: {network_id}"));
 
         Ok(())
     }

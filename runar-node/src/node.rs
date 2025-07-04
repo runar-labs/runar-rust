@@ -79,7 +79,26 @@ pub struct NodeConfig {
 }
 
 impl NodeConfig {
+    /// Create a new production configuration with the specified node ID and network ID
+    ///
+    /// This constructor is for production use and expects the key manager state
+    /// to be provided separately via with_key_manager_state().
+    pub fn new(node_id: impl Into<String>, default_network_id: impl Into<String>) -> Self {
+        Self {
+            node_id: node_id.into(),
+            default_network_id: default_network_id.into(),
+            network_ids: Vec::new(),
+            network_config: None,
+            logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
+            key_manager_state: None, // Must be set via with_key_manager_state()
+            request_timeout_ms: 30000, // 30 seconds
+        }
+    }
+
     /// Create a new test configuration with the specified node ID and network ID and a empty node keys manager
+    ///
+    /// ⚠️  WARNING: This is for TESTING ONLY. Do not use in production.
+    /// Use NodeConfig::new() for production code.
     pub fn new_test_config(
         node_id: impl Into<String>,
         default_network_id: impl Into<String>,
@@ -176,7 +195,7 @@ impl NodeConfig {
     /// Generate a node ID if not provided
     pub fn new_with_generated_id(default_network_id: impl Into<String>) -> Self {
         let node_id = Uuid::new_v4().to_string();
-        Self::new_test_config(node_id, default_network_id)
+        Self::new(node_id, default_network_id)
     }
 
     /// Add network configuration
@@ -339,7 +358,7 @@ impl Node {
 
         let keys_manager = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
 
-        // **CRITICAL FIX**: Use the real node public key as peer_id, not the simple node_id
+        //TODO check if we shuold use the compact ID here instead of just a hex of the key
         let node_public_key_bytes = keys_manager.get_node_public_key();
         let node_public_key_hex = hex::encode(&node_public_key_bytes);
         let peer_id = PeerId::new(node_public_key_hex);

@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::NodeConfig;
+use crate::key_store::OsKeyStore;
 
 pub struct StartCommand {
     config_dir: PathBuf,
@@ -30,11 +31,12 @@ impl StartCommand {
         self.logger
             .info(format!("Loaded configuration for node: {}", config.node_id));
 
-        // Load node keys
+        // Load node keys from OS key store
         let node_key_manager = self.load_node_keys(&config)?;
-        self.logger.info("Node keys loaded successfully");
+        self.logger
+            .info("Node keys loaded successfully from OS key store");
 
-        // Create Runar node configuration
+        // Create Runar node configuration using production constructor
         let runar_config = self.create_runar_config(&config, &node_key_manager)?;
 
         // Create and start the node
@@ -73,15 +75,24 @@ impl StartCommand {
     }
 
     fn load_node_keys(&self, config: &NodeConfig) -> Result<NodeKeyManager> {
-        // Load the serialized node state
-        let keys_path = self.config_dir.join("node_keys.bin");
+        // Load the serialized node state from OS key store
+        let key_store = OsKeyStore::new(self.logger.clone());
 
-        if !keys_path.exists() {
-            return Err(anyhow::anyhow!("Node keys file not found: {:?}", keys_path));
+        if !key_store.keys_exist(&config.keys_name) {
+            return Err(anyhow::anyhow!(
+                "Node keys not found in OS key store: {}",
+                config.keys_name
+            ));
         }
 
-        let serialized_state = std::fs::read(&keys_path)
-            .with_context(|| format!("Failed to read node keys from {keys_path:?}"))?;
+        let serialized_state = key_store
+            .retrieve_node_keys(&config.keys_name)
+            .with_context(|| {
+                format!(
+                    "Failed to retrieve node keys from OS key store: {}",
+                    config.keys_name
+                )
+            })?;
 
         // Deserialize the node state
         let node_state =
@@ -94,8 +105,10 @@ impl StartCommand {
         let node_key_manager = NodeKeyManager::from_state(node_state, key_logger)
             .context("Failed to create node key manager from state")?;
 
-        self.logger
-            .info(format!("Node keys loaded for: {}", config.keys_name));
+        self.logger.info(format!(
+            "Node keys loaded from OS key store: {}",
+            config.keys_name
+        ));
 
         Ok(node_key_manager)
     }
@@ -110,11 +123,9 @@ impl StartCommand {
         let serialized_state = bincode::serialize(&node_state)
             .context("Failed to serialize node state for Runar config")?;
 
-        // Create Runar node configuration using public constructor and builder methods
-        let mut runar_config = RunarNodeConfig::new_test_config(
-            config.node_id.clone(),
-            config.default_network_id.clone(),
-        );
+        // Create Runar node configuration using production constructor
+        let mut runar_config =
+            RunarNodeConfig::new(config.node_id.clone(), config.default_network_id.clone());
         runar_config = runar_config
             .with_additional_networks(config.network_ids.clone())
             .with_request_timeout(config.request_timeout_ms)

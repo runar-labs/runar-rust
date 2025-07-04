@@ -11,7 +11,6 @@
 //! which is already covered in the runar-keys crate tests.
 
 use anyhow::{Context, Result};
-use uuid::Uuid;
 
 use runar_cli::{InitCommand, NodeConfig};
 use runar_common::logging::{Component, Logger};
@@ -62,7 +61,7 @@ impl MobileSimulator {
 
         self.logger.info(format!(
             "📱 Mobile: User root key initialized: {}",
-            hex::encode(&user_root_public_key)
+            compact_ids::compact_node_id(&user_root_public_key)
         ));
 
         Ok(user_root_public_key)
@@ -103,7 +102,65 @@ impl MobileSimulator {
         Ok(certificate_message)
     }
 
-    /// Connect to node setup server and send certificate
+    /// Generate network data key
+    fn generate_network_data_key(&mut self) -> Result<String> {
+        self.logger.info("📱 Mobile: Generating network data key");
+
+        let network_id = self
+            .key_manager
+            .generate_network_data_key()
+            .context("Failed to generate network data key")?;
+
+        self.logger.info(format!(
+            "📱 Mobile: Network data key generated: {network_id}"
+        ));
+        Ok(network_id)
+    }
+
+    /// Create network key message for node
+    fn create_network_key_message(
+        &self,
+        network_id: &str,
+        node_public_key: &[u8],
+    ) -> Result<runar_keys::mobile::NetworkKeyMessage> {
+        self.logger.info(format!(
+            "📱 Mobile: Creating network key message for network: {network_id}"
+        ));
+
+        let network_key_message = self
+            .key_manager
+            .create_network_key_message(network_id, node_public_key)
+            .context("Failed to create network key message")?;
+
+        Ok(network_key_message)
+    }
+
+    /// Send a message with length prefix
+    async fn send_message(&self, stream: &TcpStream, message_bytes: &[u8]) -> Result<()> {
+        let length_bytes = (message_bytes.len() as u32).to_be_bytes();
+
+        stream
+            .writable()
+            .await
+            .context("Failed to wait for stream to be writable")?;
+
+        stream
+            .try_write(&length_bytes)
+            .context("Failed to write message length")?;
+
+        stream
+            .writable()
+            .await
+            .context("Failed to wait for stream to be writable")?;
+
+        stream
+            .try_write(message_bytes)
+            .context("Failed to write message")?;
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
     async fn send_certificate_to_node(
         &self,
         server_address: &str,
@@ -143,6 +200,43 @@ impl MobileSimulator {
 
         self.logger
             .info("📱 Mobile: Certificate message sent successfully");
+
+        Ok(())
+    }
+
+    async fn send_setup_data_to_node(
+        &self,
+        server_address: &str,
+        certificate_message: NodeCertificateMessage,
+        network_key_message: runar_keys::mobile::NetworkKeyMessage,
+    ) -> Result<()> {
+        self.logger.info(format!(
+            "📱 Mobile: Connecting to node setup server at {server_address}"
+        ));
+
+        // Connect to the node's setup server
+        let stream = TcpStream::connect(server_address)
+            .await
+            .with_context(|| format!("Failed to connect to setup server at {server_address}"))?;
+
+        self.logger.info("📱 Mobile: Connected to setup server");
+
+        // Serialize the certificate message
+        let cert_bytes = bincode::serialize(&certificate_message)
+            .context("Failed to serialize certificate message")?;
+
+        // Serialize the network key message
+        let network_bytes = bincode::serialize(&network_key_message)
+            .context("Failed to serialize network key message")?;
+
+        // Send the certificate message first
+        self.send_message(&stream, &cert_bytes).await?;
+
+        // Send the network key message second
+        self.send_message(&stream, &network_bytes).await?;
+
+        self.logger
+            .info("📱 Mobile: Certificate and network key messages sent successfully");
 
         Ok(())
     }
@@ -192,14 +286,18 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     let node_id = compact_ids::compact_node_id(&node_public_key);
     println!("   ✅ Node keys generated:");
     println!("      Node ID: {node_id}");
-    println!("      Public Key: {}", hex::encode(&node_public_key));
+    println!(
+        "      Public Key: {}",
+        compact_ids::compact_node_id(&node_public_key)
+    );
 
     // ==========================================
     // STEP 3: Generate QR code (CLI process)
     // ==========================================
     println!("\n📱 STEP 3: Generating QR code");
 
-    let setup_config = { runar_cli::init::SetupConfig::new(hex::encode(&node_public_key)) };
+    let setup_config =
+        { runar_cli::init::SetupConfig::new(compact_ids::compact_node_id(&node_public_key)) };
 
     let full_setup_token = FullSetupToken {
         setup_token: setup_token.clone(),
@@ -225,9 +323,9 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     println!("   ✅ QR code parsed successfully");
 
     // ==========================================
-    // STEP 5: Mobile processes setup token (simulate mobile app)
+    // STEP 5: Mobile processes setup token and generates network key (simulate mobile app)
     // ==========================================
-    println!("\n📱 STEP 5: Mobile generating certificate");
+    println!("\n📱 STEP 5: Mobile generating certificate and network key");
 
     let certificate_message = mobile.process_setup_token(&parsed_setup_token.setup_token)?;
     println!("   ✅ Certificate generated:");
@@ -240,6 +338,12 @@ async fn test_e2e_cli_initialization() -> Result<()> {
         certificate_message.node_certificate.issuer()
     );
 
+    // Generate network key for the node
+    let network_id = mobile.generate_network_data_key()?;
+    let network_key_message = mobile.create_network_key_message(&network_id, &node_public_key)?;
+    println!("   ✅ Network key generated:");
+    println!("      Network ID: {network_id}");
+
     // ==========================================
     // STEP 6: Start setup server (CLI process)
     // ==========================================
@@ -251,44 +355,50 @@ async fn test_e2e_cli_initialization() -> Result<()> {
         logger.clone(),
     );
 
-    let server_handle = tokio::spawn(async move { server.wait_for_certificate().await });
+    let server_handle = tokio::spawn(async move { server.wait_for_setup_data().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // ==========================================
-    // STEP 7: Mobile sends certificate to node (simulate mobile app)
+    // STEP 7: Mobile sends certificate and network key to node (simulate mobile app)
     // ==========================================
-    println!("\n📱 STEP 7: Mobile sending certificate to node");
+    println!("\n📱 STEP 7: Mobile sending certificate and network key to node");
 
     mobile
-        .send_certificate_to_node(
+        .send_setup_data_to_node(
             &setup_config.get_setup_server_address(),
             certificate_message.clone(),
+            network_key_message.clone(),
         )
         .await?;
 
-    println!("   ✅ Certificate sent to node");
+    println!("   ✅ Certificate and network key sent to node");
 
     // ==========================================
-    // STEP 8: Node receives and installs certificate (CLI process)
+    // STEP 8: Node receives and installs certificate and network key (CLI process)
     // ==========================================
-    println!("\n🖥️  STEP 8: Node receiving and installing certificate");
+    println!("\n🖥️  STEP 8: Node receiving and installing certificate and network key");
 
-    let received_certificate = timeout(Duration::from_secs(10), server_handle)
+    let received_setup_data = timeout(Duration::from_secs(10), server_handle)
         .await
-        .context("Timeout waiting for server to receive certificate")?
+        .context("Timeout waiting for server to receive setup data")?
         .context("Server task failed")?
-        .context("Failed to receive certificate")?;
+        .context("Failed to receive setup data")?;
 
-    println!("   ✅ Certificate received by node");
+    println!("   ✅ Setup data received by node");
 
     node_key_manager
-        .install_certificate(received_certificate)
+        .install_certificate(received_setup_data.certificate_message)
         .context("Failed to install certificate")?;
 
+    node_key_manager
+        .install_network_key(received_setup_data.network_key_message)
+        .context("Failed to install network key")?;
+
     let _loaded_certificate_status = node_key_manager.get_certificate_status();
-    println!("   ✅ Certificate installed:");
-    println!("      Status: {_loaded_certificate_status:?}");
+    println!("   ✅ Certificate and network key installed:");
+    println!("      Certificate Status: {_loaded_certificate_status:?}");
+    println!("      Network ID: {network_id}");
 
     // ==========================================
     // STEP 9: Save configuration and keys (CLI process)
@@ -298,8 +408,8 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     let final_config = {
         NodeConfig::new(
             node_id.clone(),
-            format!("network_{}", Uuid::new_v4()),
-            hex::encode(&node_public_key),
+            network_id.clone(), // Use actual network ID from mobile
+            compact_ids::compact_node_id(&node_public_key), // Use compact ID format
             setup_config.get_setup_server().clone(),
         )
     };

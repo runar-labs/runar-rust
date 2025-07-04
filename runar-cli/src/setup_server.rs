@@ -1,15 +1,22 @@
 //! Setup server for mobile device communication
 //!
 //! This module implements a simple TCP server that waits for mobile devices
-//! to send certificate messages during the node initialization process.
+//! to send certificate messages and network key messages during the node initialization process.
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use runar_common::logging::Logger;
-use runar_keys::mobile::NodeCertificateMessage;
+use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::wrappers::TcpListenerStream;
+
+/// Complete setup data received from mobile device
+#[derive(Debug)]
+pub struct SetupData {
+    pub certificate_message: NodeCertificateMessage,
+    pub network_key_message: NetworkKeyMessage,
+}
 
 pub struct SetupServer {
     ip: String,
@@ -22,8 +29,8 @@ impl SetupServer {
         Self { ip, port, logger }
     }
 
-    /// Start the setup server and wait for a certificate message from mobile
-    pub async fn wait_for_certificate(&self) -> Result<NodeCertificateMessage> {
+    /// Start the setup server and wait for certificate and network key messages from mobile
+    pub async fn wait_for_setup_data(&self) -> Result<SetupData> {
         let address = format!("{}:{}", self.ip, self.port);
 
         self.logger
@@ -47,10 +54,9 @@ impl SetupServer {
 
                     // Handle the connection
                     match self.handle_connection(socket).await {
-                        Ok(certificate_message) => {
-                            self.logger
-                                .info("Certificate message received successfully");
-                            return Ok(certificate_message);
+                        Ok(setup_data) => {
+                            self.logger.info("Setup data received successfully");
+                            return Ok(setup_data);
                         }
                         Err(e) => {
                             self.logger
@@ -71,19 +77,40 @@ impl SetupServer {
         Err(anyhow::anyhow!("Setup server stream ended unexpectedly"))
     }
 
-    async fn handle_connection(&self, socket: TcpStream) -> Result<NodeCertificateMessage> {
-        self.logger.debug("Handling mobile device connection");
-
-        // Read the certificate message from the socket
-        let certificate_message = self.read_certificate_message(socket).await?;
-
-        self.logger
-            .info("Certificate message received and parsed successfully");
-
-        Ok(certificate_message)
+    #[allow(dead_code)]
+    pub async fn wait_for_certificate(&self) -> Result<NodeCertificateMessage> {
+        let setup_data = self.wait_for_setup_data().await?;
+        Ok(setup_data.certificate_message)
     }
 
-    async fn read_certificate_message(&self, socket: TcpStream) -> Result<NodeCertificateMessage> {
+    async fn handle_connection(&self, socket: TcpStream) -> Result<SetupData> {
+        self.logger.debug("Handling mobile device connection");
+
+        // Read both certificate and network key messages from the socket
+        let certificate_message = self.read_certificate_message(&socket).await?;
+        let network_key_message = self.read_network_key_message(&socket).await?;
+
+        self.logger
+            .info("Certificate and network key messages received and parsed successfully");
+
+        Ok(SetupData {
+            certificate_message,
+            network_key_message,
+        })
+    }
+
+    async fn read_certificate_message(&self, socket: &TcpStream) -> Result<NodeCertificateMessage> {
+        self.read_message(socket).await
+    }
+
+    async fn read_network_key_message(&self, socket: &TcpStream) -> Result<NetworkKeyMessage> {
+        self.read_message(socket).await
+    }
+
+    async fn read_message<T>(&self, socket: &TcpStream) -> Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
         const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB limit to prevent DoS
 
         // Read the message length (4 bytes, big endian) - ensure complete read
@@ -127,9 +154,8 @@ impl SetupServer {
             return Err(anyhow::anyhow!("Invalid message length: 0"));
         }
 
-        self.logger.debug(format!(
-            "Reading certificate message of {message_length} bytes"
-        ));
+        self.logger
+            .debug(format!("Reading message of {message_length} bytes"));
 
         // Read the actual message - ensure complete read
         let mut message_bytes = vec![0u8; message_length];
@@ -168,14 +194,13 @@ impl SetupServer {
             ));
         }
 
-        // Deserialize the certificate message
-        let certificate_message: NodeCertificateMessage = bincode::deserialize(&message_bytes)
-            .context("Failed to deserialize certificate message")?;
+        // Deserialize the message
+        let message: T =
+            bincode::deserialize(&message_bytes).context("Failed to deserialize message")?;
 
-        self.logger
-            .debug("Certificate message deserialized successfully");
+        self.logger.debug("Message deserialized successfully");
 
-        Ok(certificate_message)
+        Ok(message)
     }
 }
 

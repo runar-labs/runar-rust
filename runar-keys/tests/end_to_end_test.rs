@@ -47,7 +47,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let user_public_key = user_root_public_key.clone();
     println!(
         "   ✅ User public key generated: {}",
-        hex::encode(&user_public_key)
+        compact_ids::compact_node_id(&user_public_key)
     );
 
     // Create a user owned and managed CA
@@ -55,7 +55,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     assert_eq!(user_ca_public_key.len(), 33); // ECDSA P-256 compressed
     println!(
         "   ✅ User CA public key: {}",
-        hex::encode(&user_ca_public_key)
+        compact_ids::compact_node_id(&user_ca_public_key)
     );
 
     let user_root_key_len = user_root_public_key.len();
@@ -78,7 +78,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let node_public_key = node.get_node_public_key();
     println!(
         "   ✅ Node identity created: {}",
-        hex::encode(&node_public_key)
+        compact_ids::compact_node_id(&node_public_key)
     );
     let setup_token = node.generate_csr().expect("Failed to generate setup token");
 
@@ -123,10 +123,10 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let node_public_key_from_token = setup_token_mobile.node_public_key.clone();
     println!(
         "   ✅ Node public key verified from token: {}",
-        hex::encode(&node_public_key_from_token)
+        compact_ids::compact_node_id(&node_public_key_from_token)
     );
 
-    let node_cert_hex = hex::encode(&node_public_key_from_token);
+    let node_cert_hex = compact_ids::compact_node_id(&node_public_key_from_token);
     println!("   • Node certificates: 1 ({node_cert_hex})");
 
     // ==========================================
