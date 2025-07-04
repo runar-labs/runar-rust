@@ -60,7 +60,7 @@ impl StatsService {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create a minimal Node configuration
-    let config = NodeConfig::new_with_generated_id("default_network");
+    let config = NodeConfig::new_test_config("test_node", "default_network");
     let mut node = Node::new(config).await?;
 
     // Register services

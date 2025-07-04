@@ -5,7 +5,6 @@ edition.workspace = true
 authors.workspace = true
 description = "Derive macros for runar-serializer"
 license.workspace = true
-license-file.workspace = true
 
 [lib]
 proc-macro = true
