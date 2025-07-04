@@ -76,7 +76,8 @@ async fn test_simple_initialization_flow() -> Result<()> {
     // ==========================================
     println!("\n⚙️  STEP 3: Creating setup configuration");
 
-    let setup_config = runar_cli::init::SetupConfig::new(hex::encode(&node_public_key));
+    let setup_config =
+        runar_cli::init::SetupConfig::new(compact_ids::compact_node_id(&node_public_key));
 
     println!("   ✅ Setup configuration created:");
     println!("      Keys Name: {}", setup_config.get_keys_name());

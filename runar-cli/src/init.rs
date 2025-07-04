@@ -281,13 +281,19 @@ impl InitCommand {
         node_key_manager: &NodeKeyManager,
         network_id: &str,
     ) -> Result<()> {
-        // Create final NodeConfig with actual network ID from mobile
-        let node_id = setup_config.node_public_key.clone();
+        // Get the full public key bytes from the node key manager
+        let node_public_key_bytes = node_key_manager.get_node_public_key();
+
+        // Create final NodeConfig with correct formats:
+        // - node_id: compact ID (for display/identification)
+        // - node_public_key: full hex-encoded public key bytes (for cryptographic operations)
+        let node_id = setup_config.node_public_key.clone(); // This is already the compact ID
+        let node_public_key_hex = hex::encode(&node_public_key_bytes);
 
         let final_config = NodeConfig::new(
             node_id,
             network_id.to_string(), // Use actual network ID from mobile
-            setup_config.node_public_key.clone(),
+            node_public_key_hex,    // Full hex-encoded public key bytes
             setup_config.setup_server.clone(),
         );
 

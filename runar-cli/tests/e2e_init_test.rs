@@ -408,8 +408,8 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     let final_config = {
         NodeConfig::new(
             node_id.clone(),
-            network_id.clone(), // Use actual network ID from mobile
-            compact_ids::compact_node_id(&node_public_key), // Use compact ID format
+            network_id.clone(),            // Use actual network ID from mobile
+            hex::encode(&node_public_key), // Use full hex-encoded public key bytes
             setup_config.get_setup_server().clone(),
         )
     };
