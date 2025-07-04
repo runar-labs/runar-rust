@@ -278,10 +278,10 @@ impl Node {
         let key_manager_state_bytes = config
             .key_manager_state
             .clone()
-            .expect("Failed to load node credentials.");
+            .ok_or_else(|| anyhow::anyhow!("Failed to load node credentials."))?;
 
         let key_manager_state: NodeKeyManagerState = bincode::deserialize(&key_manager_state_bytes)
-            .expect("Failed to deserialize node keys state");
+            .context("Failed to deserialize node keys state")?;
 
         let keys_manager = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
 

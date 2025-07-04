@@ -139,23 +139,55 @@ impl MobileSimulator {
     async fn send_message(&self, stream: &TcpStream, message_bytes: &[u8]) -> Result<()> {
         let length_bytes = (message_bytes.len() as u32).to_be_bytes();
 
-        stream
-            .writable()
-            .await
-            .context("Failed to wait for stream to be writable")?;
+        // Write length bytes - handle partial writes
+        let mut length_bytes_written = 0;
+        while length_bytes_written < length_bytes.len() {
+            stream
+                .writable()
+                .await
+                .context("Failed to wait for stream to be writable")?;
 
-        stream
-            .try_write(&length_bytes)
-            .context("Failed to write message length")?;
+            match stream.try_write(&length_bytes[length_bytes_written..]) {
+                Ok(0) => {
+                    return Err(anyhow::anyhow!(
+                        "Connection closed while writing message length"
+                    ));
+                }
+                Ok(n) => {
+                    length_bytes_written += n;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Failed to write message length: {e}"));
+                }
+            }
+        }
 
-        stream
-            .writable()
-            .await
-            .context("Failed to wait for stream to be writable")?;
+        // Write message bytes - handle partial writes
+        let mut message_bytes_written = 0;
+        while message_bytes_written < message_bytes.len() {
+            stream
+                .writable()
+                .await
+                .context("Failed to wait for stream to be writable")?;
 
-        stream
-            .try_write(message_bytes)
-            .context("Failed to write message")?;
+            match stream.try_write(&message_bytes[message_bytes_written..]) {
+                Ok(0) => {
+                    return Err(anyhow::anyhow!("Connection closed while writing message"));
+                }
+                Ok(n) => {
+                    message_bytes_written += n;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Failed to write message: {e}"));
+                }
+            }
+        }
 
         Ok(())
     }
@@ -179,24 +211,8 @@ impl MobileSimulator {
         let message_bytes = bincode::serialize(&certificate_message)
             .context("Failed to serialize certificate message")?;
 
-        let length_bytes = (message_bytes.len() as u32).to_be_bytes();
-        stream
-            .writable()
-            .await
-            .context("Failed to wait for stream to be writable")?;
-
-        stream
-            .try_write(&length_bytes)
-            .context("Failed to write message length")?;
-
-        stream
-            .writable()
-            .await
-            .context("Failed to wait for stream to be writable")?;
-
-        stream
-            .try_write(&message_bytes)
-            .context("Failed to write certificate message")?;
+        // Use the improved send_message method
+        self.send_message(&stream, &message_bytes).await?;
 
         self.logger
             .info("📱 Mobile: Certificate message sent successfully");

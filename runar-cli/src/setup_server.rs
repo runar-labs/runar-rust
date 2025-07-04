@@ -133,7 +133,8 @@ impl SetupServer {
                     length_bytes_read += n;
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    // Continue the loop to call readable().await again
+                    continue;
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -179,7 +180,8 @@ impl SetupServer {
                     bytes_read += n;
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    // Continue the loop to call readable().await again
+                    continue;
                 }
                 Err(e) => return Err(e.into()),
             }
