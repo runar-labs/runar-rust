@@ -26,6 +26,7 @@
   "include": [
     "test/**/*",
     "src/**/*",
+    "ts/**/*",
     "index.d.ts"
   ],
   "exclude": [

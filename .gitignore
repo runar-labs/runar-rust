@@ -36,3 +36,6 @@ Thumbs.db
 *.log 
 target_clippy_common**
 runar-ts-ffi/node_modules/
+runar-ts-ffi/runar-ts-ffi.darwin-arm64.node
+runar-ts-ffi/runar-ts-ffi.node
+runar-ts-ffi/*.node
