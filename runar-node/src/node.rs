@@ -125,7 +125,6 @@ impl NodeConfig {
         }
     }
 
-
     /// Add network configuration
     pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
         self.network_config = Some(config);
