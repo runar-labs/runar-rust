@@ -21,7 +21,6 @@ use tokio::time::{sleep, Duration};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
-use uuid::Uuid;
 
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
@@ -79,7 +78,26 @@ pub struct NodeConfig {
 }
 
 impl NodeConfig {
+    /// Create a new production configuration with the specified node ID and network ID
+    ///
+    /// This constructor is for production use and expects the key manager state
+    /// to be provided separately via with_key_manager_state().
+    pub fn new(node_id: impl Into<String>, default_network_id: impl Into<String>) -> Self {
+        Self {
+            node_id: node_id.into(),
+            default_network_id: default_network_id.into(),
+            network_ids: Vec::new(),
+            network_config: None,
+            logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
+            key_manager_state: None, // Must be set via with_key_manager_state()
+            request_timeout_ms: 30000, // 30 seconds
+        }
+    }
+
     /// Create a new test configuration with the specified node ID and network ID and a empty node keys manager
+    ///
+    /// ⚠️  WARNING: This is for TESTING ONLY. Do not use in production.
+    /// Use NodeConfig::new() for production code.
     pub fn new_test_config(
         node_id: impl Into<String>,
         default_network_id: impl Into<String>,
@@ -105,78 +123,6 @@ impl NodeConfig {
             key_manager_state: Some(key_state_bytes),
             request_timeout_ms: 30000, // 30 seconds
         }
-    }
-
-    //TODO move these test methods to another objct with only the tests utils..
-    // so this never gets to the final production code
-    // pub fn new_network_test_config(
-    //     node_id: impl Into<String>,
-    //     default_network_id: impl Into<String>,
-    // ) -> Self {
-    //     //create test credentials
-    //     //for network tests we need to also need the mobile manger to have the user CA
-    //     // and be able to validate the certifcates
-
-    //     let mut mobile = MobileKeyManager::new();
-    //     mobile.generate_seed();
-
-    //     // Generate user root key - now returns only the public key
-    //     let _user_root_public_key = mobile
-    //         .generate_user_root_key()
-    //         .expect("Failed to generate user root key");
-
-    //     // Create a user owned and managed CA
-    //     let _user_ca_public_key = mobile
-    //         .generate_user_ca_key()
-    //         .expect("Failed to generate user CA key");
-
-    //     let mut node_keys_manager = NodeKeyManager::new();
-    //     let setup_token = node_keys_manager
-    //         .generate_setup_token()
-    //         .expect("Failed to generate setup token");
-
-    //     // 3 - (mobile side) - received the token and sign the CSR
-    //     let cert = mobile
-    //         .process_setup_token(&setup_token)
-    //         .expect("Failed to process setup token");
-
-    //     // Extract the node ID from the setup token
-    //     // In a real-world scenario, the mobile device would have received this in the setup token
-    //     let node_public_key = hex::encode(&setup_token.node_public_key);
-
-    //     // Mobile encrypts a message containing both the certificate and CA public key for secure transmission to the node
-    //     // This ensures only the target node can decrypt the message and has the CA key needed for verification
-    //     let encrypted_node_msg = mobile
-    //         .encrypt_message_for_node(&cert, &node_public_key)
-    //         .expect("Failed to encrypt message");
-
-    //     node_keys_manager
-    //         .process_mobile_message(&encrypted_node_msg)
-    //         .expect("Failed to process encrypted certificate");
-
-    //     let key_state = node_keys_manager.export_state();
-
-    //     let key_state_bytes =
-    //         bincode::serialize(&key_state).expect("Failed to serialize node state");
-
-    //     //now the node keys manager contain valid keys and certificates and is stored in the
-    //     //key ring
-
-    //     Self {
-    //         node_id: node_id.into(),
-    //         default_network_id: default_network_id.into(),
-    //         network_ids: Vec::new(),
-    //         network_config: None,
-    //         logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-    //         key_manager_state: Some(key_state_bytes),
-    //         request_timeout_ms: 30000, // 30 seconds
-    //     }
-    // }
-
-    /// Generate a node ID if not provided
-    pub fn new_with_generated_id(default_network_id: impl Into<String>) -> Self {
-        let node_id = Uuid::new_v4().to_string();
-        Self::new_test_config(node_id, default_network_id)
     }
 
     /// Add network configuration
@@ -332,14 +278,14 @@ impl Node {
         let key_manager_state_bytes = config
             .key_manager_state
             .clone()
-            .expect("Failed to load node credentials.");
+            .ok_or_else(|| anyhow::anyhow!("Failed to load node credentials."))?;
 
         let key_manager_state: NodeKeyManagerState = bincode::deserialize(&key_manager_state_bytes)
-            .expect("Failed to deserialize node keys state");
+            .context("Failed to deserialize node keys state")?;
 
         let keys_manager = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
 
-        // **CRITICAL FIX**: Use the real node public key as peer_id, not the simple node_id
+        //TODO check if we shuold use the compact ID here instead of just a hex of the key
         let node_public_key_bytes = keys_manager.get_node_public_key();
         let node_public_key_hex = hex::encode(&node_public_key_bytes);
         let peer_id = PeerId::new(node_public_key_hex);

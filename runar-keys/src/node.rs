@@ -724,7 +724,7 @@ impl NodeKeyManager {
                 CertificateStatus::None
             };
 
-        let node_id = hex::encode(state.node_key_pair.public_key_bytes());
+        let node_id = crate::compact_ids::compact_node_id(&state.node_key_pair.public_key_bytes());
         logger.info(format!(
             "Node Key Manager state imported for node: {node_id}"
         ));
