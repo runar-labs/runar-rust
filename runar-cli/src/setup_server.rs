@@ -84,24 +84,54 @@ impl SetupServer {
     }
 
     async fn read_certificate_message(&self, socket: TcpStream) -> Result<NodeCertificateMessage> {
-        // Read the message length (4 bytes, big endian)
-        let mut length_bytes = [0u8; 4];
-        socket
-            .readable()
-            .await
-            .context("Failed to wait for socket to be readable")?;
+        const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB limit to prevent DoS
 
-        socket
-            .try_read(&mut length_bytes)
-            .context("Failed to read message length")?;
+        // Read the message length (4 bytes, big endian) - ensure complete read
+        let mut length_bytes = [0u8; 4];
+        let mut length_bytes_read = 0;
+
+        while length_bytes_read < 4 {
+            socket
+                .readable()
+                .await
+                .context("Failed to wait for socket to be readable")?;
+
+            match socket.try_read(&mut length_bytes[length_bytes_read..]) {
+                Ok(0) => {
+                    return Err(anyhow::anyhow!(
+                        "Connection closed while reading message length"
+                    ));
+                }
+                Ok(n) => {
+                    length_bytes_read += n;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
 
         let message_length = u32::from_be_bytes(length_bytes) as usize;
+
+        // Bounds checking to prevent DoS via excessive memory allocation
+        if message_length > MAX_MESSAGE_SIZE {
+            return Err(anyhow::anyhow!(
+                "Message size {} exceeds maximum allowed size {}",
+                message_length,
+                MAX_MESSAGE_SIZE
+            ));
+        }
+
+        if message_length == 0 {
+            return Err(anyhow::anyhow!("Invalid message length: 0"));
+        }
 
         self.logger.debug(format!(
             "Reading certificate message of {message_length} bytes"
         ));
 
-        // Read the actual message
+        // Read the actual message - ensure complete read
         let mut message_bytes = vec![0u8; message_length];
         let mut bytes_read = 0;
 
@@ -112,16 +142,30 @@ impl SetupServer {
                 .context("Failed to wait for socket to be readable")?;
 
             match socket.try_read(&mut message_bytes[bytes_read..]) {
-                Ok(0) => break,
+                Ok(0) => {
+                    return Err(anyhow::anyhow!(
+                        "Connection closed prematurely. Expected {} bytes, got {} bytes",
+                        message_length,
+                        bytes_read
+                    ));
+                }
                 Ok(n) => {
                     bytes_read += n;
                 }
-
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
                 Err(e) => return Err(e.into()),
             }
+        }
+
+        // Verify we read the complete message before deserialization
+        if bytes_read != message_length {
+            return Err(anyhow::anyhow!(
+                "Incomplete message received. Expected {} bytes, got {} bytes",
+                message_length,
+                bytes_read
+            ));
         }
 
         // Deserialize the certificate message
