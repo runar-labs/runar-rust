@@ -44,7 +44,8 @@ impl JsNode {
     /// Synchronous constructor. Internally blocks on the async `Node::new`.
     #[napi(constructor)]
     pub fn new() -> napi::Result<Self> {
-        let config = NodeConfig::new_with_generated_id("default");
+        let node_id = uuid::Uuid::new_v4().to_string();
+        let config = NodeConfig::new(node_id, "default");
         let handle = tokio::runtime::Handle::current();
         let node = handle
             .block_on(Node::new(config))
