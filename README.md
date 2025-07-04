@@ -127,16 +127,25 @@ This lets you start with a blazing-fast monolith and migrate to microservices gr
 
 ```rust
 // In tests or local tooling – everything lives in one process
-let mut node = Node::new(NodeConfig::in_memory()).await?;
+let mut node = Node::new(NodeConfig::new_test_config("test-node", "test-network")).await?;
 node.add_service(MathService).await?;
-let sum: f64 = node.request("math/add", Some(ArcValue::map(hmap!{"a"=>1.0,"b"=>2.0}))).await?;
+let sum: f64 = node.request("math/add", Some(ArcValue::new_map(hmap!{"a"=>1.0,"b"=>2.0}))).await?;
 ```
 
 Later, in production:
 
 ```rust
 // math-service now runs remotely; only wiring changes
-let mut node = Node::new(NodeConfig::quic(...)).await?;
+use runar_node::network::network_config::{NetworkConfig, QuicTransportOptions};
+
+let quic_options = QuicTransportOptions::new();
+let network_config = NetworkConfig::with_quic(quic_options)
+    .with_multicast_discovery();
+
+let mut node = Node::new(
+    NodeConfig::new_test_config("prod-node", "prod-network")
+        .with_network_config(network_config)
+).await?;
 let sum: f64 = node.request("math/add", None::<ArcValue>).await?;
 ```
 
