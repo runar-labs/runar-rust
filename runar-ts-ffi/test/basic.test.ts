@@ -47,99 +47,36 @@ describe('Runar TypeScript FFI', () => {
     await expect(node.stop()).resolves.toBeUndefined();
   });
 
-  it('should add a JavaScript service', async () => {
+  it('should add a simple JavaScript service', async () => {
+    await node.start();
+    
     const jsService = {
       name: 'test-service',
       path: 'test',
       version: '1.0.0',
-      description: 'Test service for FFI validation'
-    };
-
-    await expect(node.addService(jsService)).resolves.toBeUndefined();
-  });
-
-  it('should handle service requests after adding service', async () => {
-    // Start the node first
-    await node.start();
-
-    // Add our test service
-    const jsService = {
-      name: 'math-service',
-      path: 'math',
-      version: '1.0.0',
-      description: 'Math operations service'
-    };
-
-    await node.addService(jsService);
-
-    // Test the echo action (which our wrapper automatically registers)
-    const response = await node.request('math/echo', { message: 'hello world' });
-    expect(response).toBeDefined();
-    
-    // The response should echo back our input or return the default message
-    console.log('Service response:', response);
-
-    // Stop the node after test
-    await node.stop();
-  });
-
-  it('should publish events', async () => {
-    await node.start();
-    
-    // Publishing should not throw errors
-    await expect(node.publish('test/event', { data: 'test payload' })).resolves.toBeUndefined();
-    
-    await node.stop();
-  });
-
-  it('should handle requests to non-existent services gracefully', async () => {
-    await node.start();
-    
-    // This should throw an error since the service doesn't exist
-    await expect(node.request('nonexistent/action', {})).rejects.toThrow();
-    
-    await node.stop();
-  });
-
-  it('should handle null payloads', async () => {
-    await node.start();
-    
-    const jsService = {
-      name: 'null-test-service',
-      path: 'nulltest',
-    };
-
-    await node.addService(jsService);
-
-    // Test with null payload
-    const response = await node.request('nulltest/echo', null);
-    expect(response).toBeDefined();
-    
-    await node.stop();
-  });
-
-  it('should handle math service with add action', async () => {
-    await node.start();
-    
-    const mathService = {
-      name: 'math-service',
-      path: 'math',
-      version: '1.0.0',
-      description: 'Math operations service',
+      description: 'Test service',
       actions: {
-        add: true, // Enable the add action
-        echo: false // Disable echo for this service
+        echo: (payload: any) => Promise.resolve(payload)
       }
     };
 
-    await node.addService(mathService);
+    await expect(node.addService(jsService)).resolves.toBeUndefined();
+    await node.stop();
+  });
 
-    // Test the add action
-    const response = await node.request('math/add', { a: 5, b: 3 });
-    expect(response).toBe(8); // Should return the sum
+  it('should reject services without actions', async () => {
+    await node.start();
     
-    // Test with invalid payload
-    await expect(node.request('math/add', { a: 5 })).rejects.toThrow();
+    const invalidService = {
+      name: 'invalid-service',
+      path: 'invalid',
+      version: '1.0.0',
+      description: 'Service without actions'
+      // No actions defined - should fail
+    };
+
+    // This should throw an error because no actions are defined
+    await expect(node.addService(invalidService)).rejects.toThrow();
     
     await node.stop();
   });

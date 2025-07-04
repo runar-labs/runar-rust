@@ -15,8 +15,14 @@ async function main() {
     version: '1.0.0',
     description: 'Math operations service',
     actions: {
-      add: true,   // Enable the add action
-      echo: true   // Enable echo action too
+      add: async (payload, ctx) => {
+        ctx.logger.info(`Adding numbers: ${payload.a} + ${payload.b}`);
+        return payload.a + payload.b;
+      },
+      echo: (payload, ctx) => {
+        ctx.logger.debug('Echo called from JS');
+        return payload.message ?? 'JS echo service responding';
+      }
     }
   };
 
