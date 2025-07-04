@@ -3,9 +3,8 @@
 //! This example demonstrates how to use the CLI programmatically.
 
 use anyhow::Result;
-use runar_cli::{InitCommand, StartCommand, NodeConfig};
+use runar_cli::{InitCommand, NodeConfig, StartCommand};
 use runar_common::logging::{Component, Logger};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -17,15 +16,15 @@ async fn main() -> Result<()> {
     // Create a temporary directory for this example
     let temp_dir = TempDir::new()?;
     let config_dir = temp_dir.path().to_path_buf();
-    
-    println!("📁 Using temporary config directory: {:?}", config_dir);
+
+    println!("📁 Using temporary config directory: {config_dir:?}");
 
     // Create logger
     let logger = Arc::new(Logger::new_root(Component::CLI, "example"));
 
     // Example 1: Create a configuration manually
     println!("\n🔧 Example 1: Creating configuration manually");
-    
+
     let config = NodeConfig::new(
         "example_node".to_string(),
         "example_network".to_string(),
@@ -38,7 +37,7 @@ async fn main() -> Result<()> {
 
     // Example 2: Load configuration
     println!("\n📖 Example 2: Loading configuration");
-    
+
     let loaded_config = NodeConfig::load(&config_dir)?;
     println!("✅ Configuration loaded:");
     println!("   Node ID: {}", loaded_config.node_id);
@@ -47,7 +46,7 @@ async fn main() -> Result<()> {
 
     // Example 3: Check if configuration exists
     println!("\n🔍 Example 3: Checking configuration existence");
-    
+
     if NodeConfig::exists(&config_dir) {
         println!("✅ Configuration exists");
     } else {
@@ -56,10 +55,10 @@ async fn main() -> Result<()> {
 
     // Example 4: Create command instances
     println!("\n🚀 Example 4: Creating command instances");
-    
-    let init_cmd = InitCommand::new(config_dir.clone(), logger.clone());
-    let start_cmd = StartCommand::new(config_dir, logger);
-    
+
+    let _init_cmd = InitCommand::new(config_dir.clone(), logger.clone());
+    let _start_cmd = StartCommand::new(config_dir, logger);
+
     println!("✅ InitCommand and StartCommand created successfully");
 
     println!("\n🎉 Basic CLI usage example completed!");
@@ -67,4 +66,4 @@ async fn main() -> Result<()> {
     println!("   would require a mobile device to complete the certificate exchange.");
 
     Ok(())
-} 
+}

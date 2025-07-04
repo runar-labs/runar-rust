@@ -24,7 +24,7 @@ qrcode = "0.13"
 image = "0.24"
 
 # Network dependencies for setup server
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 futures-util = "0.3"
 
 # Signal handling for graceful shutdown
@@ -32,7 +32,7 @@ tokio-util = "0.7"
 
 # Local dependencies
 runar_common = { path = "../runar-common" }
-runar_keys = { path = "../runar-keys" }
+runar-keys = { path = "../runar-keys" }
 runar_node = { path = "../runar-node" }
 
 # Logging

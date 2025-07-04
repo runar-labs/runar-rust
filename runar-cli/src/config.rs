@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use uuid::Uuid;
 
 /// Node configuration stored in the config file
@@ -12,22 +12,22 @@ use uuid::Uuid;
 pub struct NodeConfig {
     /// Unique identifier for this node
     pub node_id: String,
-    
+
     /// Default network ID this node belongs to
     pub default_network_id: String,
-    
+
     /// Additional network IDs this node participates in
     pub network_ids: Vec<String>,
-    
+
     /// Keys name for OS key store (format: runar_{uuid})
     pub keys_name: String,
-    
+
     /// Node public key (for reference)
     pub node_public_key: String,
-    
+
     /// Setup server configuration
     pub setup_server: SetupServerConfig,
-    
+
     /// Request timeout in milliseconds
     pub request_timeout_ms: u64,
 }
@@ -37,7 +37,7 @@ pub struct NodeConfig {
 pub struct SetupServerConfig {
     /// IP address for setup server
     pub ip: String,
-    
+
     /// Port for setup server
     pub port: u16,
 }
@@ -60,7 +60,7 @@ impl NodeConfig {
         setup_server: SetupServerConfig,
     ) -> Self {
         let keys_name = format!("runar_{}", Uuid::new_v4());
-        
+
         Self {
             node_id,
             default_network_id,
@@ -71,49 +71,42 @@ impl NodeConfig {
             request_timeout_ms: 30000, // 30 seconds
         }
     }
-    
+
     /// Load configuration from file
     pub fn load(config_dir: &Path) -> Result<Self> {
         let config_file = config_dir.join("config.json");
-        
+
         if !config_file.exists() {
-            return Err(anyhow::anyhow!("Configuration file not found: {:?}", config_file));
+            return Err(anyhow::anyhow!(
+                "Configuration file not found: {:?}",
+                config_file
+            ));
         }
-        
+
         let config_content = std::fs::read_to_string(&config_file)
-            .with_context(|| format!("Failed to read config file: {:?}", config_file))?;
-        
+            .with_context(|| format!("Failed to read config file: {config_file:?}"))?;
+
         let config: NodeConfig = serde_json::from_str(&config_content)
-            .with_context(|| format!("Failed to parse config file: {:?}", config_file))?;
-        
+            .with_context(|| format!("Failed to parse config file: {config_file:?}"))?;
+
         Ok(config)
     }
-    
+
     /// Save configuration to file
     pub fn save(&self, config_dir: &Path) -> Result<()> {
         let config_file = config_dir.join("config.json");
-        
-        let config_content = serde_json::to_string_pretty(self)
-            .context("Failed to serialize config")?;
-        
+
+        let config_content =
+            serde_json::to_string_pretty(self).context("Failed to serialize config")?;
+
         std::fs::write(&config_file, config_content)
-            .with_context(|| format!("Failed to write config file: {:?}", config_file))?;
-        
+            .with_context(|| format!("Failed to write config file: {config_file:?}"))?;
+
         Ok(())
     }
-    
+
     /// Check if configuration exists
     pub fn exists(config_dir: &Path) -> bool {
         config_dir.join("config.json").exists()
     }
-    
-    /// Get the keys name for OS key store
-    pub fn get_keys_name(&self) -> &str {
-        &self.keys_name
-    }
-    
-    /// Get the setup server address
-    pub fn get_setup_server_address(&self) -> String {
-        format!("{}:{}", self.setup_server.ip, self.setup_server.port)
-    }
-} 
+}

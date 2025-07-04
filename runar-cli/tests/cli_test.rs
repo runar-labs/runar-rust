@@ -1,8 +1,8 @@
 //! Basic tests for the Runar CLI
 
-use runar_cli::{InitCommand, StartCommand, NodeConfig};
+use runar_cli::{InitCommand, NodeConfig, StartCommand};
 use runar_common::logging::{Component, Logger};
-use std::path::PathBuf;
+
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -33,10 +33,9 @@ async fn test_init_command_creation() {
     let config_dir = temp_dir.path().to_path_buf();
     let logger = Arc::new(Logger::new_root(Component::CLI, "test"));
 
-    let init_cmd = InitCommand::new(config_dir, logger);
+        let _init_cmd = InitCommand::new(config_dir, logger);
     
     // Just test that the command can be created
-    assert!(true);
 }
 
 #[tokio::test]
@@ -45,10 +44,9 @@ async fn test_start_command_creation() {
     let config_dir = temp_dir.path().to_path_buf();
     let logger = Arc::new(Logger::new_root(Component::CLI, "test"));
 
-    let start_cmd = StartCommand::new(config_dir, logger);
+        let _start_cmd = StartCommand::new(config_dir, logger);
     
     // Just test that the command can be created
-    assert!(true);
 }
 
 #[test]
@@ -70,4 +68,4 @@ fn test_config_exists_check() {
 
     // Should exist now
     assert!(NodeConfig::exists(&config_dir));
-} 
+}

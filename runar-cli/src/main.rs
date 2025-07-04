@@ -15,7 +15,6 @@ mod init;
 mod setup_server;
 mod start;
 
-use config::NodeConfig;
 use init::InitCommand;
 use start::StartCommand;
 
@@ -73,7 +72,7 @@ async fn main() -> Result<()> {
 
     // Ensure config directory exists
     std::fs::create_dir_all(&config_dir)
-        .with_context(|| format!("Failed to create config directory: {:?}", config_dir))?;
+        .with_context(|| format!("Failed to create config directory: {config_dir:?}"))?;
 
     match cli.command {
         Some(Commands::Init { force }) => {
@@ -97,4 +96,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-} 
+}

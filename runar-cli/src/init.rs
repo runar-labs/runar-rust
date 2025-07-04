@@ -37,7 +37,7 @@ pub struct SetupConfig {
 }
 
 impl SetupConfig {
-    fn new(node_public_key: String) -> Self {
+    pub fn new(node_public_key: String) -> Self {
         Self {
             keys_name: format!("runar_{}", Uuid::new_v4()),
             setup_server: SetupServerConfig::default(),
@@ -45,17 +45,22 @@ impl SetupConfig {
         }
     }
 
-    fn get_setup_server_address(&self) -> String {
+    pub fn get_setup_server_address(&self) -> String {
         format!("{}:{}", self.setup_server.ip, self.setup_server.port)
+    }
+
+    pub fn get_setup_server(&self) -> &SetupServerConfig {
+        &self.setup_server
+    }
+
+    pub fn get_keys_name(&self) -> &str {
+        &self.keys_name
     }
 }
 
 impl InitCommand {
     pub fn new(config_dir: PathBuf, logger: Arc<Logger>) -> Self {
-        Self {
-            config_dir,
-            logger,
-        }
+        Self { config_dir, logger }
     }
 
     pub async fn run(&self, force: bool) -> Result<()> {
@@ -69,24 +74,31 @@ impl InitCommand {
         }
 
         if force {
-            self.logger.info("Force flag specified - will re-initialize existing configuration");
+            self.logger
+                .info("Force flag specified - will re-initialize existing configuration");
         }
 
         // Step 1: Generate node keys and CSR
-        self.logger.info("Step 1: Generating node keys and certificate signing request...");
-        let (node_key_manager, setup_token) = self.generate_node_keys()?;
+        self.logger
+            .info("Step 1: Generating node keys and certificate signing request...");
+        let (mut node_key_manager, _setup_token) = self.generate_node_keys()?;
 
         // Step 2: Create temporary setup configuration
-        self.logger.info("Step 2: Creating temporary setup configuration...");
+        self.logger
+            .info("Step 2: Creating temporary setup configuration...");
         let setup_config = self.create_setup_config(&node_key_manager)?;
 
         // Step 3: Generate QR code
-        self.logger.info("Step 3: Generating QR code for mobile setup...");
-        self.generate_qr_code(&setup_token, &setup_config)?;
+        self.logger
+            .info("Step 3: Generating QR code for mobile setup...");
+        self.generate_qr_code(&_setup_token, &setup_config)?;
 
         // Step 4: Start setup server and wait for mobile
-        self.logger.info("Step 4: Starting setup server and waiting for mobile device...");
-        let certificate_message = self.wait_for_mobile_setup(&setup_token, &setup_config).await?;
+        self.logger
+            .info("Step 4: Starting setup server and waiting for mobile device...");
+        let certificate_message = self
+            .wait_for_mobile_setup(&_setup_token, &setup_config)
+            .await?;
 
         // Step 5: Install certificate
         self.logger.info("Step 5: Installing certificate...");
@@ -109,96 +121,115 @@ impl InitCommand {
             .context("Failed to create node key manager")?;
 
         // Generate CSR
-        let setup_token = node_key_manager
+        let _setup_token = node_key_manager
             .generate_csr()
             .context("Failed to generate certificate signing request")?;
 
         let node_public_key = node_key_manager.get_node_public_key();
         let node_id = compact_ids::compact_node_id(&node_public_key);
-        
-        self.logger.info(format!("Node identity created: {node_id}"));
-        self.logger.debug(format!("Node public key: {}", hex::encode(&node_public_key)));
 
-        Ok((node_key_manager, setup_token))
+        self.logger
+            .info(format!("Node identity created: {node_id}"));
+        self.logger.debug(format!(
+            "Node public key: {}",
+            hex::encode(&node_public_key)
+        ));
+
+        Ok((node_key_manager, _setup_token))
     }
 
     fn create_setup_config(&self, node_key_manager: &NodeKeyManager) -> Result<SetupConfig> {
         let node_public_key = node_key_manager.get_node_public_key();
-        
+
         // Create temporary setup config with unique keys name for OS key store
         let setup_config = SetupConfig::new(hex::encode(&node_public_key));
-        
-        self.logger.info(format!("Setup configuration created with keys name: {}", setup_config.keys_name));
-        self.logger.debug(format!("Setup server will be available at: {}", setup_config.get_setup_server_address()));
+
+        self.logger.info(format!(
+            "Setup configuration created with keys name: {}",
+            setup_config.get_keys_name()
+        ));
+        self.logger.debug(format!(
+            "Setup server will be available at: {}",
+            setup_config.get_setup_server_address()
+        ));
 
         Ok(setup_config)
     }
 
-    fn generate_qr_code(&self, setup_token: &SetupToken, setup_config: &SetupConfig) -> Result<()> {
+    fn generate_qr_code(
+        &self,
+        _setup_token: &SetupToken,
+        setup_config: &SetupConfig,
+    ) -> Result<()> {
         // Create full setup token with server information
         let full_setup_token = FullSetupToken {
-            setup_token: setup_token.clone(),
+            setup_token: _setup_token.clone(),
             server_address: setup_config.get_setup_server_address(),
         };
 
         // Serialize the full setup token
-        let setup_token_bytes = bincode::serialize(&full_setup_token)
-            .context("Failed to serialize setup token")?;
+        let setup_token_bytes =
+            bincode::serialize(&full_setup_token).context("Failed to serialize setup token")?;
 
         // Generate QR code
-        let qr_code = qrcode::QrCode::new(&setup_token_bytes)
-            .context("Failed to generate QR code")?;
+        let qr_code =
+            qrcode::QrCode::new(&setup_token_bytes).context("Failed to generate QR code")?;
 
-        // Convert to image
-        let qr_image = qr_code.to_image()
-            .context("Failed to convert QR code to image")?;
+        // Convert to image (PNG) - commented out, not needed for now
+        // let qr_image = qr_code.to_image()
+        //     .context("Failed to convert QR code to image")?;
 
-        // Save QR code image
-        let qr_path = self.config_dir.join("setup_qr.png");
-        qr_image.save(&qr_path)
-            .with_context(|| format!("Failed to save QR code to {:?}", qr_path))?;
+        // Save QR code image (optional)
+        // let qr_path = self.config_dir.join("setup_qr.png");
+        // qr_image.save(&qr_path)
+        //     .with_context(|| format!("Failed to save QR code to {:?}", qr_path))?;
 
         // Display QR code in terminal (if possible)
         self.display_qr_code_in_terminal(&qr_code)?;
 
-        println!("📱 QR Code saved to: {:?}", qr_path);
+        // println!("📱 QR Code saved to: {:?}", qr_path);
         println!("📱 Scan this QR code with your mobile Runar app to complete setup");
-        println!("🌐 Setup server will be available at: {}", setup_config.get_setup_server_address());
+        println!(
+            "🌐 Setup server will be available at: {}",
+            setup_config.get_setup_server_address()
+        );
 
         Ok(())
     }
 
     fn display_qr_code_in_terminal(&self, qr_code: &qrcode::QrCode) -> Result<()> {
         // Try to display QR code in terminal using ASCII art
-        let qr_string = qr_code.to_string();
+        let qr_string = qr_code
+            .render::<qrcode::render::unicode::Dense1x2>()
+            .build();
         println!("\n📱 QR Code (ASCII):");
-        println!("{}", qr_string);
+        println!("{qr_string}");
         println!();
-        
+
         Ok(())
     }
 
     async fn wait_for_mobile_setup(
         &self,
-        setup_token: &SetupToken,
+        _setup_token: &SetupToken,
         setup_config: &SetupConfig,
     ) -> Result<NodeCertificateMessage> {
         let server = SetupServer::new(
-            setup_config.setup_server.ip.clone(),
-            setup_config.setup_server.port,
+            setup_config.get_setup_server().ip.clone(),
+            setup_config.get_setup_server().port,
             self.logger.clone(),
         );
 
         println!("🔐 Waiting for mobile device to complete setup...");
         println!("📱 Please scan the QR code with your mobile Runar app");
-        
+
         let certificate_message = server
             .wait_for_certificate()
             .await
             .context("Failed to receive certificate from mobile device")?;
 
         self.logger.info("Certificate received from mobile device");
-        
+
         Ok(certificate_message)
     }
 
@@ -212,10 +243,14 @@ impl InitCommand {
             .context("Failed to install certificate")?;
 
         let status = node_key_manager.get_certificate_status();
-        self.logger.info(format!("Certificate status: {:?}", status));
+        self.logger
+            .info(format!("Certificate status: {status:?}"));
 
         if status != runar_keys::node::CertificateStatus::Valid {
-            return Err(anyhow::anyhow!("Certificate installation failed - status: {:?}", status));
+            return Err(anyhow::anyhow!(
+                "Certificate installation failed - status: {:?}",
+                status
+            ));
         }
 
         self.logger.info("Certificate installed successfully");
@@ -232,7 +267,7 @@ impl InitCommand {
             .context("Failed to decode node public key")?;
         let node_id = compact_ids::compact_node_id(&node_public_key);
         let default_network_id = format!("network_{}", Uuid::new_v4());
-        
+
         let final_config = NodeConfig::new(
             node_id,
             default_network_id,
@@ -241,23 +276,29 @@ impl InitCommand {
         );
 
         // Save final configuration file
-        final_config.save(&self.config_dir)
+        final_config
+            .save(&self.config_dir)
             .context("Failed to save configuration file")?;
 
         // Export and save node state
         let node_state = node_key_manager.export_state();
-        let serialized_state = bincode::serialize(&node_state)
-            .context("Failed to serialize node state")?;
+        let serialized_state =
+            bincode::serialize(&node_state).context("Failed to serialize node state")?;
 
         // In a real implementation, this would be saved to OS key store using setup_config.keys_name
         // For now, we'll save it to a file (this should be replaced with proper key store)
         let keys_path = self.config_dir.join("node_keys.bin");
         std::fs::write(&keys_path, &serialized_state)
-            .with_context(|| format!("Failed to save node keys to {:?}", keys_path))?;
+            .with_context(|| format!("Failed to save node keys to {keys_path:?}"))?;
 
-        self.logger.info(format!("Configuration saved to {:?}", self.config_dir));
-        self.logger.info(format!("Node keys saved to {:?}", keys_path));
-        self.logger.info(format!("Keys name for OS key store: {}", setup_config.keys_name));
+        self.logger
+            .info(format!("Configuration saved to {:?}", self.config_dir));
+        self.logger
+            .info(format!("Node keys saved to {keys_path:?}"));
+        self.logger.info(format!(
+            "Keys name for OS key store: {}",
+            setup_config.keys_name
+        ));
 
         Ok(())
     }
@@ -279,4 +320,4 @@ impl InitCommand {
 struct FullSetupToken {
     setup_token: SetupToken,
     server_address: String,
-} 
+}
