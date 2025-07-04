@@ -19,6 +19,84 @@ fn to_napi_error(err: anyhow::Error) -> napi::Error {
     napi::Error::new(napi::Status::GenericFailure, format!("{err:?}"))
 }
 
+/// Context object passed to JavaScript action handlers
+#[napi(object)]
+pub struct Context {
+    pub network_id: String,
+    pub service_name: String,
+    pub service_path: String,
+}
+
+/// Logger interface for JavaScript services
+#[napi]
+pub struct JsLogger {
+    inner: Arc<runar_common::logging::Logger>,
+}
+
+#[napi]
+impl JsLogger {
+    #[napi]
+    pub fn debug(&self, message: String) {
+        self.inner.debug(message);
+    }
+
+    #[napi]
+    pub fn info(&self, message: String) {
+        self.inner.info(message);
+    }
+
+    #[napi]
+    pub fn warn(&self, message: String) {
+        self.inner.warn(message);
+    }
+
+    #[napi]
+    pub fn error(&self, message: String) {
+        self.inner.error(message);
+    }
+}
+
+impl From<Arc<runar_common::logging::Logger>> for JsLogger {
+    fn from(logger: Arc<runar_common::logging::Logger>) -> Self {
+        Self { inner: logger }
+    }
+}
+
+/// JavaScript service definition with action handlers
+#[napi(object)]
+pub struct JsService {
+    pub name: String,
+    pub path: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub actions: Option<JsActions>,
+}
+
+/// JavaScript action handlers
+#[napi(object)]
+pub struct JsActions {
+    // Support both boolean flags for built-in actions and function callbacks
+    pub echo: Option<bool>, // Placeholder for echo action
+    pub add: Option<bool>,  // Placeholder for math add action
+                            // Custom action handlers will be stored separately in the wrapper
+}
+
+/// Action call data passed to JavaScript - simplified for initial implementation
+#[napi(object)]
+pub struct JsActionCall {
+    pub payload: Option<JsonValue>,
+    pub path: String,
+    pub network_id: String,
+}
+
+/// Response from JavaScript action handler
+#[napi(object)]
+pub struct JsActionResponse {
+    pub success: bool,
+    pub data: Option<JsonValue>,
+    pub error: Option<String>,
+}
+
 #[napi]
 pub struct JsNode {
     inner: Arc<Mutex<Node>>, // Protect mutable Node operations
@@ -94,41 +172,14 @@ impl JsNode {
     // Additional API methods will be added in future milestones.
 }
 
-/// JavaScript service definition with proper error handling for ThreadsafeFunction
-#[napi(object)]
-pub struct JsService {
-    pub name: String,
-    pub path: String,
-    pub version: Option<String>,
-    pub description: Option<String>,
-    // For now, we'll handle action registration manually rather than passing functions directly
-    // This avoids the complex ThreadsafeFunction serialization issues
-}
-
-/// Action call data passed to JavaScript - simplified for initial implementation
-#[napi(object)]
-pub struct JsActionCall {
-    pub payload: Option<JsonValue>,
-    pub path: String,
-    pub network_id: String,
-}
-
-/// Response from JavaScript action handler
-#[napi(object)]
-pub struct JsActionResponse {
-    pub success: bool,
-    pub data: Option<JsonValue>,
-    pub error: Option<String>,
-}
-
-/// Wrapper service that delegates to JavaScript handlers via a different mechanism
-/// This avoids the ThreadsafeFunction complexity for now while maintaining the architecture
+/// Wrapper service that delegates to JavaScript handlers
 pub struct JsServiceWrapper {
     name: String,
     path: String,
     version: String,
     description: String,
     network_id: Option<String>,
+    actions: Option<JsActions>,
 }
 
 impl JsServiceWrapper {
@@ -141,6 +192,7 @@ impl JsServiceWrapper {
                 .description
                 .unwrap_or_else(|| "JS Service".to_string()),
             network_id: None,
+            actions: js_service.actions,
         }
     }
 }
@@ -172,19 +224,67 @@ impl AbstractService for JsServiceWrapper {
     }
 
     async fn init(&self, context: LifecycleContext) -> anyhow::Result<()> {
-        // For now, register a simple echo action to demonstrate the pattern
-        // In the full implementation, this would register JS callbacks
-        let echo_handler: ActionHandler = Arc::new(move |payload, _ctx| {
-            Box::pin(async move {
-                // Echo back the payload or return a simple message
-                match payload {
-                    Some(data) => Ok(data),
-                    None => Ok(ArcValue::new_primitive("JS service responding".to_string())),
-                }
-            })
-        });
+        // Register actions based on the JS service definition
+        if let Some(actions) = &self.actions {
+            // Register echo action if specified
+            if actions.echo.unwrap_or(false) {
+                let echo_handler: ActionHandler = Arc::new(move |payload, ctx| {
+                    let logger = ctx.logger.clone();
+                    Box::pin(async move {
+                        logger.debug("Echo action called from JS service".to_string());
+                        match payload {
+                            Some(data) => Ok(data),
+                            None => Ok(ArcValue::new_primitive(
+                                "JS echo service responding".to_string(),
+                            )),
+                        }
+                    })
+                });
+                context.register_action("echo", echo_handler).await?;
+            }
 
-        context.register_action("echo", echo_handler).await?;
+            // Register add action if specified
+            if actions.add.unwrap_or(false) {
+                let add_handler: ActionHandler = Arc::new(move |payload, ctx| {
+                    let logger = ctx.logger.clone();
+                    Box::pin(async move {
+                        logger.debug("Add action called from JS service".to_string());
+
+                        // Parse the payload as JSON to extract numbers
+                        if let Some(data) = payload {
+                            if let Ok(json) = serde_json::to_value(&data) {
+                                if let (Some(a), Some(b)) = (json.get("a"), json.get("b")) {
+                                    if let (Some(a_num), Some(b_num)) = (a.as_f64(), b.as_f64()) {
+                                        let result = a_num + b_num;
+                                        logger.info(format!(
+                                            "JS math service: {} + {} = {}",
+                                            a_num, b_num, result
+                                        ));
+                                        return Ok(ArcValue::new_primitive(result));
+                                    }
+                                }
+                            }
+                        }
+
+                        Err(anyhow::anyhow!(
+                            "Invalid payload for add action. Expected: {{a: number, b: number}}"
+                        ))
+                    })
+                });
+                context.register_action("add", add_handler).await?;
+            }
+        } else {
+            // Default echo action for backward compatibility
+            let echo_handler: ActionHandler = Arc::new(move |payload, _ctx| {
+                Box::pin(async move {
+                    match payload {
+                        Some(data) => Ok(data),
+                        None => Ok(ArcValue::new_primitive("JS service responding".to_string())),
+                    }
+                })
+            });
+            context.register_action("echo", echo_handler).await?;
+        }
 
         context
             .logger

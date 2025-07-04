@@ -27,4 +27,7 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 
 # Tokio is required by napi's tokio_rt feature but we leverage workspace version
-# It will be satisfied by workspace dependency resolution. 
+# It will be satisfied by workspace dependency resolution.
+
+[build-dependencies]
+napi-build = "2.2.2" 

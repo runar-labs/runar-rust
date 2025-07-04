@@ -117,4 +117,30 @@ describe('Runar TypeScript FFI', () => {
     
     await node.stop();
   });
+
+  it('should handle math service with add action', async () => {
+    await node.start();
+    
+    const mathService = {
+      name: 'math-service',
+      path: 'math',
+      version: '1.0.0',
+      description: 'Math operations service',
+      actions: {
+        add: true, // Enable the add action
+        echo: false // Disable echo for this service
+      }
+    };
+
+    await node.addService(mathService);
+
+    // Test the add action
+    const response = await node.request('math/add', { a: 5, b: 3 });
+    expect(response).toBe(8); // Should return the sum
+    
+    // Test with invalid payload
+    await expect(node.request('math/add', { a: 5 })).rejects.toThrow();
+    
+    await node.stop();
+  });
 }); 

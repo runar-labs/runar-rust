@@ -1766,6 +1766,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "napi-build"
+version = "2.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fff539e61c5e3dd4d7d283610662f5d672c2aea0f158df78af694f13dbb3287b"
+
+[[package]]
 name = "napi-derive"
 version = "2.16.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2502,6 +2508,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "napi",
+ "napi-build",
  "napi-derive",
  "runar_common",
  "runar_node",
