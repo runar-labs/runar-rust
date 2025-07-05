@@ -17,6 +17,7 @@ napi-derive = "2.16.0"
 # Local Runar crates
 runar_node = { path = "../runar-node" }
 runar_common = { path = "../runar-common" }
+runar-test-utils = { path = "../runar-test-utils" }
 
 # Utilities
 serde_json = "1.0"
@@ -32,6 +33,10 @@ async-trait = { workspace = true }
 
 # Tokio is required by napi's tokio_rt feature but we leverage workspace version
 # It will be satisfied by workspace dependency resolution.
+
+[features]
+default = ["test-utils"]
+test-utils = []
 
 [build-dependencies]
 napi-build = "2.2.2" 

@@ -2350,6 +2350,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "runar-test-utils",
  "runar_common",
  "runar_macros",
  "runar_node",
@@ -3285,6 +3286,7 @@ dependencies = [
  "axum",
  "futures",
  "reqwest",
+ "runar-test-utils",
  "runar_common",
  "runar_macros",
  "runar_node",
@@ -3349,6 +3351,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-test-utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "runar-keys",
+ "runar_common",
+ "runar_node",
+ "serde",
+ "tokio",
+ "tokio-test",
+ "uuid",
+]
+
+[[package]]
 name = "runar-ts-ffi"
 version = "0.1.0"
 dependencies = [
@@ -3360,6 +3377,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "once_cell",
+ "runar-test-utils",
  "runar_common",
  "runar_node",
  "serde",
@@ -3439,6 +3457,7 @@ dependencies = [
  "rcgen 0.11.3",
  "ring 0.17.14",
  "runar-keys",
+ "runar-test-utils",
  "runar_common",
  "rustls 0.23.28",
  "rustls-native-certs 0.6.3",

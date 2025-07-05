@@ -4,7 +4,7 @@ use runar_common::types::ArcValue;
 use runar_gateway::GatwayService;
 use runar_macros::{action, service, service_impl};
 use runar_node::Node;
-use runar_node::NodeConfig;
+use runar_test_utils::create_node_test_config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
@@ -62,10 +62,10 @@ impl EchoService {
 #[tokio::test]
 async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
-    let node_network_id = "test-network-gw";
     let logging_config = runar_node::config::LoggingConfig::new()
         .with_default_level(runar_node::config::LogLevel::Debug);
-    let node_config = NodeConfig::new_test_config("gateway-test-node", node_network_id)
+    let node_config = create_node_test_config()
+        .expect("Error creating test config")
         .with_logging_config(logging_config);
     let mut node = Node::new(node_config).await?;
 

@@ -3,6 +3,7 @@ use runar_common::{params, types::ArcValue};
 use runar_macros::{action, publish, service, service_impl, subscribe};
 use runar_node::{
     services::{EventContext, RequestContext},
+    test_utils::create_test_config,
     Node, NodeConfig,
 };
 use std::sync::{Arc, Mutex};
@@ -60,7 +61,7 @@ impl StatsService {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create a minimal Node configuration
-    let config = NodeConfig::new_test_config("test_node", "default_network");
+    let config = create_test_config().expect("Error creating test config");
     let mut node = Node::new(config).await?;
 
     // Register services

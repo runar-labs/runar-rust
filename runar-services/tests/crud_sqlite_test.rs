@@ -4,6 +4,7 @@ use runar_common::types::ArcValue;
 use runar_common::vmap; // Added for vmap!
 
 use runar_node::Node;
+use runar_test_utils::create_test_config;
 
 use runar_node::{
     config::{LogLevel, LoggingConfig},
@@ -29,7 +30,8 @@ const CRUD_SERVICE_PATH: &str = "crud_db";
 
 async fn setup_node_with_services() -> Result<Node> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
-    let node_config = NodeConfig::new_test_config("crud-test-node", "test_network_crud")
+    let node_config = create_test_config()
+        .expect("Error creating test config")
         .with_logging_config(logging_config);
     let mut node = Node::new(node_config).await?;
 

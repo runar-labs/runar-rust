@@ -14,3 +14,4 @@ async-trait = "0.1"
 runar_common = { path = "../../runar-common" }
 runar_macros = { path = "../../runar-macros" }
 runar_node = { path = "../../runar-node" }
+runar-test-utils = { path = "../../runar-test-utils" }
