@@ -45,7 +45,7 @@ impl JsNode {
     #[napi(constructor)]
     pub fn new() -> napi::Result<Self> {
         let node_id = uuid::Uuid::new_v4().to_string();
-        let config = NodeConfig::new(node_id, "default");
+        let config = NodeConfig::new_test_config(node_id, "default");
         let handle = tokio::runtime::Handle::current();
         let node = handle
             .block_on(Node::new(config))
@@ -124,11 +124,6 @@ impl JsNode {
                 "JS service 'version' must be provided and non-empty",
             ));
         }
-
-        eprintln!(
-            "[RUST JSService] name={:?} path={:?} version={:?}",
-            js_service.name, js_service.path, js_service.version
-        );
 
         let wrapper = JsWrapperService::new(js_service)?;
         node.add_service(wrapper)
@@ -239,6 +234,16 @@ impl AbstractService for JsWrapperService {
                     // Create correlation id and oneshot channel entry in the pending map
                     let id = Uuid::new_v4().to_string();
                     let (tx, rx) = tokio::sync::oneshot::channel::<serde_json::Value>();
+
+                    // Check if JS dispatcher is registered before inserting into pending map
+                    let tsfn = match JS_DISPATCHER.get() {
+                        Some(tsfn) => tsfn,
+                        None => {
+                            return Err(anyhow::anyhow!("JS dispatcher not registered"));
+                        }
+                    };
+
+                    // Now safe to insert into pending map since we know dispatcher exists
                     PENDING.insert(id.clone(), tx);
 
                     // Construct the message to JS
@@ -251,26 +256,27 @@ impl AbstractService for JsWrapperService {
                     });
 
                     // Dispatch via threadsafe function
-                    println!("[RUSTLOG] Dispatching message to JS: {msg}");
-                    if let Some(tsfn) = JS_DISPATCHER.get() {
-                        let status =
-                            tsfn.call(Ok(msg.clone()), ThreadsafeFunctionCallMode::Blocking);
-                        if status != napi::Status::Ok {
-                            println!(
-                                "[RUSTLOG] TSFN call returned status {status:?} for msg {msg:?}"
-                            );
-                        }
-                    } else {
-                        return Err(anyhow::anyhow!("JS dispatcher not registered"));
+                    let status = tsfn.call(Ok(msg.clone()), ThreadsafeFunctionCallMode::Blocking);
+                    if status != napi::Status::Ok {
+                        // Remove from pending map on dispatch failure
+                        PENDING.remove(&id);
+                        return Err(anyhow::anyhow!("TSFN call failed with status: {status:?}"));
                     }
 
                     // Wait up to 10 seconds for the response
                     match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
-                        Ok(Ok(resp)) => Ok(ArcValue::from_json(resp)),
+                        Ok(Ok(resp)) => {
+                            // Remove from pending map on successful response
+                            PENDING.remove(&id);
+                            Ok(ArcValue::from_json(resp))
+                        }
                         Ok(Err(_)) => {
+                            // Remove from pending map on channel error
+                            PENDING.remove(&id);
                             Err(anyhow::anyhow!("JS channel closed before sending response"))
                         }
                         Err(_) => {
+                            // Remove from pending map on timeout
                             PENDING.remove(&id);
                             Err(anyhow::anyhow!("Timed out awaiting JS response"))
                         }
@@ -291,10 +297,6 @@ impl AbstractService for JsWrapperService {
     }
 }
 
-// Make JsService Send + Sync for FFI
-unsafe impl Send for JsService {}
-unsafe impl Sync for JsService {}
-
 /// Global TSFN to call back into JS
 static JS_DISPATCHER: OnceCell<
     ThreadsafeFunction<serde_json::Value, ErrorStrategy::CalleeHandled>,
@@ -309,7 +311,6 @@ static PENDING: once_cell::sync::Lazy<PendingMap> = once_cell::sync::Lazy::new(D
 pub fn register_js_dispatch(cb: JsFunction) -> napi::Result<()> {
     let tsfn: ThreadsafeFunction<serde_json::Value, ErrorStrategy::CalleeHandled> = cb
         .create_threadsafe_function(0, |ctx| {
-            eprintln!("[RUSTLOG] mapping closure value: {}", ctx.value);
             let js_obj = ctx.env.to_js_value(&ctx.value)?;
             Ok(vec![js_obj])
         })?;

@@ -25,6 +25,4 @@ export declare class JsNode {
   request(path: string, payload?: JsonValue | undefined | null): Promise<JsonValue>
   publish(topic: string, data?: JsonValue | undefined | null): Promise<void>
   addService(jsService: JsService): Promise<void>
-  /** Register a JS callback dispatcher */
-  registerJsCallback(cb: (msg: any) => any | Promise<any>): void
 }
