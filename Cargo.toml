@@ -11,6 +11,7 @@ members = [
     "runar-serializer",
     "runar-serializer-macros",
     "runar-nodejs-ffi",
+    "runar-ios-ffi",
     "runar-cli", "runar-test-utils",
 ]
 exclude = [
