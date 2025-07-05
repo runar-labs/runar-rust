@@ -3,7 +3,7 @@ use runar_common::types::ArcValue;
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_test_utils::create_node_test_config;
 // TransportOptions was unused, removed.
-use runar_node::{Node, NodeConfig};
+use runar_node::Node;
 use std::collections::HashMap;
 // Arc was unused, removed.
 use std::time::Duration;

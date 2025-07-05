@@ -29,6 +29,7 @@ pub mod node;
 pub mod compact_ids {
     use crate::error::{KeyError, Result};
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use sha2::{Digest, Sha256};
 
     /// Encode public key bytes to a compact Base64 URL-safe string
     pub fn encode_compact_id(public_key: &[u8]) -> String {
@@ -42,19 +43,51 @@ pub mod compact_ids {
             .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to decode compact ID: {e}")))
     }
 
-    /// Generate a compact node ID from public key bytes
+    /// Generate a compact node ID from public key bytes using SHA-256 hash
+    /// Takes the first 16 bytes (128 bits) of the SHA-256 hash for a compact representation
     pub fn compact_node_id(public_key: &[u8]) -> String {
-        encode_compact_id(public_key)
+        let mut hasher = Sha256::new();
+        hasher.update(public_key);
+        let hash_result = hasher.finalize();
+
+        // Take first 16 bytes (128 bits) for compact representation
+        let compact_hash = &hash_result[..16];
+        URL_SAFE_NO_PAD.encode(compact_hash)
     }
 
-    /// Generate a compact network ID from public key bytes  
+    /// Generate a compact network ID from public key bytes using SHA-256 hash
+    /// Takes the first 16 bytes (128 bits) of the SHA-256 hash for a compact representation
     pub fn compact_network_id(public_key: &[u8]) -> String {
-        encode_compact_id(public_key)
+        let mut hasher = Sha256::new();
+        hasher.update(public_key);
+        let hash_result = hasher.finalize();
+
+        // Take first 16 bytes (128 bits) for compact representation
+        let compact_hash = &hash_result[..16];
+        URL_SAFE_NO_PAD.encode(compact_hash)
     }
 
-    /// Extract public key from compact ID
-    pub fn public_key_from_compact_id(compact_id: &str) -> Result<Vec<u8>> {
-        decode_compact_id(compact_id)
+    /// Generate a compact ID from public key bytes using SHA-256 hash
+    /// This is the new recommended function for creating compact IDs
+    pub fn hash_compact_id(public_key: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(public_key);
+        let hash_result = hasher.finalize();
+
+        // Take first 16 bytes (128 bits) for compact representation
+        let compact_hash = &hash_result[..16];
+        URL_SAFE_NO_PAD.encode(compact_hash)
+    }
+
+    /// Generate a shorter compact ID (8 bytes = 64 bits) for very compact representation
+    pub fn short_compact_id(public_key: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(public_key);
+        let hash_result = hasher.finalize();
+
+        // Take first 8 bytes (64 bits) for very compact representation
+        let compact_hash = &hash_result[..8];
+        URL_SAFE_NO_PAD.encode(compact_hash)
     }
 }
 

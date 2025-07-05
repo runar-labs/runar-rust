@@ -3424,6 +3424,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rand 0.8.5",
+ "runar-test-utils",
  "runar_common",
  "runar_node",
  "rusqlite",
@@ -3483,6 +3484,7 @@ dependencies = [
  "async-trait",
  "futures",
  "hex",
+ "runar-test-utils",
  "runar_common",
  "runar_macros",
  "runar_node",
@@ -3960,6 +3962,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "runar-test-utils",
  "runar_common",
  "runar_macros",
  "runar_node",

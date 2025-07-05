@@ -7,10 +7,7 @@ use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFun
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
 use runar_common::types::ArcValue;
-use runar_node::{
-    AbstractService, ActionHandler, LifecycleContext, Node, NodeConfig, NodeDelegate,
-};
-use runar_test_utils;
+use runar_node::{AbstractService, ActionHandler, LifecycleContext, Node, NodeDelegate};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -45,7 +42,6 @@ impl JsNode {
     /// Synchronous constructor. Internally blocks on the async `Node::new`.
     #[napi(constructor)]
     pub fn new() -> napi::Result<Self> {
-        let node_id = uuid::Uuid::new_v4().to_string();
         let config = runar_test_utils::create_node_test_config().map_err(anyhow_to_napi_error)?;
         let handle = tokio::runtime::Handle::current();
         let node = handle

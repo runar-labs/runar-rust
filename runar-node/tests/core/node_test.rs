@@ -184,8 +184,8 @@ async fn test_node_lifecycle() {
 /// components which are required for remote communication.
 #[tokio::test]
 async fn test_node_event_metadata_registration() -> Result<()> {
-    let mut config = create_node_test_config().expect("Error creating test config");
-    config.network_config = None; // Disable networking for this unit test
+    let config = create_node_test_config().expect("Error creating test config");
+    let default_network_id = config.default_network_id.clone();
     let mut node = Node::new(config).await?;
 
     let math_service_name = "MathMetaTest";
@@ -201,7 +201,7 @@ async fn test_node_event_metadata_registration() -> Result<()> {
 
     let math_service_metadata = services_list
         .iter()
-        .find(|s| s.service_path == math_service_path && s.network_id == "test_network_event")
+        .find(|s| s.service_path == math_service_path && s.network_id == default_network_id)
         .expect("MathService metadata not found in registry list");
 
     assert_eq!(math_service_metadata.name, math_service_name);

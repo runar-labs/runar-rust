@@ -174,6 +174,14 @@ impl MobileKeyManager {
         Ok(public_key)
     }
 
+    pub fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
+        let network_key = self
+            .network_data_keys
+            .get(network_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
+        Ok(network_key.public_key_bytes())
+    }
+
     /// Generate a network data key for envelope encryption and return the network ID (compact Base64 public key)
     pub fn generate_network_data_key(&mut self) -> Result<String> {
         let network_key = EcdsaKeyPair::new()?;
