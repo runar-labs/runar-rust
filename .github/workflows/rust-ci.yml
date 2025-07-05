@@ -51,7 +51,10 @@ jobs:
           cache-dependency-path: runar-nodejs-ffi/package-lock.json
 
       - name: Install dependencies
-        run: cd runar-nodejs-ffi && npm ci
+        run: |
+          cd runar-nodejs-ffi
+          rm -rf node_modules package-lock.json
+          npm install
 
       - name: Build Node.js FFI
         run: cd runar-nodejs-ffi && npm run build
