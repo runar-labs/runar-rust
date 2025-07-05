@@ -10,31 +10,16 @@ line_length = 100
 prefix = "runar_"
 include = [
     "CNode",
-    "CNodeConfig", 
-    "CError",
-    "CDataResult",
-    "SwiftServiceAdapter"
+    "CNodeConfig"
 ]
-
-[export.item_types]
-enums = ["RunarLogLevel", "KeychainAccessible"]
 
 [export.functions]
 prefix = "runar_"
 include = [
     "node_create",
-    "node_free", 
     "node_start",
-    "node_stop",
-    "node_request_raw",
-    "node_publish",
-    "node_subscribe",
-    "node_unsubscribe",
-    "service_create",
-    "service_free",
-    "error_free",
-    "data_result_free",
-    "string_free"
+    "node_request",
+    "test_function"
 ]
 
 [defines]

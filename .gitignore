@@ -41,3 +41,4 @@ runar-nodejs-ffi/runar-nodejs-ffi.darwin-arm64.node
 runar-nodejs-ffi/runar-nodejs-ffi.node
 runar-nodejs-ffi/*.node
 cargo-wrapper.sh
+runar-swift/.build/
