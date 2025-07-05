@@ -285,7 +285,7 @@ mod tests {
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
     use runar_node::Node;
-    use runar_node::NodeConfig;
+    use runar_test_utils::create_node_test_config;
     use serde_json::json;
 
     #[tokio::test]
@@ -294,10 +294,12 @@ mod tests {
         let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
 
         // Create a node with a test network ID
-        let mut config = NodeConfig::new_test_config("test-node", "test_network")
+        let config = create_node_test_config()
+            .expect("Error creating test config")
             .with_logging_config(logging_config);
-        // Disable networking
-        config.network_config = None;
+
+        let default_network_id = config.default_network_id.clone();
+
         let mut node = Node::new(config).await.unwrap();
 
         let store = Arc::new(Mutex::new(HashMap::new()));
@@ -441,7 +443,7 @@ mod tests {
                 float_field: 1500.0,
                 vector_field: vec![1, 2, 3],
                 map_field: HashMap::new(),
-                network_id: Some("test_network".to_string()),
+                network_id: Some(default_network_id),
             }
         );
 

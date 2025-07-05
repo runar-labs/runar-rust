@@ -32,10 +32,10 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // 1 - (mobile side) - generate user master key
     let mobile_logger = create_test_logger("mobile-e2e");
-    let mut mobile = MobileKeyManager::new(mobile_logger)?;
+    let mut mobile_keys_manager = MobileKeyManager::new(mobile_logger)?;
 
     // Generate user root key - now returns only the public key
-    let user_root_public_key = mobile
+    let user_root_public_key = mobile_keys_manager
         .initialize_user_root_key()
         .expect("Failed to generate user root key");
     assert_eq!(
@@ -51,7 +51,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     );
 
     // Create a user owned and managed CA
-    let user_ca_public_key = mobile.get_ca_public_key();
+    let user_ca_public_key = mobile_keys_manager.get_ca_public_key();
     assert_eq!(user_ca_public_key.len(), 33); // ECDSA P-256 compressed
     println!(
         "   ✅ User CA public key: {}",
@@ -72,21 +72,23 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     //     and generate a setup handshake token which contains the CSR request and the node public key
     //     which will be presented as QR code.. here in the test we use the token as a string directly.
     let node_logger = create_test_logger("node-e2e");
-    let mut node = NodeKeyManager::new(node_logger)?;
+    let mut node_keys_manager = NodeKeyManager::new(node_logger)?;
 
     // Get the node public key (node ID) - keys are created in constructor
-    let node_public_key = node.get_node_public_key();
+    let node_public_key = node_keys_manager.get_node_public_key();
     println!(
         "   ✅ Node identity created: {}",
         compact_ids::compact_node_id(&node_public_key)
     );
-    let setup_token = node.generate_csr().expect("Failed to generate setup token");
+    let setup_token = node_keys_manager
+        .generate_csr()
+        .expect("Failed to generate setup token");
 
     // In a real scenario, the node gets the mobile public key (e.g., by scanning a QR code)
     // and uses it to encrypt the setup token.
     let setup_token_bytes =
         bincode::serialize(&setup_token).expect("Failed to serialize setup token");
-    let encrypted_setup_token = node
+    let encrypted_setup_token = node_keys_manager
         .encrypt_message_for_mobile(&setup_token_bytes, &user_public_key)
         .expect("Failed to encrypt setup token for mobile");
 
@@ -102,7 +104,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Mobile decodes the QR code and decrypts the setup token.
     let encrypted_setup_token_mobile =
         hex::decode(setup_token_str).expect("Failed to decode setup token");
-    let decrypted_setup_token_bytes = mobile
+    let decrypted_setup_token_bytes = mobile_keys_manager
         .decrypt_message_from_node(&encrypted_setup_token_mobile)
         .expect("Failed to decrypt setup token from node");
 
@@ -110,7 +112,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         .expect("Failed to deserialize setup token");
 
     // 3 - (mobile side) - received the token and sign the CSR
-    let cert_message = mobile
+    let cert_message = mobile_keys_manager
         .process_setup_token(&setup_token_mobile)
         .expect("Failed to process setup token");
 
@@ -137,12 +139,12 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // The certificate message is serialized and then encrypted for the node using its public key.
     let serialized_cert_msg =
         bincode::serialize(&cert_message).expect("Failed to serialize certificate message");
-    let encrypted_cert_msg = mobile
+    let encrypted_cert_msg = mobile_keys_manager
         .encrypt_message_for_node(&serialized_cert_msg, &node_public_key_from_token)
         .expect("Failed to encrypt certificate message for node");
 
     // Node side - receives the encrypted certificate message, decrypts, and installs it.
-    let decrypted_cert_msg_bytes = node
+    let decrypted_cert_msg_bytes = node_keys_manager
         .decrypt_message_from_mobile(&encrypted_cert_msg)
         .expect("Failed to decrypt certificate message from mobile");
     let deserialized_cert_msg: NodeCertificateMessage =
@@ -150,15 +152,19 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
             .expect("Failed to deserialize certificate message");
 
     // 4 - (node side) - received the certificate message, validates it, and stores it
-    node.install_certificate(deserialized_cert_msg)
+    node_keys_manager
+        .install_certificate(deserialized_cert_msg)
         .expect("Failed to install certificate");
 
     println!("   ✅ Certificate installed on node");
     println!(
         "      Node certificate status: {:?}",
-        node.get_certificate_status()
+        node_keys_manager.get_certificate_status()
     );
-    assert_eq!(node.get_certificate_status(), CertificateStatus::Valid);
+    assert_eq!(
+        node_keys_manager.get_certificate_status(),
+        CertificateStatus::Valid
+    );
 
     // ==========================================
     // FROM THIS POINT FORWARD - SECURE QUIC TRANSPORT READY
@@ -166,7 +172,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("\n🌐 QUIC TRANSPORT VALIDATION");
 
     // Get QUIC-compatible certificates, private key, and validator from the node
-    let quic_config = node
+    let quic_config = node_keys_manager
         .get_quic_certificate_config()
         .expect("Failed to get QUIC certificates");
 
@@ -321,14 +327,14 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // 5 - (mobile side) - user creates a network - generate a network key
     // The network ID is now the public key of the network key (no arbitrary strings)
-    let network_id = mobile
+    let network_id = mobile_keys_manager
         .generate_network_data_key()
         .expect("Failed to generate network data key");
     println!("   ✅ Network data key generated with ID: {network_id}");
 
     // Create network key message for the node
     // Use the actual network_id (public key) and node's public key
-    let network_key_message = mobile
+    let network_key_message = mobile_keys_manager
         .create_network_key_message(&network_id, &node_public_key_from_token)
         .expect("Failed to create network key message");
 
@@ -342,17 +348,18 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         .expect("Failed to deserialize network key message");
 
     // 6 - (node side) - process the network key message and store the keys securely
-    node.install_network_key(deserialized_network_keys)
+    node_keys_manager
+        .install_network_key(deserialized_network_keys)
         .expect("Failed to install network key");
     println!("   ✅ Network key installed on node");
 
     // At this point the node is ready to process requests, events and data of the network
 
     // 7 - (mobile side) - User creates profile keys
-    let profile_personal_key = mobile
+    let profile_personal_key = mobile_keys_manager
         .derive_user_profile_key("personal")
         .expect("Failed to generate personal profile key");
-    let profile_work_key = mobile
+    let profile_work_key = mobile_keys_manager
         .derive_user_profile_key("work")
         .expect("Failed to generate work profile key");
 
@@ -374,7 +381,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     //     user profile key and network key, so only the user or apps running in the
     //     network can decrypt it.
     let test_data = b"This is a test message that should be encrypted and decrypted";
-    let envelope = mobile
+    let envelope = mobile_keys_manager
         .encrypt_with_envelope(
             test_data,
             &network_id,
@@ -391,7 +398,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // 9 - (node side) - received the encrypted data and decrypts it using the
     //     network key (the node does not have the user profile key)
-    let decrypted_by_node = node
+    let decrypted_by_node = node_keys_manager
         .decrypt_envelope_data(&envelope)
         .expect("Node failed to decrypt envelope data");
     assert_eq!(
@@ -401,7 +408,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   ✅ Node successfully decrypted envelope data using network key");
 
     // Additionally, verify that the mobile can also decrypt the data using profile keys
-    let decrypted_by_mobile_personal = mobile
+    let decrypted_by_mobile_personal = mobile_keys_manager
         .decrypt_with_profile(&envelope, "personal")
         .expect("Mobile failed to decrypt with personal profile");
     assert_eq!(
@@ -410,7 +417,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     );
     println!("   ✅ Mobile successfully decrypted with personal profile key");
 
-    let decrypted_by_mobile_work = mobile
+    let decrypted_by_mobile_work = mobile_keys_manager
         .decrypt_with_profile(&envelope, "work")
         .expect("Mobile failed to decrypt with work profile");
     assert_eq!(
@@ -424,7 +431,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     let file_data_1 = b"This is some secret file content that should be encrypted on the node.";
 
-    let encrypted_file_1 = node
+    let encrypted_file_1 = node_keys_manager
         .encrypt_local_data(file_data_1)
         .expect("Node failed to encrypt local data");
     println!(
@@ -433,7 +440,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     );
     assert_ne!(file_data_1, &encrypted_file_1[..]); // Ensure it's not plaintext
 
-    let decrypted_file_1 = node
+    let decrypted_file_1 = node_keys_manager
         .decrypt_local_data(&encrypted_file_1)
         .expect("Node failed to decrypt local data");
     println!(
@@ -454,7 +461,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Now let's simulate when mobile and node already have keys stored in secure storage.
     // Step 1: Export the current state of the key managers
-    let node_state = node.export_state();
+    let node_state = node_keys_manager.export_state();
 
     // In a real implementation, these states would be serialized and stored in secure storage
     // For this test, we'll simulate that by serializing and deserializing them
@@ -474,7 +481,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Verify that the hydrated node manager can still perform operations
     // Try encrypting and decrypting data with the hydrated manager
     let test_data_2 = b"This is a second test message after key restoration";
-    let envelope_2 = mobile
+    let envelope_2 = mobile_keys_manager
         .encrypt_with_envelope(test_data_2, &network_id, vec!["personal".to_string()])
         .expect("Mobile failed to encrypt data after restoration");
 
@@ -489,7 +496,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   ✅ Hydrated node successfully decrypted envelope data");
 
     // Mobile should be able to decrypt with the profile key
-    let decrypted_by_mobile_2 = mobile
+    let decrypted_by_mobile_2 = mobile_keys_manager
         .decrypt_with_profile(&envelope_2, "personal")
         .expect("Mobile failed to decrypt after node restoration");
     assert_eq!(
@@ -502,7 +509,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("\n🔐 Testing Node Symmetric Encryption After Hydration");
 
     // Check encrypted data before hydration still works
-    let decrypted_file_1_check = node
+    let decrypted_file_1_check = node_keys_manager
         .decrypt_local_data(&encrypted_file_1)
         .expect("Original node failed to decrypt data after hydration test");
     assert_eq!(
@@ -519,7 +526,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Test 1: Get QUIC certificates from ORIGINAL node (before serialization)
     println!("   Testing QUIC certs BEFORE state serialization...");
-    let original_quic_config = node
+    let original_quic_config = node_keys_manager
         .get_quic_certificate_config()
         .expect("Failed to get QUIC certs from original node");
 
@@ -601,7 +608,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let file_data_2 = b"This is secret file content to test after hydration.";
     println!("\n💾 Additional Local Storage Test After Hydration");
 
-    let encrypted_file_2 = node
+    let encrypted_file_2 = node_keys_manager
         .encrypt_local_data(file_data_2)
         .expect("Node failed to encrypt data");
     println!(
@@ -612,7 +619,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   Encrypted data (hex): {encrypted_hex}");
     assert_ne!(file_data_2, &encrypted_file_2[..]); // Ensure it's not plaintext
 
-    let decrypted_file_2 = node
+    let decrypted_file_2 = node_keys_manager
         .decrypt_local_data(&encrypted_file_2)
         .expect("Node failed to decrypt data");
     println!(

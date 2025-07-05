@@ -94,37 +94,6 @@ impl NodeConfig {
         }
     }
 
-    /// Create a new test configuration with the specified node ID and network ID and a empty node keys manager
-    ///
-    /// ⚠️  WARNING: This is for TESTING ONLY. Do not use in production.
-    /// Use NodeConfig::new() for production code.
-    pub fn new_test_config(
-        node_id: impl Into<String>,
-        default_network_id: impl Into<String>,
-    ) -> Self {
-        //create test credentials
-        let logger = Arc::new(Logger::new_root(
-            runar_common::logging::Component::Node,
-            "test",
-        ));
-        let node_keys_manager =
-            NodeKeyManager::new(logger).expect("Failed to create NodeKeyManager");
-        let key_state = node_keys_manager.export_state();
-
-        let key_state_bytes =
-            bincode::serialize(&key_state).expect("Failed to serialize node state");
-
-        Self {
-            node_id: node_id.into(),
-            default_network_id: default_network_id.into(),
-            network_ids: Vec::new(),
-            network_config: None,
-            logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            key_manager_state: Some(key_state_bytes),
-            request_timeout_ms: 30000, // 30 seconds
-        }
-    }
-
     /// Add network configuration
     pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
         self.network_config = Some(config);

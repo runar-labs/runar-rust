@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 // Real key managers from runar-keys
 use runar_keys::{
-    compact_ids,
     mobile::{EnvelopeEncryptedData, MobileKeyManager},
     node::NodeKeyManager,
 };
@@ -47,7 +46,7 @@ fn test_end_to_end_encryption_real_keystores() -> Result<()> {
     // Derive keys required for tests before Arc wrapping
     let profile_pk = mobile_mgr_raw.derive_user_profile_key("user")?;
     let network_id = mobile_mgr_raw.generate_network_data_key()?;
-    let network_pub = compact_ids::public_key_from_compact_id(&network_id)?;
+    let network_pub = mobile_mgr_raw.get_network_public_key(&network_id)?;
 
     // Wrap in Arc after setup
     let mobile_mgr = Arc::new(mobile_mgr_raw);

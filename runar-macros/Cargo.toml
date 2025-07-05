@@ -43,6 +43,7 @@ serde_json = "1.0"
 chrono = "0.4"
 tempfile = "3.8"
 tokio = { version = "1.32", features = ["full"] }
+runar-test-utils = { path = "../runar-test-utils" }
 
 # Binary for macro expansion debugging
 [[bin]]

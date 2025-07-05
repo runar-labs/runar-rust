@@ -6,7 +6,8 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
-use runar_node::{Node, NodeConfig, ServiceMetadata, ServiceState};
+use runar_node::{Node, ServiceMetadata, ServiceState};
+use runar_test_utils::create_node_test_config;
 use serde_json::Value;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -25,8 +26,7 @@ async fn test_registry_service_list_services() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
-        let config =
-            NodeConfig::new_test_config("node-reg-list".to_string(), "test_network".to_string());
+        let config = create_node_test_config().expect("Error creating test config");
         let mut node = Node::new(config).await.unwrap();
 
         // Create a test service
@@ -96,7 +96,8 @@ async fn test_registry_service_get_service_info() {
         let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
 
         // Create a node with a test network ID
-        let config = NodeConfig::new_test_config("node-reg-info", "test_network")
+        let config = create_node_test_config()
+            .expect("Error creating test config")
             .with_logging_config(logging_config);
         let mut node = Node::new(config).await.unwrap();
 
@@ -166,7 +167,7 @@ async fn test_registry_service_get_service_state() {
         let test_logger = Logger::new_root(Component::Node, "test_state");
 
         // Create a node with a test network ID
-        let config = NodeConfig::new_test_config("node-reg-state", "test_network");
+        let config = create_node_test_config().expect("Error creating test config");
         let mut node = Node::new(config).await.unwrap();
 
         // Create a test service
@@ -217,7 +218,7 @@ async fn test_registry_service_missing_parameter() {
         let test_logger = Logger::new_root(Component::Node, "test_missing_param");
 
         // Create a node with a test network ID
-        let config = NodeConfig::new_test_config("node-reg-missing", "test_network");
+        let config = create_node_test_config().expect("Error creating test config");
         let mut node = Node::new(config).await.unwrap();
 
         // Create a test service

@@ -10,7 +10,8 @@ members = [
     "rust-examples/simple",
     "runar-serializer",
     "runar-serializer-macros",
-    "runar-cli",
+    "runar-nodejs-ffi",
+    "runar-cli", "runar-test-utils",
 ]
 exclude = [
     "quinn",

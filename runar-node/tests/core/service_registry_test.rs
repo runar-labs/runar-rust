@@ -4,7 +4,8 @@
 // action handlers and event subscriptions.
 
 use anyhow::{anyhow, Result};
-use runar_node::{ActionMetadata, Node, NodeConfig};
+use runar_node::{ActionMetadata, Node};
+use runar_test_utils::create_node_test_config;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -347,7 +348,7 @@ async fn test_action_handler_network_isolation() {
 
         println!("VERIFICATION 2: Testing handler execution with proper context");
         let node: Arc<Node> = Arc::new(
-            Node::new(NodeConfig::new_test_config("test-node", "default"))
+            Node::new(create_node_test_config().expect("Error creating test config"))
                 .await
                 .unwrap(),
         );
@@ -397,7 +398,7 @@ async fn test_action_handler_network_isolation() {
 
         println!("\nVERIFICATION 4: Context validation is still good practice");
         let node: Arc<Node> = Arc::new(
-            Node::new(NodeConfig::new_test_config("test-node", "default"))
+            Node::new(create_node_test_config().expect("Error creating test config"))
                 .await
                 .unwrap(),
         );
@@ -732,7 +733,7 @@ async fn test_multiple_network_ids() {
     let network2_path = TopicPath::new("network2:math/add", "default").unwrap();
 
     let node = Arc::new(
-        Node::new(NodeConfig::new_test_config("test-node", "default"))
+        Node::new(create_node_test_config().expect("Error creating test config"))
             .await
             .unwrap(),
     );

@@ -1,8 +1,9 @@
 use anyhow::Result;
 use runar_common::types::ArcValue;
 use runar_node::config::{LogLevel, LoggingConfig};
+use runar_test_utils::create_node_test_config;
 // TransportOptions was unused, removed.
-use runar_node::{Node, NodeConfig};
+use runar_node::Node;
 use std::collections::HashMap;
 // Arc was unused, removed.
 use std::time::Duration;
@@ -32,7 +33,8 @@ async fn main() -> Result<()> {
         component_levels: HashMap::new(), // Initialize explicitly
     };
 
-    let node_config = NodeConfig::new_test_config("micro_services_demo_node", "default_network")
+    let node_config = create_node_test_config()
+        .expect("Error creating test config")
         .with_logging_config(logging_config);
 
     let mut node = Node::new(node_config).await?;

@@ -603,8 +603,7 @@ fn test_symmetric_key_management() {
 
     // Verify node ID is derived from public key
     assert!(!node_id.is_empty());
-    // 65-byte uncompressed ECDSA public key encoded in base64 URL-safe = 87 characters
-    assert_eq!(node_id.len(), 87);
+    assert_eq!(node_id.len(), 22);
 
     // Test storage key access
     let storage_key = node_manager.get_storage_key();

@@ -9,4 +9,5 @@ tokio = { version = "1", features = ["full"] }
 runar_node = { path = "../../runar-node" }
 runar_macros = { path = "../../runar-macros" }
 runar_common = { path = "../../runar-common" }
+runar-test-utils = { path = "../../runar-test-utils" }
 async-trait = "0.1"

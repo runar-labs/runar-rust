@@ -158,6 +158,8 @@ impl SerializerRegistry {
         self.register_map::<String, i64>().unwrap();
         self.register_map::<String, f64>().unwrap();
         self.register_map::<String, bool>().unwrap();
+
+        self.register::<HashMap<String, ArcValue>>().unwrap();
     }
 
     /// Seal the registry to prevent further modifications
