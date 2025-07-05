@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { RunarNode } from '../ts/runtime';
+import { createNodeTestConfig } from '../index';
 
 describe('High-level RunarNode API', () => {
   let node: RunarNode;
 
   beforeAll(async () => {
-    node = new RunarNode();
+    const config = createNodeTestConfig();
+    node = new RunarNode(config);
 
     await node.addService({
       name: 'Math Service Name',

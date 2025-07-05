@@ -10,7 +10,7 @@ members = [
     "rust-examples/simple",
     "runar-serializer",
     "runar-serializer-macros",
-    "runar-ts-ffi",
+    "runar-nodejs-ffi",
     "runar-cli", "runar-test-utils",
 ]
 exclude = [

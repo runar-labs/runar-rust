@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { JsNode } from '../index';
+import { JsNode, createNodeTestConfig } from '../index';
 import { attachDispatcher, dispatchToRust, detachDispatcher } from '../ts/dispatcher';
 
 describe('Dispatcher message-bus bridge', () => {
@@ -45,7 +45,8 @@ describe('Dispatcher message-bus bridge', () => {
   });
 
   it('should round-trip an add action', async () => {
-    node = new JsNode();
+    const config = createNodeTestConfig();
+    node = new JsNode(config);
 
     // Add the service BEFORE starting the node so that its actions are fully initialized.
     const svcObj = {

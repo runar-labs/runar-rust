@@ -3328,6 +3328,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-nodejs-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dashmap",
+ "lazy_static",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "once_cell",
+ "runar-test-utils",
+ "runar_common",
+ "runar_node",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "runar-serializer"
 version = "0.1.0"
 dependencies = [
@@ -3362,27 +3383,6 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-test",
- "uuid",
-]
-
-[[package]]
-name = "runar-ts-ffi"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "dashmap",
- "lazy_static",
- "napi",
- "napi-build",
- "napi-derive",
- "once_cell",
- "runar-test-utils",
- "runar_common",
- "runar_node",
- "serde",
- "serde_json",
- "tokio",
  "uuid",
 ]
 

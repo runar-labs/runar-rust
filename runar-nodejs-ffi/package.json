@@ -1,11 +1,11 @@
 {
-  "name": "runar-ts",
+  "name": "runar-nodejs-ffi",
   "version": "0.1.0",
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
-    "name": "runar-ts-ffi",
+    "name": "runar-nodejs-ffi",
     "triples": {
       "defaults": true,
       "additional": [

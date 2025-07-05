@@ -7,7 +7,9 @@ use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFun
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
 use runar_common::types::ArcValue;
-use runar_node::{AbstractService, ActionHandler, LifecycleContext, Node, NodeDelegate};
+use runar_node::{
+    AbstractService, ActionHandler, LifecycleContext, Node, NodeConfig, NodeDelegate,
+};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -31,6 +33,82 @@ pub struct JsService {
     pub actions: Vec<String>, // Just the action names
 }
 
+/// JavaScript-safe node configuration interface
+/// This exposes only the fields that are safe to expose to JS
+#[napi(object)]
+pub struct JsNodeConfig {
+    /// Correlation ID to link this config to the actual Rust config
+    pub correlation_id: String,
+    /// Node ID (safe to expose)
+    pub node_id: String,
+    /// Default network ID (safe to expose)
+    pub default_network_id: String,
+    /// Additional network IDs (safe to expose)
+    pub network_ids: Vec<String>,
+    /// Request timeout in milliseconds (safe to expose)
+    pub request_timeout_ms: f64,
+    /// Logging level (safe to expose)
+    pub log_level: Option<String>,
+}
+
+/// Global storage for node configurations by correlation ID
+/// This keeps sensitive key data in Rust while allowing JS to reference configs
+static NODE_CONFIGS: OnceCell<DashMap<String, NodeConfig>> = OnceCell::new();
+
+fn get_node_configs() -> &'static DashMap<String, NodeConfig> {
+    NODE_CONFIGS.get_or_init(DashMap::new)
+}
+
+/// Create a test node configuration for JavaScript
+/// This creates the full config in Rust and returns a JS-safe version
+#[napi]
+pub fn create_node_test_config() -> napi::Result<JsNodeConfig> {
+    let correlation_id = Uuid::new_v4().to_string();
+
+    let config = runar_test_utils::create_node_test_config().map_err(anyhow_to_napi_error)?;
+
+    // Store the full config in Rust
+    get_node_configs().insert(correlation_id.clone(), config.clone());
+
+    // Return JS-safe version
+    Ok(JsNodeConfig {
+        correlation_id,
+        node_id: config.node_id,
+        default_network_id: config.default_network_id,
+        network_ids: config.network_ids,
+        request_timeout_ms: config.request_timeout_ms as f64,
+        log_level: config
+            .logging_config
+            .as_ref()
+            .map(|lc| format!("{:?}", lc.default_level)),
+    })
+}
+
+/// Create a production node configuration for JavaScript
+/// This creates a basic config that can be customized
+#[napi]
+pub fn create_node_config(
+    node_id: String,
+    default_network_id: String,
+) -> napi::Result<JsNodeConfig> {
+    let correlation_id = Uuid::new_v4().to_string();
+
+    let config = NodeConfig::new(node_id.clone(), default_network_id.clone());
+
+    // Store the full config in Rust
+    get_node_configs().insert(correlation_id.clone(), config);
+
+    // Return JS-safe version
+    Ok(JsNodeConfig {
+        correlation_id,
+        node_id,
+        default_network_id,
+        network_ids: Vec::new(),
+        request_timeout_ms: 30000.0,
+        log_level: Some("Info".to_string()),
+    })
+}
+
 /// Main Node interface for JavaScript
 #[napi]
 pub struct JsNode {
@@ -39,10 +117,30 @@ pub struct JsNode {
 
 #[napi]
 impl JsNode {
-    /// Synchronous constructor. Internally blocks on the async `Node::new`.
+    /// Synchronous constructor that accepts optional configuration
     #[napi(constructor)]
-    pub fn new() -> napi::Result<Self> {
-        let config = runar_test_utils::create_node_test_config().map_err(anyhow_to_napi_error)?;
+    pub fn new(config: Option<JsNodeConfig>) -> napi::Result<Self> {
+        let config = if let Some(js_config) = config {
+            // Retrieve the full config from Rust storage
+            get_node_configs()
+                .get(&js_config.correlation_id)
+                .ok_or_else(|| {
+                    napi::Error::new(
+                        napi::Status::InvalidArg,
+                        format!(
+                            "Node config with correlation_id '{}' not found",
+                            js_config.correlation_id
+                        ),
+                    )
+                })?
+                .clone()
+        } else {
+            return Err(napi::Error::new(
+                napi::Status::InvalidArg,
+                "Node configuration must be provided. No fallback to test config.",
+            ));
+        };
+
         let handle = tokio::runtime::Handle::current();
         let node = handle
             .block_on(Node::new(config))

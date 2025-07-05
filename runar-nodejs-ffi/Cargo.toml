@@ -1,5 +1,5 @@
 [package]
-name = "runar-ts-ffi"
+name = "runar-nodejs-ffi"
 version = "0.1.0"
 edition = "2021"
 authors = ["Runar Team"]

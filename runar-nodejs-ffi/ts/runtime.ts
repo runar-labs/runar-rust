@@ -1,7 +1,7 @@
 // High-level TypeScript wrapper around the low-level JsNode FFI.
 // This lets apps register services with real async functions instead of string names.
 
-import { JsNode } from '../index';
+import { JsNode, createNodeTestConfig, createNodeConfig, JsNodeConfig } from '../index';
 import { attachDispatcher, detachDispatcher, dispatchToRust } from './dispatcher';
 
 type LoggerLike = { info: (...args: any[]) => void; };
@@ -26,10 +26,14 @@ export interface ServiceDefinition {
  * High-level runtime that hides the dispatcher plumbing.
  */
 export class RunarNode {
-  private readonly node: JsNode = new JsNode();
+  private readonly node: JsNode;
   private readonly services = new Map<string, ServiceDefinition>();
   private initialized = false;
   private dispatcherCb: any;
+
+  constructor(config?: JsNodeConfig) {
+    this.node = new JsNode(config);
+  }
 
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
@@ -105,4 +109,6 @@ export class RunarNode {
     await this.node.stop();
     this.initialized = false;
   }
-} 
+}
+
+ 

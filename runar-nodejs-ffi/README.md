@@ -1,4 +1,4 @@
-# Runar TypeScript FFI
+# Runar Node.js FFI
 
 This crate exposes the native Rust **Runar** node to JavaScript/TypeScript
 through **napi-rs**. It adds an ergonomic TS runtime so applications can write
@@ -21,7 +21,7 @@ cryptography and persistence to the Rust core.
 ## 1  Folder layout
 
 ```
-runar-ts-ffi/
+runar-nodejs-ffi/
 ├─ src/              # native Rust addon (napi-rs entry points)
 │   └─ lib.rs        # exposes JsNode + dispatcher TSFN
 ├─ ts/               # hand-written TypeScript façade
@@ -121,7 +121,7 @@ prove multi-instance safety.*
    a wrapper in `ts/` – avoids direct JS dependency on generated loader.
 5. New tests **must** clean up dispatcher callbacks via `detachDispatcher`
    to avoid cross-suite leakage.
-6. Do not edit `index.js`; regenerate by `cargo build -p runar-ts-ffi`.
+6. Do not edit `index.js`; regenerate by `cargo build -p runar-nodejs-ffi`.
 7. Run `npm test` before every commit; CI expects all suites to pass.
 
 
