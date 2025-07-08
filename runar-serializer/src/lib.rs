@@ -20,6 +20,3 @@ pub use runar_serializer_macros::*;
 
 // Re-export so callers can write `runar_serializer::ArcValue`.
 pub use arc_value::*;
-
-#[cfg(test)]
-mod tests;

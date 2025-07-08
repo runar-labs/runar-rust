@@ -79,6 +79,8 @@ pub struct LazyDataWithOffset {
     pub end_offset: usize,
     /// Optional deserializer captured from SerializerRegistry (encryption-aware)
     pub deserializer: Option<crate::types::arc_value::DeserializerFnWrapper>,
+    /// Optional alternative deserializer (e.g., encrypted alias)
+    pub alias_deserializer: Option<crate::types::arc_value::DeserializerFnWrapper>,
     // NOTE: We no longer store the deserializer function here, as we use direct bincode
 }
 
@@ -403,12 +405,24 @@ impl SerializerRegistry {
             let data_start_offset = (data_slice.as_ptr() as usize) - (bytes_arc.as_ptr() as usize);
             let data_end_offset = data_start_offset + data_slice.len();
 
+            // Capture primary and alias deserializers if available
+            let primary_deser = self.get_deserializer_arc(&type_name);
+            // Build alias name Encrypted<Type>
+            let alias_name = if let Some(idx) = type_name.rfind("::") {
+                let (prefix, last) = type_name.split_at(idx + 2);
+                format!("{prefix}Encrypted{last}")
+            } else {
+                format!("Encrypted{type_name}")
+            };
+            let alias_deser = self.get_deserializer_arc(&alias_name);
+
             let lazy_data = LazyDataWithOffset {
                 type_name: type_name.to_string(),
                 original_buffer: bytes_arc.clone(), // Clone the Arc (cheap)
                 start_offset: data_start_offset,
                 end_offset: data_end_offset,
-                deserializer: None, // Default to None, specific constructors will populate
+                deserializer: primary_deser,
+                alias_deserializer: alias_deser,
             };
 
             // Store Arc<LazyDataWithOffset> in value, keeping original category
@@ -1076,23 +1090,32 @@ impl ArcValue {
                     }
 
                     let expected_type_name = std::any::type_name::<T>();
-                    if !crate::types::erased_arc::compare_type_names(
-                        expected_type_name,
-                        &type_name_clone,
-                    ) {
+                    let names_match = {
+                        if expected_type_name == type_name_clone {
+                            true
+                        } else {
+                            let expected_last =
+                                expected_type_name.rsplit("::").next().unwrap_or("");
+                            let header_last = type_name_clone.rsplit("::").next().unwrap_or("");
+                            expected_last == header_last && !expected_last.starts_with("Encrypted")
+                        }
+                    };
+
+                    let alias_match = {
+                        // plain last segment
+                        let header_last = type_name_clone.rsplit("::").next().unwrap_or("");
+                        let expected_last = expected_type_name.rsplit("::").next().unwrap_or("");
+                        expected_last == format!("Encrypted{header_last}")
+                    };
+
+                    if !names_match && !alias_match {
                         return Err(anyhow!(
-                            "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
-                            expected_type_name,
-                            type_name_clone
+                            "Lazy data type mismatch: expected {expected_type_name} / alias, but stored type is {type_name_clone}"
                         ));
                     }
 
                     let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
-                    // First try plain bincode into the requested T
-                    if let Ok(deserialized_struct) = bincode::deserialize::<T>(data_slice) {
-                        *actual_value = ErasedArc::new(Arc::new(deserialized_struct));
-                    } else {
-                        // Fallback: use the captured deserializer wrapper (may decrypt)
+                    if names_match {
                         let lazy_data_arc = actual_value.get_lazy_data()?;
                         if let Some(wrapper) = &lazy_data_arc.deserializer {
                             let boxed = wrapper
@@ -1113,6 +1136,28 @@ impl ArcValue {
                                 type_name_clone
                             ));
                         }
+                    } else if alias_match {
+                        // Use alias deserializer if provided (expected to decode Encrypted<T>)
+                        let lazy_data_arc = actual_value.get_lazy_data()?;
+                        if let Some(wrapper) = &lazy_data_arc.alias_deserializer {
+                            let boxed = wrapper
+                                .call(data_slice)
+                                .map_err(|e| anyhow!("Alias deserializer error: {e}"))?;
+                            let concrete = boxed.downcast::<T>().map_err(|_| {
+                                anyhow!(
+                                    "Alias deserializer returned unexpected type (expected {})",
+                                    std::any::type_name::<T>()
+                                )
+                            })?;
+                            *actual_value = ErasedArc::new(Arc::new(*concrete));
+                        } else {
+                            return Err(anyhow!(
+                                "No alias deserializer available for type {}",
+                                type_name_clone
+                            ));
+                        }
+                    } else {
+                        // Should not reach here due to earlier check
                     }
                 }
                 // Explicitly assign and return

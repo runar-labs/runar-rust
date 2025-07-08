@@ -368,6 +368,8 @@ impl CertificateAuthority {
             .set_not_after(&not_after)
             .map_err(|e| KeyError::CertificateError(format!("Failed to set not_after: {e}")))?;
 
+        //TODO createa a field i the MobileKeyManager that will be seriqaliast and restore.. so we alweays
+        //have the latest number and we can just increase from it.
         // Set serial number (in production this would be from a database)
         let serial_number = {
             let mut bn = BigNum::new()

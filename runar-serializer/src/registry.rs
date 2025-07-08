@@ -1,11 +1,10 @@
 use crate::traits::{KeyStore, LabelResolver, RunarDecrypt, RunarEncrypt};
 use anyhow::{anyhow, Result};
-use bincode;
+use prost::Message;
 use runar_common::logging::Logger;
 use runar_common::types::arc_value::{
-    DeserializerFnWrapper, SerializerRegistry as BaseSerializerRegistry, ValueCategory,
+    DeserializerFnWrapper, SerializerRegistry as BaseSerializerRegistry,
 };
-use runar_common::types::erased_arc::ErasedArc;
 use runar_common::types::ArcValue;
 use std::any::Any;
 use std::collections::HashMap;
@@ -99,19 +98,25 @@ impl SerializerRegistry {
     pub fn register_encryptable<T>(&mut self) -> Result<()>
     where
         T: 'static
+            + prost::Message
             + crate::traits::RunarEncrypt
             + serde::Serialize
             + for<'de> serde::Deserialize<'de>
             + Clone
             + Send
-            + Sync,
+            + Sync
+            + prost::Message
+            + Default,
         T::Encrypted: 'static
+            + prost::Message
             + crate::traits::RunarDecrypt<Decrypted = T>
             + serde::Serialize
             + for<'de> serde::Deserialize<'de>
             + Clone
             + Send
-            + Sync,
+            + Sync
+            + prost::Message
+            + Default,
     {
         self.register_with_encryption::<T>()
     }
@@ -120,19 +125,25 @@ impl SerializerRegistry {
     fn register_with_encryption<T>(&mut self) -> Result<()>
     where
         T: 'static
+            + prost::Message
             + RunarEncrypt
             + serde::Serialize
             + for<'de> serde::Deserialize<'de>
             + Clone
             + Send
-            + Sync,
+            + Sync
+            + prost::Message
+            + Default,
         T::Encrypted: 'static
+            + prost::Message
             + RunarDecrypt<Decrypted = T>
             + serde::Serialize
             + for<'de> serde::Deserialize<'de>
             + Clone
             + Send
-            + Sync,
+            + Sync
+            + prost::Message
+            + Default,
     {
         let type_name = std::any::type_name::<T>();
 
@@ -143,9 +154,13 @@ impl SerializerRegistry {
             if let Some(typed_value) = value.downcast_ref::<T>() {
                 if let (Some(ref ks), Some(ref lr)) = (&keystore, &label_resolver) {
                     let encrypted = typed_value.encrypt_with_keystore(ks.as_ref(), lr.as_ref())?;
-                    bincode::serialize(&encrypted).map_err(|e| anyhow!("Serialization error: {e}"))
+                    let mut buf = Vec::new();
+                    Message::encode(&encrypted, &mut buf)?;
+                    Ok(buf)
                 } else {
-                    bincode::serialize(typed_value).map_err(|e| anyhow!("Serialization error: {e}"))
+                    let mut buf = Vec::new();
+                    Message::encode(typed_value, &mut buf)?;
+                    Ok(buf)
                 }
             } else {
                 Err(anyhow!("Type mismatch during serialization"))
@@ -156,27 +171,54 @@ impl SerializerRegistry {
         self.base_registry
             .register_custom_serializer(type_name, serializer_closure)?;
 
+        // ---------- Encrypted< T > direct serializer/deserializer ----------
+        let encrypted_type_name = std::any::type_name::<T::Encrypted>();
+
+        // Serializer for EncryptedT (no decryption, plain prost encode)
+        let enc_name_clone = encrypted_type_name.to_string();
+        let enc_serializer = Box::new(move |value: &dyn Any| -> Result<Vec<u8>> {
+            if let Some(enc) = value.downcast_ref::<T::Encrypted>() {
+                let mut buf = Vec::new();
+                prost::Message::encode(enc, &mut buf)?;
+                Ok(buf)
+            } else {
+                Err(anyhow!(
+                    "Type mismatch during encrypted serialization for {}",
+                    enc_name_clone
+                ))
+            }
+        });
+
+        self.base_registry
+            .register_custom_serializer(encrypted_type_name, enc_serializer)?;
+
+        // Deserializer for EncryptedT (prost decode only, no decryption)
+        let enc_deser_wrapper = DeserializerFnWrapper::new(|bytes: &[u8]| {
+            let decoded = T::Encrypted::decode(bytes)?;
+            Ok(Box::new(decoded))
+        });
+
+        self.base_registry
+            .register_custom_deserializer(encrypted_type_name, enc_deser_wrapper)?;
+
         // Prepare deserializer that tries encrypted first
         let keystore_for_deser = self.keystore.clone();
         let deserializer_wrapper =
             DeserializerFnWrapper::new(move |bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
                 // Attempt encrypted deserialization
-                if let Ok(enc_obj) = bincode::deserialize::<T::Encrypted>(bytes) {
+                if let Ok(enc_obj) = T::Encrypted::decode(bytes) {
                     if let Some(ref ks) = keystore_for_deser {
                         let dec = enc_obj.decrypt_with_keystore(ks.as_ref())?;
                         return Ok(Box::new(dec));
                     }
                 }
                 // Fallback to plaintext
-                let obj: T = bincode::deserialize(bytes)?;
+                let obj: T = T::decode(bytes)?;
                 Ok(Box::new(obj))
             });
 
         self.base_registry
             .register_custom_deserializer(type_name, deserializer_wrapper)?;
-
-        // Ensure encrypted version itself is also registered plainly (to allow deserialization when expected)
-        self.base_registry.register::<T::Encrypted>()?;
 
         Ok(())
     }
@@ -228,56 +270,10 @@ impl SerializerRegistry {
 
     /// Deserialize bytes to an ArcValue
     pub fn deserialize_value(&self, bytes_arc: Arc<[u8]>) -> Result<ArcValue> {
-        // Fast-path: attempt to parse header and eagerly run our own registered deserializer.
-        if bytes_arc.is_empty() {
-            return Err(anyhow!("Empty byte slice"));
-        }
+        // The base registry already handles header parsing, lazy construction, and alias
+        // detection (e.g. `Encrypted<T>`).  Re-use it directly so we maintain a single
+        // implementation of this fairly complex logic.
 
-        let category_byte = bytes_arc[0];
-        let category = match category_byte {
-            0x01 => ValueCategory::Primitive,
-            0x02 => ValueCategory::List,
-            0x03 => ValueCategory::Map,
-            0x04 => ValueCategory::Struct,
-            0x05 => ValueCategory::Null,
-            0x06 => ValueCategory::Bytes,
-            0x07 => ValueCategory::Json,
-            _ => return Err(anyhow!(format!("Unknown category byte: {category_byte}"))),
-        };
-
-        if category == ValueCategory::Null {
-            return Ok(ArcValue::null());
-        }
-
-        if bytes_arc.len() < 2 {
-            return Err(anyhow!("Byte slice too short for header"));
-        }
-        let type_len = bytes_arc[1] as usize;
-        if bytes_arc.len() < 2 + type_len {
-            return Err(anyhow!("Byte slice too short for stated type length"));
-        }
-        let type_name_bytes = &bytes_arc[2..2 + type_len];
-        let type_name = std::str::from_utf8(type_name_bytes)?.to_string();
-
-        let payload_start = 2 + type_len;
-
-        if let Some(wrapper) = self.get_deserializer_arc(&type_name) {
-            // Build a lazy ArcValue that carries the wrapper so it can decrypt later.
-            use runar_common::types::arc_value::LazyDataWithOffset;
-
-            let lazy = LazyDataWithOffset {
-                type_name: type_name.clone(),
-                original_buffer: bytes_arc.clone(),
-                start_offset: payload_start,
-                end_offset: bytes_arc.len(),
-                deserializer: Some(wrapper),
-            };
-
-            let erased = ErasedArc::from_value(lazy);
-            return Ok(ArcValue::new(erased, category));
-        }
-
-        // Fallback to base behaviour (lazy path)
         self.base_registry.deserialize_value(bytes_arc)
     }
 
@@ -348,7 +344,7 @@ impl SerializerRegistry {
         group: &crate::encryption::EncryptedLabelGroup,
     ) -> Result<T>
     where
-        T: for<'de> serde::Deserialize<'de>,
+        T: for<'de> serde::Deserialize<'de> + prost::Message + Default,
     {
         let ks = self
             .keystore
