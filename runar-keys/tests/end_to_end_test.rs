@@ -377,6 +377,24 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     );
     println!("   ✅ Profile keys generated: personal, work");
 
+    // --- Mobile state serialization & restoration check for profile keys ---
+    let mobile_state = mobile_keys_manager.export_state();
+    let serialized_mobile_state =
+        bincode::serialize(&mobile_state).expect("Failed to serialize mobile state");
+    let deserialized_mobile_state: runar_keys::mobile::MobileKeyManagerState =
+        bincode::deserialize(&serialized_mobile_state).expect("Failed to deserialize mobile state");
+
+    let mobile_logger_hydrated = create_test_logger("mobile-hydrated");
+    let mut mobile_hydrated = runar_keys::mobile::MobileKeyManager::from_state(
+        deserialized_mobile_state,
+        mobile_logger_hydrated,
+    )?;
+
+    // After restoration, deriving the same profile key should yield identical public key bytes
+    let restored_personal_key = mobile_hydrated.derive_user_profile_key("personal")?;
+    assert_eq!(restored_personal_key, profile_personal_key);
+    println!("   ✅ Mobile profile keys persisted across serialization");
+
     // 8 - (mobile side) - Encrypts data using envelope which is encrypted using the
     //     user profile key and network key, so only the user or apps running in the
     //     network can decrypt it.

@@ -708,6 +708,8 @@ impl QuicTransportImpl {
                 self.node_id, peer_id, socket_addr
             ));
 
+            //TODO we just changed the cert subject to use the node_id.
+            // can we change here also to use the node_if of the peer? to replace localhost?
             // Create a new connection to the peer
             // For testing, we use "localhost" as the server name to avoid certificate validation issues
             // In production, we would use the peer_id or a proper domain name

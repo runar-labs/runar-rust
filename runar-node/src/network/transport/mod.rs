@@ -17,14 +17,12 @@ use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
 use rustls_pki_types::{CertificateDer, ServerName};
 
 // Internal module declarations
-pub mod cert_utils;
 pub mod connection_pool;
 pub mod peer_registry;
 pub mod peer_state;
 pub mod quic_transport;
 pub mod stream_pool;
 
-pub use cert_utils::generate_self_signed_cert;
 pub use connection_pool::ConnectionPool;
 pub use peer_state::PeerState;
 pub use stream_pool::StreamPool;

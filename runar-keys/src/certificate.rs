@@ -12,6 +12,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use x509_parser::prelude::*;
 
 // OpenSSL for proper CA operations
+use openssl::asn1::Asn1Integer;
 use openssl::bn::{BigNum, MsbOption};
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
@@ -314,129 +315,111 @@ impl CertificateAuthority {
         &self.ca_key_pair.verifying_key
     }
 
+    /// Get a reference to the CA key pair (used for state export)
+    pub fn ca_key_pair(&self) -> &EcdsaKeyPair {
+        &self.ca_key_pair
+    }
+
     /// Sign a certificate request using OpenSSL for proper CA operations
     pub fn sign_certificate_request(
         &self,
         csr_der: &[u8],
         validity_days: u32,
     ) -> Result<X509Certificate> {
-        // Parse the CSR using OpenSSL (this properly extracts the public key)
+        self.sign_certificate_request_with_serial(csr_der, validity_days, None)
+    }
+
+    /// Same as `sign_certificate_request` but allows a caller-supplied serial
+    /// number. If `serial_override` is `None` a random 64-bit serial is used
+    /// (matches the previous behaviour).
+    pub fn sign_certificate_request_with_serial(
+        &self,
+        csr_der: &[u8],
+        validity_days: u32,
+        serial_override: Option<u64>,
+    ) -> Result<X509Certificate> {
+        // Parse CSR and extract public key
         let req = X509Req::from_der(csr_der)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to parse CSR: {e}")))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to parse CSR DER: {e}")))?;
 
-        // Extract the public key directly from the CSR
-        let req_public_key = req.public_key().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to extract public key from CSR: {e}"))
-        })?;
-
-        // Convert our CA private key to OpenSSL format
-        let ca_private_key = self.ca_key_pair_to_openssl_pkey()?;
-
-        // Create the certificate using OpenSSL's proper CA operations
+        // Build certificate
         let mut cert_builder = X509Builder::new().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create certificate builder: {e}"))
+            KeyError::CertificateError(format!("Failed to create X509 builder: {e}"))
         })?;
 
-        // Set the public key from the CSR (this is the key step that was broken before!)
+        // Subject / issuer / public key
+        let req_public_key = req.public_key()?;
+
+        // ----- New security check: verify CSR signature -----
+        // Ensures the included public key actually matches the private key
+        // that signed the CSR, protecting against tampering in transit.
+        if !req.verify(&req_public_key)? {
+            return Err(KeyError::CertificateError(
+                "CSR signature verification failed".to_string(),
+            ));
+        }
+
         cert_builder
             .set_pubkey(&req_public_key)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set public key: {e}")))?;
-
-        // Set subject name from the CSR
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set pubkey: {e}")))?;
         cert_builder
             .set_subject_name(req.subject_name())
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set subject name: {e}")))?;
-
-        // Set issuer name (CA)
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set subject: {e}")))?;
         let ca_name = self.create_ca_name()?;
         cert_builder
             .set_issuer_name(&ca_name)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set issuer name: {e}")))?;
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set issuer: {e}")))?;
 
-        // Set validity period
-        let not_before = openssl::asn1::Asn1Time::days_from_now(0).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create not_before time: {e}"))
-        })?;
-        let not_after = openssl::asn1::Asn1Time::days_from_now(validity_days).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create not_after time: {e}"))
-        })?;
+        // Validity
+        let not_before = openssl::asn1::Asn1Time::days_from_now(0)?;
+        let not_after = openssl::asn1::Asn1Time::days_from_now(validity_days)?;
+        cert_builder.set_not_before(&not_before)?;
+        cert_builder.set_not_after(&not_after)?;
 
-        cert_builder
-            .set_not_before(&not_before)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set not_before: {e}")))?;
-        cert_builder
-            .set_not_after(&not_after)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set not_after: {e}")))?;
+        // Extensions
+        cert_builder.append_extension(
+            KeyUsage::new()
+                .digital_signature()
+                .key_encipherment()
+                .build()?,
+        )?;
+        cert_builder.append_extension(
+            ExtendedKeyUsage::new()
+                .server_auth()
+                .client_auth()
+                .build()?,
+        )?;
 
-        //TODO createa a field i the MobileKeyManager that will be seriqaliast and restore.. so we alweays
-        //have the latest number and we can just increase from it.
-        // Set serial number (in production this would be from a database)
-        let serial_number = {
-            let mut bn = BigNum::new()
-                .map_err(|e| KeyError::CertificateError(format!("Failed to create BigNum: {e}")))?;
-            bn.rand(64, MsbOption::MAYBE_ZERO, false).map_err(|e| {
-                KeyError::CertificateError(format!("Failed to generate random serial: {e}"))
-            })?;
-            bn.to_asn1_integer().map_err(|e| {
-                KeyError::CertificateError(format!("Failed to convert serial to ASN1: {e}"))
-            })?
+        // Serial number
+        let serial_asn1 = match serial_override {
+            Some(s) => Self::u64_to_asn1(s)?,
+            None => self.random_serial()?,
         };
-        cert_builder
-            .set_serial_number(&serial_number)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set serial number: {e}")))?;
+        cert_builder.set_serial_number(&serial_asn1)?;
 
-        // Add standard X.509v3 extensions for TLS
-        cert_builder
-            .append_extension(
-                KeyUsage::new()
-                    .digital_signature()
-                    .key_encipherment()
-                    .build()
-                    .map_err(|e| {
-                        KeyError::CertificateError(format!(
-                            "Failed to create key usage extension: {e}"
-                        ))
-                    })?,
-            )
-            .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to add key usage extension: {e}"))
-            })?;
-
-        cert_builder
-            .append_extension(
-                ExtendedKeyUsage::new()
-                    .server_auth()
-                    .client_auth()
-                    .build()
-                    .map_err(|e| {
-                        KeyError::CertificateError(format!(
-                            "Failed to create extended key usage extension: {e}"
-                        ))
-                    })?,
-            )
-            .map_err(|e| {
-                KeyError::CertificateError(format!(
-                    "Failed to add extended key usage extension: {e}"
-                ))
-            })?;
-
-        // Sign the certificate with the CA private key (this creates the proper certificate!)
-        cert_builder
-            .sign(&ca_private_key, MessageDigest::sha256())
-            .map_err(|e| KeyError::CertificateError(format!("Failed to sign certificate: {e}")))?;
-
-        // Build the final certificate
-        let openssl_cert = cert_builder.build();
-
-        // Convert to DER format
-        let cert_der = openssl_cert.to_der().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to convert certificate to DER: {e}"))
-        })?;
-
-        // Certificate successfully signed with CSR's actual public key - handled by caller logging
-
-        // Return as our X509Certificate wrapper
+        // Sign & return
+        let ca_pkey = self.ca_key_pair_to_openssl_pkey()?;
+        cert_builder.sign(&ca_pkey, MessageDigest::sha256())?;
+        let cert_der = cert_builder.build().to_der()?;
         X509Certificate::from_der(cert_der)
+    }
+
+    fn random_serial(&self) -> Result<Asn1Integer> {
+        let mut bn = BigNum::new()
+            .map_err(|e| KeyError::CertificateError(format!("Failed to create BigNum: {e}")))?;
+        bn.rand(64, MsbOption::MAYBE_ZERO, false).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to generate random serial: {e}"))
+        })?;
+        bn.to_asn1_integer()
+            .map_err(|e| KeyError::CertificateError(format!("Failed to convert serial: {e}")))
+    }
+
+    fn u64_to_asn1(value: u64) -> Result<Asn1Integer> {
+        let bn = BigNum::from_dec_str(&value.to_string()).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to create BigNum from u64: {e}"))
+        })?;
+        bn.to_asn1_integer()
+            .map_err(|e| KeyError::CertificateError(format!("Failed to convert serial: {e}")))
     }
 
     /// Convert our ECDSA key pair to OpenSSL PKey format

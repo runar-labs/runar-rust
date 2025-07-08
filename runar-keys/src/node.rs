@@ -370,10 +370,9 @@ impl NodeKeyManager {
 
     /// Install certificate received from mobile CA
     pub fn install_certificate(&mut self, cert_message: NodeCertificateMessage) -> Result<()> {
-        // For this demo, we'll skip the CA signature validation since we're using self-signed certificates
-        // In a production system, this would validate the certificate signature against the CA
-        // let ca_public_key = cert_message.ca_certificate.public_key()?;
-        // cert_message.node_certificate.validate(&ca_public_key)?;
+        // Validate the certificate signature against the CA's public key
+        let ca_public_key = cert_message.ca_certificate.public_key()?;
+        cert_message.node_certificate.validate(&ca_public_key)?;
 
         // Verify the certificate is for this node
         let node_id = self.get_node_id();
