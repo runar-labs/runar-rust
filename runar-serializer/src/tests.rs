@@ -251,24 +251,24 @@ fn test_label_resolver() {
 fn test_encrypted_label_group() {
     let group = EncryptedLabelGroup {
         label: "test".to_string(),
-        envelope: EnvelopeEncryptedData {
+        envelope: Some(EnvelopeEncryptedData {
             encrypted_data: vec![1, 2, 3],
             network_id: String::new(),
             network_encrypted_key: Vec::new(),
             profile_encrypted_keys: std::collections::HashMap::new(),
-        },
+        }),
     };
 
     assert!(!group.is_empty());
 
     let empty_group = EncryptedLabelGroup {
         label: "test".to_string(),
-        envelope: EnvelopeEncryptedData {
+        envelope: Some(EnvelopeEncryptedData {
             encrypted_data: vec![],
             network_id: String::new(),
             network_encrypted_key: Vec::new(),
             profile_encrypted_keys: std::collections::HashMap::new(),
-        },
+        }),
     };
 
     assert!(empty_group.is_empty());

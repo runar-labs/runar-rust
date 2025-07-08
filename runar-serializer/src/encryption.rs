@@ -5,17 +5,22 @@ use runar_keys::compact_ids;
 use serde::{Deserialize, Serialize};
 
 /// Container for label-grouped encryption (one per label)
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, prost::Message)]
 pub struct EncryptedLabelGroup {
     /// The label this group was encrypted with
+    #[prost(string, tag = "1")]
     pub label: String,
     /// Envelope-encrypted payload produced by runar-keys
-    pub envelope: EnvelopeEncryptedData,
+    #[prost(message, optional, tag = "2")]
+    pub envelope: ::core::option::Option<EnvelopeEncryptedData>,
 }
 
 impl EncryptedLabelGroup {
     pub fn is_empty(&self) -> bool {
-        self.envelope.encrypted_data.is_empty()
+        match &self.envelope {
+            Some(env) => env.encrypted_data.is_empty(),
+            None => true,
+        }
     }
 }
 
@@ -47,7 +52,7 @@ pub fn encrypt_label_group<T: Serialize>(
 
     Ok(EncryptedLabelGroup {
         label: label.to_string(),
-        envelope,
+        envelope: Some(envelope),
     })
 }
 
@@ -63,7 +68,12 @@ pub fn decrypt_label_group<T: for<'de> Deserialize<'de>>(
     }
 
     // Attempt decryption using the provided key manager
-    let plaintext = keystore.decrypt_envelope_data(&encrypted_group.envelope)?;
+    let env = encrypted_group
+        .envelope
+        .as_ref()
+        .ok_or_else(|| anyhow!("Empty encrypted group"))?;
+
+    let plaintext = keystore.decrypt_envelope_data(env)?;
 
     // Deserialize the fields struct from plaintext
     let fields_struct: T = bincode::deserialize(&plaintext)?;

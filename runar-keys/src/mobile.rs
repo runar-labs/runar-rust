@@ -59,15 +59,19 @@ pub struct NetworkKeyMessage {
 }
 
 /// Envelope encrypted data structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, prost::Message)]
 pub struct EnvelopeEncryptedData {
     /// The encrypted data payload
+    #[prost(bytes = "vec", tag = "1")]
     pub encrypted_data: Vec<u8>,
     /// Network ID this data belongs to
+    #[prost(string, tag = "2")]
     pub network_id: String,
     /// Envelope key encrypted with network key (always required)
+    #[prost(bytes = "vec", tag = "3")]
     pub network_encrypted_key: Vec<u8>,
     /// Envelope key encrypted with each profile key
+    #[prost(map = "string, bytes", tag = "4")]
     pub profile_encrypted_keys: HashMap<String, Vec<u8>>,
 }
 
