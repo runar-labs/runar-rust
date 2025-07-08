@@ -348,7 +348,9 @@ impl CertificateAuthority {
         })?;
 
         // Subject / issuer / public key
-        let req_public_key = req.public_key()?;
+        let req_public_key = req.public_key().map_err(|e| {
+            KeyError::CertificateError(format!("Failed to extract public key from CSR: {e}"))
+        })?;
 
         // ----- New security check: verify CSR signature -----
         // Ensures the included public key actually matches the private key
@@ -371,36 +373,62 @@ impl CertificateAuthority {
             .map_err(|e| KeyError::CertificateError(format!("Failed to set issuer: {e}")))?;
 
         // Validity
-        let not_before = openssl::asn1::Asn1Time::days_from_now(0)?;
-        let not_after = openssl::asn1::Asn1Time::days_from_now(validity_days)?;
-        cert_builder.set_not_before(&not_before)?;
-        cert_builder.set_not_after(&not_after)?;
+        let not_before = openssl::asn1::Asn1Time::days_from_now(0).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to set certificate not_before: {e}"))
+        })?;
+        let not_after = openssl::asn1::Asn1Time::days_from_now(validity_days).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to set certificate not_after: {e}"))
+        })?;
+        cert_builder
+            .set_not_before(&not_before)
+            .map_err(|e| KeyError::CertificateError(format!("Failed to apply not_before: {e}")))?;
+        cert_builder
+            .set_not_after(&not_after)
+            .map_err(|e| KeyError::CertificateError(format!("Failed to apply not_after: {e}")))?;
 
         // Extensions
-        cert_builder.append_extension(
-            KeyUsage::new()
-                .digital_signature()
-                .key_encipherment()
-                .build()?,
-        )?;
-        cert_builder.append_extension(
-            ExtendedKeyUsage::new()
-                .server_auth()
-                .client_auth()
-                .build()?,
-        )?;
+        cert_builder
+            .append_extension(
+                KeyUsage::new()
+                    .digital_signature()
+                    .key_encipherment()
+                    .build()
+                    .map_err(|e| {
+                        KeyError::CertificateError(format!("Failed to build KeyUsage ext: {e}"))
+                    })?,
+            )
+            .map_err(|e| {
+                KeyError::CertificateError(format!("Failed to append KeyUsage ext: {e}"))
+            })?;
+        cert_builder
+            .append_extension(
+                ExtendedKeyUsage::new()
+                    .server_auth()
+                    .client_auth()
+                    .build()
+                    .map_err(|e| {
+                        KeyError::CertificateError(format!("Failed to build EKU ext: {e}"))
+                    })?,
+            )
+            .map_err(|e| KeyError::CertificateError(format!("Failed to append EKU ext: {e}")))?;
 
         // Serial number
         let serial_asn1 = match serial_override {
             Some(s) => Self::u64_to_asn1(s)?,
             None => self.random_serial()?,
         };
-        cert_builder.set_serial_number(&serial_asn1)?;
+        cert_builder
+            .set_serial_number(&serial_asn1)
+            .map_err(|e| KeyError::CertificateError(format!("Failed to set serial number: {e}")))?;
 
         // Sign & return
         let ca_pkey = self.ca_key_pair_to_openssl_pkey()?;
-        cert_builder.sign(&ca_pkey, MessageDigest::sha256())?;
-        let cert_der = cert_builder.build().to_der()?;
+        cert_builder
+            .sign(&ca_pkey, MessageDigest::sha256())
+            .map_err(|e| KeyError::CertificateError(format!("Failed to sign certificate: {e}")))?;
+        let cert_der = cert_builder.build().to_der().map_err(|e| {
+            KeyError::CertificateError(format!("Failed to serialize certificate DER: {e}"))
+        })?;
         X509Certificate::from_der(cert_der)
     }
 
