@@ -1076,12 +1076,21 @@ impl ArcValue {
                     }
 
                     let expected_type_name = std::any::type_name::<T>();
-                    if !crate::types::erased_arc::compare_type_names(
+                    let names_match = crate::types::erased_arc::compare_type_names(
                         expected_type_name,
                         &type_name_clone,
-                    ) {
+                    );
+
+                    let alias_match = {
+                        // plain last segment
+                        let header_last = type_name_clone.rsplit("::").next().unwrap_or("");
+                        let expected_last = expected_type_name.rsplit("::").next().unwrap_or("");
+                        expected_last == format!("Encrypted{}", header_last)
+                    };
+
+                    if !names_match && !alias_match {
                         return Err(anyhow!(
-                            "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
+                            "Lazy data type mismatch: expected {} / alias, but stored type is {}",
                             expected_type_name,
                             type_name_clone
                         ));

@@ -13,6 +13,5 @@ runar-serializer-macros = { path = "../runar-serializer-macros" }
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-bincode = "1.3"
 prost = { version = "0.12", default-features = false, features = ["std", "derive"] }
 log = { workspace = true } 

@@ -1,6 +1,6 @@
 use crate::traits::{EnvelopeEncryptedData, KeyScope, KeyStore, LabelResolver};
 use anyhow::{anyhow, Result};
-use bincode;
+use prost::Message;
 use runar_keys::compact_ids;
 use serde::{Deserialize, Serialize};
 
@@ -25,14 +25,15 @@ impl EncryptedLabelGroup {
 }
 
 /// Encrypt a group of fields that share the same label ("user", "system", ...)
-pub fn encrypt_label_group<T: Serialize>(
+pub fn encrypt_label_group<T: Serialize + prost::Message>(
     label: &str,
     fields_struct: &T,
     keystore: &KeyStore,
     resolver: &dyn LabelResolver,
 ) -> Result<EncryptedLabelGroup> {
     // Serialize the fields within this label group
-    let plaintext = bincode::serialize(fields_struct)?;
+    let mut plaintext = Vec::new();
+    Message::encode(fields_struct, &mut plaintext)?;
 
     // Resolve the label to key info (public key + scope)
     let info = resolver
@@ -59,7 +60,7 @@ pub fn encrypt_label_group<T: Serialize>(
 /// Attempt to decrypt a label group back into its original struct.  
 /// Returns an error if decryption fails, allowing callers to ignore failures
 /// (e.g. when the current context lacks the required keys).
-pub fn decrypt_label_group<T: for<'de> Deserialize<'de>>(
+pub fn decrypt_label_group<T: for<'de> Deserialize<'de> + prost::Message + Default>(
     encrypted_group: &EncryptedLabelGroup,
     keystore: &KeyStore,
 ) -> Result<T> {
@@ -76,6 +77,6 @@ pub fn decrypt_label_group<T: for<'de> Deserialize<'de>>(
     let plaintext = keystore.decrypt_envelope_data(env)?;
 
     // Deserialize the fields struct from plaintext
-    let fields_struct: T = bincode::deserialize(&plaintext)?;
+    let fields_struct: T = Message::decode(&*plaintext)?;
     Ok(fields_struct)
 }

@@ -1,11 +1,15 @@
+use prost::Message;
 use runar_serializer::encryption::EncryptedLabelGroup;
 use runar_serializer_macros::Encrypt;
 
-#[derive(Encrypt, serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Encrypt, serde::Serialize, serde::Deserialize, Clone, Message)]
 pub struct SampleStruct {
+    #[prost(uint32, tag = "1")]
     pub id: u32,
     #[runar(user)]
+    #[prost(string, tag = "2")]
     pub name: String,
+    #[prost(uint64, tag = "3")]
     pub created: u64,
 }
 

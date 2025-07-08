@@ -99,22 +99,24 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         let fields = &label_groups[label];
         let cap_label = capitalize(label);
         let substruct_ident = format_ident!("{}{}Fields", struct_name, cap_label);
+        let substruct_proto_ident = format_ident!("{}{}FieldsProto", struct_name, cap_label);
         let group_field_ident = format_ident!("{}_encrypted", label);
 
-        // Build substruct definition
+        // Build substruct definition (plain struct without prost)
         let sub_fields_tokens: Vec<_> = fields
             .iter()
             .map(|(id, ty)| quote! { pub #id: #ty, })
             .collect();
 
+        // Keeping a plain substruct for ergonomic access; no derives needed beyond Clone for build
         substruct_defs.push(quote! {
-            #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+            #[derive(Clone)]
             struct #substruct_ident {
                 #(#sub_fields_tokens)*
             }
         });
 
-        // Build encryption arm for this label
+        // Build encryption arm for this label using the *Proto* variant (which is prost::Message)
         let substruct_build_fields: Vec<_> = fields
             .iter()
             .map(|(id, _)| quote! { #id: self.#id.clone(), })
@@ -122,7 +124,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         let label_lit = LitStr::new(label, proc_macro2::Span::call_site());
         encrypt_label_match_arms.push(quote! {
             #group_field_ident: if resolver.can_resolve(#label_lit) {
-                let group_struct = #substruct_ident { #(#substruct_build_fields)* };
+                let group_struct = #substruct_proto_ident { #(#substruct_build_fields)* };
                 Some(runar_serializer::encryption::encrypt_label_group(#label_lit, &group_struct, keystore, resolver)?)
             } else { None },
         });
@@ -135,7 +137,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
         decrypt_label_blocks.push(quote! {
             if let Some(ref group) = self.#group_field_ident {
-                if let Ok(tmp) = runar_serializer::encryption::decrypt_label_group::<#substruct_ident>(group, keystore) {
+                if let Ok(tmp) = runar_serializer::encryption::decrypt_label_group::<#substruct_proto_ident>(group, keystore) {
                     #(#assign_fields)*
                 }
             }
@@ -145,7 +147,6 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         encrypted_struct_label_fields.push(quote! { pub #group_field_ident: Option<runar_serializer::encryption::EncryptedLabelGroup>, });
 
         // -------- Proto specific --------
-        let substruct_proto_ident = format_ident!("{}{}FieldsProto", struct_name, cap_label);
 
         // Build proto substruct fields with prost attributes
         let mut sub_fields_proto_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -239,12 +240,41 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    // Generate encrypted struct definition
+    // Build encrypted struct field tokens with prost attributes
+    let mut enc_plain_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
+    for (idx, (fid, fty)) in plaintext_fields.iter().enumerate() {
+        let tag_num = idx + 1;
+        let proto_ty_ident = match quote::quote!(#fty).to_string().replace(' ', "").as_str() {
+            "String" => proc_macro2::Ident::new("string", proc_macro2::Span::call_site()),
+            "u64" => proc_macro2::Ident::new("uint64", proc_macro2::Span::call_site()),
+            "u32" => proc_macro2::Ident::new("uint32", proc_macro2::Span::call_site()),
+            "i32" => proc_macro2::Ident::new("int32", proc_macro2::Span::call_site()),
+            "i64" => proc_macro2::Ident::new("int64", proc_macro2::Span::call_site()),
+            "bool" => proc_macro2::Ident::new("bool", proc_macro2::Span::call_site()),
+            _ => proc_macro2::Ident::new("bytes", proc_macro2::Span::call_site()),
+        };
+        enc_plain_tokens.push(quote! {
+            #[prost(#proto_ty_ident, tag = #tag_num)]
+            pub #fid: #fty,
+        });
+    }
+
+    // Label field tokens
+    let mut enc_label_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
+    for (label_idx, label) in label_order.iter().enumerate() {
+        let group_field_ident = format_ident!("{}_encrypted", label);
+        let tag_num = plaintext_fields.len() + label_idx + 1;
+        enc_label_tokens.push(quote! {
+            #[prost(message, optional, tag = #tag_num)]
+            pub #group_field_ident: ::core::option::Option<runar_serializer::encryption::EncryptedLabelGroup>,
+        });
+    }
+
     let encrypted_struct_def = quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+        #[derive(serde::Serialize, serde::Deserialize, Clone, prost::Message)]
         pub struct #encrypted_name {
-            #(#encrypted_plaintext_fields)*
-            #(#encrypted_struct_label_fields)*
+            #(#enc_plain_tokens)*
+            #(#enc_label_tokens)*
         }
     };
 

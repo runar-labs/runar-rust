@@ -3377,7 +3377,6 @@ name = "runar-serializer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bincode",
  "log",
  "prost",
  "runar-keys",
