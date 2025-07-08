@@ -3499,6 +3499,7 @@ dependencies = [
  "tokio-tungstenite",
  "uuid",
  "webpki-roots 0.25.4",
+ "x509-parser",
 ]
 
 [[package]]

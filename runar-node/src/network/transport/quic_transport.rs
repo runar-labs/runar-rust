@@ -26,8 +26,9 @@ use tokio::task::JoinHandle;
 
 // Import rustls explicitly - these types need clear namespacing to avoid conflicts with quinn's types
 // Quinn uses rustls internally but we need to reference specific rustls types
-use rustls;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use x509_parser::extensions::GeneralName;
+use x509_parser::prelude::*;
 
 use super::{
     ConnectionPool, NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
@@ -708,12 +709,10 @@ impl QuicTransportImpl {
                 self.node_id, peer_id, socket_addr
             ));
 
-            //TODO we just changed the cert subject to use the node_id.
-            // can we change here also to use the node_if of the peer? to replace localhost?
-            // Create a new connection to the peer
-            // For testing, we use "localhost" as the server name to avoid certificate validation issues
-            // In production, we would use the peer_id or a proper domain name
-            let connect_result = endpoint.connect(socket_addr, "localhost");
+            // Use the peer's node_id (hex-encoded public key) as the TLS Server Name so
+            // our custom certificate verifier can ensure the presented certificate
+            // actually belongs to that node.
+            let connect_result = endpoint.connect(socket_addr, &peer_id.public_key);
 
             match connect_result {
                 Ok(connecting) => {
@@ -1879,13 +1878,57 @@ struct NodeIdServerNameVerifier;
 impl rustls::client::danger::ServerCertVerifier for NodeIdServerNameVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
+        end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
+        server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
         _now: rustls_pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        // Accept any server name - we validate certificates through our own CA chain
+        // Only DNS names are expected (node_id as hex string)
+        let expected = match server_name {
+            ServerName::DnsName(dns) => dns.as_ref(),
+            _ => {
+                return Err(rustls::Error::General(
+                    "Unsupported server name type in verifier".into(),
+                ));
+            }
+        };
+
+        // Parse end-entity certificate DER to inspect subject/SAN
+        let (_, parsed) = parse_x509_certificate(end_entity.as_ref())
+            .map_err(|_| rustls::Error::General("Unable to parse X509 certificate".into()))?;
+
+        // Check SubjectAlternativeName DNS entries
+        let san_match = parsed
+            .extensions()
+            .iter()
+            .filter_map(|ext| {
+                if let ParsedExtension::SubjectAlternativeName(san) = &ext.parsed_extension() {
+                    Some(san.general_names.iter().any(|gn| match gn {
+                        GeneralName::DNSName(name) => *name == expected,
+                        _ => false,
+                    }))
+                } else {
+                    None
+                }
+            })
+            .any(|b| b);
+
+        // Check CommonName as fallback (legacy)
+        let cn_match = parsed
+            .subject()
+            .iter_common_name()
+            .any(|cn| cn.as_str().map(|s| s == expected).unwrap_or(false));
+
+        if !(san_match || cn_match) {
+            return Err(rustls::Error::General(
+                "Certificate subject/SAN does not match node_id".into(),
+            ));
+        }
+
+        // Further chain validation can be added here (TODO) – currently handled at
+        // the application layer after handshake.
+
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 

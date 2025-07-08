@@ -39,6 +39,9 @@ futures-util = "0.3.28"
 tokio-tungstenite = { version = "0.18", features = ["rustls-tls-native-roots"] }
 webpki-roots = "0.25.0"  # For system root certificates
 
+# Certificate parsing for strict server-name verification
+x509-parser = { version = "0.16", features = ["verify"] }
+
 # For the example
 tokio-stream = "0.1.14"
 ring = { version = "0.17.14", features = ["std"] }
