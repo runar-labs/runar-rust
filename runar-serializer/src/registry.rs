@@ -3,9 +3,8 @@ use anyhow::{anyhow, Result};
 use prost::Message;
 use runar_common::logging::Logger;
 use runar_common::types::arc_value::{
-    DeserializerFnWrapper, SerializerRegistry as BaseSerializerRegistry, ValueCategory,
+    DeserializerFnWrapper, SerializerRegistry as BaseSerializerRegistry,
 };
-use runar_common::types::erased_arc::ErasedArc;
 use runar_common::types::ArcValue;
 use std::any::Any;
 use std::collections::HashMap;
@@ -221,9 +220,6 @@ impl SerializerRegistry {
         self.base_registry
             .register_custom_deserializer(type_name, deserializer_wrapper)?;
 
-        // Ensure encrypted version itself is also registered for defaults (helps generic code)
-        self.base_registry.register::<T::Encrypted>()?;
-
         Ok(())
     }
 
@@ -274,56 +270,10 @@ impl SerializerRegistry {
 
     /// Deserialize bytes to an ArcValue
     pub fn deserialize_value(&self, bytes_arc: Arc<[u8]>) -> Result<ArcValue> {
-        // Fast-path: attempt to parse header and eagerly run our own registered deserializer.
-        if bytes_arc.is_empty() {
-            return Err(anyhow!("Empty byte slice"));
-        }
+        // The base registry already handles header parsing, lazy construction, and alias
+        // detection (e.g. `Encrypted<T>`).  Re-use it directly so we maintain a single
+        // implementation of this fairly complex logic.
 
-        let category_byte = bytes_arc[0];
-        let category = match category_byte {
-            0x01 => ValueCategory::Primitive,
-            0x02 => ValueCategory::List,
-            0x03 => ValueCategory::Map,
-            0x04 => ValueCategory::Struct,
-            0x05 => ValueCategory::Null,
-            0x06 => ValueCategory::Bytes,
-            0x07 => ValueCategory::Json,
-            _ => return Err(anyhow!(format!("Unknown category byte: {category_byte}"))),
-        };
-
-        if category == ValueCategory::Null {
-            return Ok(ArcValue::null());
-        }
-
-        if bytes_arc.len() < 2 {
-            return Err(anyhow!("Byte slice too short for header"));
-        }
-        let type_len = bytes_arc[1] as usize;
-        if bytes_arc.len() < 2 + type_len {
-            return Err(anyhow!("Byte slice too short for stated type length"));
-        }
-        let type_name_bytes = &bytes_arc[2..2 + type_len];
-        let type_name = std::str::from_utf8(type_name_bytes)?.to_string();
-
-        let payload_start = 2 + type_len;
-
-        if let Some(wrapper) = self.get_deserializer_arc(&type_name) {
-            // Build a lazy ArcValue that carries the wrapper so it can decrypt later.
-            use runar_common::types::arc_value::LazyDataWithOffset;
-
-            let lazy = LazyDataWithOffset {
-                type_name: type_name.clone(),
-                original_buffer: bytes_arc.clone(),
-                start_offset: payload_start,
-                end_offset: bytes_arc.len(),
-                deserializer: Some(wrapper),
-            };
-
-            let erased = ErasedArc::from_value(lazy);
-            return Ok(ArcValue::new(erased, category));
-        }
-
-        // Fallback to base behaviour (lazy path)
         self.base_registry.deserialize_value(bytes_arc)
     }
 

@@ -138,6 +138,8 @@ impl MobileKeyManager {
         Ok(root_key.public_key_bytes())
     }
 
+    //TODO lets fix this.. so we have proper key derivation using HKDF/SLIP-0010
+
     /// Derive a user profile key from the root key
     /// In production, this would use proper key derivation (HKDF/SLIP-0010)
     /// For now, we generate independent keys but associate them with the root

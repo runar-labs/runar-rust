@@ -197,12 +197,6 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         });
     }
 
-    // Plaintext fields in encrypted struct
-    let encrypted_plaintext_fields: Vec<_> = plaintext_fields
-        .iter()
-        .map(|(id, ty)| quote! { pub #id: #ty, })
-        .collect();
-
     // Initialisation tokens for plaintext fields in encrypt impl
     let encrypt_plaintext_inits: Vec<_> = plaintext_fields
         .iter()
