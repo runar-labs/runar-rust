@@ -7,9 +7,8 @@
 //! - Configuration storage
 
 use anyhow::{Context, Result};
-use runar_common::logging::Logger;
+use runar_common::{compact_ids::compact_id, logging::Logger};
 use runar_keys::{
-    compact_ids,
     mobile::{NodeCertificateMessage, SetupToken},
     NodeKeyManager,
 };
@@ -132,14 +131,12 @@ impl InitCommand {
             .context("Failed to generate certificate signing request")?;
 
         let node_public_key = node_key_manager.get_node_public_key();
-        let node_id = compact_ids::compact_node_id(&node_public_key);
+        let node_id = compact_id(&node_public_key);
 
         self.logger
             .info(format!("Node identity created: {node_id}"));
-        self.logger.debug(format!(
-            "Node public key: {}",
-            compact_ids::compact_node_id(&node_public_key)
-        ));
+        self.logger
+            .debug(format!("Node public key: {}", compact_id(&node_public_key)));
 
         Ok((node_key_manager, _setup_token))
     }
@@ -148,7 +145,7 @@ impl InitCommand {
         let node_public_key = node_key_manager.get_node_public_key();
 
         // Create temporary setup config with unique keys name for OS key store
-        let setup_config = SetupConfig::new(compact_ids::compact_node_id(&node_public_key));
+        let setup_config = SetupConfig::new(compact_id(&node_public_key));
 
         self.logger.info(format!(
             "Setup configuration created with keys name: {}",

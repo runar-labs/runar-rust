@@ -7,6 +7,7 @@ use crate::certificate::{
     CertificateAuthority, CertificateValidator, EcdsaKeyPair, X509Certificate,
 };
 use crate::error::{KeyError, Result};
+use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -89,8 +90,26 @@ pub struct MobileKeyManager {
     network_data_keys: HashMap<String, EcdsaKeyPair>,
     /// Issued certificates tracking
     issued_certificates: HashMap<String, X509Certificate>,
+    /// Monotonically-increasing certificate serial number used as the X.509
+    /// serial for node certificates. Persisted so restarts keep the sequence
+    /// and avoid duplicate serial numbers.
+    serial_counter: u64,
     /// Logger instance
     logger: Arc<Logger>,
+}
+
+/// Serializable snapshot of the MobileKeyManager. This allows persisting
+/// all cryptographic material so a restored instance can continue to operate
+/// without regenerating or losing keys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MobileKeyManagerState {
+    ca_key_pair: EcdsaKeyPair,
+    ca_certificate: X509Certificate,
+    user_root_key: Option<EcdsaKeyPair>,
+    user_profile_keys: HashMap<String, EcdsaKeyPair>,
+    network_data_keys: HashMap<String, EcdsaKeyPair>,
+    issued_certificates: HashMap<String, X509Certificate>,
+    serial_counter: u64,
 }
 
 impl MobileKeyManager {
@@ -113,6 +132,7 @@ impl MobileKeyManager {
             user_profile_keys: HashMap::new(),
             network_data_keys: HashMap::new(),
             issued_certificates: HashMap::new(),
+            serial_counter: 1,
             logger,
         })
     }
@@ -140,41 +160,87 @@ impl MobileKeyManager {
 
     //TODO lets fix this.. so we have proper key derivation using HKDF/SLIP-0010
 
-    /// Derive a user profile key from the root key
-    /// In production, this would use proper key derivation (HKDF/SLIP-0010)
-    /// For now, we generate independent keys but associate them with the root
+    /// Derive a user profile key from the root key using HKDF.
+    ///
+    /// This implementation follows these steps:
+    /// 1.  The secret scalar bytes of the user *root* key are used as the
+    ///     Input Key Material (IKM) for HKDF-SHA-256. Using the raw scalar
+    ///     avoids the variability and additional metadata present in the
+    ///     PKCS#8 representation previously used.
+    /// 2.  A domain-separated `info` string (`"runar-profile-{profile_id}"`)
+    ///     is supplied to HKDF to ensure every profile receives a unique key
+    ///     tied to the caller-supplied identifier.
+    /// 3.  HKDF expands to 32 bytes. These bytes are interpreted as a P-256
+    ///     scalar.  If the candidate scalar is *not* in the valid field range
+    ///     (i.e. ≥ n or zero) we derive a new candidate by appending an
+    ///     incrementing counter to the `info` string.  The probability of
+    ///     requiring multiple attempts is negligible but this guarantees a
+    ///     correct result in constant time.
+    /// 4.  The resulting scalar is converted into an `EcdsaKeyPair` which is
+    ///     cached so subsequent calls for the same `profile_id` return the
+    ///     exact same key without additional computation.
+    ///
+    /// This approach is deterministic, collision-resistant, and ensures strong
+    /// cryptographic separation between the root and profile keys while
+    /// remaining compatible with the system-wide ECDSA P-256 algorithm.
     pub fn derive_user_profile_key(&mut self, profile_id: &str) -> Result<Vec<u8>> {
+        // Return cached key if we have already derived it before.
+        if let Some(existing) = self.user_profile_keys.get(profile_id) {
+            return Ok(existing.public_key_bytes());
+        }
+
         use hkdf::Hkdf;
         use p256::ecdsa::SigningKey;
         use sha2::Sha256;
 
-        // Ensure root key exists
+        // Ensure the root key exists.
         let root_key = self
             .user_root_key
             .as_ref()
             .ok_or_else(|| KeyError::KeyNotFound("User root key not initialized".to_string()))?;
 
-        // Use HKDF to derive profile key from root key
-        let root_key_bytes = root_key.private_key_der()?;
-        let hk = Hkdf::<Sha256>::new(None, &root_key_bytes);
+        // Extract the raw 32-byte scalar of the root private key.
+        // This is a stable representation suitable for HKDF input.
+        let root_scalar_bytes = root_key.signing_key().to_bytes();
 
-        let info = format!("runar-profile-{profile_id}");
-        let mut derived_key = [0u8; 32];
-        hk.expand(info.as_bytes(), &mut derived_key)
-            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
+        // Derive a profile-specific private scalar using HKDF-SHA256.
+        let hk = Hkdf::<Sha256>::new(
+            Some(b"RunarUserProfileDerivationSalt"),
+            root_scalar_bytes.as_slice(),
+        );
 
-        // Create ECDSA key from derived bytes
-        let signing_key = SigningKey::from_bytes((&derived_key).into()).map_err(|e| {
-            KeyError::KeyDerivationError(format!("Failed to create signing key: {e}"))
-        })?;
+        // Attempt to create a valid P-256 signing key from the HKDF output.
+        // If the candidate scalar is out of range (rare) retry with a counter
+        // in the info field until success.
+        let mut counter: u32 = 0;
+        let signing_key = loop {
+            let info = if counter == 0 {
+                format!("runar-profile-{profile_id}")
+            } else {
+                format!("runar-profile-{profile_id}-{counter}")
+            };
 
+            let mut candidate_bytes = [0u8; 32];
+            hk.expand(info.as_bytes(), &mut candidate_bytes)
+                .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
+
+            match SigningKey::from_bytes((&candidate_bytes).into()) {
+                Ok(sk) => break sk,
+                Err(_) => {
+                    counter += 1;
+                    continue; // try again with different info string
+                }
+            }
+        };
+
+        // Wrap the signing key in our convenience type and cache it.
         let profile_key = EcdsaKeyPair::from_signing_key(signing_key);
         let public_key = profile_key.public_key_bytes();
-
         self.user_profile_keys
             .insert(profile_id.to_string(), profile_key);
+
         self.logger.info(format!(
-            "User profile key derived using HKDF for profile: {profile_id}"
+            "User profile key derived using HKDF for profile: {profile_id} (attempts: {counter})"
         ));
 
         Ok(public_key)
@@ -192,7 +258,7 @@ impl MobileKeyManager {
     pub fn generate_network_data_key(&mut self) -> Result<String> {
         let network_key = EcdsaKeyPair::new()?;
         let public_key = network_key.public_key_bytes();
-        let network_id = crate::compact_ids::compact_network_id(&public_key);
+        let network_id = compact_id(&public_key);
 
         self.network_data_keys
             .insert(network_id.clone(), network_key);
@@ -476,27 +542,46 @@ impl MobileKeyManager {
             ));
         }
 
-        // Instead of signing the CSR (which has key pair issues), let's use the simplified approach
-        // that works correctly with the node's actual key pair.
-        // This is acceptable for this implementation since we have access to the node's key pair.
+        // ----- Validate CSR subject: CN must equal the claimed node_id -----
+        {
+            use openssl::nid::Nid;
+            use openssl::x509::X509Req;
 
-        // For this simplified approach, we'll extract the node ID from the setup token
-        // and create a certificate using the create_signed_certificate method.
-        // In a production system, this would properly extract and use the public key from the CSR.
+            let csr = X509Req::from_der(&setup_token.csr_der).map_err(|e| {
+                KeyError::CertificateError(format!(
+                    "Failed to parse CSR DER for subject validation: {e}"
+                ))
+            })?;
 
-        let _subject = format!("CN={node_id},O=Runar Node,C=US");
-        let validity_days = 365; // 1 year validity
+            let mut cn_matches = false;
+            for entry in csr.subject_name().entries_by_nid(Nid::COMMONNAME) {
+                if let Ok(data) = entry.data().as_utf8() {
+                    if data.to_string() == *node_id {
+                        cn_matches = true;
+                        break;
+                    }
+                }
+            }
 
-        // Create certificate using node's key pair (extracted from CSR in a real implementation)
-        // For now, we'll need the node's key pair to be passed or extracted differently
-        // This is a limitation of the current implementation approach
+            if !cn_matches {
+                return Err(KeyError::InvalidOperation(format!(
+                    "CSR CN does not match node ID '{node_id}'",
+                )));
+            }
+        }
 
-        // Since we can't easily extract the key pair from the CSR with rcgen,
-        // let's fall back to the sign_certificate_request for now but acknowledge
-        // this is the source of the signature verification issue
+        let validity_days = 365; // 1-year validity
+
         let node_certificate = self
             .certificate_authority
-            .sign_certificate_request(&setup_token.csr_der, validity_days)?;
+            .sign_certificate_request_with_serial(
+                &setup_token.csr_der,
+                validity_days,
+                Some(self.serial_counter),
+            )?;
+
+        // Increment serial for next issuance
+        self.serial_counter = self.serial_counter.wrapping_add(1);
 
         // Store the issued certificate
         self.issued_certificates
@@ -553,7 +638,7 @@ impl MobileKeyManager {
         let encrypted_network_key =
             self.encrypt_key_with_ecdsa(&network_private_key, node_public_key)?;
 
-        let node_id = crate::compact_ids::compact_node_id(node_public_key);
+        let node_id = compact_id(node_public_key);
         self.logger.info(format!(
             "Network key encrypted for node {node_id} with ECIES"
         ));
@@ -634,6 +719,46 @@ impl MobileKeyManager {
             .as_ref()
             .ok_or_else(|| KeyError::KeyNotFound("User root key not initialized".to_string()))?;
         self.decrypt_key_with_ecdsa(encrypted_message, root_key_pair)
+    }
+
+    // ---------------------------------------------------------------------
+    // Persistence helpers
+    // ---------------------------------------------------------------------
+
+    /// Export all cryptographic material for persistence.
+    pub fn export_state(&self) -> MobileKeyManagerState {
+        MobileKeyManagerState {
+            ca_key_pair: self.certificate_authority.ca_key_pair().clone(),
+            ca_certificate: self.certificate_authority.ca_certificate().clone(),
+            user_root_key: self.user_root_key.clone(),
+            user_profile_keys: self.user_profile_keys.clone(),
+            network_data_keys: self.network_data_keys.clone(),
+            issued_certificates: self.issued_certificates.clone(),
+            serial_counter: self.serial_counter,
+        }
+    }
+
+    /// Restore a MobileKeyManager from a previously exported state.
+    pub fn from_state(state: MobileKeyManagerState, logger: Arc<Logger>) -> Result<Self> {
+        let certificate_authority = CertificateAuthority::from_existing(
+            state.ca_key_pair.clone(),
+            state.ca_certificate.clone(),
+        );
+
+        let certificate_validator = CertificateValidator::new(vec![state.ca_certificate.clone()]);
+
+        logger.info("Mobile Key Manager state imported".to_string());
+
+        Ok(Self {
+            certificate_authority,
+            certificate_validator,
+            user_root_key: state.user_root_key,
+            user_profile_keys: state.user_profile_keys,
+            network_data_keys: state.network_data_keys,
+            issued_certificates: state.issued_certificates,
+            serial_counter: state.serial_counter,
+            logger,
+        })
     }
 }
 

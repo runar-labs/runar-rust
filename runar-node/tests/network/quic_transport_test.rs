@@ -1,3 +1,4 @@
+use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -9,14 +10,9 @@ use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
-    NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, PeerId,
+    NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
 };
 
-// Additional imports for certificate handling
-use hex;
-
-/// Comprehensive test that validates the QuicTransport API meets all Node requirements
-///
 /// This test ensures the transport layer properly handles:
 /// 1. Bidirectional streams for request-response patterns
 /// 2. Unidirectional streams for handshakes and announcements
@@ -159,13 +155,19 @@ async fn test_quic_transport_complete_api_validation(
 
     // Get the actual node public keys (not hardcoded values)
     let node1_public_key_bytes = node_key_manager_1.get_node_public_key();
+    let node1_id = compact_id(&node1_public_key_bytes);
+
     let node2_public_key_bytes = node_key_manager_2.get_node_public_key();
+    let node2_id = compact_id(&node2_public_key_bytes);
 
-    let node1_public_key_hex = hex::encode(&node1_public_key_bytes);
-    let node2_public_key_hex = hex::encode(&node2_public_key_bytes);
-
-    println!("✅ [QUIC Transport API] Node 1 public key: {node1_public_key_hex}");
-    println!("✅ [QUIC Transport API] Node 2 public key: {node2_public_key_hex}");
+    println!(
+        "✅ [QUIC Transport API] Node 1 public key: {}",
+        compact_id(&node1_public_key_bytes)
+    );
+    println!(
+        "✅ [QUIC Transport API] Node 2 public key: {}",
+        compact_id(&node2_public_key_bytes)
+    );
 
     // ==================================================
     // STEP 6: Create Message Tracking for Validation
@@ -185,7 +187,7 @@ async fn test_quic_transport_complete_api_validation(
         let logger = logger_1.clone();
         let messages = node1_messages_clone.clone();
         let msg_type = message.message_type.clone();
-        let source = message.source.clone();
+        let source = message.source_node_id.clone();
 
         logger.debug(format!(
             "📥 [Transport1] Received message: Type={}, From={}, Payloads={}",
@@ -206,7 +208,7 @@ async fn test_quic_transport_complete_api_validation(
         let logger = logger_2.clone();
         let messages = node2_messages_clone.clone();
         let msg_type = message.message_type.clone();
-        let source = message.source.clone();
+        let source = message.source_node_id.clone();
 
         logger.debug(format!(
             "📥 [Transport2] Received message: Type={}, From={}, Payloads={}",
@@ -228,7 +230,7 @@ async fn test_quic_transport_complete_api_validation(
     // ==================================================
 
     let node1_info = NodeInfo {
-        peer_id: PeerId::new(node1_public_key_hex.clone()),
+        node_public_key: node1_public_key_bytes.clone(),
         network_ids: vec!["test".to_string()],
         addresses: vec!["127.0.0.1:50069".to_string()],
         services: vec![ServiceMetadata {
@@ -263,7 +265,7 @@ async fn test_quic_transport_complete_api_validation(
     };
 
     let node2_info = NodeInfo {
-        peer_id: PeerId::new(node2_public_key_hex.clone()),
+        node_public_key: node2_public_key_bytes.clone(),
         network_ids: vec!["test".to_string()],
         addresses: vec!["127.0.0.1:50044".to_string()],
         services: vec![ServiceMetadata {
@@ -345,14 +347,13 @@ async fn test_quic_transport_complete_api_validation(
     println!("🔄 [QUIC Transport API] Testing connection management...");
 
     // Test connection establishment
-    let peer_info_1 = PeerInfo::new(node1_public_key_hex.clone(), node1_info.addresses.clone());
-
-    let peer_info_2 = PeerInfo::new(node2_public_key_hex.clone(), node2_info.addresses.clone());
+    let peer_info_1 = PeerInfo::new(node1_public_key_bytes.clone(), node1_info.addresses.clone());
+    let peer_info_2 = PeerInfo::new(node2_public_key_bytes.clone(), node2_info.addresses.clone());
 
     // **FIXED**: Use lexicographic ordering to determine which node should initiate
     // Only the node with the smaller peer ID should initiate the connection
-    let should_node1_initiate = node1_public_key_hex < node2_public_key_hex;
-    let should_node2_initiate = node2_public_key_hex < node1_public_key_hex;
+    let should_node1_initiate = node1_id < node2_id;
+    let should_node2_initiate = node2_id < node1_id;
 
     if should_node1_initiate {
         println!("🔗 [QUIC Transport API] Node1 initiating connection (smaller peer ID)...");
@@ -367,8 +368,8 @@ async fn test_quic_transport_complete_api_validation(
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
     // Verify connections
-    let t1_connected = transport1.is_connected(node2_info.peer_id.clone()).await;
-    let t2_connected = transport2.is_connected(node1_info.peer_id.clone()).await;
+    let t1_connected = transport1.is_connected(node2_id.clone()).await;
+    let t2_connected = transport2.is_connected(node1_id.clone()).await;
     println!(
         "🔗 [QUIC Transport API] Connection status: T1→T2={t1_connected}, T2→T1={t2_connected}"
     );
@@ -395,8 +396,8 @@ async fn test_quic_transport_complete_api_validation(
     };
 
     let announcement_message = NetworkMessage {
-        source: sender_info.peer_id.clone(),
-        destination: receiver_info.peer_id.clone(),
+        source_node_id: compact_id(&sender_info.node_public_key),
+        destination_node_id: compact_id(&receiver_info.node_public_key),
         message_type: "ANNOUNCEMENT".to_string(),
         payloads: vec![NetworkMessagePayloadItem {
             path: "".to_string(),
@@ -457,8 +458,8 @@ async fn test_quic_transport_complete_api_validation(
     };
 
     let request_message = NetworkMessage {
-        source: request_sender_info.peer_id.clone(),
-        destination: request_receiver_info.peer_id.clone(),
+        source_node_id: compact_id(&request_sender_info.node_public_key),
+        destination_node_id: compact_id(&request_receiver_info.node_public_key),
         message_type: "REQUEST".to_string(),
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/add".to_string(),
@@ -483,8 +484,8 @@ async fn test_quic_transport_complete_api_validation(
     drop(receiver_msgs);
 
     let response_message = NetworkMessage {
-        source: request_receiver_info.peer_id.clone(),
-        destination: request_sender_info.peer_id.clone(),
+        source_node_id: compact_id(&request_receiver_info.node_public_key),
+        destination_node_id: compact_id(&request_sender_info.node_public_key),
         message_type: "RESPONSE".to_string(),
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/add".to_string(),
@@ -515,8 +516,8 @@ async fn test_quic_transport_complete_api_validation(
     logger.info("📡 Testing unidirectional event broadcasting...");
 
     let event_message = NetworkMessage {
-        source: sender_info.peer_id.clone(),
-        destination: receiver_info.peer_id.clone(),
+        source_node_id: compact_id(&sender_info.node_public_key),
+        destination_node_id: compact_id(&receiver_info.node_public_key),
         message_type: "EVENT".to_string(),
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/calculated".to_string(),
@@ -567,7 +568,7 @@ async fn test_quic_transport_complete_api_validation(
     for msg in node1_msgs.iter() {
         println!(
             "    - {}: {} from {}",
-            msg.message_type, msg.source, msg.message_type
+            msg.message_type, msg.source_node_id, msg.message_type
         );
         match msg.message_type.as_str() {
             "REQUEST" => request_count += 1,
@@ -585,7 +586,7 @@ async fn test_quic_transport_complete_api_validation(
     for msg in node2_msgs.iter() {
         println!(
             "    - {}: {} from {}",
-            msg.message_type, msg.source, msg.message_type
+            msg.message_type, msg.source_node_id, msg.message_type
         );
         match msg.message_type.as_str() {
             "REQUEST" => _request_count_b += 1,
@@ -596,8 +597,8 @@ async fn test_quic_transport_complete_api_validation(
     }
 
     // Check connection status
-    let a_connected_to_b = transport1.is_connected(node2_info.peer_id.clone()).await;
-    let b_connected_to_a = transport2.is_connected(node1_info.peer_id.clone()).await;
+    let a_connected_to_b = transport1.is_connected(node2_id.clone()).await;
+    let b_connected_to_a = transport2.is_connected(node1_id.clone()).await;
 
     logger.info("\n🔗 CONNECTION STATUS:");
     logger.info(format!("  - Node A → Node B: {a_connected_to_b}"));

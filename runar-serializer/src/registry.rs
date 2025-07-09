@@ -98,14 +98,14 @@ impl SerializerRegistry {
     pub fn register_encryptable<T>(&mut self) -> Result<()>
     where
         T: 'static
-            + prost::Message
+            //+ prost::Message
             + crate::traits::RunarEncrypt
             + serde::Serialize
             + for<'de> serde::Deserialize<'de>
             + Clone
             + Send
             + Sync
-            + prost::Message
+            //+ prost::Message
             + Default,
         T::Encrypted: 'static
             + prost::Message
@@ -115,7 +115,7 @@ impl SerializerRegistry {
             + Clone
             + Send
             + Sync
-            + prost::Message
+            //+ prost::Message
             + Default,
     {
         self.register_with_encryption::<T>()
@@ -125,14 +125,14 @@ impl SerializerRegistry {
     fn register_with_encryption<T>(&mut self) -> Result<()>
     where
         T: 'static
-            + prost::Message
+            // + prost::Message
             + RunarEncrypt
             + serde::Serialize
             + for<'de> serde::Deserialize<'de>
             + Clone
             + Send
             + Sync
-            + prost::Message
+            // + prost::Message
             + Default,
         T::Encrypted: 'static
             + prost::Message
@@ -142,7 +142,7 @@ impl SerializerRegistry {
             + Clone
             + Send
             + Sync
-            + prost::Message
+            //+ prost::Message
             + Default,
     {
         let type_name = std::any::type_name::<T>();
@@ -158,9 +158,10 @@ impl SerializerRegistry {
                     Message::encode(&encrypted, &mut buf)?;
                     Ok(buf)
                 } else {
-                    let mut buf = Vec::new();
-                    Message::encode(typed_value, &mut buf)?;
-                    Ok(buf)
+                    // let mut buf = Vec::new();
+                    // Message::encode(typed_value, &mut buf)?;
+                    // Ok(buf)
+                    Err(anyhow!("Cannot serialize plain type {type_name}"))
                 }
             } else {
                 Err(anyhow!("Type mismatch during serialization"))
@@ -213,8 +214,9 @@ impl SerializerRegistry {
                     }
                 }
                 // Fallback to plaintext
-                let obj: T = T::decode(bytes)?;
-                Ok(Box::new(obj))
+                // let obj: T = T::decode(bytes)?;
+                // Ok(Box::new(obj))
+                Err(anyhow!("Cannot deserialize plain type {type_name}"))
             });
 
         self.base_registry

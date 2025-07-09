@@ -6,6 +6,7 @@
 
 // Standard library imports
 use anyhow::{anyhow, Result};
+use runar_common::compact_ids::compact_id;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
@@ -86,11 +87,14 @@ impl MemoryDiscovery {
                 ticker.tick().await;
 
                 let peer_info = PeerInfo {
-                    public_key: node_info.peer_id.public_key.clone(),
+                    public_key: node_info.node_public_key.clone(),
                     addresses: node_info.addresses.clone(),
                 };
 
-                logger.debug(format!("Announcing local node: {}", node_info.peer_id));
+                logger.debug(format!(
+                    "Announcing local node: {}",
+                    compact_id(&node_info.node_public_key)
+                ));
 
                 // Notify listeners (simulating network discovery update)
                 let listeners_vec = {
@@ -135,7 +139,7 @@ impl MemoryDiscovery {
 
     /// Adds a node to the discovery registry.
     async fn add_node_internal(&self, node_info: NodeInfo) {
-        let node_key = node_info.peer_id.to_string();
+        let node_key = compact_id(&node_info.node_public_key);
         {
             let mut nodes = self.nodes.write().unwrap();
             nodes.insert(node_key.clone(), node_info.clone());
@@ -145,7 +149,7 @@ impl MemoryDiscovery {
             .debug(format!("Added node to registry: {node_key}"));
 
         let peer_info = PeerInfo {
-            public_key: node_info.peer_id.public_key.clone(),
+            public_key: node_info.node_public_key.clone(),
             addresses: node_info.addresses.clone(),
         };
 
@@ -188,8 +192,10 @@ impl NodeDiscovery for MemoryDiscovery {
             }
         };
 
-        self.logger
-            .info(format!("Starting to announce node: {}", info.peer_id));
+        self.logger.info(format!(
+            "Starting to announce node: {}",
+            compact_id(&info.node_public_key)
+        ));
 
         // Get the options
         let options = match &*self.options.read().unwrap() {
@@ -221,9 +227,11 @@ impl NodeDiscovery for MemoryDiscovery {
         // Remove our node from the registry
         if let Some(info) = &*self.local_node.read().unwrap() {
             let mut nodes_map = self.nodes.write().unwrap();
-            nodes_map.remove(&info.peer_id.to_string());
-            self.logger
-                .debug(format!("Removed local node {} from registry", info.peer_id));
+            nodes_map.remove(&compact_id(&info.node_public_key));
+            self.logger.debug(format!(
+                "Removed local node {} from registry",
+                compact_id(&info.node_public_key)
+            ));
         }
 
         Ok(())
@@ -254,38 +262,4 @@ impl NodeDiscovery for MemoryDiscovery {
 
         Ok(())
     }
-}
-
-#[cfg(test)]
-mod tests {
-    // Add necessary imports for testing
-    use super::*;
-    use crate::network::transport::PeerId;
-    use runar_common::logging::Component; // Added for Logger::new_root
-
-    // ... other test helper functions ...
-
-    #[tokio::test]
-    async fn test_find_node() {
-        // Setup discovery instance with a test logger
-        let logger = Logger::new_root(Component::Network, "test_node");
-        let discovery = MemoryDiscovery::new(logger);
-
-        // Set options
-        let options = DiscoveryOptions::default();
-        discovery.init(options).await.unwrap();
-
-        // Set up local node
-        let local_node = NodeInfo {
-            peer_id: PeerId::new("test_node".to_string()),
-            network_ids: vec!["net1".to_string()],
-            addresses: vec!["127.0.0.1:8000".to_string()],
-            services: vec![],
-            version: 0,
-        };
-        discovery.set_local_node(local_node);
-
-        // Create NodeInfo for test
-    }
-    // TODO: Add tests for register, update, discover, cleanup, listener
 }

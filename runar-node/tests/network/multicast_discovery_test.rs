@@ -3,13 +3,13 @@
 // Tests for the Multicast Discovery implementation
 
 use anyhow::Result;
+use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_node::network::discovery::DEFAULT_MULTICAST_ADDR;
 use runar_node::network::discovery::{
     DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo,
 };
-use runar_node::network::transport::PeerId;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -18,7 +18,11 @@ use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use std::time::SystemTime;
 use tokio::sync::oneshot;
 
-async fn create_test_discovery(network_id: &str, node_id: &str) -> Result<MulticastDiscovery> {
+async fn create_test_discovery(
+    network_id: &str,
+    node_id: &str,
+    node_public_key: &[u8],
+) -> Result<MulticastDiscovery> {
     let options = DiscoveryOptions {
         multicast_group: format!("{DEFAULT_MULTICAST_ADDR}:45678"),
         announce_interval: Duration::from_secs(1), // Use shorter interval for tests
@@ -30,7 +34,7 @@ async fn create_test_discovery(network_id: &str, node_id: &str) -> Result<Multic
 
     // Create a test node info
     let node_info = NodeInfo {
-        peer_id: PeerId::new(node_id.to_string()),
+        node_public_key: node_public_key.to_vec(),
         network_ids: vec![network_id.to_string()],
         addresses: vec!["127.0.0.1:8000".to_string()],
         services: vec![ServiceMetadata {
@@ -73,9 +77,18 @@ async fn create_test_discovery(network_id: &str, node_id: &str) -> Result<Multic
 #[tokio::test]
 async fn test_multicast_announce_and_discover() -> Result<()> {
     async fn test_multiple_discovery_instances() -> Result<()> {
+        // Create random node public keys
+        let node_1_public_key: [u8; 32] = rand::random();
+        let node_1_id = compact_id(&node_1_public_key);
+
+        let node_2_public_key: [u8; 32] = rand::random();
+        let node_2_id = compact_id(&node_2_public_key);
+
         // Create two discovery instances
-        let discovery1 = create_test_discovery("test-network", "test-node-1").await?;
-        let discovery2 = create_test_discovery("test-network", "test-node-2").await?;
+        let discovery1 =
+            create_test_discovery("test-network", &node_1_id, &node_1_public_key).await?;
+        let discovery2 =
+            create_test_discovery("test-network", &node_2_id, &node_2_public_key).await?;
 
         // Create channels for receiving notifications
         let (tx1, _rx1) = mpsc::channel::<PeerInfo>(10);
@@ -88,14 +101,17 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
         let done_tx2 = Arc::new(tokio::sync::Mutex::new(Some(done_tx2)));
 
         // Set discovery listeners for both instances
+        let node_2_id_clone = node_2_id.clone();
         discovery1
             .set_discovery_listener(Arc::new(move |peer_info: PeerInfo| {
                 let tx = tx1.clone();
                 let done_tx_clone = Arc::clone(&done_tx1);
+                let node_2_id = node_2_id_clone.clone();
 
                 Box::pin(async move {
                     // Only trigger for node2
-                    if peer_info.public_key.contains("node-2") {
+                    let peer_id = compact_id(&peer_info.public_key);
+                    if peer_id == node_2_id {
                         // Send the peer info to our channel
                         if let Err(e) = tx.send(peer_info).await {
                             eprintln!("Channel send error: {e}");
@@ -110,14 +126,17 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
             }))
             .await?;
 
+        let node_1_id_clone = node_1_id.clone();
         discovery2
             .set_discovery_listener(Arc::new(move |peer_info: PeerInfo| {
                 let tx = tx2.clone();
                 let done_tx_clone = Arc::clone(&done_tx2);
+                let node_1_id = node_1_id_clone.clone();
 
                 Box::pin(async move {
                     // Only trigger for node1
-                    if peer_info.public_key.contains("node-1") {
+                    let peer_id = compact_id(&peer_info.public_key);
+                    if peer_id == node_1_id {
                         // Send the peer info to our channel
                         if let Err(e) = tx.send(peer_info).await {
                             eprintln!("Channel send error: {e}");

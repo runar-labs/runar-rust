@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use runar_common::compact_ids::compact_id;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -33,11 +34,9 @@ impl MockNodeDiscovery {
     }
 
     /// Add a test node to the discovery service
-    pub fn add_test_node(&self, info: NodeInfo) {
-        self.nodes
-            .write()
-            .unwrap()
-            .insert(info.peer_id.public_key.clone(), info);
+    pub fn add_test_node(&self, node_info: NodeInfo) {
+        let key = compact_id(&node_info.node_public_key);
+        self.nodes.write().unwrap().insert(key, node_info);
     }
 
     /// Clear all nodes
@@ -47,11 +46,11 @@ impl MockNodeDiscovery {
 
     /// Helper to add nodes for testing
     pub async fn add_mock_node(&self, node_info: NodeInfo) {
-        let key = node_info.peer_id.to_string();
+        let key = compact_id(&node_info.node_public_key);
         self.nodes.write().unwrap().insert(key, node_info.clone());
         // Notify listeners
         let peer_info = crate::network::discovery::PeerInfo {
-            public_key: node_info.peer_id.public_key.clone(),
+            public_key: node_info.node_public_key.clone(),
             addresses: node_info.addresses.clone(),
         };
         let listeners = {

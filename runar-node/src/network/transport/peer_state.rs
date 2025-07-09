@@ -3,7 +3,7 @@
 //! INTENTION: Tracks state, manages stream pools, and handles connection health for a single peer.
 
 use crate::network::discovery::NodeInfo;
-use crate::network::transport::{NetworkError, PeerId, StreamPool};
+use crate::network::transport::{NetworkError, StreamPool};
 use runar_common::logging::Logger;
 use std::fmt;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ use tokio::sync::{mpsc, Mutex};
 /// manages stream pools, and handles connection health. Only mutable fields are
 /// protected by granular locks for reduced contention.
 pub struct PeerState {
-    pub peer_id: PeerId,
+    pub peer_node_id: String,
     pub address: String,
     pub stream_pool: StreamPool,
     pub connection: Mutex<Option<quinn::Connection>>,
@@ -43,14 +43,14 @@ impl PeerState {
     ///
     /// INTENTION: Initialize a new peer state with the given parameters.
     pub fn new(
-        peer_id: PeerId,
+        peer_node_id: String,
         address: String,
         max_idle_streams: usize,
         logger: Arc<Logger>,
     ) -> Self {
         let (status_tx, status_rx) = mpsc::channel(10);
         Self {
-            peer_id,
+            peer_node_id,
             address,
             stream_pool: StreamPool::new(max_idle_streams, logger.clone()),
             connection: Mutex::new(None),
@@ -70,7 +70,7 @@ impl PeerState {
         *info = Some(node_info);
         self.logger.info(format!(
             "Node info set for peer {peer_id}",
-            peer_id = self.peer_id
+            peer_id = self.peer_node_id
         ));
     }
     /// Set the connection for this peer
@@ -79,7 +79,7 @@ impl PeerState {
     pub async fn set_connection(&self, connection: quinn::Connection) {
         self.logger.info(format!(
             "🔗 [PeerState] Setting connection for peer {} - Remote: {}",
-            self.peer_id,
+            self.peer_node_id,
             connection.remote_address()
         ));
 
@@ -90,7 +90,7 @@ impl PeerState {
         let _ = self.status_tx.send(true).await;
         self.logger.info(format!(
             "✅ [PeerState] Connection established with peer {} at {}",
-            self.peer_id,
+            self.peer_node_id,
             std::time::Instant::now().elapsed().as_millis()
         ));
     }
@@ -104,7 +104,7 @@ impl PeerState {
 
         self.logger.debug(format!(
             "🔍 [PeerState] Connection check for peer {} - Connected: {}",
-            self.peer_id, connected
+            self.peer_node_id, connected
         ));
 
         // If we have a connection, also check if it's still alive
@@ -114,7 +114,7 @@ impl PeerState {
                 if close_reason.is_some() {
                     self.logger.warn(format!(
                         "⚠️ [PeerState] Connection to peer {} is closed - Reason: {:?}",
-                        self.peer_id, close_reason
+                        self.peer_node_id, close_reason
                     ));
                     return false;
                 }
@@ -130,47 +130,47 @@ impl PeerState {
     pub async fn get_send_stream(&self) -> Result<quinn::SendStream, NetworkError> {
         self.logger.debug(format!(
             "🔄 [PeerState] Checking for idle stream for peer {}",
-            self.peer_id
+            self.peer_node_id
         ));
 
         if let Some(stream) = self.stream_pool.get_idle_stream().await {
             self.logger.debug(format!(
                 "✅ [PeerState] Found idle stream for peer {}",
-                self.peer_id
+                self.peer_node_id
             ));
             return Ok(stream);
         }
 
         self.logger.debug(format!(
             "🆕 [PeerState] No idle stream available - creating new stream for peer {}",
-            self.peer_id
+            self.peer_node_id
         ));
 
         let mut conn_guard = self.connection.lock().await;
         if let Some(conn) = conn_guard.as_mut() {
             self.logger.debug(format!(
                 "✅ [PeerState] Connection available for peer {} - opening new stream",
-                self.peer_id
+                self.peer_node_id
             ));
 
             match conn.open_bi().await {
                 Ok((send_stream, _recv_stream)) => {
                     self.logger.info(format!(
                         "✅ [PeerState] Opened new bidirectional stream to peer {}",
-                        self.peer_id
+                        self.peer_node_id
                     ));
                     Ok(send_stream)
                 }
                 Err(e) => {
                     self.logger.error(format!(
                         "❌ [PeerState] Failed to open stream to peer {}: {}",
-                        self.peer_id, e
+                        self.peer_node_id, e
                     ));
 
                     // Log additional connection state information
                     self.logger.error(format!(
                         "🔍 [PeerState] Connection diagnostics for peer {} - Error details: {:?}",
-                        self.peer_id, e
+                        self.peer_node_id, e
                     ));
 
                     Err(NetworkError::ConnectionError(format!(
@@ -181,7 +181,7 @@ impl PeerState {
         } else {
             self.logger.error(format!(
                 "❌ [PeerState] No connection available for peer {} - cannot create stream",
-                self.peer_id
+                self.peer_node_id
             ));
             Err(NetworkError::ConnectionError(
                 "Not connected to peer".to_string(),
@@ -221,7 +221,7 @@ impl PeerState {
             conn.close(0u32.into(), b"Connection closed by peer");
             let _ = self.status_tx.send(false).await;
             self.logger
-                .info(format!("Connection closed with peer {}", self.peer_id));
+                .info(format!("Connection closed with peer {}", self.peer_node_id));
         }
         let _ = self.stream_pool.clear().await;
         Ok(())
@@ -231,7 +231,7 @@ impl PeerState {
 impl fmt::Debug for PeerState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PeerState")
-            .field("peer_id", &self.peer_id)
+            .field("peer_id", &self.peer_node_id)
             .field("address", &self.address)
             .finish()
     }

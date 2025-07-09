@@ -13,9 +13,11 @@
 use anyhow::{Context, Result};
 
 use runar_cli::{InitCommand, NodeConfig};
-use runar_common::logging::{Component, Logger};
+use runar_common::{
+    compact_ids::compact_id,
+    logging::{Component, Logger},
+};
 use runar_keys::{
-    compact_ids,
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     NodeKeyManager,
 };
@@ -61,7 +63,7 @@ impl MobileSimulator {
 
         self.logger.info(format!(
             "📱 Mobile: User root key initialized: {}",
-            compact_ids::compact_node_id(&user_root_public_key)
+            compact_id(&user_root_public_key)
         ));
 
         Ok(user_root_public_key)
@@ -299,21 +301,17 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     };
 
     let node_public_key = node_key_manager.get_node_public_key();
-    let node_id = compact_ids::compact_node_id(&node_public_key);
+    let node_id = compact_id(&node_public_key);
     println!("   ✅ Node keys generated:");
     println!("      Node ID: {node_id}");
-    println!(
-        "      Public Key: {}",
-        compact_ids::compact_node_id(&node_public_key)
-    );
+    println!("      Public Key: {}", compact_id(&node_public_key));
 
     // ==========================================
     // STEP 3: Generate QR code (CLI process)
     // ==========================================
     println!("\n📱 STEP 3: Generating QR code");
 
-    let setup_config =
-        { runar_cli::init::SetupConfig::new(compact_ids::compact_node_id(&node_public_key)) };
+    let setup_config = { runar_cli::init::SetupConfig::new(compact_id(&node_public_key)) };
 
     let full_setup_token = FullSetupToken {
         setup_token: setup_token.clone(),

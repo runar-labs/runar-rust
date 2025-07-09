@@ -297,10 +297,10 @@ impl ServiceRegistry {
     pub async fn register_remote_service(&self, service: Arc<RemoteService>) -> Result<()> {
         let service_topic = service.service_topic.clone();
         let service_path = service.path().to_string();
-        let peer_id = service.peer_id().clone();
+        let peer_node_id = service.peer_node_id().clone();
 
         self.logger.info(format!(
-            "Registering remote service: {service_path} from peer: {peer_id}"
+            "Registering remote service: {service_path} from peer: {peer_node_id}"
         ));
 
         // Add to remote services using PathTrie

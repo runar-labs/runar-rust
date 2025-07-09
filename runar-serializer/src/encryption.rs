@@ -1,7 +1,7 @@
 use crate::traits::{EnvelopeEncryptedData, KeyScope, KeyStore, LabelResolver};
 use anyhow::{anyhow, Result};
 use prost::Message;
-use runar_keys::compact_ids;
+use runar_common::compact_ids::compact_id;
 use serde::{Deserialize, Serialize};
 
 /// Container for label-grouped encryption (one per label)
@@ -42,10 +42,7 @@ pub fn encrypt_label_group<T: Serialize + prost::Message>(
 
     // Determine envelope encryption parameters based on scope
     let (network_id, profile_ids): (String, Vec<String>) = match info.scope {
-        KeyScope::Network => (
-            compact_ids::compact_network_id(&info.public_key),
-            Vec::new(),
-        ),
+        KeyScope::Network => (compact_id(&info.public_key), Vec::new()),
         KeyScope::Profile => (String::new(), vec![label.to_string()]),
     };
 

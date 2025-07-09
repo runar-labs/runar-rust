@@ -6,9 +6,11 @@
 use anyhow::{Context, Result};
 
 use runar_cli::NodeConfig;
-use runar_common::logging::{Component, Logger};
+use runar_common::{
+    compact_ids::compact_id,
+    logging::{Component, Logger},
+};
 use runar_keys::{
-    compact_ids,
     mobile::{MobileKeyManager, SetupToken},
     NodeKeyManager,
 };
@@ -66,7 +68,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
         .context("Failed to generate certificate signing request")?;
 
     let node_public_key = node_key_manager.get_node_public_key();
-    let node_id = compact_ids::compact_node_id(&node_public_key);
+    let node_id = compact_id(&node_public_key);
     println!("   ✅ Node keys generated:");
     println!("      Node ID: {node_id}");
     println!("      Public Key: {}", hex::encode(&node_public_key));
@@ -76,8 +78,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     // ==========================================
     println!("\n⚙️  STEP 3: Creating setup configuration");
 
-    let setup_config =
-        runar_cli::init::SetupConfig::new(compact_ids::compact_node_id(&node_public_key));
+    let setup_config = runar_cli::init::SetupConfig::new(compact_id(&node_public_key));
 
     println!("   ✅ Setup configuration created:");
     println!("      Keys Name: {}", setup_config.get_keys_name());
