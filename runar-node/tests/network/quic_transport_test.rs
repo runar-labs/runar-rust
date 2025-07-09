@@ -238,7 +238,7 @@ async fn test_quic_transport_complete_api_validation(
             service_path: "api1".to_string(),
             name: "api1".to_string(),
             version: "1.0.0".to_string(),
-            description: "API service for transport testing".to_string(),
+            description: "API 1".to_string(),
             actions: vec![
                 ActionMetadata {
                     name: "get".to_string(),
@@ -258,10 +258,10 @@ async fn test_quic_transport_complete_api_validation(
                 description: "Data processing completed".to_string(),
                 data_schema: None,
             }],
-            registration_time: 1751181000,
+            registration_time: 0,
             last_start_time: None,
         }],
-        version: 0,
+        version: 1,
     };
 
     let node2_info = NodeInfo {
@@ -273,7 +273,7 @@ async fn test_quic_transport_complete_api_validation(
             service_path: "storage1".to_string(),
             name: "storage1".to_string(),
             version: "1.0.0".to_string(),
-            description: "Storage service for transport testing".to_string(),
+            description: "Storage 1".to_string(),
             actions: vec![
                 ActionMetadata {
                     name: "store".to_string(),
@@ -293,10 +293,10 @@ async fn test_quic_transport_complete_api_validation(
                 description: "Storage state changed".to_string(),
                 data_schema: None,
             }],
-            registration_time: 1751181000,
+            registration_time: 0,
             last_start_time: None,
         }],
-        version: 0,
+        version: 1,
     };
 
     let transport1_options = QuicTransportOptions::new()

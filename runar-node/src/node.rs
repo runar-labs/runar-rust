@@ -1433,7 +1433,8 @@ impl Node {
         existing_peer: &NodeInfo,
     ) -> Result<Vec<Arc<RemoteService>>> {
         //remove all the services
-        for service_to_remove in &existing_peer.services {
+        let services = &existing_peer.services;
+        for service_to_remove in services {
             let service_path = TopicPath::new(
                 &service_to_remove.service_path,
                 service_to_remove.network_id.as_str(),
@@ -1447,7 +1448,7 @@ impl Node {
     }
 
     async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
-        let capabilities = node_info.services.clone();
+        let capabilities = &node_info.services;
         self.logger.info(format!(
             "Processing {count} capabilities from node {peer_node_id}",
             count = capabilities.len(),
@@ -1466,7 +1467,7 @@ impl Node {
         let peer_node_id = compact_id(&node_info.node_public_key);
         // Create RemoteService instances directly
         let rs_config = CreateRemoteServicesConfig {
-            capabilities,
+            capabilities: capabilities.clone(),
             peer_node_id: peer_node_id.clone(),
             request_timeout_ms: self.config.request_timeout_ms,
         };
@@ -1682,11 +1683,12 @@ impl Node {
             }
         }
 
+        let services = self.collect_local_service_capabilities().await?;
         let node_info = NodeInfo {
             node_public_key: self.node_public_key.clone(),
             network_ids: self.network_ids.clone(),
             addresses: vec![address],
-            services: self.collect_local_service_capabilities().await?,
+            services,
             version: self.registry_version.load(Ordering::SeqCst),
         };
 

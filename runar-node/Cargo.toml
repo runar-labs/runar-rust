@@ -24,6 +24,7 @@ rand = "0.9.0"
 # Local dependencies
 runar_common = { path = "../runar-common" }
 runar-keys = { path = "../runar-keys" }
+runar-serializer = { path = "../runar-serializer" }
 
 # Network dependencies
 quinn = "0.11"
@@ -35,6 +36,7 @@ rustls-pemfile = "1.0.3"
 rustls-native-certs = "0.6.2"
 rcgen = "0.11.1"
 bincode = "1.3.3"
+prost = { version = "0.12", default-features = false, features = ["std", "derive"] }
 futures-util = "0.3.28"
 tokio-tungstenite = { version = "0.18", features = ["rustls-tls-native-roots"] }
 webpki-roots = "0.25.0"  # For system root certificates

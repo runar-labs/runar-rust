@@ -1,6 +1,7 @@
 // Network Transport Module
 use anyhow::Result;
 use async_trait::async_trait;
+use prost::Message;
 use rand;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -208,15 +209,18 @@ pub enum NetworkMessageType {
 /// IMPORTANT: This is implemented as a struct with fields, not as a tuple.
 /// The serialized data is stored in value_bytes and should be deserialized
 /// using SerializerRegistry when needed.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, Message)]
 pub struct NetworkMessagePayloadItem {
     /// The path/topic associated with this payload
+    #[prost(string, tag = "1")]
     pub path: String,
 
     /// The serialized value/payload data as bytes
+    #[prost(bytes, tag = "2")]
     pub value_bytes: Vec<u8>,
 
     /// Correlation ID for request/response tracking
+    #[prost(string, tag = "3")]
     pub correlation_id: String,
 }
 
@@ -232,18 +236,22 @@ impl NetworkMessagePayloadItem {
 }
 
 /// Represents a message exchanged between nodes
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, Message)]
 pub struct NetworkMessage {
     /// Source node identifier
+    #[prost(string, tag = "1")]
     pub source_node_id: String,
 
     /// Destination node identifier (MUST be specified)
+    #[prost(string, tag = "2")]
     pub destination_node_id: String,
 
     /// Message type (Request, Response, Event, etc.)
+    #[prost(string, tag = "3")]
     pub message_type: String,
 
     /// List of payloads  
+    #[prost(message, repeated, tag = "4")]
     pub payloads: Vec<NetworkMessagePayloadItem>,
 }
 

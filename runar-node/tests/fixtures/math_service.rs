@@ -9,11 +9,12 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use runar_common::types::schemas::{FieldSchema, SchemaDataType};
+use runar_common::types::schemas::FieldSchema;
 use runar_common::types::ArcValue;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use runar_common::types::schemas::SchemaDataType;
 use runar_node::services::abstract_service::AbstractService;
 use runar_node::services::EventRegistrationOptions;
 use runar_node::services::{LifecycleContext, RequestContext};
@@ -407,35 +408,35 @@ impl AbstractService for MathService {
             ),
             data_schema: Some(FieldSchema {
                 name: "ConfigUpdatePayload".to_string(),
-                data_type: SchemaDataType::Object,
+                data_type: SchemaDataType::OBJECT,
                 description: Some("Payload describing the configuration changes.".to_string()),
                 nullable: Some(false),
-                properties: Some({
+                properties: {
                     let mut props = HashMap::new();
                     props.insert(
                         "updated_setting".to_string(),
-                        Box::new(FieldSchema {
+                        FieldSchema {
                             name: "updated_setting".to_string(),
-                            data_type: SchemaDataType::String,
+                            data_type: SchemaDataType::STRING,
                             description: Some("Name of the setting that was updated.".to_string()),
                             nullable: Some(false),
                             ..FieldSchema::string("updated_setting") // Base with defaults
-                        }),
+                        },
                     );
                     props.insert(
                         "new_value".to_string(),
-                        Box::new(FieldSchema {
+                        FieldSchema {
                             name: "new_value".to_string(),
-                            data_type: SchemaDataType::String,
+                            data_type: SchemaDataType::STRING,
                             description: Some("The new value of the setting.".to_string()),
                             nullable: Some(false),
                             ..FieldSchema::string("new_value") // Base with defaults
-                        }),
+                        },
                     );
                     props
-                }),
-                required: Some(vec!["updated_setting".to_string(), "new_value".to_string()]),
-                ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::Object) // Base with defaults
+                },
+                required: vec!["updated_setting".to_string(), "new_value".to_string()],
+                ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::OBJECT) // Base with defaults
             }),
         };
 
