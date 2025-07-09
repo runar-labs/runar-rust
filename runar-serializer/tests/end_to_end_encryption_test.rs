@@ -4,7 +4,6 @@ use rs::*;
 use runar_serializer as rs;
 
 use anyhow::Result;
-use prost::Message;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::ArcValue;
 use std::collections::HashMap;
@@ -12,30 +11,31 @@ use std::sync::Arc;
 
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
 
+// TODO check why we have #[prost(string, tag = "1")] .. macros in the test, since the
+// enctypt macro should do this for us the plain type TestProfile is enly iuts encryptedn version is.
+// and taht has the prost macros for each field
+
 // Test structs
-#[derive(rs::Encrypt, serde::Serialize, serde::Deserialize, Clone, PartialEq, Message)]
+#[derive(rs::Encrypt, serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug, Default)]
 pub struct TestProfile {
-    #[prost(string, tag = "1")]
     pub id: String,
+
     #[runar(user, system, search)]
-    #[prost(string, tag = "2")]
     pub name: String,
+
     #[runar(user, system, search)]
-    #[prost(string, tag = "3")]
     pub email: String,
+
     #[runar(user)]
-    #[prost(string, tag = "4")]
     pub user_private: String,
+
     #[runar(user, system, search)]
-    #[prost(uint64, tag = "5")]
     pub created_at: u64,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Message)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug, Default)]
 struct PlainData {
-    #[prost(string, tag = "1")]
     pub value: String,
-    #[prost(uint32, tag = "2")]
     pub count: u32,
 }
 

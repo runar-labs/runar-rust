@@ -30,17 +30,4 @@ pub mod compact_ids {
         let compact_hash = &hash_result[..16];
         URL_SAFE_NO_PAD.encode(compact_hash)
     }
-
-    /// Generate a shorter compact ID (8 bytes = 64 bits) for very compact representation
-    pub fn short_compact_id(public_key: &[u8]) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(public_key);
-        let hash_result = hasher.finalize();
-
-        // Take the initial 4 bytes and last 4 bytes
-        let initial_4 = &hash_result[..4];
-        let last_4 = &hash_result[hash_result.len() - 4..];
-        let compact_hash = [initial_4, last_4].concat();
-        URL_SAFE_NO_PAD.encode(compact_hash)
-    }
 }

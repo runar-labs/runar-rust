@@ -169,12 +169,6 @@ impl PeerRegistry {
         }
     }
 
-    /// Find a peer by its node identifier and optional public key
-    pub fn find_peer(&self, peer_public_key: String) -> Option<PeerEntry> {
-        let peers = self.peers.read().unwrap();
-        peers.get(&peer_public_key).cloned()
-    }
-
     /// Find all peers with a specific status
     pub fn find_peers_by_status(&self, status: PeerStatus) -> Vec<PeerEntry> {
         let peers = self.peers.read().unwrap();
