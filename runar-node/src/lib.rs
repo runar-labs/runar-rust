@@ -27,8 +27,6 @@ pub use network::{
     DiscoveryOptions, NetworkMessage, NetworkMessageType, NetworkTransport, NodeDiscovery,
     NodeInfo, TransportOptions,
 };
-// Re-export peer registry types from transport
-pub use network::transport::{PeerEntry, PeerRegistry, PeerStatus};
 
 // Re-export common macros for convenience
 pub use runar_common::vmap;

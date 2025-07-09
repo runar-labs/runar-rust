@@ -17,7 +17,6 @@ use rustls_pki_types::{CertificateDer, ServerName};
 
 // Internal module declarations
 pub mod connection_pool;
-pub mod peer_registry;
 pub mod peer_state;
 pub mod quic_transport;
 pub mod stream_pool;
@@ -85,7 +84,7 @@ impl ServerCertVerifier for SkipServerVerification {
 // Removed WebSocket module completely
 
 // Re-export types/traits from submodules or parent modules
-pub use peer_registry::{PeerEntry, PeerRegistry, PeerRegistryOptions, PeerStatus};
+// pub use peer_registry::{PeerEntry, PeerRegistry, PeerRegistryOptions, PeerStatus};
 pub use quic_transport::{QuicTransport, QuicTransportOptions};
 // Don't re-export pick_free_port since it's defined in this module
 
