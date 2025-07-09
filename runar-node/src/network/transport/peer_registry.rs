@@ -5,11 +5,11 @@
 // peers based on identifiers or network.
 
 use anyhow::Result;
+use runar_common::compact_ids::compact_id;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
-use super::PeerId;
 use crate::network::discovery::multicast_discovery::PeerInfo;
 
 /// Status of a peer in the registry
@@ -126,44 +126,46 @@ impl PeerRegistry {
         // If we've passed the limit checks, now we can modify the data structures
         let mut peers = self.peers.write().unwrap();
 
+        let peer_node_id = compact_id(&peer_public_key);
         // Add or update peer
-        if let Some(existing_peer) = peers.get_mut(&peer_public_key) {
+        if let Some(existing_peer) = peers.get_mut(&peer_node_id) {
             // Update existing peer
             existing_peer.last_seen = SystemTime::now();
             existing_peer.peer_info = discovery_msg;
         } else {
             // Create new peer entry with all its networks
             let peer_entry = PeerEntry::new(discovery_msg);
-            peers.insert(peer_public_key, peer_entry);
+            peers.insert(peer_node_id, peer_entry);
         }
 
         Ok(())
     }
 
     /// Update a peer's status
-    pub fn update_peer_status(&self, peer_id: &PeerId, status: PeerStatus) -> Result<()> {
+    pub fn update_peer_status(&self, peer_node_id: &String, status: PeerStatus) -> Result<()> {
         let mut peers = self.peers.write().unwrap();
 
-        if let Some(peer) = peers.get_mut(&peer_id.public_key) {
+        if let Some(peer) = peers.get_mut(peer_node_id) {
             peer.set_status(status);
             Ok(())
         } else {
-            anyhow::bail!("Peer not found: {}", peer_id)
+            anyhow::bail!("Peer not found: {peer_node_id}")
         }
     }
 
     /// Update a peer's last seen time and other information
     pub fn update_peer(&self, peer_info: PeerInfo) -> Result<()> {
         let peer_public_key = peer_info.public_key.clone();
+        let peer_node_id = compact_id(&peer_public_key);
 
         let mut peers = self.peers.write().unwrap();
-        if let Some(entry) = peers.get_mut(&peer_public_key) {
+        if let Some(entry) = peers.get_mut(&peer_node_id) {
             // Update peer
             entry.last_seen = SystemTime::now();
             entry.peer_info = peer_info;
             Ok(())
         } else {
-            anyhow::bail!("Peer not found for update: {}", peer_public_key)
+            anyhow::bail!("Peer not found for update: {peer_node_id}")
         }
     }
 
@@ -190,14 +192,14 @@ impl PeerRegistry {
     }
 
     /// Remove a peer from the registry
-    pub fn remove_peer(&self, id: &PeerId) -> Result<()> {
+    pub fn remove_peer(&self, peer_node_id: &String) -> Result<()> {
         let mut peers = self.peers.write().unwrap();
 
         // Remove peer
-        if peers.remove(&id.public_key).is_some() {
+        if peers.remove(peer_node_id).is_some() {
             Ok(())
         } else {
-            anyhow::bail!("Peer not found: {}", id.public_key)
+            anyhow::bail!("Peer not found: {peer_node_id}")
         }
     }
 

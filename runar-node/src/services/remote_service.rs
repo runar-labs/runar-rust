@@ -11,9 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::network::transport::{
-    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, PeerId,
-};
+use crate::network::transport::{NetworkMessage, NetworkMessagePayloadItem, NetworkTransport};
 use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
 use crate::services::{ActionHandler, LifecycleContext};
@@ -32,7 +30,7 @@ pub struct RemoteService {
     pub network_id: String,
 
     /// Remote peer information
-    peer_id: PeerId,
+    peer_node_id: String,
     /// Network transport wrapped in RwLock
     network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
 
@@ -45,7 +43,7 @@ pub struct RemoteService {
     logger: Arc<Logger>,
 
     /// Local node identifier (for sending messages)
-    local_node_id: PeerId,
+    local_node_id: String,
 
     /// Pending requests awaiting responses
     pending_requests: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
@@ -60,7 +58,7 @@ pub struct RemoteServiceConfig {
     pub service_topic: TopicPath,
     pub version: String,
     pub description: String,
-    pub peer_id: PeerId, // ID of the remote peer hosting the service
+    pub peer_node_id: String, // ID of the remote peer hosting the service
     pub request_timeout_ms: u64,
 }
 
@@ -68,7 +66,7 @@ pub struct RemoteServiceConfig {
 pub struct RemoteServiceDependencies {
     pub network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
     pub serializer: Arc<RwLock<SerializerRegistry>>,
-    pub local_node_id: PeerId, // ID of the local node
+    pub local_node_id: String, // ID of the local node
     pub pending_requests:
         Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
     pub logger: Arc<Logger>,
@@ -77,7 +75,7 @@ pub struct RemoteServiceDependencies {
 /// Configuration for creating multiple RemoteService instances from capabilities.
 pub struct CreateRemoteServicesConfig {
     pub capabilities: Vec<ServiceMetadata>,
-    pub peer_id: PeerId, // ID of the remote peer hosting the services
+    pub peer_node_id: String, // ID of the remote peer hosting the services
     pub request_timeout_ms: u64,
 }
 
@@ -91,7 +89,7 @@ impl RemoteService {
             version: config.version,
             description: config.description,
             network_id, // Derived from service_topic
-            peer_id: config.peer_id,
+            peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
             serializer: dependencies.serializer,
             actions: Arc::new(RwLock::new(HashMap::new())),
@@ -145,7 +143,7 @@ impl RemoteService {
                 service_topic: service_path,
                 version: service_metadata.version.clone(),
                 description: service_metadata.description.clone(),
-                peer_id: config.peer_id.clone(),
+                peer_node_id: config.peer_node_id.clone(),
                 request_timeout_ms: config.request_timeout_ms,
             };
 
@@ -177,8 +175,8 @@ impl RemoteService {
     }
 
     /// Get the remote peer identifier for this service
-    pub fn peer_id(&self) -> &PeerId {
-        &self.peer_id
+    pub fn peer_node_id(&self) -> &String {
+        &self.peer_node_id
     }
 
     /// Get the network identifier for this service path
@@ -208,7 +206,7 @@ impl RemoteService {
             };
 
             // Clone all necessary fields before the async block
-            let peer_id = service.peer_id.clone();
+            let peer_node_id = service.peer_node_id.clone();
             let local_node_id = service.local_node_id.clone();
             let pending_requests = service.pending_requests.clone();
             let network_transport = service.network_transport.clone();
@@ -221,7 +219,7 @@ impl RemoteService {
                 let request_id = Uuid::new_v4().to_string();
 
                 logger.info(format!(
-                    "🚀 [RemoteService] Starting remote request - Action: {action}, Request ID: {request_id}, Target: {peer_id}"
+                    "🚀 [RemoteService] Starting remote request - Action: {action}, Request ID: {request_id}, Target: {peer_node_id}"
                 ));
 
                 // Create a channel for receiving the response
@@ -260,8 +258,8 @@ impl RemoteService {
 
                 // Create the network message
                 let message = NetworkMessage {
-                    source: local_node_id.clone(),
-                    destination: peer_id.clone(),
+                    source_node_id: local_node_id.clone(),
+                    destination_node_id: peer_node_id.clone(),
                     message_type: "Request".to_string(),
                     payloads: vec![NetworkMessagePayloadItem::new(
                         action_topic_path.as_str().to_string(),

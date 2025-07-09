@@ -3,7 +3,7 @@ use runar_common::{
     types::{ArcValue, SerializerRegistry},
     Component, Logger,
 };
-use runar_node::network::transport::{NetworkMessage, NetworkMessagePayloadItem, PeerId};
+use runar_node::network::transport::{NetworkMessage, NetworkMessagePayloadItem};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,8 +59,8 @@ fn test_message_payload_item_serialization() -> Result<()> {
 #[test]
 fn test_network_message_serialization() -> Result<()> {
     // Create source and destination IDs
-    let source_id = PeerId::new("source-node".to_string());
-    let dest_id = PeerId::new("dest-node".to_string());
+    let source_id = "source-node".to_string();
+    let dest_id = "dest-node".to_string();
 
     // Create a payload with ArcValue
     let value = ArcValue::new_primitive(42.0);
@@ -82,8 +82,8 @@ fn test_network_message_serialization() -> Result<()> {
 
     // Create a network message
     let message = NetworkMessage {
-        source: source_id.clone(),
-        destination: dest_id.clone(),
+        source_node_id: source_id.clone(),
+        destination_node_id: dest_id.clone(),
         message_type: "TestMessage".to_string(),
         payloads: vec![payload_item],
     };
@@ -96,8 +96,8 @@ fn test_network_message_serialization() -> Result<()> {
     let deserialized: NetworkMessage = bincode::deserialize(&serialized)?;
 
     // Verify the data matches
-    assert_eq!(deserialized.source.public_key, source_id.public_key);
-    assert_eq!(deserialized.destination.public_key, dest_id.public_key);
+    assert_eq!(deserialized.source_node_id, source_id);
+    assert_eq!(deserialized.destination_node_id, dest_id);
     assert_eq!(deserialized.message_type, "TestMessage");
     assert_eq!(deserialized.payloads.len(), 1);
     assert_eq!(deserialized.payloads[0].path, "test/path");
@@ -128,8 +128,8 @@ fn test_struct_serialization_in_network_message() -> Result<()> {
     };
 
     // Create source and destination IDs
-    let source_id = PeerId::new("source-node".to_string());
-    let dest_id = PeerId::new("dest-node".to_string());
+    let source_id = "source-node".to_string();
+    let dest_id = "dest-node".to_string();
 
     // Create a payload with the struct using ArcValue
     let arc_value = ArcValue::from_struct(original.clone());
@@ -164,8 +164,8 @@ fn test_struct_serialization_in_network_message() -> Result<()> {
 
     // Create a network message
     let message = NetworkMessage {
-        source: source_id,
-        destination: dest_id,
+        source_node_id: source_id,
+        destination_node_id: dest_id,
         message_type: "TestMessage".to_string(),
         payloads: vec![payload_item],
     };
@@ -239,8 +239,8 @@ fn test_multiple_struct_types_in_message() -> Result<()> {
     };
 
     // Create source and destination IDs
-    let source_id = PeerId::new("source-node".to_string());
-    let dest_id = PeerId::new("dest-node".to_string());
+    let source_id = "source-node".to_string();
+    let dest_id = "dest-node".to_string();
 
     // Create payloads with different struct types using ArcValue
     // Create a SerializerRegistry for serialization
@@ -271,8 +271,8 @@ fn test_multiple_struct_types_in_message() -> Result<()> {
 
     // Create a network message with multiple payloads
     let message = NetworkMessage {
-        source: source_id,
-        destination: dest_id,
+        source_node_id: source_id,
+        destination_node_id: dest_id,
         message_type: "MultiStructMessage".to_string(),
         payloads: vec![user_payload, product_payload],
     };
@@ -326,8 +326,8 @@ fn test_multiple_struct_types_in_message() -> Result<()> {
 #[test]
 fn test_various_types_in_network_messages() -> Result<()> {
     // Create source and destination IDs
-    let source_id = PeerId::new("source-node".to_string());
-    let dest_id = PeerId::new("dest-node".to_string());
+    let source_id = "source-node".to_string();
+    let dest_id = "dest-node".to_string();
 
     // Create a struct
     let mut metadata = HashMap::new();
@@ -384,8 +384,8 @@ fn test_various_types_in_network_messages() -> Result<()> {
 
     // Create a network message with all payloads
     let message = NetworkMessage {
-        source: source_id,
-        destination: dest_id,
+        source_node_id: source_id,
+        destination_node_id: dest_id,
         message_type: "TestAllTypes".to_string(),
         payloads: vec![struct_payload, map_payload, array_payload],
     };

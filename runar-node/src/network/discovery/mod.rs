@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::network::transport::PeerId;
 use runar_common::types::ServiceMetadata;
 
 pub mod memory_discovery;
@@ -62,7 +61,7 @@ pub const DEFAULT_MULTICAST_ADDR: &str = "239.255.42.98";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeInfo {
     /// The node's unique identifier
-    pub peer_id: PeerId,
+    pub node_public_key: Vec<u8>,
     /// The list of network IDs this node participates in and handles traffic for.
     /// A node can be part of multiple networks simultaneously.
     pub network_ids: Vec<String>,

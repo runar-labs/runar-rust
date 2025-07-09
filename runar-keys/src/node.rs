@@ -4,10 +4,10 @@
 //! certificate signing requests (CSRs) and manages received certificates.
 
 use crate::certificate::{CertificateRequest, CertificateValidator, EcdsaKeyPair, X509Certificate};
-use crate::compact_ids::compact_node_id;
 use crate::error::{KeyError, Result};
 use crate::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
 use rand::RngCore;
+use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
@@ -70,7 +70,7 @@ impl NodeKeyManager {
         let storage_key = Self::generate_storage_key();
 
         let node_public_key = node_key_pair.public_key_bytes();
-        let node_public_key_str = compact_node_id(&node_public_key);
+        let node_public_key_str = compact_id(&node_public_key);
         logger.info(format!(
             "Node Key Manager created with identity: {node_public_key_str}"
         ));
@@ -96,7 +96,7 @@ impl NodeKeyManager {
 
     /// Get the node ID (compact Base58 encoding of public key)
     pub fn get_node_id(&self) -> String {
-        crate::compact_ids::compact_node_id(&self.node_key_pair.public_key_bytes())
+        compact_id(&self.node_key_pair.public_key_bytes())
     }
 
     /// Generate a 32-byte storage key for local file encryption
@@ -453,8 +453,7 @@ impl NodeKeyManager {
         let network_key_pair = EcdsaKeyPair::from_signing_key(signing_key);
 
         // Store the network key using its public key as identifier
-        let network_public_key =
-            crate::compact_ids::compact_network_id(&network_key_pair.public_key_bytes());
+        let network_public_key = compact_id(&network_key_pair.public_key_bytes());
         self.network_keys
             .insert(network_public_key.clone(), network_key_pair);
 
@@ -567,7 +566,7 @@ impl NodeKeyManager {
             has_ca_certificate: self.ca_certificate.is_some(),
             certificate_status: self.get_certificate_status(),
             network_keys_count: self.network_keys.len(),
-            node_public_key: crate::compact_ids::compact_node_id(&self.get_node_public_key()),
+            node_public_key: compact_id(&self.get_node_public_key()),
         }
     }
 
@@ -652,13 +651,13 @@ impl NodeKeyManager {
         data: &[u8],
         public_key: &[u8],
     ) -> Result<crate::mobile::EnvelopeEncryptedData> {
-        let network_id = crate::compact_ids::compact_network_id(public_key);
+        let network_id = compact_id(public_key);
         self.encrypt_with_envelope(data, &network_id, Vec::new())
     }
 
     /// Check if the manager holds the private key for the given network public key.
     pub fn has_public_key(&self, public_key: &[u8]) -> bool {
-        let network_id = crate::compact_ids::compact_network_id(public_key);
+        let network_id = compact_id(public_key);
         self.network_keys.contains_key(&network_id)
     }
 }
@@ -723,7 +722,7 @@ impl NodeKeyManager {
                 CertificateStatus::None
             };
 
-        let node_id = crate::compact_ids::compact_node_id(&state.node_key_pair.public_key_bytes());
+        let node_id = compact_id(&state.node_key_pair.public_key_bytes());
         logger.info(format!(
             "Node Key Manager state imported for node: {node_id}"
         ));

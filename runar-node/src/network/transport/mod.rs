@@ -3,7 +3,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rand;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::ops::Range;
@@ -97,27 +96,29 @@ use super::discovery::NodeInfo;
 /// Type alias for async-returning function
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Unique identifier for a node in the network
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PeerId {
-    /// Unique ID for this node within the network
-    pub public_key: String,
-}
+// /// Unique identifier for a node in the network
+// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// pub struct PeerId {
+//     /// Unique ID for this node within the network
+//     pub public_key: String,
+//     pub node_id: String,
+// }
 
-impl PeerId {
-    /// Create a new NodeIdentifier
-    pub fn new(node_id: String) -> Self {
-        Self {
-            public_key: node_id,
-        }
-    }
-}
+// impl PeerId {
+//     /// Create a new NodeIdentifier
+//     pub fn new(public_key: String, node_id: String) -> Self {
+//         Self {
+//             public_key: public_key,
+//             node_id: node_id,
+//         }
+//     }
+// }
 
-impl fmt::Display for PeerId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.public_key)
-    }
-}
+// impl fmt::Display for PeerId {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(f, "{}", self.public_key)
+//     }
+// }
 
 /// Options for network transport configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,10 +236,10 @@ impl NetworkMessagePayloadItem {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NetworkMessage {
     /// Source node identifier
-    pub source: PeerId,
+    pub source_node_id: String,
 
     /// Destination node identifier (MUST be specified)
-    pub destination: PeerId,
+    pub destination_node_id: String,
 
     /// Message type (Request, Response, Event, etc.)
     pub message_type: String,
@@ -256,7 +257,7 @@ pub type MessageCallback =
 
 /// Callback type for connection status changes
 pub type ConnectionCallback =
-    Arc<dyn Fn(PeerId, bool, Option<NodeInfo>) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+    Arc<dyn Fn(String, bool, Option<NodeInfo>) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]
@@ -270,10 +271,10 @@ pub trait NetworkTransport: Send + Sync {
     async fn stop(&self) -> Result<(), NetworkError>;
 
     /// Disconnect from a remote node
-    async fn disconnect(&self, node_id: PeerId) -> Result<(), NetworkError>;
+    async fn disconnect(&self, node_id: String) -> Result<(), NetworkError>;
 
     /// Check if connected to a specific node
-    async fn is_connected(&self, node_id: PeerId) -> bool;
+    async fn is_connected(&self, node_id: String) -> bool;
 
     /// Send a message to a remote node
     async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError>;

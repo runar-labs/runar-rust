@@ -6,7 +6,7 @@
 //
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use hex;
+use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
@@ -25,7 +25,7 @@ use tokio::sync::{oneshot, RwLock};
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
 use crate::network::transport::{
-    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, PeerId, QuicTransport,
+    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport,
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
@@ -163,7 +163,9 @@ pub struct Node {
     pub(crate) network_ids: Vec<String>,
 
     /// The node ID for this node
-    pub(crate) peer_id: PeerId,
+    pub(crate) node_id: String,
+
+    pub(crate) node_public_key: Vec<u8>,
 
     /// Configuration for this node
     pub(crate) config: Arc<NodeConfig>,
@@ -171,7 +173,7 @@ pub struct Node {
     /// The service registry for this node
     pub(crate) service_registry: Arc<ServiceRegistry>,
 
-    pub(crate) known_peers: Arc<RwLock<HashMap<PeerId, NodeInfo>>>,
+    pub(crate) known_peers: Arc<RwLock<HashMap<String, NodeInfo>>>,
 
     /// Logger instance
     pub(crate) logger: Arc<Logger>,
@@ -255,18 +257,18 @@ impl Node {
         let keys_manager = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
 
         //TODO check if we shuold use the compact ID here instead of just a hex of the key
-        let node_public_key_bytes = keys_manager.get_node_public_key();
-        let node_public_key_hex = hex::encode(&node_public_key_bytes);
-        let peer_id = PeerId::new(node_public_key_hex);
+        let node_public_key = keys_manager.get_node_public_key();
+        let node_id = compact_id(&node_public_key);
 
         logger.info("Successfully loaded existing node credentials.");
-        logger.info(format!("Node peer ID (public key): {peer_id}"));
+        logger.info(format!("Node ID: {node_id}"));
 
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: default_network_id,
             network_ids,
-            peer_id,
+            node_id,
+            node_public_key,
             config: Arc::new(config),
             logger: logger.clone(),
             service_registry,
@@ -574,7 +576,7 @@ impl Node {
             self.logger.info("Initializing network transport...");
 
             // Create network transport using the factory pattern based on transport_type
-            // let node_identifier = self.peer_id.clone();
+            // let node_identifier = self.peer_node_id.clone();
             let transport = self.create_transport(network_config).await?;
 
             // Store the transport
@@ -604,7 +606,7 @@ impl Node {
                 let provider_type = format!("{provider_config:?}");
 
                 // Create network transport using the factory pattern based on transport_type
-                // let node_identifier = self.peer_id.clone();
+                // let node_identifier = self.peer_node_id.clone();
                 let discovery_provider = self
                     .create_discovery_provider(provider_config, Some(discovery_options.clone()))
                     .await?;
@@ -755,7 +757,7 @@ impl Node {
             return Ok(());
         }
 
-        let discovered_peer_id = PeerId::new(peer_info.public_key.clone());
+        let discovered_peer_id = compact_id(&peer_info.public_key);
 
         self.logger.info(format!(
             "Discovery listener found node: {discovered_peer_id}",
@@ -763,18 +765,18 @@ impl Node {
 
         // **CRITICAL FIX**: Implement lexicographic ordering to prevent duplicate connections
         // Only the node with the smaller peer ID should initiate the connection
-        let local_peer_id = &self.peer_id;
-        let should_initiate = local_peer_id.public_key < discovered_peer_id.public_key;
+        let should_initiate = self.node_id < discovered_peer_id;
 
         if !should_initiate {
             self.logger.info(format!(
-                "🚫 [ConnectionOrdering] Not initiating connection to {discovered_peer_id} - our peer ID ({local_peer_id}) is larger, waiting for them to connect to us",
+                "🚫 [ConnectionOrdering] Not initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is larger, waiting for them to connect to us", node_id=self.node_id
             ));
             return Ok(());
         }
 
         self.logger.info(format!(
-            "✅ [ConnectionOrdering] Initiating connection to {discovered_peer_id} - our peer ID ({local_peer_id}) is smaller",
+            "✅ [ConnectionOrdering] Initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is smaller",
+            node_id=self.node_id
         ));
 
         // Check if we're already connected to this peer
@@ -847,7 +849,7 @@ impl Node {
 
         self.logger.info(format!(
             "📥 [Node] Handling network request from {} - Type: {}, Payloads: {}",
-            message.source,
+            message.source_node_id,
             message.message_type,
             message.payloads.len()
         ));
@@ -882,7 +884,7 @@ impl Node {
             };
             let params_option = if params.is_null() { None } else { Some(params) };
 
-            let local_peer_id = self.peer_id.clone();
+            let local_peer_id = self.node_id.clone();
 
             // Process the request locally using extracted topic and params
             self.logger.info(format!(
@@ -912,7 +914,7 @@ impl Node {
 
                     self.logger.info(format!(
                         "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
-                        message.source,
+                        message.source_node_id,
                         correlation_id,
                         serialized_data.len()
                     ));
@@ -926,8 +928,8 @@ impl Node {
 
                     // Create response message - destination is the original source
                     let response_message = NetworkMessage {
-                        source: local_peer_id,               // Source is now self
-                        destination: message.source.clone(), // Destination is the original request source
+                        source_node_id: local_peer_id, // Source is now self
+                        destination_node_id: message.source_node_id.clone(), // Destination is the original request source
                         message_type: "Response".to_string(),
                         payloads: vec![response_payload],
                     };
@@ -948,13 +950,13 @@ impl Node {
                             self.logger
                                 .error(format!(
                                     "❌ [Node] Failed to send response message - To: {}, Correlation: {}, Error: {}", 
-                                    message.source, correlation_id, e
+                                    message.source_node_id, correlation_id, e
                                 ));
                             // Consider returning error or just logging?
                         } else {
                             self.logger.info(format!(
                                 "✅ [Node] Response sent successfully - To: {}, Correlation: {}",
-                                message.source, correlation_id
+                                message.source_node_id, correlation_id
                             ));
                         }
                     } else {
@@ -997,7 +999,7 @@ impl Node {
 
                     self.logger.info(format!(
                         "📤 [Node] Sending error response - To: {source}, Correlation: {correlation_id}, Size: {size} bytes", 
-                        source=message.source, size=serialized_error.len()
+                        source=message.source_node_id, size=serialized_error.len()
                     ));
 
                     // Create payload item with serialized error
@@ -1008,9 +1010,9 @@ impl Node {
                     };
 
                     let response_message = NetworkMessage {
-                        source: local_peer_id,               // Source is self
-                        destination: message.source.clone(), // Destination is the original request source
-                        message_type: "Error".to_string(),   // Use Error type
+                        source_node_id: local_peer_id,                       // Source is self
+                        destination_node_id: message.source_node_id.clone(), // Destination is the original request source
+                        message_type: "Error".to_string(),                   // Use Error type
                         payloads: vec![error_payload],
                     };
 
@@ -1030,13 +1032,13 @@ impl Node {
                             self.logger
                                 .error(format!(
                                     "❌ [Node] Failed to send error response message - To: {source}, Correlation: {correlation_id}, Error: {e}", 
-                                    source=message.source
+                                    source=message.source_node_id
                                 ));
                         } else {
                             self.logger
                                 .info(format!(
                                     "✅ [Node] Error response sent successfully - To: {source}, Correlation: {correlation_id}", 
-                                    source=message.source
+                                    source=message.source_node_id
                                 ));
                         }
                     } else {
@@ -1406,19 +1408,20 @@ impl Node {
         &self,
         new_peer: NodeInfo,
     ) -> Result<Vec<Arc<RemoteService>>> {
+        let new_peer_node_id = compact_id(&new_peer.node_public_key);
         //check if we alrady know about this service..
         let mut known_peers = self.known_peers.write().await;
-        if let Some(existing_peer) = known_peers.get(&new_peer.peer_id) {
+        if let Some(existing_peer) = known_peers.get(&new_peer_node_id) {
             //check if node info is older then the stored peer
             if new_peer.version > existing_peer.version {
                 self.remove_peer_services(existing_peer).await?;
                 //remove and add again
-                known_peers.remove(&new_peer.peer_id);
-                known_peers.insert(new_peer.peer_id.clone(), new_peer.clone());
+                known_peers.remove(&new_peer_node_id);
+                known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
                 return self.add_new_peer(new_peer).await;
             }
         } else {
-            known_peers.insert(new_peer.peer_id.clone(), new_peer.clone());
+            known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
             return self.add_new_peer(new_peer).await;
         }
         drop(known_peers);
@@ -1446,9 +1449,9 @@ impl Node {
     async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
         let capabilities = node_info.services.clone();
         self.logger.info(format!(
-            "Processing {count} capabilities from node {peer_id}",
+            "Processing {count} capabilities from node {peer_node_id}",
             count = capabilities.len(),
-            peer_id = node_info.peer_id
+            peer_node_id = compact_id(&node_info.node_public_key)
         ));
 
         // Check if capabilities is empty
@@ -1458,19 +1461,20 @@ impl Node {
         }
 
         // Get the local node ID
-        let local_peer_id = self.peer_id.clone();
+        let local_peer_id = self.node_id.clone();
 
+        let peer_node_id = compact_id(&node_info.node_public_key);
         // Create RemoteService instances directly
         let rs_config = CreateRemoteServicesConfig {
             capabilities,
-            peer_id: node_info.peer_id.clone(),
+            peer_node_id: peer_node_id.clone(),
             request_timeout_ms: self.config.request_timeout_ms,
         };
 
         let rs_dependencies = RemoteServiceDependencies {
             network_transport: self.network_transport.clone(),
             serializer: self.serializer.clone(),
-            local_node_id: local_peer_id, // This is self.peer_id.clone()
+            local_node_id: local_peer_id, // This is self.peer_node_id.clone()
             pending_requests: self.pending_requests.clone(),
             logger: self.logger.clone(),
         };
@@ -1526,9 +1530,8 @@ impl Node {
         }
 
         self.logger.info(format!(
-            "Successfully processed {count} remote services from node {peer_id}",
+            "Successfully processed {count} remote services from node {peer_node_id}",
             count = remote_services.len(),
-            peer_id = node_info.peer_id
         ));
 
         Ok(remote_services)
@@ -1680,7 +1683,7 @@ impl Node {
         }
 
         let node_info = NodeInfo {
-            peer_id: self.peer_id.clone(),
+            node_public_key: self.node_public_key.clone(),
             network_ids: self.network_ids.clone(),
             addresses: vec![address],
             services: self.collect_local_service_capabilities().await?,
@@ -1772,8 +1775,8 @@ impl Node {
                     match receiver.recv().await {
                         Ok(peer_node_info) => {
                             logger.info(format!(
-                                "Received peer node info from {peer_id}",
-                                peer_id = peer_node_info.peer_id
+                                "Received peer node info from {peer_node_id}",
+                                peer_node_id = compact_id(&peer_node_info.node_public_key)
                             ));
 
                             // Process the peer node info
@@ -2016,7 +2019,8 @@ impl Clone for Node {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: self.network_id.clone(),
             network_ids: self.network_ids.clone(),
-            peer_id: self.peer_id.clone(),
+            node_id: self.node_id.clone(),
+            node_public_key: self.node_public_key.clone(),
             config: self.config.clone(),
             service_registry: self.service_registry.clone(),
             known_peers: self.known_peers.clone(),

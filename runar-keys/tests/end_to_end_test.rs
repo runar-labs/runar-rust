@@ -6,9 +6,11 @@
 //! end-to-end flow and test the whole system by bypassing the network part
 //! and dealing with the internal components directly.
 
-use runar_common::logging::{Component, Logger};
+use runar_common::{
+    compact_ids::compact_id,
+    logging::{Component, Logger},
+};
 use runar_keys::{
-    compact_ids,
     error::Result,
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::{CertificateStatus, NodeKeyManager},
@@ -47,7 +49,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let user_public_key = user_root_public_key.clone();
     println!(
         "   ✅ User public key generated: {}",
-        compact_ids::compact_node_id(&user_public_key)
+        compact_id(&user_public_key)
     );
 
     // Create a user owned and managed CA
@@ -55,7 +57,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     assert_eq!(user_ca_public_key.len(), 33); // ECDSA P-256 compressed
     println!(
         "   ✅ User CA public key: {}",
-        compact_ids::compact_node_id(&user_ca_public_key)
+        compact_id(&user_ca_public_key)
     );
 
     let user_root_key_len = user_root_public_key.len();
@@ -78,7 +80,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let node_public_key = node_keys_manager.get_node_public_key();
     println!(
         "   ✅ Node identity created: {}",
-        compact_ids::compact_node_id(&node_public_key)
+        compact_id(&node_public_key)
     );
     let setup_token = node_keys_manager
         .generate_csr()
@@ -125,10 +127,10 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let node_public_key_from_token = setup_token_mobile.node_public_key.clone();
     println!(
         "   ✅ Node public key verified from token: {}",
-        compact_ids::compact_node_id(&node_public_key_from_token)
+        compact_id(&node_public_key_from_token)
     );
 
-    let node_cert_hex = compact_ids::compact_node_id(&node_public_key_from_token);
+    let node_cert_hex = compact_id(&node_public_key_from_token);
     println!("   • Node certificates: 1 ({node_cert_hex})");
 
     // ==========================================
@@ -289,7 +291,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // For our certificates, we expect the node public key in the subject
     assert!(
-        subject_str.contains(&compact_ids::compact_node_id(&node_public_key_from_token)),
+        subject_str.contains(&compact_id(&node_public_key_from_token)),
         "Certificate subject should contain node public key"
     );
 

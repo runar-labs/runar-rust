@@ -12,8 +12,8 @@ pub use discovery::{
 };
 pub use runar_common::types::{ActionMetadata, EventMetadata, ServiceMetadata};
 pub use transport::{
-    MessageHandler, NetworkMessage, NetworkMessageType, NetworkTransport, PeerEntry, PeerId,
-    PeerRegistry, PeerStatus, QuicTransport, QuicTransportOptions, TransportOptions,
+    MessageHandler, NetworkMessage, NetworkMessageType, NetworkTransport, PeerEntry, PeerRegistry,
+    PeerStatus, QuicTransport, QuicTransportOptions, TransportOptions,
 };
 
 // Implementation modules should be imported directly when needed:

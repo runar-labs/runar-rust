@@ -4,8 +4,8 @@
 // in production builds. All functions in this crate are for testing only.
 
 use anyhow::Result;
+use runar_common::compact_ids;
 use runar_common::logging::{Component, Logger};
-use runar_keys::compact_ids;
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
 use runar_node::{
     network::{network_config::NetworkConfig, QuicTransportOptions},
@@ -42,7 +42,7 @@ pub fn create_test_node_keys(
 
     let mut node_keys_manager = NodeKeyManager::new(logger.clone())?;
     let node_public_key = node_keys_manager.get_node_public_key();
-    let node_id = compact_ids::compact_node_id(&node_public_key);
+    let node_id = compact_ids::compact_id(&node_public_key);
 
     let setup_token = node_keys_manager
         .generate_csr()
