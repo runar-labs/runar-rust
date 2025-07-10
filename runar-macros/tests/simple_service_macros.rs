@@ -5,35 +5,46 @@
 
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
-use prost_derive::Message;
+use prost::Message;
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_macros::{action, publish, service, service_impl, subscribe};
+use runar_macros_common::{hmap, params};
 use runar_node::services::{EventContext, RequestContext};
 use runar_node::AbstractService;
 use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc}; // Added for metadata testing
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-struct MyData {
+#[derive(Clone, PartialEq, Serialize, Deserialize, Message)]
+pub struct MyData {
+    #[prost(int32, tag = "1")]
     id: i32,
+    #[prost(string, tag = "2")]
     text_field: String,
+    #[prost(int32, tag = "3")]
     number_field: i32,
+    #[prost(bool, tag = "4")]
     boolean_field: bool,
+    #[prost(double, tag = "5")]
     float_field: f64,
+    #[prost(int32, repeated, tag = "6")]
     vector_field: Vec<i32>,
+    #[prost(map = "string, int32", tag = "7")]
     map_field: HashMap<String, i32>,
+    #[prost(string, optional, tag = "8")]
     network_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-struct PreWrappedStruct {
+#[derive(Clone, PartialEq, Serialize, Deserialize, Message)]
+pub struct PreWrappedStruct {
+    #[prost(string, tag = "1")]
     id: String,
+    #[prost(int32, tag = "2")]
     value: i32,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Message)]
-struct User {
+#[derive(Clone, PartialEq, Serialize, Deserialize, Message)]
+pub struct User {
     #[prost(int32, tag = "1")]
     id: i32,
     #[prost(string, tag = "2")]
@@ -42,6 +53,26 @@ struct User {
     email: String,
     #[prost(int32, tag = "4")]
     age: i32,
+}
+
+// Encrypted TestProfile struct used for complex_profile action
+use runar_serializer as rs; // alias for encryption macro
+
+#[derive(rs::Encrypt, serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug, Default)]
+pub struct TestProfile {
+    pub id: String,
+
+    #[runar(user, system, search)]
+    pub name: String,
+
+    #[runar(user, system, search)]
+    pub email: String,
+
+    #[runar(user)]
+    pub user_private: String,
+
+    #[runar(user, system, search)]
+    pub created_at: u64,
 }
 
 // Define a simple math service
@@ -132,6 +163,15 @@ impl TestService {
         ctx.publish("age_changed", Some(ArcValue::new_primitive(25)))
             .await?;
         Ok(data)
+    }
+
+    #[action]
+    async fn complex_profile(
+        &self,
+        profiles: Vec<HashMap<String, TestProfile>>, // encrypted container
+        _ctx: &RequestContext,
+    ) -> Result<Vec<HashMap<String, TestProfile>>> {
+        Ok(profiles)
     }
 
     #[subscribe(path = "math/my_data_auto")]
@@ -375,7 +415,7 @@ mod tests {
 
         // Make a request to the subtract action
         // Create parameters for the add action
-        let params = runar_common::params! { "a" => 10.0, "b" => 5.0 };
+        let params = params! { "a" => 10.0, "b" => 5.0 };
 
         let response: f64 = node
             .request("math/subtract", Some(params))
@@ -387,7 +427,7 @@ mod tests {
 
         // Make a request to the multiply action (with custom name)
         // Create parameters for the add action
-        let params = runar_common::params! { "a" => 5.0, "b" => 3.0 };
+        let params = params! { "a" => 5.0, "b" => 3.0 };
 
         let response: f64 = node
             .request("math/multiply_numbers", Some(params))
@@ -398,7 +438,7 @@ mod tests {
         assert_eq!(response, 15.0);
 
         // Make a request to the divide action with valid parameters
-        let params = runar_common::params! { "a" => 6.0, "b" => 3.0 };
+        let params = params! { "a" => 6.0, "b" => 3.0 };
 
         let response: f64 = node
             .request("math/divide", Some(params))
@@ -410,7 +450,7 @@ mod tests {
 
         // Make a request to the divide action with invalid parameters (division by zero)
         // Create parameters for the add action
-        let params = runar_common::params! { "a" => 6.0, "b" => 0.0 };
+        let params = params! { "a" => 6.0, "b" => 0.0 };
 
         let response: Result<f64, anyhow::Error> = node.request("math/divide", Some(params)).await;
 
@@ -710,5 +750,26 @@ mod tests {
             .expect("Failed to call echo action");
 
         assert_eq!(result, "Hello, world!");
+
+        // Test complex_profile action with encrypted TestProfile
+        let profile = TestProfile {
+            id: "prof1".to_string(),
+            name: "Alice".to_string(),
+            email: "alice@example.com".to_string(),
+            user_private: "secret".to_string(),
+            created_at: 123456789,
+        };
+
+        let mut prof_map = HashMap::new();
+        prof_map.insert("p1".to_string(), profile.clone());
+        let profiles_param: Vec<HashMap<String, TestProfile>> = vec![prof_map];
+        let arc_value = ArcValue::new_list(profiles_param.clone());
+
+        let profile_result: Vec<HashMap<String, TestProfile>> = node
+            .request("math/complex_profile", Some(arc_value))
+            .await
+            .expect("Failed to call complex_profile action");
+
+        assert_eq!(profile_result, profiles_param);
     }
 }

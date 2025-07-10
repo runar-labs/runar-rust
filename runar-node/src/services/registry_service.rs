@@ -15,7 +15,6 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::routing::TopicPath;
-use crate::services::abstract_service::ServiceState;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::AbstractService;
 use runar_common::logging::Logger;

@@ -30,3 +30,6 @@ pub mod compact_ids {
         URL_SAFE_NO_PAD.encode(compact_hash)
     }
 }
+
+// Re-export frequently used types and macros for backward compatibility
+// Note: Avoid re-exporting to prevent cyclic dependencies. Import these directly where needed.

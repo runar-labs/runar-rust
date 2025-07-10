@@ -44,6 +44,7 @@ chrono = "0.4"
 tempfile = "3.8"
 tokio = { version = "1.32", features = ["full"] }
 runar-test-utils = { path = "../runar-test-utils" }
+runar_macros_common = { path = "../runar-macros-common" }
 prost = "0.12"
 prost-derive = "0.12"
 runar-serializer = { path = "../runar-serializer" }

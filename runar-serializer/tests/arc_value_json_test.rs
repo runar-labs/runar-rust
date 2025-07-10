@@ -32,9 +32,9 @@ fn test_from_json_number_int() {
 
 #[test]
 fn test_from_json_number_float() {
-    let json_value = json!(3.14);
+    let json_value = json!(std::f64::consts::PI);
     let mut arc_value = ArcValue::from_json(json_value);
-    assert_eq!(arc_value.as_float().unwrap(), 3.14);
+    assert_eq!(arc_value.as_float().unwrap(), std::f64::consts::PI);
 }
 
 #[test]

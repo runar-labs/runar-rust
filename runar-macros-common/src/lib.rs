@@ -10,7 +10,7 @@
 /// # Examples
 ///
 /// ```
-/// use runar_macros::vmap;
+/// use runar_macros_common::vmap;
 /// use runar_serializer::ArcValue;
 ///
 /// let map = vmap! {
@@ -169,19 +169,24 @@ macro_rules! vmap {
 /// ## Map Creation Usage:
 ///
 /// ```
-/// use runar_macros::hmap;
+/// use runar_macros_common::hmap;
 /// use runar_serializer::ArcValue;
-/// // Create a new ArcValue::Map:
-/// let params = hmap!("name" => "John", "age" => 30, "active" => true);
+/// // Create a HashMap<String, ArcValue> with heterogeneous primitive values:
+/// let params = hmap!(
+///     "name"   => ArcValue::new_primitive("John"),
+///     "age"    => ArcValue::new_primitive(30),
+///     "active" => ArcValue::new_primitive(true)
+/// );
 /// ```
 ///
 /// ## Empty Map:
 ///
 /// ```
-/// use runar_macros::hmap;
+/// use runar_macros_common::hmap;
 /// use runar_serializer::ArcValue;
-/// // Create an empty map
-/// let empty = hmap!{};
+/// use std::collections::HashMap;
+/// // Create an empty map (explicit type so inference succeeds)
+/// let empty: HashMap<String, ArcValue> = hmap!{};
 /// ```
 #[macro_export]
 macro_rules! hmap {

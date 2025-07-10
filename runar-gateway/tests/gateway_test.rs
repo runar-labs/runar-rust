@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use axum::http::StatusCode as HttpStatus;
-use runar_common::types::ArcValue;
 use runar_gateway::GatwayService;
 use runar_macros::{action, service, service_impl};
 use runar_node::Node;
+use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -12,10 +12,13 @@ use std::net::SocketAddr;
 use tokio::time::{sleep, Duration};
 
 // --- Test Data Struct ---
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, prost::Message)]
 struct MyTestData {
+    #[prost(int32, tag = "1")]
     id: i32,
+    #[prost(string, tag = "2")]
     name: String,
+    #[prost(bool, tag = "3")]
     active: bool,
 }
 

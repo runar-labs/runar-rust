@@ -31,3 +31,5 @@ runar-test-utils = { path = "../runar-test-utils" }
 serde_json = "1.0"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 # These are required for integration tests in tests/rusqlite_examples.rs
+ prost = "0.12"
+ prost-derive = "0.12"
