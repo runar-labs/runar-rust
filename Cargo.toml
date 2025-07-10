@@ -2,6 +2,7 @@
 members = [
     "runar-node",
     "runar-macros",
+    "runar-macros-common",
     "runar-common",
     "runar-services",
     "rust-examples/micro_services_demo",

@@ -15,11 +15,8 @@ use crate::node::Node; // Added for concrete type
 use crate::routing::TopicPath;
 use crate::services::NodeDelegate;
 use anyhow::Result;
-use runar_common::{
-    logging::{Component, Logger, LoggingContext},
-    types::ArcValue,   // Added ValueCategory for AsArcValue for S
-    types::AsArcValue, // Moved from this file
-};
+use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_serializer::{ArcValue, AsArcValue};
 use std::fmt::Debug;
 
 // AsArcValue trait and implementations moved to runar_common::types

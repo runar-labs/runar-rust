@@ -16,8 +16,8 @@ use crate::services::PublishOptions; // Restored
 use crate::NodeDelegate; // Keep one instance
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
-use runar_common::types::ArcValue;
-use runar_common::types::AsArcValue; // Corrected: Only AsArcValue needed here
+use runar_serializer::ArcValue;
+use runar_serializer::AsArcValue; // Corrected: Only AsArcValue needed here
 use std::fmt;
 use std::fmt::Debug;
 use std::sync::Arc;

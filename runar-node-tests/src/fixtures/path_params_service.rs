@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use runar_common::types::ArcValue;
+use runar_serializer::ArcValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 

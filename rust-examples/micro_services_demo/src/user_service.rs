@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use runar_common::types::ArcValue;
 use runar_macros::{action, service, service_impl};
 use runar_node::services::RequestContext;
 
@@ -22,13 +21,13 @@ impl UserService {
         username: String,
         email: String,
         _ctx: &RequestContext,
-    ) -> Result<ArcValue> {
+    ) -> Result<User> {
         // Placeholder implementation
         println!("UserService: Called create_user with username: {username}, email: {email}");
-        Ok(ArcValue::from_struct(User {
+        Ok(User {
             id: "user_123".to_string(), // Dummy ID
             username,
             email,
-        }))
+        })
     }
 }

@@ -7,6 +7,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use multicast_discovery::PeerInfo;
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,19 +59,24 @@ pub const DEFAULT_MULTICAST_ADDR: &str = "239.255.42.98";
 ///
 /// INTENTION: Represents a snapshot of a node's presence and capabilities
 /// within one or more networks. This information is shared via discovery mechanisms.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Message)]
 pub struct NodeInfo {
     /// The node's unique identifier
+    #[prost(bytes, tag = "1")]
     pub node_public_key: Vec<u8>,
     /// The list of network IDs this node participates in and handles traffic for.
     /// A node can be part of multiple networks simultaneously.
+    #[prost(string, repeated, tag = "2")]
     pub network_ids: Vec<String>,
     /// The node's  network addressess (e.g., "IP:PORT") - ordered by preference
+    #[prost(string, repeated, tag = "3")]
     pub addresses: Vec<String>,
     /// Node services representing the services provided by this node
+    #[prost(message, repeated, tag = "4")]
     pub services: Vec<ServiceMetadata>,
     /// incremental version counter that change everytime the ndoe chagnes (new services added, new event subscriptions, etc)
     /// //when taht happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
+    #[prost(int64, tag = "5")]
     pub version: i64,
 }
 

@@ -1,11 +1,10 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
-use runar_common::types::erased_arc::ErasedArc;
-use runar_common::types::ArcValue;
-use runar_common::types::ValueCategory;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
+use runar_serializer::erased_arc::ErasedArc;
+use runar_serializer::{ArcValue, ValueCategory};
 use rusqlite::types::ToSqlOutput;
 use rusqlite::types::{Null, ValueRef as RusqliteValueRef};
 use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};

@@ -5,7 +5,7 @@
 use anyhow::Result;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
-use runar_common::types::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_node::types::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_node::network::discovery::DEFAULT_MULTICAST_ADDR;
 use runar_node::network::discovery::{
     DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo,
@@ -32,7 +32,7 @@ async fn create_test_discovery(
     // Create a logger for testing
     let logger = Logger::new_root(Component::NetworkDiscovery, node_id);
 
-    // Create a test node info
+    // Create a test node info using direct struct initialization
     let node_info = NodeInfo {
         node_public_key: node_public_key.to_vec(),
         network_ids: vec![network_id.to_string()],

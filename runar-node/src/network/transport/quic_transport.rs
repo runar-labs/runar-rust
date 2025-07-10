@@ -16,7 +16,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use bincode;
+use prost::Message;
 use quinn::{self, Endpoint};
 use quinn::{ClientConfig, ServerConfig};
 // Using Quinn 0.11.x API - no need for proto imports
@@ -616,7 +616,9 @@ impl QuicTransportImpl {
         use tokio::io::AsyncWriteExt;
 
         // Serialize the message
-        let serialized_message = bincode::serialize(message)
+        let mut serialized_message = Vec::new();
+        message
+            .encode(&mut serialized_message)
             .map_err(|e| NetworkError::MessageError(format!("Failed to serialize message: {e}")))?;
 
         // Write message length first (4 bytes)
@@ -792,7 +794,11 @@ impl QuicTransportImpl {
                 message_type: "NODE_INFO_UPDATE".to_string(),
                 payloads: vec![NetworkMessagePayloadItem {
                     path: "".to_string(),
-                    value_bytes: bincode::serialize(&node_info).unwrap(),
+                    value_bytes: {
+                        let mut bytes = Vec::new();
+                        node_info.encode(&mut bytes).unwrap();
+                        bytes
+                    },
                     correlation_id: "".to_string(),
                 }],
             };
@@ -849,9 +855,13 @@ impl QuicTransportImpl {
             message_type: "NODE_INFO_HANDSHAKE".to_string(),
             payloads: vec![NetworkMessagePayloadItem {
                 path: "".to_string(),
-                value_bytes: bincode::serialize(&self.local_node).map_err(|e| {
-                    NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
-                })?,
+                value_bytes: {
+                    let mut bytes = Vec::new();
+                    self.local_node.encode(&mut bytes).map_err(|e| {
+                        NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
+                    })?;
+                    bytes
+                },
                 correlation_id,
             }],
         };
@@ -887,7 +897,7 @@ impl QuicTransportImpl {
 
             // Extract the node info from the message
             if let Some(payload) = message.payloads.first() {
-                match bincode::deserialize::<NodeInfo>(&payload.value_bytes) {
+                match NodeInfo::decode(payload.value_bytes.as_slice()) {
                     Ok(peer_node_info) => {
                         self.logger.debug(format!(
                             "Received node info from {}: {:?}",
@@ -909,13 +919,15 @@ impl QuicTransportImpl {
                                     payloads: vec![NetworkMessagePayloadItem {
                                         // Preserve the original path from the request
                                         path: payload.path.clone(),
-                                        value_bytes: bincode::serialize(&self.local_node).map_err(
-                                            |e| {
+                                        value_bytes: {
+                                            let mut bytes = Vec::new();
+                                            self.local_node.encode(&mut bytes).map_err(|e| {
                                                 NetworkError::MessageError(format!(
                                                     "Failed to serialize node info: {e}"
                                                 ))
-                                            },
-                                        )?,
+                                            })?;
+                                            bytes
+                                        },
                                         correlation_id: payload.correlation_id.clone(),
                                     }],
                                 };
@@ -1126,7 +1138,7 @@ impl QuicTransportImpl {
             })?;
 
         // Deserialize the message
-        bincode::deserialize(&message_data).map_err(|e| {
+        NetworkMessage::decode(message_data.as_slice()).map_err(|e| {
             NetworkError::MessageError(format!("Failed to deserialize handshake message: {e}"))
         })
     }
@@ -1308,7 +1320,7 @@ impl QuicTransportImpl {
             .map_err(|e| NetworkError::MessageError(format!("Failed to read message data: {e}")))?;
 
         // Deserialize the message
-        let message: NetworkMessage = bincode::deserialize(&message_data).map_err(|e| {
+        let message = NetworkMessage::decode(message_data.as_slice()).map_err(|e| {
             NetworkError::MessageError(format!("Failed to deserialize message: {e}"))
         })?;
 
@@ -1759,7 +1771,7 @@ impl QuicTransportImpl {
             })?;
 
         // Deserialize the response message
-        let message: NetworkMessage = bincode::deserialize(&message_data).map_err(|e| {
+        let message = NetworkMessage::decode(message_data.as_slice()).map_err(|e| {
             NetworkError::MessageError(format!(
                 "Failed to deserialize response for {correlation_id}: {e}"
             ))

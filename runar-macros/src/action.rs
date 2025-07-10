@@ -133,7 +133,7 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             None,
         );
         input_properties_map_tokens.push(quote! {
-            properties_map.insert(#param_name_str.to_string(), Box::new(#field_schema_tokens));
+            properties_map.insert(#param_name_str.to_string(), #field_schema_tokens);
         });
 
         if !is_option_for_schema_generation {
@@ -146,12 +146,13 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut properties_map = ::std::collections::HashMap::new();
             #(#input_properties_map_tokens)*
             let required_fields = vec![#(#required_input_fields_tokens),*];
-            let final_required = if required_fields.is_empty() { None } else { Some(required_fields) };
-            Some(::runar_common::types::schemas::FieldSchema::object(
+            let mut schema = ::runar_common::types::schemas::FieldSchema::new(
                 "input_payload",
-                properties_map,
-                final_required
-            ))
+                ::runar_common::types::schemas::SchemaDataType::OBJECT
+            );
+            schema.properties = properties_map;
+            schema.required = required_fields;
+            Some(schema)
         }}
     } else {
         quote!(None)
@@ -378,8 +379,11 @@ fn generate_field_schema_for_type(
         let items_schema_tokens =
             generate_field_schema_for_type("item", inner_ty_for_vec, false, None);
         base_schema_constructor_call = quote! {
-            ::runar_common::types::schemas::FieldSchema::array(#name_literal, Box::new(#items_schema_tokens))
+            ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::ARRAY)
         };
+        additional_fields_setup.extend(quote! {
+            schema.items = Some(Box::new(#items_schema_tokens));
+        });
     }
     // Handle Path types (structs, primitives)
     else if let syn::Type::Path(type_path) = ty {
@@ -388,37 +392,30 @@ fn generate_field_schema_for_type(
 
         match type_name_str.as_str() {
             "String" => {
-                base_schema_constructor_call =
-                    quote! { ::runar_common::types::schemas::FieldSchema::string(#name_literal) }
+                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::STRING) }
             }
             "i32" | "isize" => {
-                base_schema_constructor_call =
-                    quote! { ::runar_common::types::schemas::FieldSchema::integer(#name_literal) }
+                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::INT32) }
             }
             "i64" => {
-                base_schema_constructor_call =
-                    quote! { ::runar_common::types::schemas::FieldSchema::long(#name_literal) }
+                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::INT64) }
             }
             "f32" => {
-                base_schema_constructor_call =
-                    quote! { ::runar_common::types::schemas::FieldSchema::float(#name_literal) }
+                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::FLOAT) }
             }
             "f64" => {
-                base_schema_constructor_call =
-                    quote! { ::runar_common::types::schemas::FieldSchema::double(#name_literal) }
+                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::DOUBLE) }
             }
             "bool" => {
-                base_schema_constructor_call =
-                    quote! { ::runar_common::types::schemas::FieldSchema::boolean(#name_literal) }
+                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::BOOLEAN) }
             }
             // TODO: Add other specific types like Timestamp if they have constructors
             _ => {
                 // Default to Object for unknown structs or complex types
                 // For struct types, ideally, we would introspect fields here.
                 // For now, creating an empty properties map for generic objects.
-                let properties_map = quote! { ::std::collections::HashMap::new() };
                 base_schema_constructor_call = quote! {
-                    ::runar_common::types::schemas::FieldSchema::object(#name_literal, #properties_map, None)
+                    ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::OBJECT)
                 };
             }
         };
@@ -426,7 +423,7 @@ fn generate_field_schema_for_type(
     // Fallback for other unknown types
     else {
         base_schema_constructor_call = quote! {
-            ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::Any)
+            ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::ANY)
         };
     }
 
@@ -495,7 +492,7 @@ fn generate_register_action_method(
     let result_handling = if type_name == "()" {
         quote! {
             // For () return type, convert to ArcValue::null()
-            Ok(runar_common::types::ArcValue::null())
+            Ok(runar_serializer::ArcValue::null())
         }
     } else if type_name == "ArcValue" {
         // Check if the result is already an ArcValue
@@ -506,13 +503,13 @@ fn generate_register_action_method(
     } else if *is_primitive {
         quote! {
             // Convert the primitive result to ArcValue
-            let value_type = runar_common::types::ArcValue::new_primitive(result);
+            let value_type = runar_serializer::ArcValue::new_primitive(result);
             Ok(value_type)
         }
     } else {
         quote! {
             // Convert the complex result to ArcValue using from_struct
-            let value_type = runar_common::types::ArcValue::from_struct(result);
+            let value_type = runar_serializer::ArcValue::from_struct(result);
             Ok(value_type)
         }
     };
@@ -531,8 +528,8 @@ fn generate_register_action_method(
             let self_clone = self.clone();
 
             // Create the action handler as an Arc to match what the register_action expects
-            let handler = std::sync::Arc::new(move |params_opt: Option<runar_common::types::ArcValue>, #handler_request_ctx_ident: runar_node::services::RequestContext|
-                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<runar_common::types::ArcValue, anyhow::Error>> + Send>> {
+            let handler = std::sync::Arc::new(move |params_opt: Option<runar_serializer::ArcValue>, #handler_request_ctx_ident: runar_node::services::RequestContext|
+                -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<runar_serializer::ArcValue, anyhow::Error>> + Send>> {
                 let inner_self = self_clone.clone();
 
                 Box::pin(async move {
@@ -546,8 +543,8 @@ fn generate_register_action_method(
                                 return Err(anyhow!("No parameters provided"));
                             } else {
                                 // No parameters expected, so create an empty map
-                                runar_common::types::ArcValue::new_map(
-                                    std::collections::HashMap::<String, runar_common::types::ArcValue>::new()
+                                runar_serializer::ArcValue::new_map(
+                                    std::collections::HashMap::<String, runar_serializer::ArcValue>::new()
                                 )
                             }
                         }
@@ -617,7 +614,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
             let #param_ident: #param_type = {
                 // First try to extract from a map if the payload is a map
                 let mut params_value_clone = params_value.clone();
-                let map_result = params_value_clone.as_map_ref::<String, runar_common::types::ArcValue>();
+                let map_result = params_value_clone.as_map_ref::<String, runar_serializer::ArcValue>();
                 match map_result {
                     Ok(map_ref) => {
                         // If it's a map, try to get the parameter by name
@@ -674,7 +671,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
     // Always treat the payload as Map<String, ArcValue>. This supports both homogeneous
     // and heterogeneous value types in a single, predictable path.
     extractions.extend(quote! {
-        let params_map_ref = match params_value.as_map_ref::<String, runar_common::types::ArcValue>() {
+        let params_map_ref = match params_value.as_map_ref::<String, runar_serializer::ArcValue>() {
             Ok(map_ref) => map_ref,
             Err(err) => {
                 ctx.error(format!(

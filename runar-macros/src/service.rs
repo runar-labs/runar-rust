@@ -174,6 +174,8 @@ fn format_type_string(type_str: &str) -> Option<String> {
         // Primitive types
         "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
         | "usize" | "f32" | "f64" | "bool" | "char" | "()" | "String" => None,
+        // Skip ArcValue as it doesn't implement prost::Message and Default
+        "ArcValue" | "runar_serializer::ArcValue" => None,
         _ => Some(formatted),
     }
 }
@@ -256,6 +258,33 @@ fn generate_abstract_service_impl(
         }
     };
 
+    // Generate per-type registration or skip tokens depending on whether the type is a plain struct
+    let register_tokens = sorted_types
+        .iter()
+        .map(|t| {
+            let type_ident = syn::parse_str::<syn::Type>(t)
+                .unwrap_or_else(|_| panic!("Failed to parse type: {t}"));
+
+            // Very simple container detection based on the formatted type string. This avoids
+            // attempting to register container types like Vec<...> or HashMap<..., ...> which do
+            // not implement `prost::Message` and therefore fail to compile when passed to
+            // `serializer.register::<T>()`.
+            if t.contains("Vec") || t.contains("HashMap") {
+                // Skip explicit registration – converters for container types are provided by the
+                // serializer itself during initialisation.
+                quote! {
+                    context.debug(format!("Skipping registration for container type {}", stringify!(#type_ident)));
+                }
+            } else {
+                // Plain struct / enum that should implement `prost::Message` or `RunarEncrypt`.
+                quote! {
+                    context.debug(format!("Registering type {}", stringify!(#type_ident)));
+                    serializer.register::<#type_ident>()?;
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
     quote! {
         #[async_trait::async_trait]
         impl runar_node::services::abstract_service::AbstractService  for #struct_type {
@@ -315,15 +344,11 @@ fn generate_abstract_service_impl(
                 // Log all the collected types
                 #type_collection_code
 
-                // Register each type with the serializer
-                #({
-                    context.debug(format!("Registering type: {}", stringify!(#type_idents)));
-                })*
-                // Print all types being registered for macro transparency
+                // Register each collected type, skipping container types handled by built-in converters
                 #join_debug_code
-                #({
-                    serializer.register::<#type_idents>()?;
-                })*
+
+                // Auto-generated per-type registration logic
+                #(#register_tokens)*
 
                 Ok(())
             }

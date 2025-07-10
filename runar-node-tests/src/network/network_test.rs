@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use runar_node::network::transport::{NetworkTransport, NetworkMessage, PeerId, MessageHandler};
 use runar_node::network::transport::{NetworkError, ConnectionCallback};
 use runar_node::network::discovery::{NodeDiscovery, NodeInfo, DiscoveryOptions, DiscoveryListener};
-use runar_common::types::{ValueType, ServiceMetadata, ActionMetadata, EventMetadata, FieldSchema, SchemaDataType};
+use runar_node::types::{ValueType, ServiceMetadata, ActionMetadata, EventMetadata, FieldSchema, SchemaDataType};
 use runar_common::Logger;
 use runar_node::network::transport::peer_registry::PeerRegistry;
 

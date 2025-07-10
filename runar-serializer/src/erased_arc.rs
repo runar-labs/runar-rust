@@ -206,13 +206,13 @@ impl ErasedArc {
     pub fn from_value<T: 'static + fmt::Debug + Send + Sync>(value: T) -> Self {
         // Use TypeId for a more reliable check for the lazy data struct
         let is_lazy_value =
-            TypeId::of::<T>() == TypeId::of::<crate::types::arc_value::LazyDataWithOffset>();
+            TypeId::of::<T>() == TypeId::of::<super::arc_value::LazyDataWithOffset>();
 
         // Need to get the type name before moving the value
         let type_name_override = if is_lazy_value {
             // Cast to Any first, then downcast specifically to LazyDataWithOffset
             (&value as &dyn Any)
-                .downcast_ref::<crate::types::arc_value::LazyDataWithOffset>()
+                .downcast_ref::<super::arc_value::LazyDataWithOffset>()
                 .map(|lazy| lazy.type_name.clone())
         } else {
             None
@@ -380,6 +380,8 @@ impl ErasedArc {
                     || (e_value.contains("i64") && a_value.contains("i64"))
                     || (e_value.contains("f64") && a_value.contains("f64"))
                     || (e_value.contains("bool") && a_value.contains("bool"))
+                    || e_value.contains("ArcValue")
+                    || a_value.contains("ArcValue")
                     // Handle when one side has a fully qualified path and the other has a simple type name
                     || compare_type_names(&e_value, &a_value);
 
@@ -419,13 +421,13 @@ impl ErasedArc {
     }
 
     /// Directly get the LazyDataWithOffset when we know this contains one
-    pub fn get_lazy_data(&self) -> Result<Arc<crate::types::arc_value::LazyDataWithOffset>> {
+    pub fn get_lazy_data(&self) -> Result<Arc<super::arc_value::LazyDataWithOffset>> {
         if !self.is_lazy {
             return Err(anyhow!("Value is not lazy (is_lazy flag is false)"));
         }
 
         // Since we know it's lazy based on the flag, directly extract it
-        let ptr = self.reader.ptr() as *const crate::types::arc_value::LazyDataWithOffset;
+        let ptr = self.reader.ptr() as *const super::arc_value::LazyDataWithOffset;
 
         let arc = unsafe {
             // Safety: We trust that when is_lazy is true, the pointed value is LazyDataWithOffset
@@ -468,14 +470,42 @@ pub fn compare_type_names(a: &str, b: &str) -> bool {
         return true;
     }
 
+    // Special case: if either type contains ArcValue as the value of a HashMap, consider compatible
+    if a.contains("HashMap")
+        && b.contains("HashMap")
+        && (a.contains("ArcValue") || b.contains("ArcValue"))
+    {
+        // Ensure keys are same (String) if needed
+        return true;
+    }
+
     false
 }
 
 impl ErasedArc {
     /// Compare the actual value behind the erased arc for equality
     pub fn eq_value(&self, other: &ErasedArc) -> bool {
-        // For now, compare type names and pointer equality as a stub.
-        // A robust implementation should downcast and compare value contents for known types.
-        self.type_name() == other.type_name() && self.reader.ptr() == other.reader.ptr()
+        // First, ensure type compatibility (ignoring namespaces)
+        if !compare_type_names(self.type_name(), other.type_name()) {
+            return false;
+        }
+
+        // Try common primitive & standard types
+        macro_rules! try_downcast_eq {
+            ($ty:ty) => {
+                if let (Ok(left), Ok(right)) = (self.as_arc::<$ty>(), other.as_arc::<$ty>()) {
+                    return *left == *right;
+                }
+            };
+        }
+
+        try_downcast_eq!(String);
+        try_downcast_eq!(bool);
+        try_downcast_eq!(i32);
+        try_downcast_eq!(i64);
+        try_downcast_eq!(f64);
+
+        // Fallback to pointer equality when we can't compare contents safely
+        self.reader.ptr() == other.reader.ptr()
     }
 }

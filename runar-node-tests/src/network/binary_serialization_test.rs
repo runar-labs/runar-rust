@@ -1,12 +1,15 @@
 use anyhow::Result;
 use runar_common::{
-    types::{ArcValue, SerializerRegistry},
     Component, Logger,
+};
+use runar_serializer::{
+    ArcValue, SerializerRegistry,
 };
 use runar_node::network::transport::{NetworkMessage, NetworkMessagePayloadItem};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use prost::Message;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct TestStruct {
@@ -35,12 +38,13 @@ fn test_message_payload_item_serialization() -> Result<()> {
         "correlation-123".to_string(),
     );
 
-    // Serialize the payload item
-    let serialized = bincode::serialize(&payload_item)?;
+    // Serialize the payload item using protobuf
+    let mut serialized = Vec::new();
+    payload_item.encode(&mut serialized)?;
     println!("Serialized payload item to {} bytes", serialized.len());
 
-    // Deserialize the payload item
-    let deserialized: NetworkMessagePayloadItem = bincode::deserialize(&serialized)?;
+    // Deserialize the payload item using protobuf
+    let deserialized = NetworkMessagePayloadItem::decode(&serialized[..])?;
 
     // Verify the data matches
     assert_eq!(deserialized.path, "test/path");
@@ -88,12 +92,13 @@ fn test_network_message_serialization() -> Result<()> {
         payloads: vec![payload_item],
     };
 
-    // Serialize the message
-    let serialized = bincode::serialize(&message)?;
+    // Serialize the message using protobuf
+    let mut serialized = Vec::new();
+    message.encode(&mut serialized)?;
     println!("Serialized network message to {} bytes", serialized.len());
 
-    // Deserialize the message
-    let deserialized: NetworkMessage = bincode::deserialize(&serialized)?;
+    // Deserialize the message using protobuf
+    let deserialized = NetworkMessage::decode(&serialized[..])?;
 
     // Verify the data matches
     assert_eq!(deserialized.source_node_id, source_id);
@@ -170,15 +175,16 @@ fn test_struct_serialization_in_network_message() -> Result<()> {
         payloads: vec![payload_item],
     };
 
-    // Serialize the entire message using bincode
-    let serialized_message = bincode::serialize(&message)?;
+    // Serialize the entire message using protobuf
+    let mut serialized_message = Vec::new();
+    message.encode(&mut serialized_message)?;
     println!(
         "Serialized struct-based network message to {} bytes",
         serialized_message.len()
     );
 
-    // Deserialize the message
-    let deserialized_message: NetworkMessage = bincode::deserialize(&serialized_message)?;
+    // Deserialize the message using protobuf
+    let deserialized_message = NetworkMessage::decode(&serialized_message[..])?;
 
     // Deserialize the value bytes back to ArcValue
     let mut deserialized_value = registry.deserialize_value(Arc::from(
@@ -277,15 +283,16 @@ fn test_multiple_struct_types_in_message() -> Result<()> {
         payloads: vec![user_payload, product_payload],
     };
 
-    // Serialize the entire message
-    let serialized_message = bincode::serialize(&message)?;
+    // Serialize the entire message using protobuf
+    let mut serialized_message = Vec::new();
+    message.encode(&mut serialized_message)?;
     println!(
         "Serialized multi-struct message to {} bytes",
         serialized_message.len()
     );
 
-    // Deserialize the message
-    let deserialized_message: NetworkMessage = bincode::deserialize(&serialized_message)?;
+    // Deserialize the message using protobuf
+    let deserialized_message = NetworkMessage::decode(&serialized_message[..])?;
 
     // Deserialize the value bytes back to ArcValue
     let mut deserialized_user_value = registry.deserialize_value(Arc::from(
@@ -390,15 +397,16 @@ fn test_various_types_in_network_messages() -> Result<()> {
         payloads: vec![struct_payload, map_payload, array_payload],
     };
 
-    // Serialize the message
-    let serialized = bincode::serialize(&message)?;
+    // Serialize the message using protobuf
+    let mut serialized = Vec::new();
+    message.encode(&mut serialized)?;
     println!(
         "Serialized network message with all types to {} bytes",
         serialized.len()
     );
 
-    // Deserialize the message
-    let deserialized: NetworkMessage = bincode::deserialize(&serialized)?;
+    // Deserialize the message using protobuf
+    let deserialized = NetworkMessage::decode(&serialized[..])?;
 
     // Deserialize the value bytes back to ArcValue for each payload
     let mut deserialized_struct_value =

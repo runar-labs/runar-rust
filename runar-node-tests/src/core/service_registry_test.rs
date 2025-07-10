@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValue;
+use runar_serializer::ArcValue;
 use runar_node::routing::TopicPath;
 use runar_node::services::abstract_service::ServiceState;
 use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
