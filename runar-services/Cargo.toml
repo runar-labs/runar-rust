@@ -19,6 +19,7 @@ tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
 runar_common = { path = "../runar-common", features = ["abstract_service"] }
 runar_node = { path = "../runar-node" }
 hex = "0.4"
+runar-serializer = { path = "../runar-serializer" }
 
 [dev-dependencies]
 tempfile = "3.10"

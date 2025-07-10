@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use runar_common::types::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_node::types::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::discovery::NodeInfo;
@@ -12,6 +12,7 @@ use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
     NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
 };
+use runar_serializer::{ArcValue, SerializerRegistry};
 
 /// This test ensures the transport layer properly handles:
 /// 1. Bidirectional streams for request-response patterns
@@ -457,13 +458,21 @@ async fn test_quic_transport_complete_api_validation(
         )
     };
 
+    let registry = SerializerRegistry::with_defaults(logger.clone());
+
+    let mut map = std::collections::HashMap::new();
+    map.insert("a".to_string(), ArcValue::new_primitive(5));
+    map.insert("b".to_string(), ArcValue::new_primitive(3));
+    let arc_value = ArcValue::from_map(map);
+    let value_bytes = registry.serialize_value(&arc_value)?;
+
     let request_message = NetworkMessage {
         source_node_id: compact_id(&request_sender_info.node_public_key),
         destination_node_id: compact_id(&request_receiver_info.node_public_key),
         message_type: "REQUEST".to_string(),
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/add".to_string(),
-            value_bytes: bincode::serialize(&serde_json::json!({"a": 5, "b": 3})).unwrap(),
+            value_bytes: value_bytes.to_vec(),
             correlation_id: "math-request-1".to_string(),
         }],
     };
@@ -483,13 +492,18 @@ async fn test_quic_transport_complete_api_validation(
     );
     drop(receiver_msgs);
 
+    let mut map = std::collections::HashMap::new();
+    map.insert("result".to_string(), ArcValue::new_primitive(8));
+    let arc_value_result = ArcValue::from_map(map);
+    let value_bytes_result = registry.serialize_value(&arc_value_result)?;
+
     let response_message = NetworkMessage {
         source_node_id: compact_id(&request_receiver_info.node_public_key),
         destination_node_id: compact_id(&request_sender_info.node_public_key),
         message_type: "RESPONSE".to_string(),
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/add".to_string(),
-            value_bytes: bincode::serialize(&serde_json::json!({"result": 8})).unwrap(),
+            value_bytes: value_bytes_result.to_vec(),
             correlation_id: "math-request-1".to_string(),
         }],
     };
@@ -515,14 +529,19 @@ async fn test_quic_transport_complete_api_validation(
 
     logger.info("📡 Testing unidirectional event broadcasting...");
 
+    let mut map = std::collections::HashMap::new();
+    map.insert("operation".to_string(), ArcValue::new_primitive("add".to_string()));
+    map.insert("result".to_string(), ArcValue::new_primitive(8));
+    let arc_value_event = ArcValue::from_map(map);
+    let value_bytes_event = registry.serialize_value(&arc_value_event)?;
+
     let event_message = NetworkMessage {
         source_node_id: compact_id(&sender_info.node_public_key),
         destination_node_id: compact_id(&receiver_info.node_public_key),
         message_type: "EVENT".to_string(),
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/calculated".to_string(),
-            value_bytes: bincode::serialize(&serde_json::json!({"operation": "add", "result": 8}))
-                .unwrap(),
+            value_bytes: value_bytes_event.to_vec(),
             correlation_id: format!("event-{}", uuid::Uuid::new_v4()),
         }],
     };

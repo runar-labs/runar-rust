@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use runar_common::types::ArcValue;
 use runar_macros::{action, service, service_impl};
 use runar_node::services::RequestContext;
 
@@ -21,26 +20,26 @@ impl AccountService {
         &self,
         account_id: String,
         _ctx: &RequestContext,
-    ) -> Result<ArcValue> {
+    ) -> Result<f64> {
         // Placeholder implementation
         println!("AccountService: Called get_account_balance for account_id: {account_id}");
-        Ok(ArcValue::new_primitive(1234.56f64)) // Dummy balance
+        Ok(1234.56f64) // Dummy balance
     }
 
     // Example of another action, e.g., to create an account
     #[action(name = "create_account")]
     pub async fn create_account(
         &self,
-        user_id: String,
-        account_type: String,
+        name: String,
         initial_balance: f64,
         _ctx: &RequestContext,
     ) -> Result<Account> {
-        println!("AccountService: Creating account for user_id: {user_id} with type: {account_type} and balance: {initial_balance}");
+        println!(
+            "AccountService: Creating account with name: {name} and balance: {initial_balance}"
+        );
         Ok(Account {
             id: "acc_789".to_string(), // Dummy ID
-            user_id,
-            account_type,
+            name,
             balance: initial_balance,
         })
     }

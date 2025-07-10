@@ -5,7 +5,7 @@ use runar_serializer as rs;
 
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValue;
+use runar_serializer::{ArcValue, ValueCategory};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -33,9 +33,11 @@ pub struct TestProfile {
     pub created_at: u64,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, prost::Message)]
 struct PlainData {
+    #[prost(string, tag = "1")]
     pub value: String,
+    #[prost(uint32, tag = "2")]
     pub count: u32,
 }
 
@@ -46,7 +48,7 @@ struct PlainData {
 /// Build logger, key managers, label resolvers and a pair of serializer
 /// registries (mobile + node) that can encrypt/decrypt `TestProfile` and
 /// serialize `PlainData`.
-fn prepare_registries() -> Result<(rs::SerializerRegistry, rs::SerializerRegistry)> {
+fn prepare_registries() -> Result<(rs::SerializerRegistry, rs::SerializerRegistry, String)> {
     use rs::traits::{KeyScope, LabelKeyInfo};
 
     let logger = Arc::new(Logger::new_root(Component::System, "serializer-e2e"));
@@ -123,19 +125,19 @@ fn prepare_registries() -> Result<(rs::SerializerRegistry, rs::SerializerRegistr
         mobile_resolver.clone(),
     );
     mobile_registry.register_encryptable::<TestProfile>()?;
-    mobile_registry.register::<PlainData>()?;
+    mobile_registry.register_protobuf::<PlainData>()?;
 
     let mut node_registry =
         rs::SerializerRegistry::with_keystore(logger, node_mgr.clone(), node_resolver.clone());
     node_registry.register_encryptable::<TestProfile>()?;
-    node_registry.register::<PlainData>()?;
+    node_registry.register_protobuf::<PlainData>()?;
 
-    Ok((mobile_registry, node_registry))
+    Ok((mobile_registry, node_registry, network_id))
 }
 
 #[test]
 fn end_to_end_encryption() -> Result<()> {
-    let (mobile_registry, node_registry) = prepare_registries()?;
+    let (mobile_registry, node_registry, _network_id) = prepare_registries()?;
 
     // -------- Test data --------
     let profile = TestProfile {
@@ -157,13 +159,109 @@ fn end_to_end_encryption() -> Result<()> {
     // ---- Business-logic path (plain struct) ----
     let mut node_val = node_registry.deserialize_value(serialized.clone())?;
     let plain_at_node = node_val.as_struct_ref::<TestProfile>()?;
-    assert_eq!(plain_at_node.id, "user123");
-    assert_eq!(plain_at_node.user_private, ""); // user-only field hidden
+
+    // Check all fields in the decrypted struct
+    assert_eq!(plain_at_node.id, "user123", "ID should be preserved");
+    assert_eq!(
+        plain_at_node.name, "Alice",
+        "Name should be preserved (user+system+search scope)"
+    );
+    assert_eq!(
+        plain_at_node.email, "alice@example.com",
+        "Email should be preserved (user+system+search scope)"
+    );
+    assert_eq!(
+        plain_at_node.user_private, "",
+        "User-private field should be stripped (user-only scope)"
+    );
+    assert_eq!(
+        plain_at_node.created_at, 1_234_567_890,
+        "Created_at should be preserved (user+system+search scope)"
+    );
 
     // ---- Storage path (encrypted struct) ----
     let mut node_enc = node_registry.deserialize_value(serialized)?;
     let enc_at_node = node_enc.as_struct_ref::<EncryptedTestProfile>()?;
-    assert!(enc_at_node.user_encrypted.is_some());
+
+    // Check all fields in the encrypted struct
+    assert_eq!(
+        enc_at_node.id, "user123",
+        "ID should be preserved in encrypted struct"
+    );
+
+    // Check that user-private field is encrypted
+    assert!(
+        enc_at_node.user_encrypted.is_some(),
+        "User-private field should be encrypted"
+    );
+    if let Some(user_encrypted) = &enc_at_node.user_encrypted {
+        assert_eq!(
+            user_encrypted.label, "user",
+            "User-private field should have 'user' label"
+        );
+        assert!(
+            user_encrypted.envelope.is_some(),
+            "User-private field should have envelope data"
+        );
+        let envelope = user_encrypted
+            .envelope
+            .as_ref()
+            .expect("Envelope should be present");
+        assert!(
+            !envelope.encrypted_data.is_empty(),
+            "Envelope should have encrypted data"
+        );
+        assert_eq!(
+            envelope.network_id, "",
+            "Profile-scoped encryption should have empty network_id"
+        );
+        assert!(
+            envelope.network_encrypted_key.is_empty(),
+            "Profile-scoped encryption should have empty network encrypted key"
+        );
+        let profile_encrypted_keys = envelope.profile_encrypted_keys.clone();
+        assert_eq!(
+            profile_encrypted_keys.len(),
+            1,
+            "Envelope should have one profile encrypted key"
+        );
+        let user_key = profile_encrypted_keys
+            .get("user")
+            .expect("User key should be present");
+        assert!(!user_key.is_empty(), "User key should have encrypted data");
+    }
+
+    // Check that system fields are encrypted
+    assert!(
+        enc_at_node.system_encrypted.is_some(),
+        "System fields should be encrypted"
+    );
+    if let Some(system_encrypted) = &enc_at_node.system_encrypted {
+        assert_eq!(
+            system_encrypted.label, "system",
+            "System fields should have 'system' label"
+        );
+        assert!(
+            system_encrypted.envelope.is_some(),
+            "System fields should have envelope data"
+        );
+    }
+
+    // Check that search fields are encrypted
+    assert!(
+        enc_at_node.search_encrypted.is_some(),
+        "Search fields should be encrypted"
+    );
+    if let Some(search_encrypted) = &enc_at_node.search_encrypted {
+        assert_eq!(
+            search_encrypted.label, "search",
+            "Search fields should have 'search' label"
+        );
+        assert!(
+            search_encrypted.envelope.is_some(),
+            "Search fields should have envelope data"
+        );
+    }
 
     // Skipping direct keystore-based round-trip here; the registry path above already
     // ensures encryption and decryption succeed end-to-end.
@@ -172,7 +270,20 @@ fn end_to_end_encryption() -> Result<()> {
     let bytes_plain = mobile_registry.serialize_value(&ArcValue::from_struct(plain.clone()))?;
     let mut plain_val = node_registry.deserialize_value(bytes_plain)?;
     let roundtrip_plain = plain_val.as_struct_ref::<PlainData>()?;
-    assert_eq!(&*roundtrip_plain, &plain);
+
+    // Check that PlainData fields are preserved exactly (no encryption)
+    assert_eq!(
+        roundtrip_plain.value, "test",
+        "PlainData.value should be preserved exactly"
+    );
+    assert_eq!(
+        roundtrip_plain.count, 42,
+        "PlainData.count should be preserved exactly"
+    );
+    assert_eq!(
+        &*roundtrip_plain, &plain,
+        "PlainData should round-trip exactly"
+    );
 
     Ok(())
 }
@@ -181,7 +292,7 @@ fn end_to_end_encryption() -> Result<()> {
 // deserializes/inspects it.
 #[test]
 fn end_to_end_encryption_arc_value() -> Result<()> {
-    let (mobile_registry, node_registry) = prepare_registries()?;
+    let (mobile_registry, node_registry, _network_id) = prepare_registries()?;
 
     let profile = TestProfile {
         id: "user123".into(),
@@ -196,21 +307,90 @@ fn end_to_end_encryption_arc_value() -> Result<()> {
 
     // Deserialize but keep as ArcValue
     let mut node_val = node_registry.deserialize_value(serialized.clone())?;
-    assert_eq!(
-        node_val.category,
-        runar_common::types::arc_value::ValueCategory::Struct
-    );
+    assert_eq!(node_val.category, ValueCategory::Struct);
 
     // Convert back to struct and verify contents (same as original test)
     let plain_at_node = node_val.as_struct_ref::<TestProfile>()?;
-    assert_eq!(plain_at_node.id, "user123");
-    assert_eq!(plain_at_node.name, "Alice");
-    assert_eq!(plain_at_node.user_private, ""); // should be stripped
+
+    // Check all fields in the decrypted struct (ArcValue path)
+    assert_eq!(
+        plain_at_node.id, "user123",
+        "ID should be preserved in ArcValue path"
+    );
+    assert_eq!(
+        plain_at_node.name, "Alice",
+        "Name should be preserved in ArcValue path (user+system+search scope)"
+    );
+    assert_eq!(
+        plain_at_node.email, "alice@example.com",
+        "Email should be preserved in ArcValue path (user+system+search scope)"
+    );
+    assert_eq!(
+        plain_at_node.user_private, "",
+        "User-private field should be stripped in ArcValue path (user-only scope)"
+    );
+    assert_eq!(
+        plain_at_node.created_at, 1_234_567_890,
+        "Created_at should be preserved in ArcValue path (user+system+search scope)"
+    );
 
     // A fresh deserialization to inspect the encrypted representation lazily.
     let mut node_enc_val = node_registry.deserialize_value(serialized)?;
     let enc_at_node = node_enc_val.as_struct_ref::<EncryptedTestProfile>()?;
-    assert!(enc_at_node.user_encrypted.is_some());
+
+    // Check all fields in the encrypted struct (ArcValue path)
+    assert_eq!(
+        enc_at_node.id, "user123",
+        "ID should be preserved in encrypted struct (ArcValue path)"
+    );
+
+    // Check that user-private field is encrypted
+    assert!(
+        enc_at_node.user_encrypted.is_some(),
+        "User-private field should be encrypted in ArcValue path"
+    );
+    if let Some(user_encrypted) = &enc_at_node.user_encrypted {
+        assert_eq!(
+            user_encrypted.label, "user",
+            "User-private field should have 'user' label in ArcValue path"
+        );
+        assert!(
+            user_encrypted.envelope.is_some(),
+            "User-private field should have envelope data in ArcValue path"
+        );
+    }
+
+    // Check that system fields are encrypted
+    assert!(
+        enc_at_node.system_encrypted.is_some(),
+        "System fields should be encrypted in ArcValue path"
+    );
+    if let Some(system_encrypted) = &enc_at_node.system_encrypted {
+        assert_eq!(
+            system_encrypted.label, "system",
+            "System fields should have 'system' label in ArcValue path"
+        );
+        assert!(
+            system_encrypted.envelope.is_some(),
+            "System fields should have envelope data in ArcValue path"
+        );
+    }
+
+    // Check that search fields are encrypted
+    assert!(
+        enc_at_node.search_encrypted.is_some(),
+        "Search fields should be encrypted in ArcValue path"
+    );
+    if let Some(search_encrypted) = &enc_at_node.search_encrypted {
+        assert_eq!(
+            search_encrypted.label, "search",
+            "Search fields should have 'search' label in ArcValue path"
+        );
+        assert!(
+            search_encrypted.envelope.is_some(),
+            "Search fields should have envelope data in ArcValue path"
+        );
+    }
 
     Ok(())
 }

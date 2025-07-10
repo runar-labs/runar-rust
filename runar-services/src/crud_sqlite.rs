@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use runar_common::types::{ArcValue, ValueCategory};
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
+use runar_serializer::{ArcValue, ValueCategory};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;

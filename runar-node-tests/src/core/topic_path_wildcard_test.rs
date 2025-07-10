@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValue;
+use runar_serializer::ArcValue;
 use runar_node::routing::TopicPath;
 use runar_node::services::EventContext;
 use runar_node::ServiceRegistry;

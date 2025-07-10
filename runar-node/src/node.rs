@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
-use runar_common::types::{ArcValue, EventMetadata, SerializerRegistry};
+use runar_common::types::EventMetadata;
 use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
+use runar_serializer::{ArcValue, SerializerRegistry};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -48,7 +49,7 @@ use crate::services::{
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
-use runar_common::types::AsArcValue;
+use runar_serializer::AsArcValue;
 
 /// Node Configuration
 ///

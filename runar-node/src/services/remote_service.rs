@@ -16,7 +16,8 @@ use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
 use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
-use runar_common::types::{ActionMetadata, ArcValue, SerializerRegistry, ServiceMetadata};
+use runar_common::types::{ActionMetadata, ServiceMetadata};
+use runar_serializer::{ArcValue, SerializerRegistry};
 
 /// Represents a service running on a remote node
 #[derive(Clone)]

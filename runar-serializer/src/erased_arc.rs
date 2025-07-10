@@ -206,13 +206,13 @@ impl ErasedArc {
     pub fn from_value<T: 'static + fmt::Debug + Send + Sync>(value: T) -> Self {
         // Use TypeId for a more reliable check for the lazy data struct
         let is_lazy_value =
-            TypeId::of::<T>() == TypeId::of::<crate::types::arc_value::LazyDataWithOffset>();
+            TypeId::of::<T>() == TypeId::of::<super::arc_value::LazyDataWithOffset>();
 
         // Need to get the type name before moving the value
         let type_name_override = if is_lazy_value {
             // Cast to Any first, then downcast specifically to LazyDataWithOffset
             (&value as &dyn Any)
-                .downcast_ref::<crate::types::arc_value::LazyDataWithOffset>()
+                .downcast_ref::<super::arc_value::LazyDataWithOffset>()
                 .map(|lazy| lazy.type_name.clone())
         } else {
             None
@@ -419,13 +419,13 @@ impl ErasedArc {
     }
 
     /// Directly get the LazyDataWithOffset when we know this contains one
-    pub fn get_lazy_data(&self) -> Result<Arc<crate::types::arc_value::LazyDataWithOffset>> {
+    pub fn get_lazy_data(&self) -> Result<Arc<super::arc_value::LazyDataWithOffset>> {
         if !self.is_lazy {
             return Err(anyhow!("Value is not lazy (is_lazy flag is false)"));
         }
 
         // Since we know it's lazy based on the flag, directly extract it
-        let ptr = self.reader.ptr() as *const crate::types::arc_value::LazyDataWithOffset;
+        let ptr = self.reader.ptr() as *const super::arc_value::LazyDataWithOffset;
 
         let arc = unsafe {
             // Safety: We trust that when is_lazy is true, the pointed value is LazyDataWithOffset

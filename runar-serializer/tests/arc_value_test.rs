@@ -1,4 +1,4 @@
-use super::arc_value::{ArcValue, ValueCategory};
+use runar_serializer::{ArcValue, ValueCategory};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;

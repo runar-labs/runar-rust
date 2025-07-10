@@ -2350,9 +2350,12 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "prost",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
  "serde",
  "serde_json",
@@ -3309,6 +3312,7 @@ dependencies = [
  "axum",
  "futures",
  "reqwest",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
@@ -3363,6 +3367,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "once_cell",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_node",
@@ -3377,11 +3382,14 @@ name = "runar-serializer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
+ "bincode",
  "log",
  "prost",
  "runar-keys",
  "runar-serializer-macros",
  "runar_common",
+ "rustc-hash 1.1.0",
  "serde",
  "serde_json",
 ]
@@ -3450,8 +3458,11 @@ dependencies = [
  "linkme",
  "once_cell",
  "proc-macro2",
+ "prost",
+ "prost-derive",
  "quote",
  "rand 0.8.5",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_node",
@@ -3461,6 +3472,15 @@ dependencies = [
  "syn 2.0.104",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "runar_macros_common"
+version = "0.1.0"
+dependencies = [
+ "runar-serializer",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3490,6 +3510,7 @@ dependencies = [
  "runar-serializer",
  "runar-test-utils",
  "runar_common",
+ "runar_macros_common",
  "rustls 0.23.28",
  "rustls-native-certs 0.6.3",
  "rustls-pemfile",
@@ -3515,6 +3536,7 @@ dependencies = [
  "async-trait",
  "futures",
  "hex",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
@@ -3993,9 +4015,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
  "tokio",
 ]

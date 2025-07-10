@@ -11,7 +11,8 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
-use runar_common::types::{ArcValue, EventMetadata};
+use runar_serializer::ArcValue;
+use runar_node::types::EventMetadata;
 use runar_node::routing::TopicPath;
 use runar_node::services::service_registry::ServiceRegistry;
 use runar_node::services::EventContext;

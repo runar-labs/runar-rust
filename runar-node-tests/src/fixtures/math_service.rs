@@ -9,12 +9,12 @@
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use runar_common::types::schemas::FieldSchema;
-use runar_common::types::ArcValue;
+use runar_node::types::schemas::FieldSchema;
+use runar_serializer::ArcValue;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use runar_common::types::schemas::SchemaDataType;
+use runar_node::types::schemas::SchemaDataType;
 use runar_node::services::abstract_service::AbstractService;
 use runar_node::services::EventRegistrationOptions;
 use runar_node::services::{LifecycleContext, RequestContext};

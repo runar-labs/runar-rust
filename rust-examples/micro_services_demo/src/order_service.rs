@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use runar_common::types::ArcValue;
 use runar_macros::{action, service, service_impl};
 use runar_node::services::RequestContext;
 
@@ -23,16 +22,16 @@ impl OrderService {
         product_id: String,
         quantity: u32,
         _ctx: &RequestContext,
-    ) -> Result<ArcValue> {
+    ) -> Result<Order> {
         // Placeholder implementation
         let _total_price = quantity as f64 * 10.0; // Dummy price calculation
         println!("OrderService: Called create_order for user_id: {user_id}, product_id: {product_id}, quantity: {quantity}");
-        Ok(ArcValue::from_struct(Order {
+        Ok(Order {
             id: "order_789".to_string(), // Dummy ID
             user_id,
             product_id,
             quantity,
             total_price: quantity as f64 * 10.0, // Dummy price calculation
-        }))
+        })
     }
 }

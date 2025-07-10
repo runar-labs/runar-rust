@@ -3,9 +3,9 @@
 // These tests verify that the Node properly handles requests
 // and delegates to the ServiceRegistry as needed.
 
-use runar_common::hmap;
-use runar_common::types::schemas::ServiceMetadata;
-use runar_common::types::ArcValue;
+use runar_node::types::schemas::ServiceMetadata;
+use runar_serializer::ArcValue;
+use runar_macros_common::hmap;
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_test_utils::create_node_test_config;

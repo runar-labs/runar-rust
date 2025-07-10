@@ -5,11 +5,12 @@
 
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
+use prost_derive::Message;
 use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
-use runar_common::{params, types::ArcValue};
 use runar_macros::{action, publish, service, service_impl, subscribe};
 use runar_node::services::{EventContext, RequestContext};
 use runar_node::AbstractService;
+use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc}; // Added for metadata testing
 
@@ -31,11 +32,15 @@ struct PreWrappedStruct {
     value: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Message)]
 struct User {
+    #[prost(int32, tag = "1")]
     id: i32,
+    #[prost(string, tag = "2")]
     name: String,
+    #[prost(string, tag = "3")]
     email: String,
+    #[prost(int32, tag = "4")]
     age: i32,
 }
 

@@ -26,6 +26,7 @@ runar_common = { path = "../runar-common" }
 runar-keys = { path = "../runar-keys" }
 runar-serializer = { path = "../runar-serializer" }
 
+
 # Network dependencies
 quinn = "0.11"
 bytes = "1.4.0"
@@ -59,5 +60,6 @@ default = []
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
 runar-test-utils = { path = "../runar-test-utils" }
+runar_macros_common = { path = "../runar-macros-common" }
 
 

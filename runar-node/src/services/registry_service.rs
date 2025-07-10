@@ -19,7 +19,7 @@ use crate::services::abstract_service::ServiceState;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::AbstractService;
 use runar_common::logging::Logger;
-use runar_common::types::ArcValue;
+use runar_serializer::ArcValue;
 
 /// Registry Info Service - provides information about registered services without holding state
 pub struct RegistryService {
@@ -282,13 +282,6 @@ impl AbstractService for RegistryService {
         context
             .logger
             .info("Registry Service initialization complete");
-
-        // registering custom types with the serializer
-        context
-            .serializer
-            .write()
-            .await
-            .register::<ServiceState>()?;
 
         Ok(())
     }

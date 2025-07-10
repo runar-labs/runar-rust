@@ -29,7 +29,6 @@ pub use network::{
 };
 
 // Re-export common macros for convenience
-pub use runar_common::vmap;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
