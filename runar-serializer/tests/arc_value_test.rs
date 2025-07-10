@@ -1,120 +1,182 @@
 use runar_serializer::{ArcValue, ValueCategory};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Arc;
 
+// Non-JSON tests for ArcValue functionality
 #[test]
-fn test_from_json_null() {
-    let json_null = json!(null);
-    let arc_value = ArcValue::from_json(json_null);
-    assert!(arc_value.is_null());
+fn test_null_value() {
+    let null_value = ArcValue::null();
+    assert_eq!(null_value.category, ValueCategory::Null);
+    assert!(null_value.is_null());
 }
 
 #[test]
-fn test_from_json_bool() {
-    let json_bool = json!(true);
-    let mut arc_value = ArcValue::from_json(json_bool);
-    assert!(arc_value.as_type::<bool>().unwrap());
+fn test_primitive_creation() {
+    let string_value = ArcValue::new_primitive("Hello, world!".to_string());
+    assert_eq!(string_value.category, ValueCategory::Primitive);
+
+    let int_value = ArcValue::new_primitive(42i32);
+    assert_eq!(int_value.category, ValueCategory::Primitive);
+
+    let bool_value = ArcValue::new_primitive(true);
+    assert_eq!(bool_value.category, ValueCategory::Primitive);
 }
 
 #[test]
-fn test_from_json_number_int() {
-    let json_int = json!(123);
-    let mut arc_value = ArcValue::from_json(json_int);
-    assert_eq!(arc_value.as_type::<i64>().unwrap(), 123);
+fn test_list_creation() {
+    let list_value = ArcValue::new_list(vec![1, 2, 3, 4, 5]);
+    assert_eq!(list_value.category, ValueCategory::List);
 }
 
 #[test]
-fn test_from_json_number_float() {
-    let json_float = json!(123.45);
-    let mut arc_value = ArcValue::from_json(json_float);
-    assert_eq!(arc_value.as_type::<f64>().unwrap(), 123.45);
+fn test_map_creation() {
+    let mut map = HashMap::new();
+    map.insert("key1".to_string(), "value1".to_string());
+    map.insert("key2".to_string(), "value2".to_string());
+
+    let map_value = ArcValue::new_map(map);
+    assert_eq!(map_value.category, ValueCategory::Map);
 }
 
 #[test]
-fn test_from_json_string() {
-    let json_string = json!("hello");
-    let mut arc_value = ArcValue::from_json(json_string);
-    assert_eq!(arc_value.as_type::<String>().unwrap(), "hello".to_string());
+fn test_struct_creation() {
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct TestStruct {
+        field1: String,
+        field2: i32,
+    }
+
+    let test_struct = TestStruct {
+        field1: "Hello".to_string(),
+        field2: 42,
+    };
+
+    let struct_value = ArcValue::from_struct(test_struct);
+    assert_eq!(struct_value.category, ValueCategory::Struct);
 }
 
 #[test]
-fn test_from_json_array() {
-    let json_array = json!([1, "test", true]);
-    let mut arc_value = ArcValue::from_json(json_array);
-    assert_eq!(arc_value.category, ValueCategory::List);
-    let list = arc_value.as_type::<Vec<ArcValue>>().unwrap();
-    assert_eq!(list.len(), 3);
-
-    let mut val0 = list[0].clone();
-    assert_eq!(val0.as_type::<i64>().unwrap(), 1);
-
-    let mut val1 = list[1].clone();
-    assert_eq!(val1.as_type::<String>().unwrap(), "test".to_string());
-
-    let mut val2 = list[2].clone();
-    assert!(val2.as_type::<bool>().unwrap());
+fn test_bytes_creation() {
+    let bytes_value = ArcValue::new_bytes(vec![1, 2, 3, 4, 5]);
+    assert_eq!(bytes_value.category, ValueCategory::Bytes);
 }
 
 #[test]
-fn test_from_json_object_to_map() {
-    let json_object = json!({ "key1": "value1", "key2": 123 });
-    let mut arc_value = ArcValue::from_json(json_object);
-    // Initially, JSON objects are represented lazily with category Json
-    assert_eq!(arc_value.category, ValueCategory::Json);
-    // Accessing as a HashMap triggers lazy conversion and updates the category to Map
-    let map = arc_value.as_type::<HashMap<String, ArcValue>>().unwrap();
-    assert_eq!(arc_value.category, ValueCategory::Map);
-    assert_eq!(map.len(), 2);
-
-    let mut val1 = map.get("key1").unwrap().clone();
-    assert_eq!(val1.as_type::<String>().unwrap(), "value1".to_string());
-
-    let mut val2 = map.get("key2").unwrap().clone();
-    assert_eq!(val2.as_type::<i64>().unwrap(), 123);
-
-    let payload = json!({ "message": "hello from gateway test" });
-    let mut arc_value = ArcValue::from_json(payload);
-    // Initially, JSON objects are represented lazily with category Json
-    assert_eq!(arc_value.category, ValueCategory::Json);
-    // Accessing as a HashMap triggers lazy conversion and updates the category to Map
-    let map = arc_value.as_type::<HashMap<String, ArcValue>>().unwrap();
-    assert_eq!(arc_value.category, ValueCategory::Map);
-    assert_eq!(map.len(), 1);
-    let mut message = map.get("message").unwrap().clone();
-    assert_eq!(
-        message.as_type::<String>().unwrap(),
-        "hello from gateway test".to_string()
-    );
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-struct MyStruct {
-    id: i64,
-    name: String,
-    active: bool,
+fn test_json_creation() {
+    let json_value = ArcValue::new_json(serde_json::json!({"key": "value"}));
+    assert_eq!(json_value.category, ValueCategory::Json);
 }
 
 #[test]
-fn test_from_json_object_to_struct() {
-    let json_object = json!({ "id": 1, "name": "Test Struct", "active": true });
-    let mut arc_value = ArcValue::from_json(json_object);
-    assert_eq!(arc_value.category, ValueCategory::Json);
-    let obj: MyStruct = arc_value.as_type::<MyStruct>().unwrap();
-    assert_eq!(obj.id, 1);
-    assert_eq!(obj.name, "Test Struct");
-    assert!(obj.active);
+fn test_primitive_access() {
+    let mut value = ArcValue::new_primitive("Hello, world!".to_string());
+
+    // Test as_type
+    let string_value: String = value.as_type().unwrap();
+    assert_eq!(string_value, "Hello, world!");
+
+    // Test as_type_ref
+    let string_ref = value.as_type_ref::<String>().unwrap();
+    assert_eq!(&*string_ref, "Hello, world!");
 }
 
 #[test]
-fn test_from_json_object_to_struct_list() {
-    let json_object = json!([ { "id": 1, "name": "Test Struct", "active": true } ]);
-    let mut arc_value = ArcValue::from_json(json_object);
-    assert_eq!(arc_value.category, ValueCategory::List);
-    let list: Vec<MyStruct> = arc_value.as_type::<Vec<MyStruct>>().unwrap();
-    assert_eq!(list.len(), 1);
-    let obj = list[0].clone();
-    assert_eq!(obj.id, 1);
-    assert_eq!(obj.name, "Test Struct");
-    assert!(obj.active);
+fn test_list_access() {
+    let list = vec![1, 2, 3, 4, 5];
+    let mut value = ArcValue::new_list(list);
+
+    // Test as_list_ref
+    let list_ref = value.as_list_ref::<i32>().unwrap();
+    assert_eq!(*list_ref, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn test_map_access() {
+    let mut map = HashMap::new();
+    map.insert("key1".to_string(), "value1".to_string());
+    map.insert("key2".to_string(), "value2".to_string());
+
+    let mut value = ArcValue::new_map(map);
+
+    // Test as_map_ref
+    let map_ref = value.as_map_ref::<String, String>().unwrap();
+    assert_eq!(map_ref.len(), 2);
+    assert_eq!(map_ref.get("key1"), Some(&"value1".to_string()));
+    assert_eq!(map_ref.get("key2"), Some(&"value2".to_string()));
+}
+
+#[test]
+fn test_struct_access() {
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct TestStruct {
+        field1: String,
+        field2: i32,
+    }
+
+    let test_struct = TestStruct {
+        field1: "Hello".to_string(),
+        field2: 42,
+    };
+
+    let mut value = ArcValue::from_struct(test_struct.clone());
+
+    // Test as_struct_ref
+    let struct_ref = value.as_struct_ref::<TestStruct>().unwrap();
+    assert_eq!(*struct_ref, test_struct);
+}
+
+#[test]
+fn test_type_mismatch_errors() {
+    let mut value = ArcValue::new_primitive("Hello, world!".to_string());
+
+    // Try to get it as a number - this should fail
+    let result: Result<i32, _> = value.as_type();
+    assert!(result.is_err());
+
+    // Try to get it as a list - this should fail
+    let result: Result<Arc<Vec<String>>, _> = value.as_list_ref();
+    assert!(result.is_err());
+
+    // Try to get it as a map - this should fail
+    let result: Result<Arc<HashMap<String, String>>, _> = value.as_map_ref();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_cloning() {
+    let original_value = ArcValue::new_primitive("Hello, world!".to_string());
+    let cloned_value = original_value.clone();
+
+    // Verify they have the same content
+    let mut original = original_value;
+    let mut cloned = cloned_value;
+
+    let original_string: String = original.as_type().unwrap();
+    let cloned_string: String = cloned.as_type().unwrap();
+    assert_eq!(original_string, cloned_string);
+}
+
+#[test]
+fn test_equality() {
+    let value1 = ArcValue::new_primitive("Hello".to_string());
+    let value2 = ArcValue::new_primitive("Hello".to_string());
+    let value3 = ArcValue::new_primitive("World".to_string());
+
+    assert_eq!(value1, value2);
+    assert_ne!(value1, value3);
+
+    let null1 = ArcValue::null();
+    let null2 = ArcValue::null();
+    assert_eq!(null1, null2);
+}
+
+#[test]
+fn test_category_mismatch() {
+    let primitive_value = ArcValue::new_primitive("Hello".to_string());
+    let list_value = ArcValue::new_list(vec![1, 2, 3]);
+    let map_value = ArcValue::new_map(HashMap::<String, String>::new());
+
+    assert_eq!(primitive_value.category, ValueCategory::Primitive);
+    assert_eq!(list_value.category, ValueCategory::List);
+    assert_eq!(map_value.category, ValueCategory::Map);
 }

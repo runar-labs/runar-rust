@@ -86,6 +86,9 @@ impl SerializerRegistry {
             .unwrap();
         self.register_protobuf::<crate::map_types::StringToArcValueMap>()
             .unwrap();
+        self.register::<crate::map_types::StringToBytesMap>().ok();
+        self.register::<crate::vec_types::VecHashMapStringBytes>()
+            .ok();
     }
 
     /// Register all built-in map and vector types
@@ -379,7 +382,256 @@ impl SerializerRegistry {
             + Sync
             + Default,
     {
-        self.register_with_encryption::<T>()
+        // Register the base encrypted type
+        self.register_with_encryption::<T>()?;
+
+        // Automatically register composite types containing this encrypted type
+        self.register_encrypted_composite_types::<T>()?;
+
+        Ok(())
+    }
+
+    /// Register composite types containing an encrypted type
+    fn register_encrypted_composite_types<T>(&mut self) -> Result<()>
+    where
+        T: 'static
+            + RunarEncrypt
+            + serde::Serialize
+            + for<'de> serde::Deserialize<'de>
+            + Clone
+            + Send
+            + Sync
+            + Default,
+        T::Encrypted: 'static
+            + prost::Message
+            + RunarDecrypt<Decrypted = T>
+            + serde::Serialize
+            + for<'de> serde::Deserialize<'de>
+            + Clone
+            + Send
+            + Sync
+            + Default,
+    {
+        // Register HashMap<String, T> converter
+        self.register_encrypted_hashmap_converter::<T>()?;
+
+        // Register Vec<HashMap<String, T>> converter
+        self.register_encrypted_vec_hashmap_converter::<T>()?;
+
+        Ok(())
+    }
+
+    /// Register converter for HashMap<String, T> where T is encrypted
+    fn register_encrypted_hashmap_converter<T>(&mut self) -> Result<()>
+    where
+        T: 'static
+            + RunarEncrypt
+            + serde::Serialize
+            + for<'de> serde::Deserialize<'de>
+            + Clone
+            + Send
+            + Sync
+            + Default,
+        T::Encrypted: 'static
+            + prost::Message
+            + RunarDecrypt<Decrypted = T>
+            + serde::Serialize
+            + for<'de> serde::Deserialize<'de>
+            + Clone
+            + Send
+            + Sync
+            + Default,
+    {
+        use std::collections::HashMap;
+
+        let type_name = std::any::type_name::<HashMap<String, T>>();
+
+        let keystore = self.keystore.clone();
+        let label_resolver = self.label_resolver.clone();
+
+        // Serializer: HashMap<String, T> -> serialized bytes using StringToBytesMap
+        let serializer = Box::new(move |value: &dyn Any| -> Result<Vec<u8>> {
+            if let Some(hashmap) = value.downcast_ref::<HashMap<String, T>>() {
+                let mut bytes_map: HashMap<String, Vec<u8>> = HashMap::new();
+                for (key, val) in hashmap {
+                    if let (Some(ref ks), Some(ref lr)) = (&keystore, &label_resolver) {
+                        let encrypted = val.encrypt_with_keystore(ks.as_ref(), lr.as_ref())?;
+                        let mut buf = Vec::new();
+                        prost::Message::encode(&encrypted, &mut buf)?;
+                        bytes_map.insert(key.clone(), buf);
+                    } else {
+                        return Err(anyhow!(
+                            "Cannot serialize encrypted type without keystore and label resolver"
+                        ));
+                    }
+                }
+                let map_proto = crate::map_types::StringToBytesMap::from_hashmap(bytes_map);
+                let mut buf = Vec::new();
+                prost::Message::encode(&map_proto, &mut buf)?;
+                Ok(buf)
+            } else {
+                Err(anyhow!(
+                    "Type mismatch during HashMap<String, T> serialization"
+                ))
+            }
+        });
+
+        // Prepare deserializers for lazy values
+        let plain_type_name = std::any::type_name::<T>().to_string();
+        let enc_type_name = std::any::type_name::<T::Encrypted>().to_string();
+        let plain_deser_opt = self.get_deserializer_arc(&plain_type_name);
+        let enc_deser_opt = self.get_deserializer_arc(&enc_type_name);
+
+        // Build lazy deserializer returning HashMap<String, ArcValue>
+        let av_deserializer =
+            DeserializerFnWrapper::new(move |bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
+                // Decode outer bytes map
+                let map_proto: crate::map_types::StringToBytesMap = prost::Message::decode(bytes)?;
+                let mut result: HashMap<String, crate::ArcValue> = HashMap::new();
+
+                for (key, enc_bytes) in map_proto.entries {
+                    // Construct synthetic header: category=Struct (0x04), type length, type bytes, payload bytes
+                    let mut buf: Vec<u8> =
+                        Vec::with_capacity(2 + plain_type_name.len() + enc_bytes.len());
+                    buf.push(0x04); // ValueCategory::Struct
+                    buf.push(plain_type_name.len() as u8);
+                    buf.extend_from_slice(plain_type_name.as_bytes());
+                    buf.extend_from_slice(&enc_bytes);
+
+                    let arc_buf: std::sync::Arc<[u8]> = std::sync::Arc::from(buf);
+                    let start_offset = 2 + plain_type_name.len();
+                    let end_offset = arc_buf.len();
+
+                    let lazy = crate::LazyDataWithOffset {
+                        type_name: plain_type_name.clone(),
+                        original_buffer: arc_buf.clone(),
+                        start_offset,
+                        end_offset,
+                        deserializer: plain_deser_opt.clone(),
+                        alias_deserializer: enc_deser_opt.clone(),
+                    };
+
+                    let erased = crate::ErasedArc::from_value(lazy);
+                    let av = crate::ArcValue::new(erased, crate::ValueCategory::Struct);
+                    result.insert(key, av);
+                }
+
+                Ok(Box::new(result))
+            });
+
+        self.register_custom_serializer(type_name, serializer)?;
+        self.register_custom_deserializer(type_name, av_deserializer)?;
+
+        Ok(())
+    }
+
+    /// Register converter for Vec<HashMap<String, T>> where T is encrypted
+    fn register_encrypted_vec_hashmap_converter<T>(&mut self) -> Result<()>
+    where
+        T: 'static
+            + RunarEncrypt
+            + serde::Serialize
+            + for<'de> serde::Deserialize<'de>
+            + Clone
+            + Send
+            + Sync
+            + Default,
+        T::Encrypted: 'static
+            + prost::Message
+            + RunarDecrypt<Decrypted = T>
+            + serde::Serialize
+            + for<'de> serde::Deserialize<'de>
+            + Clone
+            + Send
+            + Sync
+            + Default,
+    {
+        use std::collections::HashMap;
+
+        let type_name = std::any::type_name::<Vec<HashMap<String, T>>>();
+
+        let keystore = self.keystore.clone();
+        let label_resolver = self.label_resolver.clone();
+
+        // Serializer: Vec<HashMap<String, T>> -> serialized bytes using VecHashMapStringBytes
+        let serializer = Box::new(move |value: &dyn Any| -> Result<Vec<u8>> {
+            if let Some(vec_hashmap) = value.downcast_ref::<Vec<HashMap<String, T>>>() {
+                let mut vec_bytes_maps: Vec<HashMap<String, Vec<u8>>> = Vec::new();
+                for hashmap in vec_hashmap {
+                    let mut bytes_map = HashMap::new();
+                    for (key, val) in hashmap {
+                        if let (Some(ref ks), Some(ref lr)) = (&keystore, &label_resolver) {
+                            let encrypted = val.encrypt_with_keystore(ks.as_ref(), lr.as_ref())?;
+                            let mut buf = Vec::new();
+                            prost::Message::encode(&encrypted, &mut buf)?;
+                            bytes_map.insert(key.clone(), buf);
+                        } else {
+                            return Err(anyhow!("Cannot serialize encrypted type without keystore and label resolver"));
+                        }
+                    }
+                    vec_bytes_maps.push(bytes_map);
+                }
+                let proto_vec =
+                    crate::vec_types::VecHashMapStringBytes::from_vec_hashmap(vec_bytes_maps);
+                let mut buf = Vec::new();
+                prost::Message::encode(&proto_vec, &mut buf)?;
+                Ok(buf)
+            } else {
+                Err(anyhow!(
+                    "Type mismatch during Vec<HashMap<String, T>> serialization"
+                ))
+            }
+        });
+
+        // Deserializer: bytes -> Vec<HashMap<String, ArcValue>> (lazy)
+        let plain_type_name = std::any::type_name::<T>().to_string();
+        let enc_type_name = std::any::type_name::<T::Encrypted>().to_string();
+        let plain_deser_opt = self.get_deserializer_arc(&plain_type_name);
+        let enc_deser_opt = self.get_deserializer_arc(&enc_type_name);
+
+        let av_deserializer =
+            DeserializerFnWrapper::new(move |bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
+                let proto_vec: crate::vec_types::VecHashMapStringBytes =
+                    prost::Message::decode(bytes)?;
+                let mut result_vec: Vec<HashMap<String, crate::ArcValue>> = Vec::new();
+
+                for bytes_map in proto_vec.into_vec_hashmap() {
+                    let mut hashmap: HashMap<String, crate::ArcValue> = HashMap::new();
+                    for (k, enc_bytes) in bytes_map {
+                        // Construct synthetic header: category=Struct (0x04), type length, type bytes, payload bytes
+                        let mut buf: Vec<u8> =
+                            Vec::with_capacity(2 + plain_type_name.len() + enc_bytes.len());
+                        buf.push(0x04); // ValueCategory::Struct
+                        buf.push(plain_type_name.len() as u8);
+                        buf.extend_from_slice(plain_type_name.as_bytes());
+                        buf.extend_from_slice(&enc_bytes);
+
+                        let arc_buf: std::sync::Arc<[u8]> = std::sync::Arc::from(buf);
+                        let start_offset = 2 + plain_type_name.len();
+                        let end_offset = arc_buf.len();
+
+                        let lazy = crate::LazyDataWithOffset {
+                            type_name: plain_type_name.clone(),
+                            original_buffer: arc_buf.clone(),
+                            start_offset,
+                            end_offset,
+                            deserializer: plain_deser_opt.clone(),
+                            alias_deserializer: enc_deser_opt.clone(),
+                        };
+
+                        let erased = crate::ErasedArc::from_value(lazy);
+                        let av = crate::ArcValue::new(erased, crate::ValueCategory::Struct);
+                        hashmap.insert(k, av);
+                    }
+                    result_vec.push(hashmap);
+                }
+                Ok(Box::new(result_vec))
+            });
+
+        self.register_custom_serializer(type_name, serializer)?;
+        self.register_custom_deserializer(type_name, av_deserializer)?;
+
+        Ok(())
     }
 
     /// Register a type without encryption
@@ -562,22 +814,28 @@ impl SerializerRegistry {
 
         self.register_custom_deserializer(encrypted_type_name, enc_deser_wrapper)?;
 
-        // Prepare deserializer that tries encrypted first
-        let keystore_for_deser = self.keystore.clone();
-        let deserializer_wrapper =
-            DeserializerFnWrapper::new(move |bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
-                // Attempt encrypted deserialization
-                if let Ok(enc_obj) = T::Encrypted::decode(bytes) {
-                    if let Some(ref ks) = keystore_for_deser {
-                        let dec = enc_obj.decrypt_with_keystore(ks.as_ref())?;
-                        return Ok(Box::new(dec));
-                    }
+        // Register a decrypting deserializer for the *plain* type `T`.
+        // This enables callers to request the decrypted struct directly via
+        // `ArcValue::as_struct_ref::<T>()` while keeping the stored bytes in
+        // their encrypted form. The deserializer simply decodes the bytes as
+        // `T::Encrypted` and then decrypts with the registry keystore.
+        {
+            let ks_clone = self.keystore.clone();
+            let type_name_clone = type_name.to_string();
+            let plain_deser = DeserializerFnWrapper::new(move |bytes: &[u8]| {
+                let enc = T::Encrypted::decode(bytes)?;
+                if let Some(ref ks) = ks_clone {
+                    let dec: T = enc.decrypt_with_keystore(ks.as_ref())?;
+                    Ok(Box::new(dec))
+                } else {
+                    Err(anyhow!(
+                        "Keystore required for decrypting {}",
+                        type_name_clone
+                    ))
                 }
-                // Fallback to plaintext
-                Err(anyhow!("Cannot deserialize plain type {type_name}"))
             });
-
-        self.register_custom_deserializer(type_name, deserializer_wrapper)?;
+            self.register_custom_deserializer(type_name, plain_deser)?;
+        }
 
         Ok(())
     }

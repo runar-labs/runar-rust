@@ -86,7 +86,7 @@ impl fmt::Debug for LazyDataWithOffset {
 }
 
 /// Categorizes the value for efficient dispatch
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ValueCategory {
     Primitive,
     List,
@@ -199,24 +199,12 @@ impl ArcValue {
     pub fn from_json(json_val: JsonValue) -> Self {
         match json_val {
             JsonValue::Null => ArcValue::null(),
-            JsonValue::Bool(b) => ArcValue::new_primitive(b),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    ArcValue::new_primitive(i)
-                } else if let Some(f) = n.as_f64() {
-                    ArcValue::new_primitive(f)
-                } else {
-                    // Fallback to string representation for complex numbers not fitting i64/f64
-                    ArcValue::new_primitive(n.to_string())
-                }
-            }
-            JsonValue::String(s) => ArcValue::new_primitive(s),
+            JsonValue::Bool(b) => ArcValue::new_json(JsonValue::Bool(b)),
+            JsonValue::Number(n) => ArcValue::new_json(JsonValue::Number(n)),
+            JsonValue::String(s) => ArcValue::new_json(JsonValue::String(s)),
             JsonValue::Array(arr) => {
-                let values: Vec<ArcValue> = arr
-                    .into_iter()
-                    .map(ArcValue::from_json) // Recursive call to Self::from_json
-                    .collect();
-                ArcValue::new_list(values)
+                // Store the raw JSON array lazily; conversion happens on demand
+                ArcValue::new_json(JsonValue::Array(arr))
             }
             JsonValue::Object(obj) => {
                 // Store the raw JSON object lazily; conversion happens on demand
@@ -760,6 +748,11 @@ impl ArcValue {
             }
         }
     }
+
+    /// Convenience accessor to retrieve the value category (copy).
+    pub fn category(&self) -> ValueCategory {
+        self.category
+    }
 }
 
 struct ArcValueVisitor;
@@ -1185,5 +1178,146 @@ where
             Some(value) => value.into_arc_value_type(),
             None => ArcValue::null(),
         }
+    }
+}
+
+impl ArcValue {
+    /// Get map as HashMap<String, ArcValue> - works with both Map and Json categories
+    /// For Json objects, this performs lazy conversion to HashMap<String, ArcValue>
+    pub fn as_map(&mut self) -> Result<HashMap<String, ArcValue>> {
+        match self.category {
+            ValueCategory::Map => {
+                let arc_map = self.as_map_ref::<String, ArcValue>()?;
+                Ok((*arc_map).clone())
+            }
+            ValueCategory::Json => {
+                // Lazy conversion from JSON object to HashMap<String, ArcValue>
+                let json_arc = self
+                    .value
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Cannot get map from null ArcValue"))?
+                    .as_arc::<serde_json::Value>()
+                    .map_err(|e| {
+                        anyhow!(
+                            "Expected serde_json::Value in ArcValue::Json but found {}",
+                            e
+                        )
+                    })?;
+
+                if let serde_json::Value::Object(map_obj) = &*json_arc {
+                    let converted: HashMap<String, ArcValue> = map_obj
+                        .iter()
+                        .map(|(k, v)| (k.clone(), ArcValue::from_json(v.clone())))
+                        .collect();
+
+                    // Update the internal value to the converted map
+                    self.value = Some(ErasedArc::new(Arc::new(converted.clone())));
+                    self.category = ValueCategory::Map;
+
+                    Ok(converted)
+                } else {
+                    Err(anyhow!("JSON value is not an object"))
+                }
+            }
+            _ => Err(anyhow!("Cannot get map from category {:?}", self.category)),
+        }
+    }
+
+    /// Get list as Vec<ArcValue> - works with both List and Json categories
+    /// For Json arrays, this performs lazy conversion to Vec<ArcValue>
+    pub fn as_list(&mut self) -> Result<Vec<ArcValue>> {
+        match self.category {
+            ValueCategory::List => {
+                let arc_list = self.as_list_ref::<ArcValue>()?;
+                Ok((*arc_list).clone())
+            }
+            ValueCategory::Json => {
+                // Lazy conversion from JSON array to Vec<ArcValue>
+                let json_arc = self
+                    .value
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Cannot get list from null ArcValue"))?
+                    .as_arc::<serde_json::Value>()
+                    .map_err(|e| {
+                        anyhow!(
+                            "Expected serde_json::Value in ArcValue::Json but found {}",
+                            e
+                        )
+                    })?;
+
+                if let serde_json::Value::Array(arr) = &*json_arc {
+                    let converted: Vec<ArcValue> =
+                        arr.iter().map(|v| ArcValue::from_json(v.clone())).collect();
+
+                    // Update the internal value to the converted list
+                    self.value = Some(ErasedArc::new(Arc::new(converted.clone())));
+                    self.category = ValueCategory::List;
+
+                    Ok(converted)
+                } else {
+                    Err(anyhow!("JSON value is not an array"))
+                }
+            }
+            _ => Err(anyhow!("Cannot get list from category {:?}", self.category)),
+        }
+    }
+
+    /// Get primitive value as the specified type - works with Primitive and Json categories
+    pub fn as_primitive<T>(&mut self) -> Result<T>
+    where
+        T: 'static + Clone + for<'de> Deserialize<'de> + fmt::Debug + Send + Sync,
+    {
+        match self.category {
+            ValueCategory::Primitive => {
+                let arc_val = self.as_type_ref::<T>()?;
+                Ok((*arc_val).clone())
+            }
+            ValueCategory::Json => {
+                // Lazy conversion from JSON primitive to T
+                let json_arc = self
+                    .value
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("Cannot get primitive from null ArcValue"))?
+                    .as_arc::<serde_json::Value>()
+                    .map_err(|e| {
+                        anyhow!(
+                            "Expected serde_json::Value in ArcValue::Json but found {}",
+                            e
+                        )
+                    })?;
+
+                let deserialized = serde_json::from_value::<T>((*json_arc).clone())?;
+
+                // Update the internal value to the converted primitive
+                self.value = Some(ErasedArc::new(Arc::new(deserialized.clone())));
+                self.category = ValueCategory::Primitive;
+
+                Ok(deserialized)
+            }
+            _ => Err(anyhow!(
+                "Cannot get primitive from category {:?}",
+                self.category
+            )),
+        }
+    }
+
+    /// Get string value - convenience method for string primitives
+    pub fn as_string(&mut self) -> Result<String> {
+        self.as_primitive::<String>()
+    }
+
+    /// Get integer value - convenience method for integer primitives
+    pub fn as_int(&mut self) -> Result<i64> {
+        self.as_primitive::<i64>()
+    }
+
+    /// Get float value - convenience method for float primitives
+    pub fn as_float(&mut self) -> Result<f64> {
+        self.as_primitive::<f64>()
+    }
+
+    /// Get boolean value - convenience method for boolean primitives
+    pub fn as_bool(&mut self) -> Result<bool> {
+        self.as_primitive::<bool>()
     }
 }

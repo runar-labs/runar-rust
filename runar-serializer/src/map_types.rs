@@ -42,6 +42,13 @@ pub struct StringToArcValueMap {
     pub entries: HashMap<String, Vec<u8>>,
 }
 
+/// Map type for String -> bytes (Vec<u8>)
+#[derive(Clone, PartialEq, prost::Message, serde::Serialize, serde::Deserialize)]
+pub struct StringToBytesMap {
+    #[prost(map = "string, bytes", tag = "1")]
+    pub entries: HashMap<String, Vec<u8>>,
+}
+
 // Helper functions to convert between HashMap and our map types
 impl StringToIntMap {
     pub fn from_hashmap(map: HashMap<String, i32>) -> Self {
@@ -120,5 +127,15 @@ impl StringToArcValueMap {
             entries.insert(key, value);
         }
         Ok(entries)
+    }
+}
+
+impl StringToBytesMap {
+    pub fn from_hashmap(map: HashMap<String, Vec<u8>>) -> Self {
+        Self { entries: map }
+    }
+
+    pub fn into_hashmap(self) -> HashMap<String, Vec<u8>> {
+        self.entries
     }
 }

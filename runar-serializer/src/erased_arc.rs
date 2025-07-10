@@ -380,6 +380,8 @@ impl ErasedArc {
                     || (e_value.contains("i64") && a_value.contains("i64"))
                     || (e_value.contains("f64") && a_value.contains("f64"))
                     || (e_value.contains("bool") && a_value.contains("bool"))
+                    || e_value.contains("ArcValue")
+                    || a_value.contains("ArcValue")
                     // Handle when one side has a fully qualified path and the other has a simple type name
                     || compare_type_names(&e_value, &a_value);
 
@@ -468,14 +470,42 @@ pub fn compare_type_names(a: &str, b: &str) -> bool {
         return true;
     }
 
+    // Special case: if either type contains ArcValue as the value of a HashMap, consider compatible
+    if a.contains("HashMap")
+        && b.contains("HashMap")
+        && (a.contains("ArcValue") || b.contains("ArcValue"))
+    {
+        // Ensure keys are same (String) if needed
+        return true;
+    }
+
     false
 }
 
 impl ErasedArc {
     /// Compare the actual value behind the erased arc for equality
     pub fn eq_value(&self, other: &ErasedArc) -> bool {
-        // For now, compare type names and pointer equality as a stub.
-        // A robust implementation should downcast and compare value contents for known types.
-        self.type_name() == other.type_name() && self.reader.ptr() == other.reader.ptr()
+        // First, ensure type compatibility (ignoring namespaces)
+        if !compare_type_names(self.type_name(), other.type_name()) {
+            return false;
+        }
+
+        // Try common primitive & standard types
+        macro_rules! try_downcast_eq {
+            ($ty:ty) => {
+                if let (Ok(left), Ok(right)) = (self.as_arc::<$ty>(), other.as_arc::<$ty>()) {
+                    return *left == *right;
+                }
+            };
+        }
+
+        try_downcast_eq!(String);
+        try_downcast_eq!(bool);
+        try_downcast_eq!(i32);
+        try_downcast_eq!(i64);
+        try_downcast_eq!(f64);
+
+        // Fallback to pointer equality when we can't compare contents safely
+        self.reader.ptr() == other.reader.ptr()
     }
 }
