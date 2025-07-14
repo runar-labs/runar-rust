@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use runar_macros::{action, service, service_impl};
 use runar_node::services::RequestContext;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::Account;
 
@@ -20,27 +21,54 @@ impl AccountService {
         &self,
         account_id: String,
         _ctx: &RequestContext,
-    ) -> Result<f64> {
+    ) -> Result<u64> {
+        // Changed from f64 to u64
         // Placeholder implementation
         println!("AccountService: Called get_account_balance for account_id: {account_id}");
-        Ok(1234.56f64) // Dummy balance
+        Ok(1234500) // Return balance in cents (12345.00)
     }
 
-    // Example of another action, e.g., to create an account
     #[action(name = "create_account")]
     pub async fn create_account(
         &self,
+        user_id: String,
         name: String,
-        initial_balance: f64,
+        account_type: String,
         _ctx: &RequestContext,
     ) -> Result<Account> {
-        println!(
-            "AccountService: Creating account with name: {name} and balance: {initial_balance}"
-        );
+        // Placeholder implementation
+        println!("AccountService: Called create_account for user_id: {user_id}");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         Ok(Account {
-            id: "acc_789".to_string(), // Dummy ID
+            id: format!("account_{}", now),
             name,
-            balance: initial_balance,
+            balance_cents: 0, // Changed from 0.0
+            account_type,
+            created_at: now,
+        })
+    }
+
+    #[action(name = "get_account")]
+    pub async fn get_account(&self, account_id: String, _ctx: &RequestContext) -> Result<Account> {
+        // Placeholder implementation
+        println!("AccountService: Called get_account for account_id: {account_id}");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(Account {
+            id: account_id,
+            name: "Main Account".to_string(),
+            balance_cents: 1234500, // Changed from 12345.0 (12345.00 in cents)
+            account_type: "checking".to_string(),
+            created_at: now,
         })
     }
 }

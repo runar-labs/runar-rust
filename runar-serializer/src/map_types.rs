@@ -35,16 +35,15 @@ pub struct StringToStringMap {
     pub entries: HashMap<String, String>,
 }
 
-/// Map type for String -> ArcValue (stored as serialized bytes)
+/// Map type for String -> bytes (Vec<u8>)
 #[derive(Clone, PartialEq, prost::Message, serde::Serialize, serde::Deserialize)]
-pub struct StringToArcValueMap {
+pub struct StringToBytesMap {
     #[prost(map = "string, bytes", tag = "1")]
     pub entries: HashMap<String, Vec<u8>>,
 }
 
-/// Map type for String -> bytes (Vec<u8>)
 #[derive(Clone, PartialEq, prost::Message, serde::Serialize, serde::Deserialize)]
-pub struct StringToBytesMap {
+pub struct StringToArcValueMap {
     #[prost(map = "string, bytes", tag = "1")]
     pub entries: HashMap<String, Vec<u8>>,
 }
@@ -97,36 +96,6 @@ impl StringToStringMap {
 
     pub fn into_hashmap(self) -> HashMap<String, String> {
         self.entries
-    }
-}
-
-impl StringToArcValueMap {
-    pub fn from_hashmap_with_registry(
-        map: HashMap<String, crate::ArcValue>,
-        registry: &crate::SerializerRegistry,
-    ) -> Result<Self, anyhow::Error> {
-        let mut entries = HashMap::new();
-        for (key, value) in map {
-            // Use ArcValue's proper protobuf serialization through the registry
-            let bytes = registry.serialize_value(&value)?;
-            entries.insert(key, bytes.to_vec());
-        }
-        Ok(Self { entries })
-    }
-
-    pub fn into_hashmap_with_registry(
-        self,
-        registry: &crate::SerializerRegistry,
-    ) -> Result<HashMap<String, crate::ArcValue>, anyhow::Error> {
-        let mut entries = HashMap::new();
-
-        for (key, bytes) in self.entries {
-            // Use ArcValue's proper protobuf deserialization through the registry
-            let arc_bytes = std::sync::Arc::from(bytes);
-            let value = registry.deserialize_value(arc_bytes)?;
-            entries.insert(key, value);
-        }
-        Ok(entries)
     }
 }
 

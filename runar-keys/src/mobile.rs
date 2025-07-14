@@ -86,6 +86,8 @@ pub struct MobileKeyManager {
     user_root_key: Option<EcdsaKeyPair>,
     /// User profile keys indexed by profile ID - derived from root key
     user_profile_keys: HashMap<String, EcdsaKeyPair>,
+    /// Mapping from human-readable label → compact-id for quick reuse
+    label_to_pid: HashMap<String, String>,
     /// Network data keys indexed by network ID - for envelope encryption
     network_data_keys: HashMap<String, EcdsaKeyPair>,
     /// Issued certificates tracking
@@ -107,6 +109,7 @@ pub struct MobileKeyManagerState {
     ca_certificate: X509Certificate,
     user_root_key: Option<EcdsaKeyPair>,
     user_profile_keys: HashMap<String, EcdsaKeyPair>,
+    label_to_pid: HashMap<String, String>,
     network_data_keys: HashMap<String, EcdsaKeyPair>,
     issued_certificates: HashMap<String, X509Certificate>,
     serial_counter: u64,
@@ -130,6 +133,7 @@ impl MobileKeyManager {
             certificate_validator,
             user_root_key: None,
             user_profile_keys: HashMap::new(),
+            label_to_pid: HashMap::new(),
             network_data_keys: HashMap::new(),
             issued_certificates: HashMap::new(),
             serial_counter: 1,
@@ -183,10 +187,12 @@ impl MobileKeyManager {
     /// This approach is deterministic, collision-resistant, and ensures strong
     /// cryptographic separation between the root and profile keys while
     /// remaining compatible with the system-wide ECDSA P-256 algorithm.
-    pub fn derive_user_profile_key(&mut self, profile_id: &str) -> Result<Vec<u8>> {
-        // Return cached key if we have already derived it before.
-        if let Some(existing) = self.user_profile_keys.get(profile_id) {
-            return Ok(existing.public_key_bytes());
+    pub fn derive_user_profile_key(&mut self, label: &str) -> Result<Vec<u8>> {
+        // Fast-path: if we already derived a key for this label return it.
+        if let Some(pid) = self.label_to_pid.get(label) {
+            if let Some(key) = self.user_profile_keys.get(pid) {
+                return Ok(key.public_key_bytes());
+            }
         }
 
         use hkdf::Hkdf;
@@ -215,9 +221,9 @@ impl MobileKeyManager {
         let mut counter: u32 = 0;
         let signing_key = loop {
             let info = if counter == 0 {
-                format!("runar-profile-{profile_id}")
+                format!("runar-profile-{label}")
             } else {
-                format!("runar-profile-{profile_id}-{counter}")
+                format!("runar-profile-{label}-{counter}")
             };
 
             let mut candidate_bytes = [0u8; 32];
@@ -233,14 +239,15 @@ impl MobileKeyManager {
             }
         };
 
-        // Wrap the signing key in our convenience type and cache it.
+        // Wrap the signing key in our convenience type and cache it using the compact ID.
         let profile_key = EcdsaKeyPair::from_signing_key(signing_key);
         let public_key = profile_key.public_key_bytes();
-        self.user_profile_keys
-            .insert(profile_id.to_string(), profile_key);
+        let pid = compact_id(&public_key);
+        self.user_profile_keys.insert(pid.clone(), profile_key);
+        self.label_to_pid.insert(label.to_string(), pid.clone());
 
         self.logger.info(format!(
-            "User profile key derived using HKDF for profile: {profile_id} (attempts: {counter})"
+            "User profile key derived using HKDF for label '{label}' (attempts: {counter}, id: {pid})"
         ));
 
         Ok(public_key)
@@ -732,6 +739,7 @@ impl MobileKeyManager {
             ca_certificate: self.certificate_authority.ca_certificate().clone(),
             user_root_key: self.user_root_key.clone(),
             user_profile_keys: self.user_profile_keys.clone(),
+            label_to_pid: self.label_to_pid.clone(),
             network_data_keys: self.network_data_keys.clone(),
             issued_certificates: self.issued_certificates.clone(),
             serial_counter: self.serial_counter,
@@ -754,6 +762,7 @@ impl MobileKeyManager {
             certificate_validator,
             user_root_key: state.user_root_key,
             user_profile_keys: state.user_profile_keys,
+            label_to_pid: state.label_to_pid,
             network_data_keys: state.network_data_keys,
             issued_certificates: state.issued_certificates,
             serial_counter: state.serial_counter,

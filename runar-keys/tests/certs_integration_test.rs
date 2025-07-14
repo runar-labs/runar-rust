@@ -7,6 +7,7 @@
 //! 4. QUIC transport configuration
 //! 5. Cross-node validation
 
+use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{
     certificate::X509Certificate,
@@ -435,6 +436,11 @@ async fn test_enhanced_key_management() -> Result<()> {
     let profile2_key = mobile.derive_user_profile_key("work")?;
     let profile3_key = mobile.derive_user_profile_key("family")?;
 
+    // Compute compact IDs for the derived profile public keys
+    let personal_id = compact_id(&profile1_key);
+    let work_id = compact_id(&profile2_key);
+    let family_id = compact_id(&profile3_key);
+
     assert_ne!(profile1_key, profile2_key);
     assert_ne!(profile2_key, profile3_key);
     assert_ne!(profile1_key, profile3_key);
@@ -495,7 +501,7 @@ async fn test_enhanced_key_management() -> Result<()> {
     let envelope_data = mobile.encrypt_with_envelope(
         sensitive_data,
         &network1_key,
-        vec!["personal".to_string(), "work".to_string()],
+        vec![personal_id.clone(), work_id.clone()],
     )?;
     let envelope_network_id = &envelope_data.network_id;
     println!("   Envelope created for network: {envelope_network_id}");
@@ -510,12 +516,12 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("\n🔓 Phase 7: Multi-Key Decryption Testing");
 
     // Decrypt with personal profile
-    let decrypted_personal = mobile.decrypt_with_profile(&envelope_data, "personal")?;
+    let decrypted_personal = mobile.decrypt_with_profile(&envelope_data, &personal_id)?;
     assert_eq!(sensitive_data.to_vec(), decrypted_personal);
     println!("   ✅ Successfully decrypted with 'personal' profile key");
 
     // Decrypt with work profile
-    let decrypted_work = mobile.decrypt_with_profile(&envelope_data, "work")?;
+    let decrypted_work = mobile.decrypt_with_profile(&envelope_data, &work_id)?;
     assert_eq!(sensitive_data.to_vec(), decrypted_work);
     println!("   ✅ Successfully decrypted with 'work' profile key");
 
@@ -545,7 +551,7 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("\n🛡️  Phase 9: Security Validation");
 
     // Try to decrypt with wrong profile (should fail gracefully)
-    let missing_profile_result = mobile.decrypt_with_profile(&envelope_data, "family");
+    let missing_profile_result = mobile.decrypt_with_profile(&envelope_data, &family_id);
     assert!(missing_profile_result.is_err());
     println!("   ✅ Correctly failed to decrypt with non-recipient profile key");
 

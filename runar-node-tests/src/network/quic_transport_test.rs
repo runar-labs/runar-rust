@@ -4,7 +4,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use runar_node::types::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::discovery::NodeInfo;
@@ -12,6 +11,7 @@ use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
     NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
 };
+use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_serializer::{ArcValue, SerializerRegistry};
 
 /// This test ensures the transport layer properly handles:
@@ -530,7 +530,10 @@ async fn test_quic_transport_complete_api_validation(
     logger.info("📡 Testing unidirectional event broadcasting...");
 
     let mut map = std::collections::HashMap::new();
-    map.insert("operation".to_string(), ArcValue::new_primitive("add".to_string()));
+    map.insert(
+        "operation".to_string(),
+        ArcValue::new_primitive("add".to_string()),
+    );
     map.insert("result".to_string(), ArcValue::new_primitive(8));
     let arc_value_event = ArcValue::from_map(map);
     let value_bytes_event = registry.serialize_value(&arc_value_event)?;

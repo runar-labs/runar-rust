@@ -2351,6 +2351,7 @@ dependencies = [
  "async-trait",
  "futures",
  "prost",
+ "runar-keys",
  "runar-serializer",
  "runar-test-utils",
  "runar_common",
@@ -3358,6 +3359,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-node-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "prost",
+ "rand 0.8.5",
+ "runar-keys",
+ "runar-serializer",
+ "runar-test-utils",
+ "runar_common",
+ "runar_macros_common",
+ "runar_node",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-test",
+ "uuid",
+]
+
+[[package]]
 name = "runar-nodejs-ffi"
 version = "0.1.0"
 dependencies = [
@@ -3400,6 +3422,7 @@ dependencies = [
 name = "runar-serializer-macros"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "proc-macro2",
  "prost",
  "quote",

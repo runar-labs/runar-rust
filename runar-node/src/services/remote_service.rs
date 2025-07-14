@@ -35,7 +35,9 @@ pub struct RemoteService {
     /// Network transport wrapped in RwLock
     network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
 
-    serializer: Arc<RwLock<SerializerRegistry>>,
+    // Add keystore: Arc<KeyStore>, resolver: Arc<dyn LabelResolver>,
+    keystore: Arc<RwLock<Option<Box<dyn runar_common::keystore::KeyStore>>>>,
+    resolver: Arc<RwLock<Option<Box<dyn runar_common::routing::LabelResolver>>>>,
 
     /// Service capabilities
     actions: Arc<RwLock<HashMap<String, ActionMetadata>>>,
@@ -66,7 +68,8 @@ pub struct RemoteServiceConfig {
 /// Dependencies required by a RemoteService instance, provided by the local node.
 pub struct RemoteServiceDependencies {
     pub network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
-    pub serializer: Arc<RwLock<SerializerRegistry>>,
+    pub keystore: Arc<RwLock<Option<Box<dyn runar_common::keystore::KeyStore>>>>,
+    pub resolver: Arc<RwLock<Option<Box<dyn runar_common::routing::LabelResolver>>>>,
     pub local_node_id: String, // ID of the local node
     pub pending_requests:
         Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
@@ -92,7 +95,8 @@ impl RemoteService {
             network_id, // Derived from service_topic
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
-            serializer: dependencies.serializer,
+            keystore: dependencies.keystore,
+            resolver: dependencies.resolver,
             actions: Arc::new(RwLock::new(HashMap::new())),
             logger: dependencies.logger,
             local_node_id: dependencies.local_node_id,
@@ -151,7 +155,8 @@ impl RemoteService {
             // Prepare dependencies for RemoteService::new (cloning Arcs)
             let rs_dependencies = RemoteServiceDependencies {
                 network_transport: dependencies.network_transport.clone(),
-                serializer: dependencies.serializer.clone(),
+                keystore: dependencies.keystore.clone(),
+                resolver: dependencies.resolver.clone(),
                 local_node_id: dependencies.local_node_id.clone(),
                 pending_requests: dependencies.pending_requests.clone(),
                 logger: dependencies.logger.clone(),
@@ -211,7 +216,8 @@ impl RemoteService {
             let local_node_id = service.local_node_id.clone();
             let pending_requests = service.pending_requests.clone();
             let network_transport = service.network_transport.clone();
-            let serializer = service.serializer.clone();
+            let keystore = service.keystore.clone();
+            let resolver = service.resolver.clone();
             let request_timeout_ms = service.request_timeout_ms;
             let logger = service.logger.clone();
 
@@ -236,20 +242,13 @@ impl RemoteService {
                     "📝 [RemoteService] Stored response channel for request ID: {request_id}"
                 ));
 
-                let serializer = serializer.read().await;
+                let keystore = keystore.read().await;
+                let resolver = resolver.read().await;
                 // Serialize the parameters and convert from Arc<[u8]> to Vec<u8>
-                let payload_vec: Vec<u8> = match if let Some(params) = params {
-                    serializer.serialize_value(&params)
+                let payload_vec: Vec<u8> = if let Some(params) = params {
+                    params.serialize(Some(&keystore), Some(&*resolver))?
                 } else {
-                    serializer.serialize_value(&ArcValue::null())
-                } {
-                    Ok(bytes) => bytes.to_vec(), // Convert Arc<[u8]> to Vec<u8>
-                    Err(e) => {
-                        logger.error(format!(
-                            "❌ [RemoteService] Serialization error for request {request_id}: {e}"
-                        ));
-                        return Err(anyhow::anyhow!("Serialization error: {e}"));
-                    }
+                    ArcValue::null().serialize(None, None)?
                 };
 
                 let payload_size = payload_vec.len();

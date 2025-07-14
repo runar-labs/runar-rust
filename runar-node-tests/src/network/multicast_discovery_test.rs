@@ -5,11 +5,11 @@
 use anyhow::Result;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
-use runar_node::types::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_node::network::discovery::DEFAULT_MULTICAST_ADDR;
 use runar_node::network::discovery::{
     DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo,
 };
+use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;

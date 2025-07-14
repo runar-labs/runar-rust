@@ -30,6 +30,7 @@ pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificat
 pub use error::{KeyError, Result};
 pub use mobile::MobileKeyManager;
 pub use node::NodeKeyManager;
+// expose profile public key registration convenience re-export
 
 // ---------------------------------------------------------------------------
 // Common envelope crypto abstraction (shared with serializer)

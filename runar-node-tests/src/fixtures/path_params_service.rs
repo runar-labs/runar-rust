@@ -4,7 +4,6 @@
 // It implements template paths to demonstrate proper parameter extraction.
 
 use anyhow::Result;
-use async_trait::async_trait;
 use runar_serializer::ArcValue;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -73,7 +72,7 @@ impl PathParamsService {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl AbstractService for PathParamsService {
     fn name(&self) -> &str {
         &self.name

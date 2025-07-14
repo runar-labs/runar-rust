@@ -3,11 +3,10 @@
 // These tests verify that the Node properly handles requests
 // and delegates to the ServiceRegistry as needed.
 
-use runar_node::types::schemas::ServiceMetadata;
-use runar_serializer::ArcValue;
-use runar_macros_common::hmap;
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::Node;
+use runar_node::ServiceMetadata;
+use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
 use std::future::Future;
 use std::pin::Pin;
@@ -20,6 +19,8 @@ use runar_node::services::EventContext;
 use runar_node::NodeDelegate;
 
 use std::collections::HashMap;
+
+use runar_macros_common::hmap;
 
 // Import the test fixtures
 use crate::fixtures::math_service::MathService;

@@ -118,3 +118,9 @@ impl VecHashMapStringBytes {
         self.entries.into_iter().map(|m| m.into_hashmap()).collect()
     }
 }
+
+#[derive(Clone, PartialEq, prost::Message, serde::Serialize, serde::Deserialize)]
+pub struct VecArcValue {
+    #[prost(bytes, repeated, tag = "1")]
+    pub entries: Vec<Vec<u8>>,
+}

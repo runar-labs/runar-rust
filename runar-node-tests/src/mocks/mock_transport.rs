@@ -4,15 +4,14 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
-use crate::network::transport::{
-    NetworkTransport, TransportFactory, NetworkMessage, 
-    NodeIdentifier, MessageHandler, PeerRegistry
-};
-use crate::network::discovery::NodeInfo;
 use runar_common::Logger;
+use runar_node::network::discovery::{multicast_discovery::PeerInfo, NodeInfo};
+use runar_node::network::transport::{
+    MessageHandler, NetworkError, NetworkMessage, NetworkTransport,
+};
+use tokio::sync::broadcast;
 
 /// A mock network transport that stores messages in memory
 pub struct MockNetworkTransport {
@@ -21,25 +20,22 @@ pub struct MockNetworkTransport {
     /// Handlers registered with this transport
     handlers: RwLock<Vec<MessageHandler>>,
     /// Local node identifier
-    node_id: NodeIdentifier,
-    /// Peer registry
-    peer_registry: Arc<PeerRegistry>,
+    node_id: String,
     /// Logger
     logger: Logger,
 }
 
 impl MockNetworkTransport {
     /// Create a new mock transport
-    pub fn new(node_id: NodeIdentifier, logger: Logger) -> Self {
+    pub fn new(node_id: String, logger: Logger) -> Self {
         Self {
             messages: RwLock::new(Vec::new()),
             handlers: RwLock::new(Vec::new()),
             node_id,
-            peer_registry: Arc::new(PeerRegistry::new()),
             logger,
         }
     }
-    
+
     /// Get all messages sent through this transport
     pub fn get_messages(&self) -> Vec<NetworkMessage> {
         self.messages.read().unwrap().clone()
@@ -48,65 +44,62 @@ impl MockNetworkTransport {
 
 #[async_trait]
 impl NetworkTransport for MockNetworkTransport {
-    async fn init(&self) -> Result<()> {
-        self.logger.info("Initializing mock transport");
+    async fn start(&self) -> Result<(), NetworkError> {
+        self.logger.info("MockNetworkTransport: start called");
         Ok(())
     }
-    
-    async fn connect(&self, node_info: &NodeInfo) -> Result<()> {
-        // Just log the connection attempt
-        self.logger.info(format!("Mock connecting to node: {identifier}", identifier=node_info.identifier));
+
+    async fn stop(&self) -> Result<(), NetworkError> {
+        self.logger.info("MockNetworkTransport: stop called");
         Ok(())
     }
-    
-    async fn send(&self, message: NetworkMessage) -> Result<()> {
-        self.logger.info(format!("Mock sending message to: {:?}", message.destination));
-        self.messages.write().unwrap().push(message.clone());
-        
-        // Call handlers
-        for handler in self.handlers.read().unwrap().iter() {
-            handler(message.clone())?;
-        }
-        
+
+    async fn disconnect(&self, node_id: String) -> Result<(), NetworkError> {
+        self.logger.info(format!(
+            "MockNetworkTransport: disconnect called for node_id: {node_id}"
+        ));
         Ok(())
     }
-    
-    fn register_handler(&self, handler: MessageHandler) -> Result<()> {
-        self.handlers.write().unwrap().push(handler);
+
+    async fn is_connected(&self, node_id: String) -> bool {
+        self.logger.info(format!(
+            "MockNetworkTransport: is_connected called for node_id: {node_id}"
+        ));
+        false
+    }
+
+    async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError> {
+        self.logger.info(format!(
+            "MockNetworkTransport: send_message called to: {}",
+            message.destination_node_id
+        ));
+        self.messages.write().unwrap().push(message);
         Ok(())
     }
-    
-    fn peer_registry(&self) -> &PeerRegistry {
-        &self.peer_registry
-    }
-    
-    fn local_node_id(&self) -> &NodeIdentifier {
-        &self.node_id
-    }
-    
-    async fn local_address(&self) -> Option<SocketAddr> {
-        // Use a fixed address for mock transport
-        Some("127.0.0.1:8090".parse().unwrap())
-    }
-    
-    async fn shutdown(&self) -> Result<()> {
-        self.logger.info("Shutting down Mock transport");
+
+    async fn connect_peer(&self, discovery_msg: PeerInfo) -> Result<(), NetworkError> {
+        self.logger.info(format!(
+            "MockNetworkTransport: connect_peer called for peer: {:?}",
+            discovery_msg.public_key
+        ));
         Ok(())
+    }
+
+    fn get_local_address(&self) -> String {
+        "127.0.0.1:8090".to_string()
+    }
+
+    async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError> {
+        self.logger.info(format!(
+            "MockNetworkTransport: update_peers called for node: {:?}",
+            node_info.node_public_key
+        ));
+        Ok(())
+    }
+
+    async fn subscribe_to_peer_node_info(&self) -> broadcast::Receiver<NodeInfo> {
+        // Return a dummy broadcast channel for tests
+        let (_tx, rx) = broadcast::channel(1);
+        rx
     }
 }
-
-/// Factory for creating mock transport instances
-pub struct MockTransportFactory;
-
-#[async_trait]
-impl TransportFactory for MockTransportFactory {
-    type Transport = MockNetworkTransport;
-    
-    async fn create_transport(
-        &self, 
-        node_id: NodeIdentifier, 
-        logger: Logger
-    ) -> Result<Self::Transport> {
-        Ok(MockNetworkTransport::new(node_id, logger))
-    }
-} 

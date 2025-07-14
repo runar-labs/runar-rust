@@ -1,6 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Re-exports from runar-keys for envelope encryption integration
@@ -108,4 +110,16 @@ pub trait RunarDecrypt {
     type Decrypted: RunarEncrypt<Encrypted = Self>;
 
     fn decrypt_with_keystore(&self, keystore: &KeyStore) -> Result<Self::Decrypted>;
+}
+
+pub trait CustomFromBytes: Sized + 'static + Clone + Debug + Send + Sync {
+    fn from_plain_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self>
+    where
+        Self: Sized;
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self>;
+    fn to_binary(
+        &self,
+        keystore: Option<&Arc<KeyStore>>,
+        resolver: Option<&dyn LabelResolver>,
+    ) -> Result<Vec<u8>>;
 }

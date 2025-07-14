@@ -5,4 +5,4 @@
 
 pub mod mock_transport;
 
-pub use mock_transport::{MockNetworkTransport, MockTransportFactory}; 
+pub use mock_transport::MockNetworkTransport;

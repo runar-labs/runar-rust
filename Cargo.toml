@@ -12,7 +12,9 @@ members = [
     "runar-serializer",
     "runar-serializer-macros",
     "runar-nodejs-ffi",
-    "runar-cli", "runar-test-utils",
+    "runar-cli", 
+    "runar-test-utils",
+    "runar-node-tests",
 ]
 exclude = [
     "quinn",

@@ -1,9 +1,7 @@
 use anyhow::Result;
-use runar_common::logging::Logger;
-use runar_common::Component;
-use runar_serializer::ArcValue;
-use runar_macros_common::hmap;
+use runar_common::logging::{Component, Logger};
 use runar_node::config::{LogLevel, LoggingConfig};
+use runar_serializer::ArcValue;
 
 use runar_node::node::Node;
 use runar_test_utils::create_networked_node_test_config;
@@ -14,6 +12,7 @@ use tokio::time::sleep;
 
 // Import the fixture MathService
 use crate::fixtures::math_service::MathService;
+use runar_macros_common::hmap;
 
 // TODO issues we found in the last refactoru of this test ( to be addressewd later)
 // 1 - when I changed the params to use params!{} macro which wraps each element in a map with ArcValue the serializer

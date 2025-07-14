@@ -8,16 +8,15 @@
 // Any changes to the service interface or semantics may break numerous tests across the codebase.
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use runar_node::types::schemas::FieldSchema;
+use runar_common::types::schemas::{FieldSchema, SchemaDataType};
+use runar_node::services::{
+    abstract_service::AbstractService, event_context::EventContext,
+    request_context::RequestContext, EventRegistrationOptions,
+};
+use runar_node::LifecycleContext;
 use runar_serializer::ArcValue;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-use runar_node::types::schemas::SchemaDataType;
-use runar_node::services::abstract_service::AbstractService;
-use runar_node::services::EventRegistrationOptions;
-use runar_node::services::{LifecycleContext, RequestContext};
 
 /// A simple math service for testing
 ///
@@ -300,7 +299,7 @@ impl MathService {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl AbstractService for MathService {
     fn name(&self) -> &str {
         &self.name

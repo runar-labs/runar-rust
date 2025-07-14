@@ -365,6 +365,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         .derive_user_profile_key("work")
         .expect("Failed to generate work profile key");
 
+    // Convert profile public keys to compact identifiers that will be used as
+    // recipient IDs inside envelopes.
+    let personal_id = compact_id(&profile_personal_key);
+    let work_id = compact_id(&profile_work_key);
+
     assert!(
         !profile_personal_key.is_empty(),
         "Personal profile key should be valid"
@@ -394,6 +399,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // After restoration, deriving the same profile key should yield identical public key bytes
     let restored_personal_key = mobile_hydrated.derive_user_profile_key("personal")?;
+    let _restored_personal_id = compact_id(&restored_personal_key);
     assert_eq!(restored_personal_key, profile_personal_key);
     println!("   ✅ Mobile profile keys persisted across serialization");
 
@@ -405,7 +411,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         .encrypt_with_envelope(
             test_data,
             &network_id,
-            vec!["personal".to_string(), "work".to_string()],
+            vec![personal_id.clone(), work_id.clone()],
         )
         .expect("Failed to encrypt data with envelope");
 
@@ -429,7 +435,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Additionally, verify that the mobile can also decrypt the data using profile keys
     let decrypted_by_mobile_personal = mobile_keys_manager
-        .decrypt_with_profile(&envelope, "personal")
+        .decrypt_with_profile(&envelope, &personal_id)
         .expect("Mobile failed to decrypt with personal profile");
     assert_eq!(
         decrypted_by_mobile_personal, test_data,
@@ -438,7 +444,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   ✅ Mobile successfully decrypted with personal profile key");
 
     let decrypted_by_mobile_work = mobile_keys_manager
-        .decrypt_with_profile(&envelope, "work")
+        .decrypt_with_profile(&envelope, &work_id)
         .expect("Mobile failed to decrypt with work profile");
     assert_eq!(
         decrypted_by_mobile_work, test_data,
@@ -502,7 +508,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Try encrypting and decrypting data with the hydrated manager
     let test_data_2 = b"This is a second test message after key restoration";
     let envelope_2 = mobile_keys_manager
-        .encrypt_with_envelope(test_data_2, &network_id, vec!["personal".to_string()])
+        .encrypt_with_envelope(test_data_2, &network_id, vec![personal_id.clone()])
         .expect("Mobile failed to encrypt data after restoration");
 
     // Node should be able to decrypt with the network key
@@ -516,8 +522,8 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   ✅ Hydrated node successfully decrypted envelope data");
 
     // Mobile should be able to decrypt with the profile key
-    let decrypted_by_mobile_2 = mobile_keys_manager
-        .decrypt_with_profile(&envelope_2, "personal")
+    let decrypted_by_mobile_2 = mobile_hydrated
+        .decrypt_with_profile(&envelope_2, &personal_id)
         .expect("Mobile failed to decrypt after node restoration");
     assert_eq!(
         decrypted_by_mobile_2, test_data_2,

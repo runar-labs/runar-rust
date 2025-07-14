@@ -1,6 +1,5 @@
 use std::any::{Any, TypeId};
 use std::fmt;
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -17,7 +16,10 @@ pub trait ArcRead: fmt::Debug + Send + Sync {
     fn weak_count(&self) -> usize;
 
     /// Get the type name of the contained value
-    fn type_name(&self) -> &'static str;
+    fn type_name(&self) -> &str;
+
+    /// Get the type ID of the contained value
+    fn type_id(&self) -> TypeId;
 
     /// Clone this trait object
     fn clone_box(&self) -> Box<dyn ArcRead>;
@@ -29,6 +31,8 @@ pub trait ArcRead: fmt::Debug + Send + Sync {
 // Custom serde implementation for ErasedArc
 // Only registered types can be (de)serialized.
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::ArcValue;
 
 impl Serialize for ErasedArc {
     fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
@@ -67,29 +71,27 @@ pub struct ErasedArc {
     pub is_lazy: bool,
 }
 
-/// Implementation of ArcRead for a concrete Arc<T>
+// Update ArcReader to store TypeId and String type_name (no leak)
 struct ArcReader<T: 'static + fmt::Debug + Send + Sync> {
     arc: Arc<T>,
-    _marker: PhantomData<T>,
-    // Optional override for type name, used for opaque types
-    type_name_override: Option<String>,
+    type_id: TypeId,
+    type_name: String,
 }
 
 impl<T: 'static + fmt::Debug + Send + Sync> fmt::Debug for ArcReader<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ArcReader<{}>(", self.get_type_name())?;
+        write!(f, "ArcReader<{}>(", self.type_name)?;
         self.arc.fmt(f)?;
         write!(f, ")")
     }
 }
 
 impl<T: 'static + fmt::Debug + Send + Sync> ArcReader<T> {
-    /// Get the type name, using override if available
-    fn get_type_name(&self) -> &str {
-        if let Some(ref override_name) = self.type_name_override {
-            override_name
-        } else {
-            std::any::type_name::<T>()
+    fn new(arc: Arc<T>) -> Self {
+        Self {
+            arc,
+            type_id: TypeId::of::<T>(),
+            type_name: std::any::type_name::<T>().to_string(),
         }
     }
 }
@@ -107,69 +109,23 @@ impl<T: 'static + fmt::Debug + Send + Sync> ArcRead for ArcReader<T> {
         Arc::weak_count(&self.arc)
     }
 
-    fn type_name(&self) -> &'static str {
-        // Get the current name
-        let name = self.get_type_name();
+    fn type_name(&self) -> &str {
+        self.type_name.as_str()
+    }
 
-        // For boxed types, check if we can get the actual inner type name
-        // which is more useful than "Box<dyn Any>"
-        if name.contains("Box<dyn") {
-            // Try to guess the real type from the containing context
-            // For now, just pick a meaningful default to allow type matching to succeed
-            if self.arc.type_id() == TypeId::of::<Box<dyn Any + Send + Sync>>() {
-                // If we were created by deserializing a map, return a more specific type
-                return "std::collections::HashMap<alloc::string::String, value_type_test::TestStruct>";
-            }
-        }
-
-        // Special handling for HashMap with TestStruct to preserve full type info
-        if name.contains("HashMap<") && name.contains("TestStruct") {
-            // Instead of using as_str() which requires an unstable feature,
-            // we'll use 'Box::leak' to create a static string reference
-            // This is safe because these strings are never freed during program execution
-            // and are typically short strings with a well-defined set of values
-            Box::leak(name.to_string().into_boxed_str())
-        } else {
-            // For standard types, do the same safe leak
-            Box::leak(name.to_string().into_boxed_str())
-        }
+    fn type_id(&self) -> TypeId {
+        self.type_id
     }
 
     fn clone_box(&self) -> Box<dyn ArcRead> {
         Box::new(ArcReader {
             arc: self.arc.clone(),
-            _marker: PhantomData,
-            type_name_override: self.type_name_override.clone(),
+            type_id: self.type_id,
+            type_name: self.type_name.clone(),
         })
     }
 
     fn as_any(&self) -> &dyn Any {
-        // Special handling for generic Box<dyn Any>
-        if std::any::type_name::<T>().contains("Box<dyn") {
-            // For a type that is Box<dyn Any>, we need to first get the reference to T
-            // and then get the reference to the boxed value
-            let arc_ref: &T = &self.arc;
-
-            // Check if the boxed value is a Box<dyn Any + Send + Sync>
-            if let Some(boxed_any) =
-                (arc_ref as &dyn Any).downcast_ref::<Box<dyn Any + Send + Sync>>()
-            {
-                // Return the inner content of the Box
-                return &**boxed_any as &dyn Any;
-            }
-        }
-
-        // If we reach here, let's also check if the type is Arc<Box<dyn Any>>
-        if std::any::type_name::<T>().contains("Arc<Box<") {
-            // Check if we can access the inner boxed value
-            if let Some(inner_box) =
-                (&*self.arc as &dyn Any).downcast_ref::<Box<dyn Any + Send + Sync>>()
-            {
-                return &**inner_box;
-            }
-        }
-
-        // For other types, return the Arc contents
         &*self.arc
     }
 }
@@ -193,11 +149,7 @@ impl ErasedArc {
     /// Create a new ErasedArc from an Arc
     pub fn new<T: 'static + fmt::Debug + Send + Sync>(arc: Arc<T>) -> Self {
         ErasedArc {
-            reader: Box::new(ArcReader {
-                arc,
-                _marker: PhantomData,
-                type_name_override: None,
-            }),
+            reader: Box::new(ArcReader::new(arc)),
             is_lazy: false,
         }
     }
@@ -225,8 +177,8 @@ impl ErasedArc {
         if let Some(type_name) = type_name_override {
             let reader = Box::new(ArcReader {
                 arc,
-                _marker: PhantomData,
-                type_name_override: Some(type_name),
+                type_id: TypeId::of::<T>(),
+                type_name: type_name,
             });
             ErasedArc {
                 reader,
@@ -237,8 +189,8 @@ impl ErasedArc {
             ErasedArc {
                 reader: Box::new(ArcReader {
                     arc,
-                    _marker: PhantomData,
-                    type_name_override: None,
+                    type_id: TypeId::of::<T>(),
+                    type_name: std::any::type_name::<T>().to_string(),
                 }),
                 is_lazy: false, // Not lazy
             }
@@ -261,8 +213,13 @@ impl ErasedArc {
     }
 
     /// Get the type name of the contained value
-    pub fn type_name(&self) -> &'static str {
+    pub fn type_name(&self) -> &str {
         self.reader.type_name()
+    }
+
+    /// Get the type ID of the contained value
+    pub fn type_id(&self) -> TypeId {
+        self.reader.type_id()
     }
 
     /// Get the contained value as a dynamic Any reference
@@ -281,8 +238,8 @@ impl ErasedArc {
         // Preserve the complete, accurate type name
         let reader = Box::new(ArcReader {
             arc,
-            _marker: PhantomData,
-            type_name_override: Some(type_name.to_string()),
+            type_id: TypeId::of::<Box<dyn Any + Send + Sync>>(),
+            type_name: type_name.to_string(),
         });
 
         Ok(ErasedArc {
@@ -293,52 +250,36 @@ impl ErasedArc {
 
     /// Check if this ArcAny contains a value of type T
     pub fn is_type<T: 'static>(&self) -> bool {
-        let expected_type_name = std::any::type_name::<T>();
-        let actual_type_name = self.type_name();
+        let expected_type_id = TypeId::of::<T>();
+        let actual_type_id = self.type_id();
 
         // We need this slightly more complex matching because the std::any type names
         // can have slight differences based on the package/crate names
-        if expected_type_name == actual_type_name {
+        if expected_type_id == actual_type_id {
             return true;
         }
 
         // Handle some common cases where type names might differ but are compatible
-        match (expected_type_name, actual_type_name) {
+        match (expected_type_id, actual_type_id) {
             // String variations
-            ("alloc::string::String", "String") => true,
-            ("String", "alloc::string::String") => true,
-
-            // Vec variations
-            (e, a) if e.contains("Vec<") && a.contains("Vec<") => {
-                // Basic check for Vec element types - this is a simplified approach
-                let e_elem = e
-                    .split('<')
-                    .nth(1)
-                    .unwrap_or("")
-                    .split('>')
-                    .next()
-                    .unwrap_or("");
-                let a_elem = a
-                    .split('<')
-                    .nth(1)
-                    .unwrap_or("")
-                    .split('>')
-                    .next()
-                    .unwrap_or("");
-                e_elem == a_elem
-                    || (e_elem.contains("String") && a_elem.contains("String"))
-                    || (e_elem.contains("i32") && a_elem.contains("i32"))
-                    || (e_elem.contains("i64") && a_elem.contains("i64"))
-                    || (e_elem.contains("f64") && a_elem.contains("f64"))
+            (e, a) if e == TypeId::of::<String>() && a == TypeId::of::<std::string::String>() => {
+                true
+            }
+            (e, a) if e == TypeId::of::<std::string::String>() && a == TypeId::of::<String>() => {
+                true
             }
 
             // HashMap variations - more robust check for both simple and complex value types
             (e, a)
-                if (e.contains("HashMap<") || e.contains("HashMap<"))
-                    && (a.contains("HashMap<") || a.contains("Box<")) =>
+                if (e == TypeId::of::<std::collections::HashMap<String, ArcValue>>()
+                    || e == TypeId::of::<
+                        std::collections::HashMap<String, Box<dyn Any + Send + Sync>>,
+                    >())
+                    && (a == TypeId::of::<std::collections::HashMap<String, ArcValue>>()
+                        || a == TypeId::of::<Box<dyn Any + Send + Sync>>()) =>
             {
                 // Special handling for Box<dyn Any> that might contain a HashMap
-                if a.contains("Box<dyn") {
+                if a == TypeId::of::<Box<dyn Any + Send + Sync>>() {
                     // This Box<dyn Any> might contain our HashMap, so be optimistic and return true
                     // The actual check will happen in as_arc or as_map_ref
                     return true;
@@ -366,8 +307,8 @@ impl ErasedArc {
                     }
                 };
 
-                let (e_key, e_value) = extract_key_value(e);
-                let (a_key, a_value) = extract_key_value(a);
+                let (e_key, e_value) = extract_key_value(self.type_name());
+                let (a_key, a_value) = extract_key_value(std::any::type_name::<T>());
 
                 // Keys must be compatible - usually both String
                 let keys_compatible =
@@ -389,7 +330,7 @@ impl ErasedArc {
             }
 
             // Generic structs and other types
-            (e, a) => compare_type_names(e, a),
+            (e, a) => compare_type_names(std::any::type_name::<T>(), &self.type_name()),
         }
     }
 

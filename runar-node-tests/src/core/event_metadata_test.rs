@@ -11,11 +11,11 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
-use runar_serializer::ArcValue;
-use runar_node::types::EventMetadata;
 use runar_node::routing::TopicPath;
 use runar_node::services::service_registry::ServiceRegistry;
 use runar_node::services::EventContext;
+use runar_node::EventMetadata;
+use runar_serializer::ArcValue;
 
 /// Test that verifies the get_events_metadata_by_subscriber method returns correct metadata for events
 ///

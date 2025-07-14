@@ -50,6 +50,8 @@ pub struct NodeKeyManager {
     certificate_validator: Option<CertificateValidator>,
     /// Network keys indexed by network public key (hex)
     network_keys: HashMap<String, EcdsaKeyPair>,
+    /// Known user profile public keys (id -> public key bytes)
+    profile_public_keys: HashMap<String, Vec<u8>>,
     /// Symmetric keys indexed by key name for services
     symmetric_keys: HashMap<String, Vec<u8>>,
     /// Node storage key for local file encryption (always present)
@@ -86,6 +88,7 @@ impl NodeKeyManager {
             storage_key,
             certificate_status: CertificateStatus::None,
             logger,
+            profile_public_keys: HashMap::new(),
         })
     }
 
@@ -639,10 +642,46 @@ impl NodeKeyManager {
         &self,
         data: &[u8],
         network_id: &str,
-        _profile_ids: Vec<String>,
+        profile_ids: Vec<String>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        // Nodes only support network-wide encryption.
-        self.create_envelope_for_network(data, network_id)
+        use crate::error::KeyError;
+        // Generate envelope key
+        use rand::RngCore;
+        let mut envelope_key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut envelope_key);
+
+        // Encrypt data with envelope key
+        let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
+
+        // Encrypt envelope key with network key if network_id provided
+        let mut network_encrypted_key = Vec::new();
+        if !network_id.is_empty() {
+            let net_key = self.network_keys.get(network_id).ok_or_else(|| {
+                KeyError::KeyNotFound(format!("Network key not found: {network_id}"))
+            })?;
+            network_encrypted_key =
+                self.encrypt_key_with_ecdsa(&envelope_key, &net_key.public_key_bytes())?;
+        }
+
+        // Encrypt envelope key for each profile id using stored public key
+        let mut profile_encrypted_keys = HashMap::new();
+        for pid in profile_ids {
+            if let Some(pub_key) = self.profile_public_keys.get(&pid) {
+                let enc = self.encrypt_key_with_ecdsa(&envelope_key, pub_key)?;
+                profile_encrypted_keys.insert(pid, enc);
+            } else {
+                return Err(KeyError::KeyNotFound(format!(
+                    "Profile public key not installed: {pid}"
+                )));
+            }
+        }
+
+        Ok(crate::mobile::EnvelopeEncryptedData {
+            encrypted_data,
+            network_id: network_id.to_string(),
+            network_encrypted_key,
+            profile_encrypted_keys,
+        })
     }
 
     /// Envelope-encrypt for a recipient network public key.
@@ -659,6 +698,12 @@ impl NodeKeyManager {
     pub fn has_public_key(&self, public_key: &[u8]) -> bool {
         let network_id = compact_id(public_key);
         self.network_keys.contains_key(&network_id)
+    }
+
+    /// Install a user profile public key so the node can encrypt data for that profile
+    pub fn install_profile_public_key(&mut self, public_key: Vec<u8>) {
+        let pid = compact_id(&public_key);
+        self.profile_public_keys.insert(pid, public_key);
     }
 }
 
@@ -733,6 +778,7 @@ impl NodeKeyManager {
             ca_certificate: state.ca_certificate,
             certificate_validator,
             network_keys: state.network_keys,
+            profile_public_keys: HashMap::new(),
             symmetric_keys: state.symmetric_keys,
             storage_key: state.storage_key,
             certificate_status,
