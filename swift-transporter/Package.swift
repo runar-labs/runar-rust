@@ -6,10 +6,10 @@ import PackageDescription
 let package = Package(
     name: "RunarTransporter",
     platforms: [
-        .macOS(.v13),
-        .iOS(.v16),
-        .tvOS(.v16),
-        .watchOS(.v9)
+        .macOS(.v11), // Updated for Network.framework QUIC support
+        .iOS(.v14),   // Updated for Network.framework QUIC support
+        .tvOS(.v14),  // Updated for Network.framework QUIC support
+        .watchOS(.v7) // Updated for consistency
     ],
     products: [
         .library(
@@ -24,6 +24,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "2.6.0"),
         .package(url: "https://github.com/apple/swift-async-algorithms.git", from: "1.0.0")
+        // TODO: Add Quinn Swift bindings for real QUIC compatibility
+        // .package(url: "https://github.com/quinn-rs/quinn-swift.git", from: "0.1.0")
     ],
     targets: [
         .target(
@@ -37,11 +39,46 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "AsyncAlgorithms", package: "swift-async-algorithms")
-            ]
+                // TODO: Add Quinn dependency
+                // .product(name: "Quinn", package: "quinn-swift")
+            ],
+            exclude: ["QuicTransporter_old.swift.old"]
         ),
         .testTarget(
             name: "RunarTransporterTests",
             dependencies: ["RunarTransporter"]
         ),
     ]
-) 
+)
+
+/*
+ QUIC COMPATIBILITY ANALYSIS:
+ 
+ Current Implementation: UDP with custom QUIC-like framing
+ Rust Implementation: Quinn 0.11.x with rustls TLS
+ 
+ COMPATIBILITY OPTIONS:
+ 
+ 1. ngtcp2 (C library with Swift bindings)
+    ✅ Full QUIC protocol support
+    ❌ Different TLS stack (OpenSSL vs rustls)
+    ❌ Complex C bindings required
+    ❌ Different certificate validation
+ 
+ 2. Apple Network.framework (CURRENTLY IMPLEMENTING)
+    ✅ Native iOS/macOS integration
+    ✅ Real QUIC protocol support
+    ⚠️ Platform limited (iOS 14+, macOS 11+)
+    ⚠️ Limited custom certificate validation
+    ⚠️ Less control over QUIC configuration
+ 
+ 3. Quinn Swift Bindings (RECOMMENDED)
+    ✅ Same QUIC implementation as Rust
+    ✅ Same TLS stack (rustls)
+    ✅ Identical certificate validation
+    ✅ Full protocol compatibility
+    ⚠️ Requires Quinn C API Swift bindings
+ 
+ CURRENT STATUS: Implementing Network.framework QUIC transport
+ for immediate real QUIC support while maintaining compatibility.
+ */ 
