@@ -115,5 +115,6 @@ pub trait CustomFromBytes: Sized + 'static + Clone + Debug + Send + Sync {
         keystore: Option<&Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
         network_id: &String,
+        profile_id: &String,
     ) -> Result<Vec<u8>>;
 }

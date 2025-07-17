@@ -36,6 +36,7 @@ pub struct ArcValue {
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
                     &String,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
@@ -119,12 +120,13 @@ impl ArcValue {
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
                     &String,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id| {
+        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
             let val = erased.as_arc::<T>()?;
-            T::to_binary(&*val, keystore, resolver, network_id)
+            T::to_binary(&*val, keystore, resolver, network_id, profile_id)
         });
         Self {
             category: ValueCategory::Primitive,
@@ -141,16 +143,20 @@ impl ArcValue {
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
                     &String,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id| {
+        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
             let list = erased.as_arc::<Vec<ArcValue>>()?;
             let mut proto = vec_types::VecArcValue::default();
             for item in list.iter() {
-                proto
-                    .entries
-                    .push(item.serialize(keystore.cloned(), resolver, network_id)?);
+                proto.entries.push(item.serialize(
+                    keystore.cloned(),
+                    resolver,
+                    network_id,
+                    profile_id,
+                )?);
             }
             Ok(proto.encode_to_vec())
         });
@@ -169,14 +175,15 @@ impl ArcValue {
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
                     &String,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id| {
+        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
             let map = erased.as_arc::<HashMap<String, ArcValue>>()?;
             let mut proto = map_types::StringToArcValueMap::default();
             for (k, v) in map.iter() {
-                let bytes = v.serialize(keystore.cloned(), resolver, network_id)?;
+                let bytes = v.serialize(keystore.cloned(), resolver, network_id, profile_id)?;
                 proto.entries.insert(k.clone(), bytes);
             }
             Ok(proto.encode_to_vec())
@@ -198,12 +205,13 @@ impl ArcValue {
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
                     &String,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id| {
+        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
             let val = erased.as_arc::<T>()?;
-            T::to_binary(&*val, keystore, resolver, network_id)
+            T::to_binary(&*val, keystore, resolver, network_id, profile_id)
         });
         Self {
             category: ValueCategory::Struct,
@@ -220,10 +228,11 @@ impl ArcValue {
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
                     &String,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, _, _, _| {
+        > = Arc::new(move |erased, _, _, _, _| {
             let bytes = erased.as_arc::<Vec<u8>>()?;
             Ok((*bytes).clone())
         });
@@ -242,10 +251,11 @@ impl ArcValue {
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
                     &String,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, _, _, _| {
+        > = Arc::new(move |erased, _, _, _, _| {
             let json = erased.as_arc::<JsonValue>()?;
             Ok(serde_json::to_vec(&*json)?)
         });
@@ -305,6 +315,7 @@ impl ArcValue {
         keystore: Option<Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
         network_id: &String,
+        profile_id: &String,
     ) -> Result<Vec<u8>> {
         if self.is_null() {
             return Ok(vec![0]);
@@ -334,7 +345,7 @@ impl ArcValue {
         buf.extend_from_slice(type_name_bytes);
 
         let data = if let Some(ser_fn) = &self.serialize_fn {
-            ser_fn(inner, keystore.as_ref(), resolver, network_id)
+            ser_fn(inner, keystore.as_ref(), resolver, network_id, profile_id)
         } else {
             return Err(anyhow!("No serialize function available"));
         }?;
@@ -351,7 +362,8 @@ impl ArcValue {
                 .as_ref()
                 .ok_or(anyhow!("Keystore required for encryption"))?;
 
-            let env = ks.encrypt_with_envelope(&data, Some(&network_id), Vec::new())?;
+            let env =
+                ks.encrypt_with_envelope(&data, Some(&network_id), vec![profile_id.clone()])?;
             buf.extend(env.encode_to_vec());
         } else {
             buf.extend(data);
@@ -567,6 +579,7 @@ impl CustomFromBytes for String {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.as_bytes().to_vec())
     }
@@ -593,6 +606,7 @@ impl CustomFromBytes for i64 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -619,6 +633,7 @@ impl CustomFromBytes for bool {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(vec![if *self { 1 } else { 0 }])
     }
@@ -645,6 +660,7 @@ impl CustomFromBytes for f64 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -665,6 +681,7 @@ impl CustomFromBytes for Vec<u8> {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.clone())
     }
@@ -686,6 +703,7 @@ impl CustomFromBytes for JsonValue {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         serde_json::to_vec(self).map_err(anyhow::Error::from)
     }
@@ -712,12 +730,16 @@ impl CustomFromBytes for Vec<ArcValue> {
         keystore: Option<&Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
         network_id: &String,
+        profile_id: &String,
     ) -> Result<Vec<u8>> {
         let mut proto = vec_types::VecArcValue::default();
         for item in self {
-            proto
-                .entries
-                .push(item.serialize(keystore.cloned(), resolver, network_id)?);
+            proto.entries.push(item.serialize(
+                keystore.cloned(),
+                resolver,
+                network_id,
+                profile_id,
+            )?);
         }
         Ok(proto.encode_to_vec())
     }
@@ -744,12 +766,13 @@ impl CustomFromBytes for HashMap<String, ArcValue> {
         keystore: Option<&Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
         network_id: &String,
+        profile_id: &String,
     ) -> Result<Vec<u8>> {
         let mut proto = map_types::StringToArcValueMap::default();
         for (k, v) in self {
             proto.entries.insert(
                 k.clone(),
-                v.serialize(keystore.cloned(), resolver, network_id)?,
+                v.serialize(keystore.cloned(), resolver, network_id, profile_id)?,
             );
         }
         Ok(proto.encode_to_vec())
@@ -775,6 +798,7 @@ impl CustomFromBytes for i8 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(vec![*self as u8])
     }
@@ -797,6 +821,7 @@ impl CustomFromBytes for u8 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(vec![*self])
     }
@@ -821,6 +846,7 @@ impl CustomFromBytes for i16 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -845,6 +871,7 @@ impl CustomFromBytes for u16 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -869,6 +896,7 @@ impl CustomFromBytes for i32 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -893,6 +921,7 @@ impl CustomFromBytes for u32 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -917,6 +946,7 @@ impl CustomFromBytes for u64 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -941,6 +971,7 @@ impl CustomFromBytes for f32 {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -966,6 +997,7 @@ impl CustomFromBytes for char {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> Result<Vec<u8>> {
         Ok((*self as u32).to_be_bytes().to_vec())
     }

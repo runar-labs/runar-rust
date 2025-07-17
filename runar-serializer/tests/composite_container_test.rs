@@ -36,6 +36,7 @@ fn ctx() -> Result<(
     Arc<dyn EnvelopeCrypto>,
     Arc<dyn runar_serializer::traits::LabelResolver>,
     String,
+    String,
 )> {
     let logger = Arc::new(Logger::new_root(Component::System, "comp-test"));
 
@@ -49,6 +50,7 @@ fn ctx() -> Result<(
     let mut user_mobile = MobileKeyManager::new(logger.clone())?;
     user_mobile.initialize_user_root_key()?;
     let profile_pk = user_mobile.derive_user_profile_key("user")?;
+    let profile_id = compact_id(&profile_pk);
     //install only the network public key, not the network private key
     //so this user mobile can encrypt for the network, but not decrypt
     user_mobile.install_network_public_key(&network_pub)?;
@@ -94,12 +96,12 @@ fn ctx() -> Result<(
         ]),
     }));
 
-    Ok((user_mobile_ks, node_ks, resolver, network_id))
+    Ok((user_mobile_ks, node_ks, resolver, network_id, profile_id))
 }
 
 #[test]
 fn hashmap_of_profiles_roundtrip() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id) = ctx()?;
+    let (mobile_ks, node_ks, resolver, network_id, profile_id) = ctx()?;
     let mut map: HashMap<String, ArcValue> = HashMap::new();
     map.insert(
         "u1".into(),
@@ -127,6 +129,7 @@ fn hashmap_of_profiles_roundtrip() -> Result<()> {
         Some(mobile_ks.clone()),
         Some(resolver.as_ref()),
         &network_id,
+        &profile_id,
     )?;
     //node side
     let de_node = ArcValue::deserialize(&bytes, Some(node_ks.clone()))?;
@@ -181,7 +184,7 @@ fn hashmap_of_profiles_roundtrip() -> Result<()> {
 
 #[test]
 fn vec_of_hashmap_profiles_roundtrip() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id) = ctx()?;
+    let (mobile_ks, node_ks, resolver, network_id, profile_id) = ctx()?;
 
     let build_map = |id: &str| {
         let mut m = HashMap::new();
@@ -208,6 +211,7 @@ fn vec_of_hashmap_profiles_roundtrip() -> Result<()> {
         Some(mobile_ks.clone()),
         Some(resolver.as_ref()),
         &network_id,
+        &profile_id,
     )?;
     let de = ArcValue::deserialize(&bytes, Some(node_ks.clone()))?;
     let res_list = de.as_list_ref()?;
