@@ -12,6 +12,10 @@ use super::encryption::decrypt_bytes;
 use super::erased_arc::ErasedArc;
 use super::traits::{KeyStore, LabelResolver, RunarSerializer};
 use crate::map_types;
+use crate::primitive_types::{
+    BoolValue, CharValue, DoubleValue, FloatValue, Int32Value, Int64Value, StringValue,
+    Uint32Value, Uint64Value,
+};
 use crate::vec_types;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -426,9 +430,9 @@ impl ArcValue {
         let list_of_type: Vec<Arc<T>> = list_arc
             .iter()
             .map(|entry| {
-                (entry
+                entry
                     .as_type_ref::<T>()
-                    .expect("can't convert list entry to type"))
+                    .expect("can't convert list entry to type")
             })
             .collect();
 
@@ -565,7 +569,8 @@ impl ArcValue {
 
 impl RunarSerializer for String {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        String::from_utf8(bytes.to_vec()).map_err(anyhow::Error::from)
+        let proto = StringValue::decode(bytes)?;
+        Ok(proto.value)
     }
 
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
@@ -581,18 +586,17 @@ impl RunarSerializer for String {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.as_bytes().to_vec())
+        let proto = StringValue {
+            value: self.clone(),
+        };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for i64 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 8 {
-            return Err(anyhow!("Invalid byte length for i64"));
-        }
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(bytes);
-        Ok(i64::from_be_bytes(buf))
+        let proto = Int64Value::decode(bytes)?;
+        Ok(proto.value)
     }
 
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
@@ -608,7 +612,8 @@ impl RunarSerializer for i64 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = Int64Value { value: *self };
+        Ok(proto.encode_to_vec())
     }
 }
 
@@ -616,10 +621,8 @@ impl RunarSerializer for i64 {
 
 impl RunarSerializer for bool {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 1 {
-            return Err(anyhow!("Invalid byte length for bool"));
-        }
-        Ok(bytes[0] != 0)
+        let proto = BoolValue::decode(bytes)?;
+        Ok(proto.value)
     }
 
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
@@ -635,18 +638,15 @@ impl RunarSerializer for bool {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(vec![if *self { 1 } else { 0 }])
+        let proto = BoolValue { value: *self };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for f64 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 8 {
-            return Err(anyhow!("Invalid byte length for f64"));
-        }
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(bytes);
-        Ok(f64::from_be_bytes(buf))
+        let proto = DoubleValue::decode(bytes)?;
+        Ok(proto.value)
     }
 
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
@@ -662,7 +662,8 @@ impl RunarSerializer for f64 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = DoubleValue { value: *self };
+        Ok(proto.encode_to_vec())
     }
 }
 
@@ -673,7 +674,8 @@ impl RunarSerializer for Vec<u8> {
 
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        decrypt_bytes(bytes, ks)
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
     }
 
     fn to_binary(
@@ -783,10 +785,8 @@ impl RunarSerializer for HashMap<String, ArcValue> {
 
 impl RunarSerializer for i8 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 1 {
-            return Err(anyhow!("Invalid byte length for i8"));
-        }
-        Ok(bytes[0] as i8)
+        let proto = Int32Value::decode(bytes)?;
+        Ok(proto.value as i8)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -800,16 +800,17 @@ impl RunarSerializer for i8 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(vec![*self as u8])
+        let proto = Int32Value {
+            value: *self as i32,
+        };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for u8 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 1 {
-            return Err(anyhow!("Invalid byte length for u8"));
-        }
-        Ok(bytes[0])
+        let proto = Uint32Value::decode(bytes)?;
+        Ok(proto.value as u8)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -823,18 +824,17 @@ impl RunarSerializer for u8 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(vec![*self])
+        let proto = Uint32Value {
+            value: *self as u32,
+        };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for i16 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 2 {
-            return Err(anyhow!("Invalid byte length for i16"));
-        }
-        let mut buf = [0u8; 2];
-        buf.copy_from_slice(bytes);
-        Ok(i16::from_be_bytes(buf))
+        let proto = Int32Value::decode(bytes)?;
+        Ok(proto.value as i16)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -848,18 +848,17 @@ impl RunarSerializer for i16 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = Int32Value {
+            value: *self as i32,
+        };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for u16 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 2 {
-            return Err(anyhow!("Invalid byte length for u16"));
-        }
-        let mut buf = [0u8; 2];
-        buf.copy_from_slice(bytes);
-        Ok(u16::from_be_bytes(buf))
+        let proto = Uint32Value::decode(bytes)?;
+        Ok(proto.value as u16)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -873,18 +872,17 @@ impl RunarSerializer for u16 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = Uint32Value {
+            value: *self as u32,
+        };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for i32 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 4 {
-            return Err(anyhow!("Invalid byte length for i32"));
-        }
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(bytes);
-        Ok(i32::from_be_bytes(buf))
+        let proto = Int32Value::decode(bytes)?;
+        Ok(proto.value)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -898,18 +896,15 @@ impl RunarSerializer for i32 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = Int32Value { value: *self };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for u32 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 4 {
-            return Err(anyhow!("Invalid byte length for u32"));
-        }
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(bytes);
-        Ok(u32::from_be_bytes(buf))
+        let proto = Uint32Value::decode(bytes)?;
+        Ok(proto.value)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -923,18 +918,15 @@ impl RunarSerializer for u32 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = Uint32Value { value: *self };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for u64 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 8 {
-            return Err(anyhow!("Invalid byte length for u64"));
-        }
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(bytes);
-        Ok(u64::from_be_bytes(buf))
+        let proto = Uint64Value::decode(bytes)?;
+        Ok(proto.value)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -948,18 +940,15 @@ impl RunarSerializer for u64 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = Uint64Value { value: *self };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for f32 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 4 {
-            return Err(anyhow!("Invalid byte length for f32"));
-        }
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(bytes);
-        Ok(f32::from_be_bytes(buf))
+        let proto = FloatValue::decode(bytes)?;
+        Ok(proto.value)
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -973,19 +962,15 @@ impl RunarSerializer for f32 {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok(self.to_be_bytes().to_vec())
+        let proto = FloatValue { value: *self };
+        Ok(proto.encode_to_vec())
     }
 }
 
 impl RunarSerializer for char {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        if bytes.len() != 4 {
-            return Err(anyhow!("Invalid byte length for char"));
-        }
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(bytes);
-        let u = u32::from_be_bytes(buf);
-        std::char::from_u32(u).ok_or_else(|| anyhow!("Invalid char encoding"))
+        let proto = CharValue::decode(bytes)?;
+        std::char::from_u32(proto.value).ok_or_else(|| anyhow!("Invalid char encoding"))
     }
     fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let ks = keystore.ok_or(anyhow!("Keystore required"))?;
@@ -999,10 +984,13 @@ impl RunarSerializer for char {
         _network_id: &String,
         _profile_id: &String,
     ) -> Result<Vec<u8>> {
-        Ok((*self as u32).to_be_bytes().to_vec())
+        let proto = CharValue {
+            value: *self as u32,
+        };
+        Ok(proto.encode_to_vec())
     }
 }
-// --- END: CustomFromBytes for all common primitives ---
+// --- END: RunarSerializer for all common primitives ---
 
 // ---------------------------------------------------------------------------
 // Trait: AsArcValue
@@ -1013,7 +1001,7 @@ impl RunarSerializer for char {
 /// * `from_arc_value` attempts to reconstruct `Self` from the given `ArcValue`.
 ///
 /// `from_arc_value` has a default implementation that works for any type
-/// implementing [`CustomFromBytes`].  This covers the vast majority of cases
+/// implementing [`RunarSerializer`].  This covers the vast majority of cases
 /// once the `#[derive(Serializable)]` macro is applied.  Custom/value-category
 /// specific impls can still be provided to optimise the binary layout (e.g.
 /// primitives vs. structs).
@@ -1056,7 +1044,7 @@ impl AsArcValue for () {
     }
 }
 
-// Blanket impl leveraging `CustomFromBytes` for all other types.  This must be
+// Blanket impl leveraging `RunarSerializer` for all other types.  This must be
 // **after** the concrete impls above to avoid overlap.
 impl<T> AsArcValue for T
 where

@@ -10,6 +10,7 @@ pub mod arc_value;
 pub mod encryption;
 pub mod erased_arc;
 pub mod map_types;
+pub mod primitive_types;
 pub mod traits;
 pub mod utils;
 pub mod vec_types;
