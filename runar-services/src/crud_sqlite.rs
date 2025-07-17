@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::sqlite::{
     DataType, Params as SqlParams, Schema as SqliteSchemaDef, SqlQuery, Value as SqliteValue,
 };
+use runar_serializer::CustomFromBytes;
 
 /// Represents a request to insert a single document into a collection.
 ///
@@ -621,5 +622,99 @@ impl Clone for CrudSqliteService {
             store_path: self.store_path.clone(),
             schema: Arc::clone(&self.schema),
         }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// CustomFromBytes implementations for CRUD request/response structs
+// -----------------------------------------------------------------------------
+
+impl CustomFromBytes for InsertOneRequest {
+    fn from_plain_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Ok(bincode::deserialize(bytes)?)
+    }
+
+    fn from_encrypted_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Self::from_plain_bytes(bytes, None)
+    }
+
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
+    ) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(self)?)
+    }
+}
+
+impl CustomFromBytes for InsertOneResponse {
+    fn from_plain_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Ok(bincode::deserialize(bytes)?)
+    }
+    fn from_encrypted_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Self::from_plain_bytes(bytes, None)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
+    ) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(self)?)
+    }
+}
+
+impl CustomFromBytes for FindOneRequest {
+    fn from_plain_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Ok(bincode::deserialize(bytes)?)
+    }
+    fn from_encrypted_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Self::from_plain_bytes(bytes, None)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
+    ) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(self)?)
+    }
+}
+
+impl CustomFromBytes for FindOneResponse {
+    fn from_plain_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Ok(bincode::deserialize(bytes)?)
+    }
+    fn from_encrypted_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> Result<Self> {
+        Self::from_plain_bytes(bytes, None)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
+    ) -> Result<Vec<u8>> {
+        Ok(bincode::serialize(self)?)
     }
 }

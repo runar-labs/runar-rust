@@ -1,7 +1,6 @@
-use crate::traits::{EnvelopeCrypto, EnvelopeEncryptedData, KeyScope, KeyStore, LabelResolver};
+use crate::traits::{EnvelopeEncryptedData, KeyStore, LabelResolver};
 use anyhow::{anyhow, Result};
 use prost::Message;
-use runar_common::compact_ids::compact_id;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -33,24 +32,16 @@ pub fn encrypt_label_group<T: Serialize + prost::Message>(
     resolver: &dyn LabelResolver,
 ) -> Result<EncryptedLabelGroup> {
     // Serialize the fields within this label group
-    let mut plaintext = Vec::new();
-    Message::encode(fields_struct, &mut plaintext)?;
+    let mut plain_bytes = Vec::new();
+    Message::encode(fields_struct, &mut plain_bytes)?;
 
     // Resolve the label to key info (public key + scope)
     let info = resolver
         .resolve_label_info(label)?
         .ok_or_else(|| anyhow!("Label '{label}' not available in current context"))?;
 
-    // Determine envelope encryption parameters based on scope
-    let (network_id, profile_ids) = match info.scope {
-        KeyScope::Network => (compact_id(&info.public_key), vec![]),
-        KeyScope::Profile => {
-            // Use the compact ID of the profile public key instead of the human-readable label.
-            let pid = compact_id(&info.public_key);
-            (String::new(), vec![pid])
-        }
-    };
-    let envelope = keystore.encrypt_with_envelope(&plaintext, &network_id, profile_ids)?;
+    let envelope =
+        keystore.encrypt_with_envelope(&plain_bytes, info.network_id.as_ref(), info.profile_ids)?;
 
     Ok(EncryptedLabelGroup {
         label: label.to_string(),
@@ -83,13 +74,13 @@ pub fn decrypt_label_group<T: for<'de> Deserialize<'de> + prost::Message + Defau
 }
 
 // Replace stubs with real implementations
-pub fn encrypt_bytes(bytes: &[u8], keystore: &Arc<KeyStore>) -> anyhow::Result<Vec<u8>> {
-    // Use network-agnostic envelope (empty network_id, no profile_ids)
-    let env = keystore
-        .encrypt_with_envelope(bytes, "", Vec::new())
-        .map_err(|e| anyhow!(e))?;
-    Ok(env.encode_to_vec())
-}
+// pub fn encrypt_bytes(bytes: &[u8], keystore: &Arc<KeyStore>, network_id: Option<&String>, profile_ids: Vec<String>) -> anyhow::Result<Vec<u8>> {
+//     // Use network-agnostic envelope (empty network_id, no profile_ids)
+//     let env = keystore
+//         .encrypt_with_envelope(bytes, network_id, profile_ids)
+//         .map_err(|e| anyhow!(e))?;
+//     Ok(env.encode_to_vec())
+// }
 
 pub fn decrypt_bytes(bytes: &[u8], keystore: &Arc<KeyStore>) -> anyhow::Result<Vec<u8>> {
     let env = EnvelopeEncryptedData::decode(bytes).map_err(|e| anyhow!(e))?;

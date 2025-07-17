@@ -108,6 +108,9 @@ struct QuicTransportImpl {
     // Channel for sending peer node info updates
     peer_node_info_sender: tokio::sync::broadcast::Sender<NodeInfo>,
     running: Arc<AtomicBool>,
+    // Encryption context
+    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
     // Enhanced stream management for request-response pairs
     bidirectional_streams:
         Arc<tokio::sync::RwLock<std::collections::HashMap<String, BidirectionalStream>>>,
@@ -131,6 +134,9 @@ pub struct QuicTransport {
     // Keep logger and node_id at this level for compatibility
     logger: Arc<Logger>,
     node_id: String,
+    // Encryption context owned by this transport
+    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
     // Background tasks for connection handling and message processing
     background_tasks: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -214,6 +220,8 @@ pub struct QuicTransportConfig {
         Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>,
     pub options: QuicTransportOptions,
     pub logger: Arc<Logger>,
+    pub keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    pub label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
 }
 
 impl QuicTransportOptions {
@@ -341,6 +349,8 @@ impl QuicTransportImpl {
             local_node: config.local_node_info,
             peer_node_info_sender,
             running: Arc::new(AtomicBool::new(false)),
+            keystore: config.keystore,
+            label_resolver: config.label_resolver,
             // Initialize enhanced stream management
             bidirectional_streams: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
@@ -1847,6 +1857,14 @@ impl NetworkTransport for QuicTransport {
     async fn subscribe_to_peer_node_info(&self) -> tokio::sync::broadcast::Receiver<NodeInfo> {
         self.inner.peer_node_info_sender.subscribe()
     }
+
+    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto> {
+        self.keystore.clone()
+    }
+
+    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver> {
+        self.label_resolver.clone()
+    }
 }
 
 impl QuicTransport {
@@ -1866,6 +1884,8 @@ impl QuicTransport {
         >,
         options: QuicTransportOptions,
         logger: Arc<Logger>,
+        keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+        label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Create the config struct to pass to the inner implementation
         let config = QuicTransportConfig {
@@ -1874,6 +1894,8 @@ impl QuicTransport {
             message_handler,
             options,
             logger: logger.clone(), // Clone for the inner impl
+            keystore: keystore.clone(),
+            label_resolver: label_resolver.clone(),
         };
 
         // Create the inner implementation using the config struct
@@ -1884,6 +1906,8 @@ impl QuicTransport {
             inner: Arc::new(inner_impl),
             logger, // Use the original logger passed to QuicTransport::new
             node_id: compact_id(&local_node_info.node_public_key), // local_node_info is already cloned for config, can move peer_node_id here
+            keystore,
+            label_resolver,
             background_tasks: Mutex::new(Vec::new()),
         })
     }

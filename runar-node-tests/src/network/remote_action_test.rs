@@ -1,7 +1,10 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
+use runar_macros_common::hmap;
+use runar_macros_common::params;
 use runar_node::config::{LogLevel, LoggingConfig};
-use runar_serializer::ArcValue;
+use runar_serializer::arc_value::AsArcValue;
+use runar_serializer::ArcValue; // needed by params! macro
 
 use runar_node::node::Node;
 use runar_test_utils::create_networked_node_test_config;
@@ -12,7 +15,6 @@ use tokio::time::sleep;
 
 // Import the fixture MathService
 use crate::fixtures::math_service::MathService;
-use runar_macros_common::hmap;
 
 // TODO issues we found in the last refactoru of this test ( to be addressewd later)
 // 1 - when I changed the params to use params!{} macro which wraps each element in a map with ArcValue the serializer
@@ -66,15 +68,12 @@ async fn test_remote_action_call() -> Result<()> {
     // Test 1: Call math1/add service (on node1) from node2
     logger.debug("📤 Testing remote action call from node2 to node1 (math1/add)...");
 
-    let response: f64 = node2
-        .request(
-            "math1/add",
-            Some(ArcValue::new_map(hmap! {
-                "a" => 5.0,
-                "b" => 3.0
-            })),
-        )
-        .await?;
+    let response_av = node2
+        .request("math1/add", Some(params! { "a" => 5.0, "b" => 3.0 }))
+        .await?
+        .as_type_ref::<f64>()?;
+
+    let response = *response_av;
     assert_eq!(response, 8.0);
     logger.debug(format!(
         "✅ Secure add operation succeeded: 5 + 3 = {response}"
@@ -82,15 +81,10 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Test 2: Call math2/multiply service (on node2) from node1
     logger.debug("📤 Testing remote action call from node1 to node2 (math2/multiply)...");
-    let response: f64 = node1
-        .request(
-            "math2/multiply",
-            Some(ArcValue::new_map(hmap! {
-                "a" => 4.0,
-                "b" => 7.0
-            })),
-        )
+    let response_av: ArcValue = node1
+        .request("math2/multiply", Some(params! { "a" => 4.0, "b" => 7.0 }))
         .await?;
+    let response: f64 = f64::from_arc_value(response_av)?;
     assert_eq!(response, 28.0);
 
     logger.debug("🔄 Testing dynamic service addition and discovery...");
@@ -106,15 +100,10 @@ async fn test_remote_action_call() -> Result<()> {
     // Test 3: Call the newly added math3/add service from node2
     logger.debug("📤 Testing remote action call to newly added service (math3/add)...");
 
-    let response: f64 = node2
-        .request(
-            "math3/add",
-            Some(ArcValue::new_map(hmap! {
-                "a" => 10.0,
-                "b" => 5.0
-            })),
-        )
+    let response_av: ArcValue = node2
+        .request("math3/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
         .await?;
+    let response: f64 = f64::from_arc_value(response_av)?;
     assert_eq!(response, 15.0);
     logger.info(format!(
         "✅ Dynamic service call succeeded: 10 + 5 = {response}"
@@ -125,29 +114,19 @@ async fn test_remote_action_call() -> Result<()> {
     // ==========================================
     logger.info("🧪 Testing additional secure operations...");
 
-    let response: f64 = node2
-        .request(
-            "math1/subtract",
-            Some(ArcValue::new_map(hmap! {
-                "a" => 20.0,
-                "b" => 8.0
-            })),
-        )
+    let response_av: ArcValue = node2
+        .request("math1/subtract", Some(params! { "a" => 20.0, "b" => 8.0 }))
         .await?;
+    let response: f64 = f64::from_arc_value(response_av)?;
     assert_eq!(response, 12.0);
     logger.info(format!("✅ Secure subtract operation: 20 - 8 = {response}"));
 
     // Test divide operation on math2
 
-    let response: f64 = node1
-        .request(
-            "math2/divide",
-            Some(ArcValue::new_map(hmap! {
-                "a" => 15.0,
-                "b" => 3.0
-            })),
-        )
+    let response_av: ArcValue = node1
+        .request("math2/divide", Some(params! { "a" => 15.0, "b" => 3.0 }))
         .await?;
+    let response: f64 = f64::from_arc_value(response_av)?;
     assert_eq!(response, 5.0);
     logger.info(format!("✅ Secure divide operation: 15 / 3 = {response}"));
 

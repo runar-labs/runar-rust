@@ -12,7 +12,35 @@ use runar_node::network::transport::{
     NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
 };
 use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
-use runar_serializer::{ArcValue, SerializerRegistry};
+use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
+use runar_serializer::ArcValue;
+use std::collections::HashMap;
+
+// Dummy crypto that performs no-op encryption for tests
+struct NoCrypto;
+
+impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        _network_id: &str,
+        _profile_ids: Vec<String>,
+    ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
+        Ok(runar_keys::mobile::EnvelopeEncryptedData {
+            encrypted_data: data.to_vec(),
+            network_id: "test-network".to_string(),
+            network_encrypted_key: Vec::new(),
+            profile_encrypted_keys: std::collections::HashMap::new(),
+        })
+    }
+
+    fn decrypt_envelope_data(
+        &self,
+        env: &runar_keys::mobile::EnvelopeEncryptedData,
+    ) -> runar_keys::Result<Vec<u8>> {
+        Ok(env.encrypted_data.clone())
+    }
+}
 
 /// This test ensures the transport layer properly handles:
 /// 1. Bidirectional streams for request-response patterns
@@ -310,12 +338,19 @@ async fn test_quic_transport_complete_api_validation(
         .with_private_key(node2_cert_config.private_key)
         .with_root_certificates(vec![ca_certificate]);
 
+    let empty_resolver: Arc<dyn LabelResolver> =
+        Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+            label_mappings: HashMap::new(),
+        }));
+
     let transport1 = QuicTransport::new(
         node1_info.clone(),
         "127.0.0.1:50069".parse::<SocketAddr>()?,
         node1_handler,
         transport1_options,
         logger.clone(),
+        Arc::new(NoCrypto),
+        empty_resolver.clone(),
     )?;
 
     let transport2 = QuicTransport::new(
@@ -324,6 +359,8 @@ async fn test_quic_transport_complete_api_validation(
         node2_handler,
         transport2_options,
         logger.clone(),
+        Arc::new(NoCrypto),
+        empty_resolver.clone(),
     )?;
 
     println!("✅ [QUIC Transport API] Created QuicTransport instances with proper certificates");
@@ -458,13 +495,12 @@ async fn test_quic_transport_complete_api_validation(
         )
     };
 
-    let registry = SerializerRegistry::with_defaults(logger.clone());
-
+    // Build payload for request
     let mut map = std::collections::HashMap::new();
     map.insert("a".to_string(), ArcValue::new_primitive(5));
     map.insert("b".to_string(), ArcValue::new_primitive(3));
-    let arc_value = ArcValue::from_map(map);
-    let value_bytes = registry.serialize_value(&arc_value)?;
+    let arc_value = ArcValue::new_map(map);
+    let value_bytes = arc_value.serialize(None, None)?;
 
     let request_message = NetworkMessage {
         source_node_id: compact_id(&request_sender_info.node_public_key),
@@ -494,8 +530,8 @@ async fn test_quic_transport_complete_api_validation(
 
     let mut map = std::collections::HashMap::new();
     map.insert("result".to_string(), ArcValue::new_primitive(8));
-    let arc_value_result = ArcValue::from_map(map);
-    let value_bytes_result = registry.serialize_value(&arc_value_result)?;
+    let arc_value_result = ArcValue::new_map(map);
+    let value_bytes_result = arc_value_result.serialize(None, None)?;
 
     let response_message = NetworkMessage {
         source_node_id: compact_id(&request_receiver_info.node_public_key),
@@ -535,8 +571,8 @@ async fn test_quic_transport_complete_api_validation(
         ArcValue::new_primitive("add".to_string()),
     );
     map.insert("result".to_string(), ArcValue::new_primitive(8));
-    let arc_value_event = ArcValue::from_map(map);
-    let value_bytes_event = registry.serialize_value(&arc_value_event)?;
+    let arc_value_event = ArcValue::new_map(map);
+    let value_bytes_event = arc_value_event.serialize(None, None)?;
 
     let event_message = NetworkMessage {
         source_node_id: compact_id(&sender_info.node_public_key),

@@ -39,7 +39,7 @@ pub fn derive_serializable(input: TokenStream) -> TokenStream {
                 Self::from_plain_bytes(&decrypted, keystore)
             }
 
-            fn to_binary(&self, _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, _resolver: Option<&dyn runar_serializer::LabelResolver>) -> anyhow::Result<Vec<u8>> {
+            fn to_binary(&self, _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, _resolver: Option<&dyn runar_serializer::LabelResolver>, _network_id: &String) -> anyhow::Result<Vec<u8>> {
                 let mut buf = Vec::new();
                 self.encode(&mut buf)?;
                 Ok(buf)
@@ -214,7 +214,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
                 Self::from_plain_bytes(bytes, None)
             }
 
-            fn to_binary(&self, _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, _resolver: Option<&dyn runar_serializer::LabelResolver>) -> anyhow::Result<Vec<u8>> {
+            fn to_binary(&self, _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, _resolver: Option<&dyn runar_serializer::LabelResolver>, _network_id: &String) -> anyhow::Result<Vec<u8>> {
                 let mut buf = Vec::new();
                 self.encode(&mut buf)?;
                 Ok(buf)
@@ -249,7 +249,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
     let decrypt_impl = quote! { let mut decrypted = #struct_name { #(#decrypted_plaintext_init)* #(#labeled_field_defaults)* }; #(#decrypt_label_blocks)* Ok(decrypted) };
 
-    let expanded = quote! { #(#substruct_defs)* #(#proto_substruct_defs)* #encrypted_struct_def impl #struct_name { fn encrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>, resolver: &dyn runar_serializer::LabelResolver) -> anyhow::Result<#encrypted_name> { #encrypt_impl } } impl #encrypted_name { fn decrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>) -> anyhow::Result<#struct_name> { #decrypt_impl } } impl runar_serializer::CustomFromBytes for #struct_name { fn from_plain_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { Self::from_encrypted_bytes(bytes, keystore) } fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for decryption"))?; let encrypted = #encrypted_name::decode(bytes)?; encrypted.decrypt_with_keystore(ks) } fn to_binary(&self, keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, resolver: Option<&dyn runar_serializer::LabelResolver>) -> anyhow::Result<Vec<u8>> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for encryption"))?; let res = resolver.ok_or(anyhow::anyhow!("LabelResolver required for encryption"))?; let encrypted = self.encrypt_with_keystore(ks, res)?; let mut buf = Vec::new(); encrypted.encode(&mut buf)?; Ok(buf) } } };
+    let expanded = quote! { #(#substruct_defs)* #(#proto_substruct_defs)* #encrypted_struct_def impl #struct_name { fn encrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>, resolver: &dyn runar_serializer::LabelResolver) -> anyhow::Result<#encrypted_name> { #encrypt_impl } } impl #encrypted_name { fn decrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>) -> anyhow::Result<#struct_name> { #decrypt_impl } } impl runar_serializer::CustomFromBytes for #struct_name { fn from_plain_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { Self::from_encrypted_bytes(bytes, keystore) } fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for decryption"))?; let encrypted = #encrypted_name::decode(bytes)?; encrypted.decrypt_with_keystore(ks) } fn to_binary(&self, keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, resolver: Option<&dyn runar_serializer::LabelResolver>, _network_id: &String) -> anyhow::Result<Vec<u8>> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for encryption"))?; let res = resolver.ok_or(anyhow::anyhow!("LabelResolver required for encryption"))?; let encrypted = self.encrypt_with_keystore(ks, res)?; let mut buf = Vec::new(); encrypted.encode(&mut buf)?; Ok(buf) } } };
 
     TokenStream::from(expanded)
 }

@@ -7,10 +7,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_node::services::{EventContext, LifecycleContext};
 use runar_node::AbstractService;
+use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::ArcValue;
+use runar_serializer::CustomFromBytes;
 use serde_json::Value as JsonValue;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex}; // Renamed to avoid conflict if any
@@ -344,3 +345,7 @@ impl AbstractService for GatwayService {
         Ok(())
     }
 }
+
+// -----------------------------------------------------------------------------
+// CustomFromBytes implementations for gateway-specific types
+// -----------------------------------------------------------------------------

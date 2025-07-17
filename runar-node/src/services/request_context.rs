@@ -16,8 +16,8 @@ use crate::routing::TopicPath;
 use crate::services::NodeDelegate;
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext};
-use runar_serializer::{ArcValue, AsArcValue};
-use std::fmt::Debug;
+use runar_serializer::arc_value::AsArcValue;
+use runar_serializer::ArcValue;
 
 // AsArcValue trait and implementations moved to runar_common::types
 // -----------------------------------------------------------------------------
@@ -214,10 +214,13 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
+    pub async fn request<P, T>(
+        &self,
+        path: impl Into<String>,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
-        T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         let path_string = path.into();
 
@@ -244,9 +247,7 @@ impl RequestContext {
         self.logger
             .debug(format!("Making request to processed path: {full_path}"));
 
-        // Call Node::request, specifying the generic types P and T.
-        // Node::request itself will handle deserialization to T.
-        self.node_delegate.request::<P, T>(full_path, payload).await
+        self.node_delegate.request::<P>(full_path, payload).await
     }
 }
 

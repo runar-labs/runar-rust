@@ -30,7 +30,7 @@ use crate::routing::{PathTrie, TopicPath};
 use crate::services::abstract_service::{AbstractService, ServiceState};
 use crate::services::{ActionHandler, EventContext, RemoteService};
 use runar_common::logging::Logger;
-use runar_common::types::schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_serializer::ArcValue;
 
 /// Type definition for event callbacks

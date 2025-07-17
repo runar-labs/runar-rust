@@ -6,11 +6,11 @@
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
 use prost::Message;
-use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
 use runar_macros::{action, publish, service, service_impl, subscribe};
 use runar_macros_common::{hmap, params};
 use runar_node::services::{EventContext, RequestContext};
 use runar_node::AbstractService;
+use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc}; // Added for metadata testing

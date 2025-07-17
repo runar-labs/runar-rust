@@ -5,7 +5,9 @@
 
 use crate::certificate::{CertificateRequest, CertificateValidator, EcdsaKeyPair, X509Certificate};
 use crate::error::{KeyError, Result};
-use crate::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
+use crate::mobile::{EnvelopeEncryptedData, NetworkKeyMessage, NodeCertificateMessage, SetupToken};
+use p256::ecdsa::SigningKey;
+use pkcs8::DecodePrivateKey;
 use rand::RngCore;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
@@ -48,8 +50,12 @@ pub struct NodeKeyManager {
     ca_certificate: Option<X509Certificate>,
     /// Certificate validator
     certificate_validator: Option<CertificateValidator>,
-    /// Network keys indexed by network public key (hex)
+    /// Network keys indexed by network id
     network_keys: HashMap<String, EcdsaKeyPair>,
+
+    /// Network public keys indexed by network id
+    network_public_keys: HashMap<String, Vec<u8>>,
+
     /// Known user profile public keys (id -> public key bytes)
     profile_public_keys: HashMap<String, Vec<u8>>,
     /// Symmetric keys indexed by key name for services
@@ -84,6 +90,7 @@ impl NodeKeyManager {
             ca_certificate: None,
             certificate_validator: None,
             network_keys: HashMap::new(),
+            network_public_keys: HashMap::new(),
             symmetric_keys: HashMap::new(),
             storage_key,
             certificate_status: CertificateStatus::None,
@@ -156,11 +163,16 @@ impl NodeKeyManager {
         &self,
         envelope_data: &crate::mobile::EnvelopeEncryptedData,
     ) -> Result<Vec<u8>> {
-        let network_id = &envelope_data.network_id;
-        let network_key = self
-            .network_keys
-            .get(network_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
+        let network_id = envelope_data
+            .network_id
+            .as_ref()
+            .ok_or_else(|| KeyError::DecryptionError("Envelope missing network_id".to_string()))?;
+
+        let network_key_pair = self.network_keys.get(network_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!(
+                "Network key pair not found for network: {network_id}"
+            ))
+        })?;
 
         // Ensure the encrypted envelope key is present
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
@@ -170,7 +182,7 @@ impl NodeKeyManager {
             ));
         }
 
-        let envelope_key = self.decrypt_key_with_ecdsa(encrypted_envelope_key, network_key)?;
+        let envelope_key = self.decrypt_key_with_ecdsa(encrypted_envelope_key, network_key_pair)?;
         self.decrypt_with_symmetric_key(&envelope_data.encrypted_data, &envelope_key)
     }
 
@@ -178,12 +190,12 @@ impl NodeKeyManager {
     pub fn create_envelope_for_network(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_id: Option<&String>,
     ) -> Result<crate::mobile::EnvelopeEncryptedData> {
-        let network_key = self
-            .network_keys
-            .get(network_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
+        let network_id = network_id
+            .ok_or_else(|| KeyError::DecryptionError("Missing network_id".to_string()))?;
+
+        let network_public_key_bytes = self.get_network_public_key(network_id)?;
 
         // Generate ephemeral envelope key
         let envelope_key = self.generate_envelope_key()?;
@@ -193,11 +205,11 @@ impl NodeKeyManager {
 
         // Encrypt envelope key with network key
         let encrypted_envelope_key =
-            self.encrypt_key_with_ecdsa(&envelope_key, &network_key.public_key_bytes())?;
+            self.encrypt_key_with_ecdsa(&envelope_key, &network_public_key_bytes)?;
 
         Ok(crate::mobile::EnvelopeEncryptedData {
             encrypted_data,
-            network_id: network_id.to_string(),
+            network_id: Some(network_id.to_string()),
             network_encrypted_key: encrypted_envelope_key,
             profile_encrypted_keys: HashMap::new(),
         })
@@ -446,9 +458,6 @@ impl NodeKeyManager {
             self.decrypt_key_with_ecdsa(encrypted_network_key, &self.node_key_pair)?;
 
         // Reconstruct the ECDSA key pair from the decrypted private key
-        use p256::ecdsa::SigningKey;
-        use pkcs8::DecodePrivateKey;
-
         let signing_key = SigningKey::from_pkcs8_der(&decrypted_network_key).map_err(|e| {
             KeyError::InvalidKeyFormat(format!("Failed to decode decrypted network key: {e}"))
         })?;
@@ -468,54 +477,73 @@ impl NodeKeyManager {
     }
 
     /// Get network key for encryption/decryption
-    pub fn get_network_key(&self, network_id: &str) -> Option<&EcdsaKeyPair> {
-        self.network_keys.get(network_id)
+    pub fn get_network_key_pair(&self, network_id: &str) -> Result<&EcdsaKeyPair> {
+        self.network_keys.get(network_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!(
+                "Network key pair not found for network: {network_id}"
+            ))
+        })
+    }
+
+    pub fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
+        // Check both network_data_keys and network_public_keys
+        if let Some(network_key) = self.network_keys.get(network_id) {
+            Ok(network_key.public_key_bytes())
+        } else if let Some(network_public_key) = self.network_public_keys.get(network_id) {
+            Ok(network_public_key.clone())
+        } else {
+            Err(KeyError::KeyNotFound(format!(
+                "Network public key not found for network: {network_id}"
+            )))
+        }
     }
 
     /// Encrypt data for network transmission
-    pub fn encrypt_for_network(&self, data: &[u8], network_id: &str) -> Result<Vec<u8>> {
-        let network_key = self
-            .network_keys
-            .get(network_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
-
-        // Use the network key's private key bytes as symmetric encryption key
-        let network_private_key = network_key.private_key_der().map_err(|e| {
-            KeyError::EncryptionError(format!("Failed to get network private key: {e}"))
-        })?;
-
-        // Derive encryption key from network private key using SHA256
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(&network_private_key);
-        hasher.update(b"runar-network-encryption");
-        let encryption_key = hasher.finalize();
-
-        // Encrypt using AES-GCM
-        self.encrypt_with_symmetric_key(data, &encryption_key)
+    pub fn encrypt_for_network(
+        &self,
+        data: &[u8],
+        network_id: &String,
+    ) -> Result<EnvelopeEncryptedData> {
+        // Use envelope encryption with just this network
+        let envelope_data =
+            NodeKeyManager::encrypt_with_envelope(self, data, Some(network_id), vec![])?;
+        // Return just the encrypted data for compatibility
+        Ok(envelope_data)
     }
 
     /// Decrypt network data
-    pub fn decrypt_network_data(&self, encrypted_data: &[u8], network_id: &str) -> Result<Vec<u8>> {
-        let network_key = self
-            .network_keys
-            .get(network_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
+    pub fn decrypt_network_data(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
+        let network_id = envelope_data
+            .network_id
+            .as_ref()
+            .ok_or_else(|| KeyError::DecryptionError("Envelope missing network_id".to_string()))?;
 
-        // Use the network key's private key bytes as symmetric decryption key
-        let network_private_key = network_key.private_key_der().map_err(|e| {
-            KeyError::DecryptionError(format!("Failed to get network private key: {e}"))
-        })?;
+        let network_key_pair = self.get_network_key_pair(network_id)?;
 
-        // Derive decryption key from network private key using SHA256 (same as encryption)
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(&network_private_key);
-        hasher.update(b"runar-network-encryption");
-        let decryption_key = hasher.finalize();
+        let encrypted_envelope_key = &envelope_data.network_encrypted_key;
 
-        // Decrypt using AES-GCM
-        self.decrypt_with_symmetric_key(encrypted_data, &decryption_key)
+        let decrypted_envelope_key =
+            self.decrypt_key_with_ecdsa(encrypted_envelope_key, network_key_pair)?;
+
+        let decrypted_data = self
+            .decrypt_with_symmetric_key(&envelope_data.encrypted_data, &decrypted_envelope_key)?;
+
+        Ok(decrypted_data)
+
+        // // Use the network key's private key bytes as symmetric decryption key
+        // let network_private_key = network_key_pair.private_key_der().map_err(|e| {
+        //     KeyError::DecryptionError(format!("Failed to get network private key: {e}"))
+        // })?;
+
+        // // Derive decryption key from network private key using SHA256 (same as encryption)
+        // use sha2::{Digest, Sha256};
+        // let mut hasher = Sha256::new();
+        // hasher.update(&network_private_key);
+        // hasher.update(b"runar-network-encryption");
+        // let decryption_key = hasher.finalize();
+
+        // // Decrypt using AES-GCM
+        // self.decrypt_with_symmetric_key(encrypted_data, &decryption_key)
     }
 
     /// Check certificate status with proper cryptographic validation
@@ -630,9 +658,16 @@ impl NodeKeyManager {
         self.decrypt_key_with_ecdsa(encrypted_message, &self.node_key_pair)
     }
 
-    // ---------------------------------------------------------------------
-    // Compatibility API: mirror MobileKeyManager::encrypt_with_envelope
-    // ---------------------------------------------------------------------
+    /// Create an envelope key for per-object encryption
+    /// Envelope keys are ephemeral - generated fresh for each object
+    pub fn create_envelope_key(&self) -> Result<Vec<u8>> {
+        // Generate a fresh 32-byte symmetric key for envelope encryption
+        use rand::RngCore;
+        let mut envelope_key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut envelope_key);
+        Ok(envelope_key.to_vec())
+    }
+
     /// Create an envelope‐encrypted payload. For the node side we only
     /// support network recipients – any supplied `profile_ids` will be
     /// ignored. This signature exists solely to allow generic code (e.g.
@@ -641,26 +676,22 @@ impl NodeKeyManager {
     pub fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_id: Option<&String>,
         profile_ids: Vec<String>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        use crate::error::KeyError;
-        // Generate envelope key
-        use rand::RngCore;
-        let mut envelope_key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut envelope_key);
+        let envelope_key = self.create_envelope_key()?;
 
         // Encrypt data with envelope key
         let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
 
         // Encrypt envelope key with network key if network_id provided
         let mut network_encrypted_key = Vec::new();
-        if !network_id.is_empty() {
-            let net_key = self.network_keys.get(network_id).ok_or_else(|| {
-                KeyError::KeyNotFound(format!("Network key not found: {network_id}"))
-            })?;
+        if let Some(network_id) = network_id {
+            // Check both network_data_keys and network_public_keys
+            let network_public_key_bytes = self.get_network_public_key(network_id)?;
+
             network_encrypted_key =
-                self.encrypt_key_with_ecdsa(&envelope_key, &net_key.public_key_bytes())?;
+                self.encrypt_key_with_ecdsa(&envelope_key, &network_public_key_bytes)?;
         }
 
         // Encrypt envelope key for each profile id using stored public key
@@ -678,7 +709,7 @@ impl NodeKeyManager {
 
         Ok(crate::mobile::EnvelopeEncryptedData {
             encrypted_data,
-            network_id: network_id.to_string(),
+            network_id: network_id.cloned(),
             network_encrypted_key,
             profile_encrypted_keys,
         })
@@ -691,7 +722,7 @@ impl NodeKeyManager {
         public_key: &[u8],
     ) -> Result<crate::mobile::EnvelopeEncryptedData> {
         let network_id = compact_id(public_key);
-        self.encrypt_with_envelope(data, &network_id, Vec::new())
+        self.encrypt_with_envelope(data, Some(&network_id), Vec::new())
     }
 
     /// Check if the manager holds the private key for the given network public key.
@@ -734,6 +765,8 @@ pub struct NodeKeyManagerState {
     node_certificate: Option<X509Certificate>,
     ca_certificate: Option<X509Certificate>,
     network_keys: HashMap<String, EcdsaKeyPair>,
+    network_public_keys: HashMap<String, Vec<u8>>,
+    profile_public_keys: HashMap<String, Vec<u8>>,
     symmetric_keys: HashMap<String, Vec<u8>>,
     storage_key: Vec<u8>,
 }
@@ -746,6 +779,8 @@ impl NodeKeyManager {
             node_certificate: self.node_certificate.clone(),
             ca_certificate: self.ca_certificate.clone(),
             network_keys: self.network_keys.clone(),
+            network_public_keys: self.network_public_keys.clone(),
+            profile_public_keys: self.profile_public_keys.clone(),
             symmetric_keys: self.symmetric_keys.clone(),
             storage_key: self.storage_key.clone(),
         }
@@ -778,7 +813,8 @@ impl NodeKeyManager {
             ca_certificate: state.ca_certificate,
             certificate_validator,
             network_keys: state.network_keys,
-            profile_public_keys: HashMap::new(),
+            network_public_keys: state.network_public_keys,
+            profile_public_keys: state.profile_public_keys,
             symmetric_keys: state.symmetric_keys,
             storage_key: state.storage_key,
             certificate_status,
@@ -791,7 +827,7 @@ impl crate::EnvelopeCrypto for NodeKeyManager {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_id: Option<&String>,
         _profile_ids: Vec<String>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         // Nodes only support network-wide encryption.

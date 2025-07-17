@@ -20,21 +20,19 @@ pub type KeyStore = dyn EnvelopeCrypto;
 // ---------------------------------------------------------------------------
 
 /// Determines how an envelope key should be encrypted for a given label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum KeyScope {
-    /// Encrypt with the network key so all nodes in the network can decrypt.
-    Network,
-    /// Encrypt with one or more user-profile keys so only specific profiles can decrypt.
-    Profile,
-}
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+// pub enum KeyScope {
+//     /// Encrypt with the network key so all nodes in the network can decrypt.
+//     Network,
+//     /// Encrypt with one or more user-profile keys so only specific profiles can decrypt.
+//     Profile,
+// }
 
 /// Information required to perform envelope encryption for a label.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelKeyInfo {
-    /// The public key bytes used for envelope key encryption.
-    pub public_key: Vec<u8>,
-    /// The key-encryption scope.
-    pub scope: KeyScope,
+    pub profile_ids: Vec<String>,
+    pub network_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +42,7 @@ pub struct LabelKeyInfo {
 /// Label-to-PublicKey mapping configuration
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct KeyMappingConfig {
-    /// Maps labels to public-key & scope information.
+    /// Maps labels to public-key information.
     pub label_mappings: HashMap<String, LabelKeyInfo>,
 }
 
@@ -52,11 +50,6 @@ pub struct KeyMappingConfig {
 pub trait LabelResolver: Send + Sync {
     /// Resolve a label to key-info (public key + scope).
     fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>>;
-
-    /// Legacy helper: resolve just the public key bytes.
-    fn resolve_label(&self, label: &str) -> Result<Option<Vec<u8>>> {
-        Ok(self.resolve_label_info(label)?.map(|info| info.public_key))
-    }
 
     /// Get available labels in current context
     fn available_labels(&self) -> Vec<String>;
@@ -121,5 +114,6 @@ pub trait CustomFromBytes: Sized + 'static + Clone + Debug + Send + Sync {
         &self,
         keystore: Option<&Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
+        network_id: &String,
     ) -> Result<Vec<u8>>;
 }

@@ -18,7 +18,7 @@ use crate::routing::TopicPath;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::AbstractService;
 use runar_common::logging::Logger;
-use runar_serializer::ArcValue;
+use runar_serializer::{arc_value::AsArcValue, ArcValue};
 
 /// Registry Info Service - provides information about registered services without holding state
 pub struct RegistryService {
@@ -151,10 +151,13 @@ impl RegistryService {
         let service_metadata = self.registry_delegate.get_all_service_metadata(true).await;
 
         // Convert the HashMap of ServiceMetadata to a Vec
-        let metadata_vec: Vec<_> = service_metadata.values().cloned().collect();
+        let metadata_vec: Vec<ArcValue> = service_metadata
+            .values()
+            .map(|metadata| ArcValue::new_struct(metadata.clone()))
+            .collect();
 
         // Return the list of service metadata
-        Ok(ArcValue::from_list(metadata_vec))
+        Ok(ArcValue::new_list(metadata_vec))
     }
 
     /// Handler for getting detailed information about a specific service
@@ -184,7 +187,7 @@ impl RegistryService {
             .get_service_metadata(&service_topic)
             .await
         {
-            Ok(ArcValue::from_struct(service_metadata))
+            Ok(ArcValue::new_struct(service_metadata.clone()))
         } else {
             ctx.logger
                 .debug(format!("Service '{actual_service_path}' not found"));
@@ -213,8 +216,7 @@ impl RegistryService {
             .get_service_state(&service_topic)
             .await
         {
-            let state_info = ArcValue::from_struct(service_state);
-            Ok(state_info)
+            Ok(ArcValue::new_struct(service_state))
         } else {
             ctx.logger
                 .debug(format!("Service '{service_path}' not found"));

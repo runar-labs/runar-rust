@@ -66,8 +66,8 @@ pub struct EnvelopeEncryptedData {
     #[prost(bytes = "vec", tag = "1")]
     pub encrypted_data: Vec<u8>,
     /// Network ID this data belongs to
-    #[prost(string, tag = "2")]
-    pub network_id: String,
+    #[prost(string, optional, tag = "2")]
+    pub network_id: Option<String>,
     /// Envelope key encrypted with network key (always required)
     #[prost(bytes = "vec", tag = "3")]
     pub network_encrypted_key: Vec<u8>,
@@ -88,8 +88,10 @@ pub struct MobileKeyManager {
     user_profile_keys: HashMap<String, EcdsaKeyPair>,
     /// Mapping from human-readable label → compact-id for quick reuse
     label_to_pid: HashMap<String, String>,
-    /// Network data keys indexed by network ID - for envelope encryption
+    /// Network data keys indexed by network ID - for envelope encryption and decryption
     network_data_keys: HashMap<String, EcdsaKeyPair>,
+    // network public keys indexed by network ID - for envelope encryption
+    network_public_keys: HashMap<String, Vec<u8>>,
     /// Issued certificates tracking
     issued_certificates: HashMap<String, X509Certificate>,
     /// Monotonically-increasing certificate serial number used as the X.509
@@ -111,6 +113,7 @@ pub struct MobileKeyManagerState {
     user_profile_keys: HashMap<String, EcdsaKeyPair>,
     label_to_pid: HashMap<String, String>,
     network_data_keys: HashMap<String, EcdsaKeyPair>,
+    network_public_keys: HashMap<String, Vec<u8>>,
     issued_certificates: HashMap<String, X509Certificate>,
     serial_counter: u64,
 }
@@ -135,14 +138,32 @@ impl MobileKeyManager {
             user_profile_keys: HashMap::new(),
             label_to_pid: HashMap::new(),
             network_data_keys: HashMap::new(),
+            network_public_keys: HashMap::new(),
             issued_certificates: HashMap::new(),
             serial_counter: 1,
             logger,
         })
     }
 
+    pub fn install_network_public_key(&mut self, network_public_key: &[u8]) -> Result<()> {
+        let network_id = compact_id(network_public_key);
+        self.network_public_keys
+            .insert(network_id.clone(), network_public_key.to_vec());
+
+        self.logger.info(format!(
+            "Network public key installed with ID: {network_id}"
+        ));
+        Ok(())
+    }
+
     /// Initialize user root key - Master key that never leaves the mobile device
     pub fn initialize_user_root_key(&mut self) -> Result<Vec<u8>> {
+        if self.user_root_key.is_some() {
+            return Err(KeyError::KeyAlreadyInitialized(
+                "User root key already initialized".to_string(),
+            ));
+        }
+
         let root_key = EcdsaKeyPair::new()?;
         let public_key = root_key.public_key_bytes();
 
@@ -161,8 +182,6 @@ impl MobileKeyManager {
             .ok_or_else(|| KeyError::KeyNotFound("User root key not initialized".to_string()))?;
         Ok(root_key.public_key_bytes())
     }
-
-    //TODO lets fix this.. so we have proper key derivation using HKDF/SLIP-0010
 
     /// Derive a user profile key from the root key using HKDF.
     ///
@@ -254,11 +273,16 @@ impl MobileKeyManager {
     }
 
     pub fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
-        let network_key = self
-            .network_data_keys
-            .get(network_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
-        Ok(network_key.public_key_bytes())
+        // Check both network_data_keys and network_public_keys
+        if let Some(network_key) = self.network_data_keys.get(network_id) {
+            Ok(network_key.public_key_bytes())
+        } else if let Some(network_public_key) = self.network_public_keys.get(network_id) {
+            Ok(network_public_key.clone())
+        } else {
+            Err(KeyError::KeyNotFound(format!(
+                "Network public key not found for network: {network_id}"
+            )))
+        }
     }
 
     /// Generate a network data key for envelope encryption and return the network ID (compact Base64 public key)
@@ -282,8 +306,6 @@ impl MobileKeyManager {
         use rand::RngCore;
         let mut envelope_key = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut envelope_key);
-
-        self.logger.debug("Ephemeral envelope key generated");
         Ok(envelope_key.to_vec())
     }
 
@@ -295,7 +317,7 @@ impl MobileKeyManager {
     pub fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_id: Option<&String>,
         profile_ids: Vec<String>,
     ) -> Result<EnvelopeEncryptedData> {
         // Generate ephemeral envelope key
@@ -306,12 +328,12 @@ impl MobileKeyManager {
 
         // Encrypt envelope key for network (optional)
         let mut network_encrypted_key = Vec::new();
-        if !network_id.is_empty() {
-            let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
-                KeyError::KeyNotFound(format!("Network key not found for network: {network_id}"))
-            })?;
+        if let Some(network_id) = network_id {
+            // Check both network_data_keys and network_public_keys
+            let network_public_key_bytes = self.get_network_public_key(network_id)?;
+
             network_encrypted_key =
-                self.encrypt_key_with_ecdsa(&envelope_key, &network_key.public_key_bytes())?;
+                self.encrypt_key_with_ecdsa(&envelope_key, &network_public_key_bytes)?;
         }
 
         // Encrypt envelope key for each profile
@@ -326,7 +348,7 @@ impl MobileKeyManager {
 
         Ok(EnvelopeEncryptedData {
             encrypted_data,
-            network_id: network_id.to_string(),
+            network_id: network_id.cloned(),
             network_encrypted_key,
             profile_encrypted_keys,
         })
@@ -356,11 +378,16 @@ impl MobileKeyManager {
 
     /// Decrypt envelope-encrypted data using network key
     pub fn decrypt_with_network(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
-        let network_id = envelope_data.network_id.clone();
-        let network_key = self
-            .network_data_keys
-            .get(&network_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
+        let network_id = envelope_data
+            .network_id
+            .as_ref()
+            .ok_or_else(|| KeyError::DecryptionError("Envelope missing network_id".to_string()))?;
+
+        let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!(
+                "Network key pair not found for network: {network_id}"
+            ))
+        })?;
 
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
 
@@ -635,10 +662,11 @@ impl MobileKeyManager {
         network_id: &str,
         node_public_key: &[u8],
     ) -> Result<NetworkKeyMessage> {
-        let network_key = self
-            .network_data_keys
-            .get(network_id)
-            .ok_or_else(|| KeyError::KeyNotFound(format!("Network key not found: {network_id}")))?;
+        let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!(
+                "Network key pair not found for network: {network_id}"
+            ))
+        })?;
 
         // Encrypt the network's private key for the node
         let network_private_key = network_key.private_key_der()?;
@@ -682,7 +710,7 @@ impl MobileKeyManager {
         let envelope_data = MobileKeyManager::encrypt_with_envelope(
             self,
             data,
-            "default",
+            None,
             vec![profile_id.to_string()],
         )?;
         // Return just the encrypted data for compatibility
@@ -690,10 +718,10 @@ impl MobileKeyManager {
     }
 
     /// Encrypt data for a network (legacy method for compatibility)  
-    pub fn encrypt_for_network(&self, data: &[u8], network_id: &str) -> Result<Vec<u8>> {
+    pub fn encrypt_for_network(&self, data: &[u8], network_id: &String) -> Result<Vec<u8>> {
         // Use envelope encryption with just this network
         let envelope_data =
-            MobileKeyManager::encrypt_with_envelope(self, data, network_id, vec![])?;
+            MobileKeyManager::encrypt_with_envelope(self, data, Some(network_id), vec![])?;
         // Return just the encrypted data for compatibility
         Ok(envelope_data.encrypted_data)
     }
@@ -741,6 +769,7 @@ impl MobileKeyManager {
             user_profile_keys: self.user_profile_keys.clone(),
             label_to_pid: self.label_to_pid.clone(),
             network_data_keys: self.network_data_keys.clone(),
+            network_public_keys: self.network_public_keys.clone(),
             issued_certificates: self.issued_certificates.clone(),
             serial_counter: self.serial_counter,
         }
@@ -764,6 +793,7 @@ impl MobileKeyManager {
             user_profile_keys: state.user_profile_keys,
             label_to_pid: state.label_to_pid,
             network_data_keys: state.network_data_keys,
+            network_public_keys: state.network_public_keys,
             issued_certificates: state.issued_certificates,
             serial_counter: state.serial_counter,
             logger,
@@ -775,7 +805,7 @@ impl crate::EnvelopeCrypto for MobileKeyManager {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_id: Option<&String>,
         profile_ids: Vec<String>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         MobileKeyManager::encrypt_with_envelope(self, data, network_id, profile_ids)

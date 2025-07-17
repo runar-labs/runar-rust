@@ -20,11 +20,13 @@ thiserror = "1.0"
 env_logger = "0.10"
 chrono = "0.4"
 rand = "0.9.0"
+once_cell = "1"
 
 # Local dependencies
 runar_common = { path = "../runar-common" }
 runar-keys = { path = "../runar-keys" }
 runar-serializer = { path = "../runar-serializer" }
+runar-schemas = { path = "../runar-schemas" }
 
 
 # Network dependencies

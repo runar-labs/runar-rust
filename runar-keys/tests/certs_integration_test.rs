@@ -328,7 +328,7 @@ async fn test_multiple_network_scenario() -> Result<()> {
             let encrypted = node.encrypt_for_network(test_data.as_bytes(), network_id)?;
             // Other nodes can decrypt it
             for other_node in &nodes {
-                let decrypted = other_node.decrypt_network_data(&encrypted, network_id)?;
+                let decrypted = other_node.decrypt_network_data(&encrypted)?;
                 assert_eq!(test_data.as_bytes(), decrypted.as_slice());
             }
         }
@@ -500,10 +500,13 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("   Encrypting envelope for network: {network1_id}");
     let envelope_data = mobile.encrypt_with_envelope(
         sensitive_data,
-        &network1_key,
+        Some(&network1_key),
         vec![personal_id.clone(), work_id.clone()],
     )?;
-    let envelope_network_id = &envelope_data.network_id;
+    let envelope_network_id = envelope_data
+        .network_id
+        .clone()
+        .expect("missign network id");
     println!("   Envelope created for network: {envelope_network_id}");
 
     println!("   ✅ Data encrypted with envelope encryption");
@@ -540,7 +543,7 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     // Node creates envelope for sharing
     let node_data = b"Data created by the node for network sharing";
-    let node_envelope = node.create_envelope_for_network(node_data, &network1_key)?;
+    let node_envelope = node.create_envelope_for_network(node_data, Some(&network1_key))?;
 
     // Mobile can decrypt node's envelope
     let decrypted_node_data = mobile.decrypt_with_network(&node_envelope)?;

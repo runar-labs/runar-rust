@@ -410,13 +410,13 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let envelope = mobile_keys_manager
         .encrypt_with_envelope(
             test_data,
-            &network_id,
+            Some(&network_id),
             vec![personal_id.clone(), work_id.clone()],
         )
         .expect("Failed to encrypt data with envelope");
 
     println!("   ✅ Data encrypted with envelope encryption");
-    println!("      Network: {}", envelope.network_id);
+    println!("      Network: {:?}", envelope.network_id);
     println!(
         "      Profile recipients: {}",
         envelope.profile_encrypted_keys.len()
@@ -508,7 +508,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Try encrypting and decrypting data with the hydrated manager
     let test_data_2 = b"This is a second test message after key restoration";
     let envelope_2 = mobile_keys_manager
-        .encrypt_with_envelope(test_data_2, &network_id, vec![personal_id.clone()])
+        .encrypt_with_envelope(test_data_2, Some(&network_id), vec![personal_id.clone()])
         .expect("Mobile failed to encrypt data after restoration");
 
     // Node should be able to decrypt with the network key

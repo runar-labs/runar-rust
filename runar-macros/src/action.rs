@@ -146,9 +146,9 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut properties_map = ::std::collections::HashMap::new();
             #(#input_properties_map_tokens)*
             let required_fields = vec![#(#required_input_fields_tokens),*];
-            let mut schema = ::runar_common::types::schemas::FieldSchema::new(
+            let mut schema = ::runar_schemas::FieldSchema::new(
                 "input_payload",
-                ::runar_common::types::schemas::SchemaDataType::OBJECT
+                ::runar_schemas::SchemaDataType::OBJECT
             );
             schema.properties = properties_map;
             schema.required = required_fields;
@@ -379,7 +379,7 @@ fn generate_field_schema_for_type(
         let items_schema_tokens =
             generate_field_schema_for_type("item", inner_ty_for_vec, false, None);
         base_schema_constructor_call = quote! {
-            ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::ARRAY)
+            ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::ARRAY)
         };
         additional_fields_setup.extend(quote! {
             schema.items = Some(Box::new(#items_schema_tokens));
@@ -392,22 +392,22 @@ fn generate_field_schema_for_type(
 
         match type_name_str.as_str() {
             "String" => {
-                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::STRING) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::STRING) }
             }
             "i32" | "isize" => {
-                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::INT32) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::INT32) }
             }
             "i64" => {
-                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::INT64) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::INT64) }
             }
             "f32" => {
-                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::FLOAT) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::FLOAT) }
             }
             "f64" => {
-                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::DOUBLE) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::DOUBLE) }
             }
             "bool" => {
-                base_schema_constructor_call = quote! { ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::BOOLEAN) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::BOOLEAN) }
             }
             // TODO: Add other specific types like Timestamp if they have constructors
             _ => {
@@ -415,7 +415,7 @@ fn generate_field_schema_for_type(
                 // For struct types, ideally, we would introspect fields here.
                 // For now, creating an empty properties map for generic objects.
                 base_schema_constructor_call = quote! {
-                    ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::OBJECT)
+                    ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::OBJECT)
                 };
             }
         };
@@ -423,7 +423,7 @@ fn generate_field_schema_for_type(
     // Fallback for other unknown types
     else {
         base_schema_constructor_call = quote! {
-            ::runar_common::types::schemas::FieldSchema::new(#name_literal, ::runar_common::types::schemas::SchemaDataType::ANY)
+            ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::ANY)
         };
     }
 

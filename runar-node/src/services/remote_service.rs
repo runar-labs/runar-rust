@@ -16,8 +16,9 @@ use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
 use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
-use runar_common::types::{ActionMetadata, ServiceMetadata};
-use runar_serializer::{ArcValue, SerializerRegistry};
+use runar_schemas::{ActionMetadata, ServiceMetadata};
+use runar_serializer::ArcValue;
+// No direct key-store or label resolver – encryption handled by transport layer
 
 /// Represents a service running on a remote node
 #[derive(Clone)]
@@ -32,12 +33,8 @@ pub struct RemoteService {
 
     /// Remote peer information
     peer_node_id: String,
-    /// Network transport wrapped in RwLock
-    network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
-
-    // Add keystore: Arc<KeyStore>, resolver: Arc<dyn LabelResolver>,
-    keystore: Arc<RwLock<Option<Box<dyn runar_common::keystore::KeyStore>>>>,
-    resolver: Arc<RwLock<Option<Box<dyn runar_common::routing::LabelResolver>>>>,
+    /// Shared network transport (immutable)
+    network_transport: Arc<dyn NetworkTransport>,
 
     /// Service capabilities
     actions: Arc<RwLock<HashMap<String, ActionMetadata>>>,
@@ -67,12 +64,10 @@ pub struct RemoteServiceConfig {
 
 /// Dependencies required by a RemoteService instance, provided by the local node.
 pub struct RemoteServiceDependencies {
-    pub network_transport: Arc<RwLock<Option<Box<dyn NetworkTransport>>>>,
-    pub keystore: Arc<RwLock<Option<Box<dyn runar_common::keystore::KeyStore>>>>,
-    pub resolver: Arc<RwLock<Option<Box<dyn runar_common::routing::LabelResolver>>>>,
+    pub network_transport: Arc<dyn NetworkTransport>,
     pub local_node_id: String, // ID of the local node
     pub pending_requests:
-        Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
+        Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
     pub logger: Arc<Logger>,
 }
 
@@ -95,8 +90,6 @@ impl RemoteService {
             network_id, // Derived from service_topic
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
-            keystore: dependencies.keystore,
-            resolver: dependencies.resolver,
             actions: Arc::new(RwLock::new(HashMap::new())),
             logger: dependencies.logger,
             local_node_id: dependencies.local_node_id,
@@ -119,11 +112,7 @@ impl RemoteService {
             config.capabilities.len()
         ));
 
-        // Make sure we have a valid transport
-        let transport_guard = dependencies.network_transport.read().await;
-        if transport_guard.is_none() {
-            return Err(anyhow!("Network transport not available"));
-        }
+        // The transport is guaranteed to be available via the dependency injection contract.
 
         // Create remote services for each service metadata
         let mut remote_services = Vec::new();
@@ -155,8 +144,7 @@ impl RemoteService {
             // Prepare dependencies for RemoteService::new (cloning Arcs)
             let rs_dependencies = RemoteServiceDependencies {
                 network_transport: dependencies.network_transport.clone(),
-                keystore: dependencies.keystore.clone(),
-                resolver: dependencies.resolver.clone(),
+                // no keystore/resolver
                 local_node_id: dependencies.local_node_id.clone(),
                 pending_requests: dependencies.pending_requests.clone(),
                 logger: dependencies.logger.clone(),
@@ -216,8 +204,7 @@ impl RemoteService {
             let local_node_id = service.local_node_id.clone();
             let pending_requests = service.pending_requests.clone();
             let network_transport = service.network_transport.clone();
-            let keystore = service.keystore.clone();
-            let resolver = service.resolver.clone();
+            // no keystore/resolver
             let request_timeout_ms = service.request_timeout_ms;
             let logger = service.logger.clone();
 
@@ -242,13 +229,13 @@ impl RemoteService {
                     "📝 [RemoteService] Stored response channel for request ID: {request_id}"
                 ));
 
-                let keystore = keystore.read().await;
-                let resolver = resolver.read().await;
+                //TODO fix this.. is not using the proper resolver and keystore
+                //let network_id = service.network_id();
                 // Serialize the parameters and convert from Arc<[u8]> to Vec<u8>
                 let payload_vec: Vec<u8> = if let Some(params) = params {
-                    params.serialize(Some(&keystore), Some(&*resolver))?
+                    params.serialize(None, None, &network_id)?
                 } else {
-                    ArcValue::null().serialize(None, None)?
+                    ArcValue::null().serialize(None, None, &network_id)?
                 };
 
                 let payload_size = payload_vec.len();
@@ -269,24 +256,17 @@ impl RemoteService {
                 };
 
                 // Send the request
-                if let Some(transport) = &*network_transport.read().await {
-                    if let Err(e) = transport.send_message(message).await {
-                        logger.error(format!(
-                            "❌ [RemoteService] Failed to send request {request_id}: {e}"
-                        ));
-                        // Clean up the pending request
-                        pending_requests.write().await.remove(&request_id);
-                        return Err(anyhow::anyhow!("Failed to send request: {e}"));
-                    } else {
-                        logger.info(format!(
-                            "✅ [RemoteService] Request sent successfully - ID: {request_id}, waiting for response..."
-                        ));
-                    }
-                } else {
+                if let Err(e) = network_transport.send_message(message).await {
                     logger.error(format!(
-                        "❌ [RemoteService] No transport available for request {request_id}"
+                        "❌ [RemoteService] Failed to send request {request_id}: {e}"
                     ));
-                    return Err(anyhow::anyhow!("Network transport not available"));
+                    // Clean up the pending request
+                    pending_requests.write().await.remove(&request_id);
+                    return Err(anyhow::anyhow!("Failed to send request: {e}"));
+                } else {
+                    logger.info(format!(
+                        "✅ [RemoteService] Request sent successfully - ID: {request_id}, waiting for response..."
+                    ));
                 }
 
                 logger.info(format!(

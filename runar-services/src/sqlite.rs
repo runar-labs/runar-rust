@@ -11,6 +11,7 @@ use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use runar_serializer::CustomFromBytes;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
@@ -391,7 +392,7 @@ fn internal_value_to_arc_value(value: &Value) -> ArcValue {
         Value::Text(s) => ArcValue::new_primitive(s.clone()),
         Value::Blob(b) => {
             // Ensure this matches how ArcValue expects Bytes. ErasedArc is appropriate here.
-            ArcValue::new(ErasedArc::from_value(b.clone()), ValueCategory::Bytes)
+            ArcValue::new_bytes(b.clone())
         }
         Value::Boolean(b) => ArcValue::new_primitive(*b),
     }
@@ -482,6 +483,30 @@ impl SqlQuery {
     pub fn with_params(mut self, params: Params) -> Self {
         self.params = params;
         self
+    }
+}
+
+impl CustomFromBytes for SqlQuery {
+    fn from_plain_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> anyhow::Result<Self> {
+        Ok(bincode::deserialize(bytes)?)
+    }
+
+    fn from_encrypted_bytes(
+        bytes: &[u8],
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+    ) -> anyhow::Result<Self> {
+        Self::from_plain_bytes(bytes, None)
+    }
+
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
+        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
+    ) -> anyhow::Result<Vec<u8>> {
+        Ok(bincode::serialize(self)?)
     }
 }
 
@@ -724,7 +749,7 @@ impl AbstractService for SqliteService {
                         let mut query_arc_value = params_opt // Made mutable
                             .ok_or_else(|| anyhow!("Missing payload for 'execute_query' action. Expected ArcValue wrapping SqlQuery."))?;
 
-                        let sql_query_struct = query_arc_value.as_type::<SqlQuery>()
+                        let sql_query_struct = query_arc_value.as_type_ref::<SqlQuery>()
                             .map_err(|original_error_from_as_type| {
                                 anyhow!(format!(
                                     "Invalid payload type for 'execute_query'. Expected SqlQuery, got {:?}. Original error: {:?}",
@@ -734,7 +759,7 @@ impl AbstractService for SqliteService {
                             })?;
 
                         let sql_statement = sql_query_struct.statement.clone(); // Keep a copy for the SELECT check
-                        let query_to_send = sql_query_struct.clone(); // Clone the whole SqlQuery for the command
+                        let query_to_send = sql_query_struct.as_ref().clone(); // Clone the whole SqlQuery for the command
 
                         let trimmed_sql = sql_statement.trim_start().to_uppercase();
                         if trimmed_sql.starts_with("SELECT") {

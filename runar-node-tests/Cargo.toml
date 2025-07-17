@@ -10,6 +10,7 @@ license = "MIT"
 runar_node = { path = "../runar-node" }
 runar_macros_common = { path = "../runar-macros-common" }
 runar-test-utils = { path = "../runar-test-utils" }
+runar-schemas = { path = "../runar-schemas" }
 tokio = { version = "1.28", features = ["full"] }
 tokio-test = "0.4"
 anyhow = "1.0"

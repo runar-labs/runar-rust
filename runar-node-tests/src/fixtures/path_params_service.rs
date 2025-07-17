@@ -61,14 +61,18 @@ impl PathParamsService {
         // Log that we're handling the request
         context.info("Handling extract path parameters request".to_string());
 
-        // Convert the path parameters to ValueType::String values for the response
-        let param_values: HashMap<String, String> = context.path_params.clone();
+        let param_strings: HashMap<String, String> = context.path_params.clone();
+        // Convert into HashMap<String, ArcValue>
+        let param_values: HashMap<String, ArcValue> = param_strings
+            .into_iter()
+            .map(|(k, v)| (k, ArcValue::new_primitive(v)))
+            .collect();
 
         // Log the parameters we extracted
         context.info(format!("Extracted parameters: {param_values:?}"));
 
         // Return the parameters
-        Ok(ArcValue::from_map(param_values))
+        Ok(ArcValue::new_map(param_values))
     }
 }
 

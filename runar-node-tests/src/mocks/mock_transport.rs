@@ -4,6 +4,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::RwLock;
 
 use runar_common::Logger;
@@ -11,7 +13,44 @@ use runar_node::network::discovery::{multicast_discovery::PeerInfo, NodeInfo};
 use runar_node::network::transport::{
     MessageHandler, NetworkError, NetworkMessage, NetworkTransport,
 };
+use runar_serializer::traits::{
+    ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelResolver,
+};
 use tokio::sync::broadcast;
+
+/// Stub crypto implementation that performs no encryption (identity transform)
+struct NoCrypto;
+
+impl EnvelopeCrypto for NoCrypto {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        _network_id: &str,
+        _profile_ids: Vec<String>,
+    ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
+        Ok(runar_keys::mobile::EnvelopeEncryptedData {
+            encrypted_data: data.to_vec(),
+            network_id: "test-network".to_string(),
+            network_encrypted_key: vec![],
+            profile_encrypted_keys: HashMap::new(),
+        })
+    }
+
+    fn decrypt_envelope_data(
+        &self,
+        env: &runar_keys::mobile::EnvelopeEncryptedData,
+    ) -> runar_keys::Result<Vec<u8>> {
+        Ok(env.encrypted_data.clone())
+    }
+}
+
+/// Provide a singleton dummy resolver to satisfy trait
+fn dummy_resolver() -> Arc<dyn LabelResolver> {
+    let config = KeyMappingConfig {
+        label_mappings: HashMap::new(),
+    };
+    Arc::new(ConfigurableLabelResolver::new(config))
+}
 
 /// A mock network transport that stores messages in memory
 pub struct MockNetworkTransport {
@@ -101,5 +140,13 @@ impl NetworkTransport for MockNetworkTransport {
         // Return a dummy broadcast channel for tests
         let (_tx, rx) = broadcast::channel(1);
         rx
+    }
+
+    fn keystore(&self) -> Arc<dyn EnvelopeCrypto> {
+        Arc::new(NoCrypto)
+    }
+
+    fn label_resolver(&self) -> Arc<dyn LabelResolver> {
+        dummy_resolver()
     }
 }

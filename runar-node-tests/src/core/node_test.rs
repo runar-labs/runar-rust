@@ -6,6 +6,7 @@
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_node::ServiceMetadata;
+use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
 use std::future::Future;
@@ -20,7 +21,7 @@ use runar_node::NodeDelegate;
 
 use std::collections::HashMap;
 
-use runar_macros_common::hmap;
+use runar_macros_common::params;
 
 // Import the test fixtures
 use crate::fixtures::math_service::MathService;
@@ -124,17 +125,20 @@ async fn test_node_request() {
         // Start the node to initialize all services
         node.start().await.unwrap();
 
-        // Create parameters for the add operation using vmap! macro
-        let params = ArcValue::new_map(hmap! {
-            "a" => 5.0,
-            "b" => 3.0
-        });
+        // Create parameters
+        let params = params! {
+            "a" => 5.0f64,
+            "b" => 3.0f64,
+        };
 
         // Make a request to the math service's add action
-        let result: f64 = node
+        let result_av = node
             .request("math/add", Some(params))
             .await
-            .expect("math/add call failed");
+            .expect("math/add call failed")
+            .as_type_ref::<f64>()
+            .expect("failed to convert result");
+        let result: f64 = *result_av;
         assert_eq!(result, 8.0);
     })
     .await
@@ -196,11 +200,12 @@ async fn test_node_event_metadata_registration() -> Result<()> {
     node.start().await?; // This will call init() on MathService
 
     // Request the list of services from the registry
-    let services_list: Vec<ServiceMetadata> = node
-        .request("$registry/services/list", Option::<ArcValue>::None)
-        .await?;
+    let list_arc = node
+        .request("$registry/services/list", None::<ArcValue>)
+        .await?
+        .as_typed_list_ref::<ServiceMetadata>()?;
 
-    let math_service_metadata = services_list
+    let math_service_metadata = list_arc
         .iter()
         .find(|s| s.service_path == math_service_path && s.network_id == default_network_id)
         .expect("MathService metadata not found in registry list");
@@ -309,10 +314,12 @@ async fn test_node_events() {
 
             // Verify the data matches what we published
             // For ArcValue, extract the string value
-            if let Ok(s) = data.expect("REASON").as_type::<String>() {
-                assert_eq!(s, "test data");
-                // Mark that the handler was called with correct data
-                was_called_clone.store(true, Ordering::SeqCst);
+            if let Some(av) = data {
+                if let Ok(s) = String::from_arc_value(av) {
+                    assert_eq!(s, "test data");
+                    // Mark that the handler was called with correct data
+                    was_called_clone.store(true, Ordering::SeqCst);
+                }
             }
 
             // Properly pin and box the future as expected by the subscribe method
@@ -362,10 +369,22 @@ async fn test_path_params_in_context() {
     node.start().await.unwrap();
 
     // Make a request to a path that matches the template
-    let params_map: HashMap<String, String> = node
+    let av = node
         .request("test/abc123/items/xyz789", None::<()>)
         .await
         .unwrap();
+
+    let mut av_mut = av.clone();
+    let map_arc = av_mut.as_map_ref().expect("expect map");
+    let params_map: HashMap<String, String> = map_arc
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                String::from_arc_value(v.clone()).expect("str val"),
+            )
+        })
+        .collect();
 
     // Verify the path parameters were correctly extracted
     // params_map is now HashMap<String, String>

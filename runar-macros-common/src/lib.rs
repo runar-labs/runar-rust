@@ -58,107 +58,9 @@ macro_rules! vmap {
         }
     };
 
-    // Extract a value from a map with default
-    ($map:expr, $key:expr => $default:expr) => {
-        {
-            match &$map {
-                runar_serializer::ArcValue::Map(map_data) => {
-                    match map_data.get($key) {
-                        Some(value_type) => match value_type {
-                            runar_serializer::ArcValue::String(s) => {
-                                let default_type = std::any::type_name_of_val(&$default);
-                                if default_type.ends_with("&str") || default_type.ends_with("String") {
-                                    s.clone()
-                                } else {
-                                    $default
-                                }
-                            },
-                            runar_serializer::ArcValue::Number(n) => {
-                                let default_type = std::any::type_name_of_val(&$default);
-                                if default_type.ends_with("f64") {
-                                    *n
-                                } else if default_type.ends_with("i32") {
-                                    *n as i32
-                                } else if default_type.ends_with("u32") {
-                                    *n as u32
-                                } else if default_type.ends_with("i64") {
-                                    *n as i64
-                                } else if default_type.ends_with("String") || default_type.ends_with("&str") {
-                                    n.to_string()
-                                } else {
-                                    $default
-                                }
-                            },
-                            runar_serializer::ArcValue::Bool(b) => {
-                                let default_type = std::any::type_name_of_val(&$default);
-                                if default_type.ends_with("bool") {
-                                    *b
-                                } else if default_type.ends_with("String") || default_type.ends_with("&str") {
-                                    b.to_string()
-                                } else {
-                                    $default
-                                }
-                            },
-                            _ => $default,
-                        },
-                        None => $default,
-                    }
-                },
-                _ => $default,
-            }
-        }
-    };
-
-    // Extract a direct value with default
-    ($value:expr, => $default:expr) => {
-        match &$value {
-            runar_serializer::ArcValue::String(s) => s.clone(),
-            runar_serializer::ArcValue::Number(n) => {
-                // Use type_name_of_val to detect default type
-                let default_type = std::any::type_name_of_val(&$default);
-                if default_type.ends_with("&str") || default_type.ends_with("String") {
-                    n.to_string()
-                } else if default_type.ends_with("f64") {
-                    *n
-                } else if default_type.ends_with("i32") {
-                    *n as i32
-                } else if default_type.ends_with("u32") {
-                    *n as u32
-                } else if default_type.ends_with("i64") {
-                    *n as i64
-                } else {
-                    $default
-                }
-            },
-            runar_serializer::ArcValue::Bool(b) => {
-                // Use type_name_of_val to detect default type
-                let default_type = std::any::type_name_of_val(&$default);
-                if default_type.ends_with("bool") {
-                    *b
-                } else if default_type.ends_with("String") || default_type.ends_with("&str") {
-                    b.to_string()
-                } else {
-                    $default
-                }
-            },
-            _ => $default,
-        }
-    };
-
-    // Simple key extraction without default
-    ($map:expr, $key:expr) => {
-        {
-            match &$map {
-                runar_serializer::ArcValue::Map(map_data) => {
-                    match map_data.get($key) {
-                        Some(value_type) => value_type.clone(),
-                        None => runar_serializer::ArcValue::null(),
-                    }
-                },
-                _ => runar_serializer::ArcValue::null(),
-            }
-        }
-    };
+    // NOTE: Legacy extraction arms removed in serializer redesign.  Use ArcValue
+    // accessors (`as_type_ref`, `as_map_ref`, etc.) directly when reading
+    // values from a map.
 }
 
 /// Create an ArcValue::Map with key-value pairs
@@ -239,18 +141,23 @@ macro_rules! params {
     // Empty param map
     {} => {
         {
+            use std::collections::HashMap;
             use runar_serializer::ArcValue;
-            ArcValue::new_map(hmap! {})
+            let map: HashMap<String, ArcValue> = HashMap::new();
+            ArcValue::new_map(map)
         }
     };
 
-    // Non-empty param map
+    // Map with key-value pairs
     { $($key:expr => $value:expr),* $(,)? } => {
         {
+            use std::collections::HashMap;
             use runar_serializer::ArcValue;
-            ArcValue::new_map(hmap! {
-                $( $key => ArcValue::new_primitive($value) ),*
-            })
+            let mut map = HashMap::new();
+            $(
+                map.insert($key.to_string(), ArcValue::new_primitive($value));
+            )*
+            ArcValue::new_map(map)
         }
     };
 }

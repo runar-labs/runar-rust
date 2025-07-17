@@ -1,16 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use prost::Message;
-use runar_serializer::{ArcValue, CustomFromBytes, ValueCategory};
+use runar_common::compact_ids::compact_id;
+use runar_serializer::{ArcValue, ValueCategory};
 use serde_json::{json, Value as JsonValue};
-
-// Add missing imports
-use runar_keys::error::{KeyError, Result as KeyResult};
-use runar_serializer::traits::{
-    EnvelopeEncryptedData, KeyScope, KeyStore, LabelKeyInfo, LabelResolver,
-};
 
 // Add derive(Debug) and derive(prost::Message) to TestStruct
 #[derive(Clone, PartialEq, prost::Message, runar_serializer_macros::Serializable)]
@@ -39,8 +34,8 @@ fn test_primitive_string() -> Result<()> {
     let val = ArcValue::new_primitive(original.clone());
     assert_eq!(val.category, ValueCategory::Primitive);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<String> = de.as_type_ref()?;
     assert_eq!(*resolved, original);
     Ok(())
@@ -52,8 +47,8 @@ fn test_primitive_i64() -> Result<()> {
     let val = ArcValue::new_primitive(original);
     assert_eq!(val.category, ValueCategory::Primitive);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<i64> = de.as_type_ref()?;
     assert_eq!(*resolved, original);
     Ok(())
@@ -65,8 +60,8 @@ fn test_primitive_bool() -> Result<()> {
     let val = ArcValue::new_primitive(original);
     assert_eq!(val.category, ValueCategory::Primitive);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<bool> = de.as_type_ref()?;
     assert_eq!(*resolved, original);
     Ok(())
@@ -78,8 +73,8 @@ fn test_primitive_f64() -> Result<()> {
     let val = ArcValue::new_primitive(original);
     assert_eq!(val.category, ValueCategory::Primitive);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<f64> = de.as_type_ref()?;
     assert_eq!(*resolved, original);
     Ok(())
@@ -94,13 +89,13 @@ fn test_list() -> Result<()> {
     let val = ArcValue::new_list(original.clone());
     assert_eq!(val.category, ValueCategory::List);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<Vec<ArcValue>> = de.as_list_ref()?;
     assert_eq!(resolved.len(), 2);
-    let mut item0 = resolved[0].clone();
+    let item0 = resolved[0].clone();
     assert_eq!(*item0.as_type_ref::<i64>()?, 1);
-    let mut item1 = resolved[1].clone();
+    let item1 = resolved[1].clone();
     assert_eq!(*item1.as_type_ref::<String>()?, "two");
     Ok(())
 }
@@ -116,13 +111,13 @@ fn test_map() -> Result<()> {
     let val = ArcValue::new_map(original.clone());
     assert_eq!(val.category, ValueCategory::Map);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<HashMap<String, ArcValue>> = de.as_map_ref()?;
     assert_eq!(resolved.len(), 2);
-    let mut val1 = resolved.get("key1").unwrap().clone();
+    let val1 = resolved.get("key1").unwrap().clone();
     assert_eq!(*val1.as_type_ref::<i64>()?, 42);
-    let mut val2 = resolved.get("key2").unwrap().clone();
+    let val2 = resolved.get("key2").unwrap().clone();
     assert_eq!(*val2.as_type_ref::<String>()?, "value");
     Ok(())
 }
@@ -133,8 +128,8 @@ fn test_bytes() -> Result<()> {
     let val = ArcValue::new_bytes(original.clone());
     assert_eq!(val.category, ValueCategory::Bytes);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<Vec<u8>> = de.as_bytes_ref()?;
     assert_eq!(*resolved, original);
     Ok(())
@@ -146,8 +141,8 @@ fn test_json() -> Result<()> {
     let val = ArcValue::new_json(original.clone());
     assert_eq!(val.category, ValueCategory::Json);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<JsonValue> = de.as_json_ref()?;
     assert_eq!(*resolved, original);
     Ok(())
@@ -162,8 +157,8 @@ fn test_struct() -> Result<()> {
     let val = ArcValue::new_struct(original.clone());
     assert_eq!(val.category, ValueCategory::Struct);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<TestStruct> = de.as_struct_ref()?;
     assert_eq!(*resolved, original);
     Ok(())
@@ -180,15 +175,15 @@ fn test_nested() -> Result<()> {
     let list = vec![ArcValue::new_map(map)];
     let val = ArcValue::new_list(list);
 
-    let ser = val.serialize(None, None)?;
-    let mut de = ArcValue::deserialize(&ser, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
+    let de = ArcValue::deserialize(&ser, None)?;
     let resolved_list: Arc<Vec<ArcValue>> = de.as_list_ref()?;
     assert_eq!(resolved_list.len(), 1);
-    let mut inner_map_val = resolved_list[0].clone();
+    let inner_map_val = resolved_list[0].clone();
     let resolved_map: Arc<HashMap<String, ArcValue>> = inner_map_val.as_map_ref()?;
-    let mut num_val = resolved_map.get("num").unwrap().clone();
+    let num_val = resolved_map.get("num").unwrap().clone();
     assert_eq!(*num_val.as_type_ref::<i64>()?, 42);
-    let mut str_val = resolved_map.get("str").unwrap().clone();
+    let str_val = resolved_map.get("str").unwrap().clone();
     assert_eq!(*str_val.as_type_ref::<String>()?, "nested");
     Ok(())
 }
@@ -214,13 +209,13 @@ fn test_to_json_list() -> Result<()> {
 fn test_from_json() -> Result<()> {
     let json_val = json!({"key": [1, true]});
     let val = ArcValue::from_json(json_val.clone());
-    let mut map = val.clone();
+    let map = val.clone();
     let resolved_map: Arc<HashMap<String, ArcValue>> = map.as_map_ref()?;
-    let mut list_val = resolved_map.get("key").unwrap().clone();
+    let list_val = resolved_map.get("key").unwrap().clone();
     let resolved_list: Arc<Vec<ArcValue>> = list_val.as_list_ref()?;
-    let mut item0 = resolved_list[0].clone();
+    let item0 = resolved_list[0].clone();
     assert_eq!(*item0.as_type_ref::<i64>()?, 1);
-    let mut item1 = resolved_list[1].clone();
+    let item1 = resolved_list[1].clone();
     assert_eq!(*item1.as_type_ref::<bool>()?, true);
     Ok(())
 }
@@ -229,7 +224,7 @@ fn test_from_json() -> Result<()> {
 fn test_null() -> Result<()> {
     let val = ArcValue::null();
     assert!(val.is_null());
-    let ser = val.serialize(None, None)?;
+    let ser = val.serialize(None, None, &"".to_string())?;
     assert_eq!(ser, vec![0]);
     let de = ArcValue::deserialize(&ser, None)?;
     assert!(de.is_null());
@@ -241,9 +236,7 @@ fn test_null() -> Result<()> {
 fn test_end_to_end_label_encryption_real() -> Result<()> {
     use runar_common::logging::{Component, Logger};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
-    use runar_serializer::traits::{
-        ConfigurableLabelResolver, KeyMappingConfig, KeyScope, LabelKeyInfo,
-    };
+    use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo};
 
     let logger = Arc::new(Logger::new_root(Component::System, "test"));
 
@@ -251,7 +244,7 @@ fn test_end_to_end_label_encryption_real() -> Result<()> {
     mobile_mgr.initialize_user_root_key()?;
     let profile_pk = mobile_mgr.derive_user_profile_key("user")?;
     let network_id = mobile_mgr.generate_network_data_key()?;
-    let network_pub = mobile_mgr.get_network_public_key(&network_id)?;
+    // let network_pub = mobile_mgr.get_network_public_key(&network_id)?;
 
     let mut node_mgr = NodeKeyManager::new(logger.clone())?;
     let nk_msg =
@@ -266,22 +259,22 @@ fn test_end_to_end_label_encryption_real() -> Result<()> {
             (
                 "user".to_string(),
                 LabelKeyInfo {
-                    public_key: profile_pk.clone(),
-                    scope: KeyScope::Profile,
+                    profile_ids: vec![compact_id(&profile_pk)],
+                    network_id: None,
                 },
             ),
             (
                 "system".to_string(),
                 LabelKeyInfo {
-                    public_key: network_pub.clone(),
-                    scope: KeyScope::Network,
+                    profile_ids: vec![compact_id(&profile_pk)],
+                    network_id: Some(network_id.clone()),
                 },
             ),
             (
                 "search".to_string(),
                 LabelKeyInfo {
-                    public_key: network_pub.clone(),
-                    scope: KeyScope::Network,
+                    profile_ids: vec![compact_id(&profile_pk)],
+                    network_id: Some(network_id.clone()),
                 },
             ),
         ]),
@@ -300,14 +293,15 @@ fn test_end_to_end_label_encryption_real() -> Result<()> {
     let ser = val.serialize(
         Some(mobile_keystore.clone()),
         Some(mobile_resolver.as_ref()),
+        &network_id,
     )?;
 
     // Deserialising without keystore returns a lazy ArcValue, but accessing data must fail
-    let mut av_no_key = ArcValue::deserialize(&ser, None)?;
+    let av_no_key = ArcValue::deserialize(&ser, None)?;
     assert!(av_no_key.as_struct_ref::<EncryptedTestProfile>().is_err());
 
     // --- Node opens envelope -> obtains encrypted representation ---
-    let mut av_enc = ArcValue::deserialize(&ser, Some(node_keystore.clone()))?;
+    let av_enc = ArcValue::deserialize(&ser, Some(node_keystore.clone()))?;
     let enc_profile: Arc<EncryptedTestProfile> = av_enc.as_struct_ref()?;
     // Ensure label groups present and encrypted
     assert!(enc_profile.user_encrypted.is_some());
@@ -325,7 +319,7 @@ fn test_end_to_end_label_encryption_real() -> Result<()> {
     assert!(!sys_env.network_encrypted_key.is_empty());
 
     // --- Node converts to plain TestProfile ---
-    let mut av_plain = ArcValue::deserialize(&ser, Some(node_keystore.clone()))?;
+    let av_plain = ArcValue::deserialize(&ser, Some(node_keystore.clone()))?;
     let plain: Arc<TestProfile> = av_plain.as_struct_ref()?;
     assert_eq!(plain.id, original.id);
     assert_eq!(plain.name, original.name);
@@ -334,9 +328,9 @@ fn test_end_to_end_label_encryption_real() -> Result<()> {
 
     // --- Re-serialise encrypted struct for storage ---
     let av_store = ArcValue::new_struct(enc_profile.as_ref().clone());
-    let stored_bytes = av_store.serialize(Some(node_keystore), None)?; // node re-wraps outer envelope with its network id
-                                                                       // Stored bytes: outer envelope present – deserialises lazily but access should fail without key
-    let mut av_no_key2 = ArcValue::deserialize(&stored_bytes, None)?;
+    let stored_bytes = av_store.serialize(Some(node_keystore), None, &network_id)?; // node re-wraps outer envelope with its network id
+                                                                                    // Stored bytes: outer envelope present – deserialises lazily but access should fail without key
+    let av_no_key2 = ArcValue::deserialize(&stored_bytes, None)?;
     let ep: Arc<EncryptedTestProfile> = av_no_key2.as_struct_ref()?;
     assert!(ep.system_encrypted.is_some());
 

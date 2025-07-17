@@ -1,10 +1,6 @@
 use anyhow::Result;
 use prost::Message;
-use runar_common::{Component, Logger};
-use runar_node::network::transport::{NetworkMessage, NetworkMessagePayloadItem};
-use runar_serializer::{ArcValue, SerializerRegistry};
-use std::collections::HashMap;
-use std::sync::Arc;
+// Binary serialization tests for prost messages only require prost
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub struct TestStruct {

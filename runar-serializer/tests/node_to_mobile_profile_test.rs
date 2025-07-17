@@ -90,7 +90,7 @@ fn node_to_mobile_roundtrip() -> Result<()> {
     let bytes = av.serialize(Some(node_keystore.clone()), Some(node_resolver.as_ref()))?;
 
     // mobile deserialises
-    let mut av_mobile = ArcValue::deserialize(&bytes, Some(mobile_keystore.clone()))?;
+    let av_mobile = ArcValue::deserialize(&bytes, Some(mobile_keystore.clone()))?;
     let msg: Arc<MessageForUser> = av_mobile.as_struct_ref()?;
     assert_eq!(msg.id, original.id);
     assert_eq!(msg.status, original.status);

@@ -3,12 +3,14 @@
 // INTENTION: Verify that the Registry Service correctly provides
 // information about registered services through standard requests.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use runar_common::logging::{Component, Logger};
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::{Node, ServiceMetadata, ServiceState};
+use runar_serializer::arc_value::AsArcValue;
+use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
-use serde_json::Value;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -39,10 +41,16 @@ async fn test_registry_service_list_services() {
         node.start().await.unwrap();
 
         // Use the request method to query the registry service
-        let services: Vec<ServiceMetadata> = node
-            .request("$registry/services/list".to_string(), None::<()>)
+        let mut services_av: ArcValue = node
+            .request("$registry/services/list", Option::<ArcValue>::None)
             .await
             .unwrap();
+        // Convert ArcValue list into Vec<ServiceMetadata>
+        let list_arc = services_av.as_list_ref().unwrap();
+        let services: Vec<Arc<ServiceMetadata>> = list_arc
+            .iter()
+            .map(|av| av.as_type_ref::<ServiceMetadata>().unwrap())
+            .collect();
 
         // Parse the response to verify it contains our registered services
         // services is now Vec<ServiceMetadata>
@@ -119,18 +127,26 @@ async fn test_registry_service_get_service_info() {
         // test_logger.debug(format!("Service states AFTER start: {:?}", states_after));
 
         // Debug log available handlers using logger
-        let list_response: Vec<ServiceMetadata> = node
+        let list_av: ArcValue = node
             .request("$registry/services/list", None::<()>)
             .await
             .unwrap();
+        let mut list_av_clone = list_av.clone();
+        let list_arc2 = list_av_clone.as_list_ref().unwrap();
+        let list_response: Vec<ServiceMetadata> = list_arc2
+            .iter()
+            .map(|av| ServiceMetadata::from_arc_value((*av).clone()).unwrap())
+            .collect();
         test_logger.debug(format!("Available services: {list_response:?}"));
 
         // Use the request method to query the registry service for the math service
         // Note: We should use the correct parameter path format
-        let response: ServiceMetadata = node
-            .request("$registry/services/math", None::<()>)
+        let response_av: ArcValue = node
+            .request("$registry/services/math", Option::<ArcValue>::None)
             .await
             .unwrap();
+        let response: ServiceMetadata =
+            ServiceMetadata::from_arc_value(response_av.clone()).unwrap();
         test_logger.debug(format!("Service info response: {response:?}"));
 
         // Dump the complete response data for debugging
@@ -180,9 +196,10 @@ async fn test_registry_service_get_service_state() {
         node.start().await?;
 
         // Use the request method to query the registry service for the math service state
-        let response: ServiceState = node
-            .request("$registry/services/math/state", None::<()>)
+        let state_av: ArcValue = node
+            .request("$registry/services/math/state", Option::<ArcValue>::None)
             .await?;
+        let response: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
         test_logger.debug(format!("Initial service state response: {response:?}"));
 
         // Parse the response to verify it contains service state
@@ -192,8 +209,11 @@ async fn test_registry_service_get_service_state() {
             "Expected service state to be 'RUNNING'"
         );
 
-        let response: Result<ServiceState> = node
-            .request("$registry/services/not_exisstent/state", None::<()>)
+        let response: Result<ArcValue> = node
+            .request(
+                "$registry/services/not_exisstent/state",
+                Option::<ArcValue>::None,
+            )
             .await;
         test_logger.debug(format!("Service state after start: {response:?}"));
         Ok::<(), anyhow::Error>(())
@@ -233,7 +253,9 @@ async fn test_registry_service_missing_parameter() {
         // Make an invalid request with missing service_path parameter
         // The registry service expects a path parameter in the URL, but we're using an invalid path
         // that the router won't be able to match to a template with a parameter
-        let response: Result<Value> = node.request("$registry/services", None::<()>).await;
+        let response: Result<ArcValue> = node
+            .request("$registry/services", Option::<ArcValue>::None)
+            .await;
 
         // The request should fail or return an error response
         match response {
@@ -249,8 +271,9 @@ async fn test_registry_service_missing_parameter() {
         }
 
         // Test with an invalid path format for service_path/state endpoint
-        let state_response: Result<Value> =
-            node.request("$registry/services//state", None::<()>).await;
+        let state_response: Result<ArcValue> = node
+            .request("$registry/services//state", Option::<ArcValue>::None)
+            .await;
 
         // The request should fail or return an error response
         match state_response {

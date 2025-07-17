@@ -8,13 +8,12 @@
 // Any changes to the service interface or semantics may break numerous tests across the codebase.
 
 use anyhow::{anyhow, Result};
-use runar_common::types::schemas::{FieldSchema, SchemaDataType};
 use runar_node::services::{
-    abstract_service::AbstractService, event_context::EventContext,
-    request_context::RequestContext, EventRegistrationOptions,
+    abstract_service::AbstractService, request_context::RequestContext, EventRegistrationOptions,
 };
 use runar_node::LifecycleContext;
-use runar_serializer::ArcValue;
+use runar_schemas::{FieldSchema, SchemaDataType};
+use runar_serializer::{arc_value::AsArcValue, ArcValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -174,25 +173,23 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling add operation request".to_string());
-        let zero = 0.0;
-        let mut data = params.unwrap_or_else(ArcValue::null);
-        let (a, b) = match data.as_map_ref::<String, f64>() {
-            Ok(map) => {
-                let a = *map.get("a").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'a'".to_string());
-                    &zero
-                });
-                let b = *map.get("b").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'b'".to_string());
-                    &zero
-                });
-                (a, b)
-            }
-            Err(e) => {
-                context.error(format!("Parameter extraction error: {e}"));
-                return Err(anyhow!(format!("Parameter extraction error: {}", e)));
+        let mut data = params.expect("params are required");
+        let map = data
+            .as_map_ref()
+            .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
+
+        let extract = |key: &str| -> Result<f64> {
+            match map.get(key) {
+                Some(v) => f64::from_arc_value(v.clone()).map_err(|e| anyhow!(e)),
+                None => {
+                    context.error(format!("Missing parameter '{key}'"));
+                    Ok(0.0)
+                }
             }
         };
+
+        let a = extract("a")?;
+        let b = extract("b")?;
         let result = self.add(a, b, &context).await;
         context.info(format!("Addition successful: {a} + {b} = {result}"));
         Ok(ArcValue::new_primitive(result))
@@ -205,27 +202,21 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling subtract operation request".to_string());
-        let zero = 0.0;
         let mut data = params.unwrap_or_else(ArcValue::null);
-        let (a, b) = match data.as_map_ref::<String, f64>() {
-            Ok(map) => {
-                let a = *map.get("a").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'a'".to_string());
-                    &zero
-                });
-                let b = *map.get("b").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'b'".to_string());
-                    &zero
-                });
-                (a, b)
-            }
-            Err(e) => {
-                context.error(format!("Parameter extraction error: {e}"));
-                return Err(anyhow!(format!("Parameter extraction error: {}", e)));
-            }
-        };
+        let map = data
+            .as_map_ref()
+            .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
+
+        let a = map
+            .get("a")
+            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .unwrap_or(0.0);
+        let b = map
+            .get("b")
+            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .unwrap_or(0.0);
         let result = self.subtract(a, b, &context);
-        context.info(format!("Subtraction successful: {a} - {b} = {result}",));
+        context.info(format!("Subtraction successful: {a} - {b} = {result}"));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -236,27 +227,21 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling multiply operation request".to_string());
-        let zero = 0.0;
         let mut data = params.unwrap_or_else(ArcValue::null);
-        let (a, b) = match data.as_map_ref::<String, f64>() {
-            Ok(map) => {
-                let a = *map.get("a").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'a'".to_string());
-                    &zero
-                });
-                let b = *map.get("b").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'b'".to_string());
-                    &zero
-                });
-                (a, b)
-            }
-            Err(e) => {
-                context.error(format!("Parameter extraction error: {e}"));
-                return Err(anyhow!(format!("Parameter extraction error: {}", e)));
-            }
-        };
+        let map = data
+            .as_map_ref()
+            .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
+
+        let a = map
+            .get("a")
+            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .unwrap_or(0.0);
+        let b = map
+            .get("b")
+            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .unwrap_or(0.0);
         let result = self.multiply(a, b, &context);
-        context.info(format!("Multiplication successful: {a} * {b} = {result}",));
+        context.info(format!("Multiplication successful: {a} * {b} = {result}"));
         Ok(ArcValue::new_primitive(result))
     }
 
@@ -268,24 +253,18 @@ impl MathService {
     ) -> Result<ArcValue> {
         context.info("Handling divide operation request".to_string());
         let mut data = params.unwrap_or_else(ArcValue::null);
-        let zero = 0.0;
-        let (a, b) = match data.as_map_ref::<String, f64>() {
-            Ok(map) => {
-                let a = *map.get("a").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'a'".to_string());
-                    &zero
-                });
-                let b = *map.get("b").unwrap_or_else(|| {
-                    context.error("Missing or invalid parameter 'b'".to_string());
-                    &zero
-                });
-                (a, b)
-            }
-            Err(e) => {
-                context.error(format!("Parameter extraction error: {e}"));
-                return Err(anyhow!(format!("Parameter extraction error: {}", e)));
-            }
-        };
+        let map = data
+            .as_map_ref()
+            .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
+
+        let a = map
+            .get("a")
+            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .unwrap_or(0.0);
+        let b = map
+            .get("b")
+            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .unwrap_or(0.0);
         match self.divide(a, b, &context) {
             Ok(result) => {
                 context.info(format!("Division successful: {a} / {b} = {result}"));
@@ -463,8 +442,8 @@ impl AbstractService for MathService {
                     // Create a boxed future that returns Result<(), anyhow::Error>
                     Box::pin(async move {
                         ctx.info(format!(
-                            "MathService received math/added event: {}",
-                            value.unwrap()
+                            "MathService received math/added event: {:?}",
+                            value
                         ));
                         Ok(()) // Return Result::Ok
                     })

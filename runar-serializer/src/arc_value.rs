@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use prost::Message;
 use serde_json::Value as JsonValue;
 
-use super::encryption::{decrypt_bytes, encrypt_bytes};
+use super::encryption::decrypt_bytes;
 use super::erased_arc::ErasedArc;
 use super::traits::{CustomFromBytes, KeyStore, LabelResolver};
 use crate::map_types;
@@ -35,6 +35,7 @@ pub struct ArcValue {
                     &ErasedArc,
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
@@ -117,12 +118,13 @@ impl ArcValue {
                     &ErasedArc,
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver| {
+        > = Arc::new(move |erased, keystore, resolver, network_id| {
             let val = erased.as_arc::<T>()?;
-            T::to_binary(&*val, keystore, resolver)
+            T::to_binary(&*val, keystore, resolver, network_id)
         });
         Self {
             category: ValueCategory::Primitive,
@@ -138,16 +140,17 @@ impl ArcValue {
                     &ErasedArc,
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver| {
+        > = Arc::new(move |erased, keystore, resolver, network_id| {
             let list = erased.as_arc::<Vec<ArcValue>>()?;
             let mut proto = vec_types::VecArcValue::default();
             for item in list.iter() {
                 proto
                     .entries
-                    .push(item.serialize(keystore.cloned(), resolver)?);
+                    .push(item.serialize(keystore.cloned(), resolver, network_id)?);
             }
             Ok(proto.encode_to_vec())
         });
@@ -165,16 +168,16 @@ impl ArcValue {
                     &ErasedArc,
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver| {
+        > = Arc::new(move |erased, keystore, resolver, network_id| {
             let map = erased.as_arc::<HashMap<String, ArcValue>>()?;
             let mut proto = map_types::StringToArcValueMap::default();
             for (k, v) in map.iter() {
-                proto
-                    .entries
-                    .insert(k.clone(), v.serialize(keystore.cloned(), resolver)?);
+                let bytes = v.serialize(keystore.cloned(), resolver, network_id)?;
+                proto.entries.insert(k.clone(), bytes);
             }
             Ok(proto.encode_to_vec())
         });
@@ -194,12 +197,13 @@ impl ArcValue {
                     &ErasedArc,
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, keystore, resolver| {
+        > = Arc::new(move |erased, keystore, resolver, network_id| {
             let val = erased.as_arc::<T>()?;
-            T::to_binary(&*val, keystore, resolver)
+            T::to_binary(&*val, keystore, resolver, network_id)
         });
         Self {
             category: ValueCategory::Struct,
@@ -215,10 +219,11 @@ impl ArcValue {
                     &ErasedArc,
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, _, _| {
+        > = Arc::new(move |erased, _, _, _| {
             let bytes = erased.as_arc::<Vec<u8>>()?;
             Ok((*bytes).clone())
         });
@@ -236,10 +241,11 @@ impl ArcValue {
                     &ErasedArc,
                     Option<&Arc<KeyStore>>,
                     Option<&dyn LabelResolver>,
+                    &String,
                 ) -> Result<Vec<u8>>
                 + Send
                 + Sync,
-        > = Arc::new(move |erased, _, _| {
+        > = Arc::new(move |erased, _, _, _| {
             let json = erased.as_arc::<JsonValue>()?;
             Ok(serde_json::to_vec(&*json)?)
         });
@@ -298,6 +304,7 @@ impl ArcValue {
         &self,
         keystore: Option<Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
+        network_id: &String,
     ) -> Result<Vec<u8>> {
         if self.is_null() {
             return Ok(vec![0]);
@@ -327,7 +334,7 @@ impl ArcValue {
         buf.extend_from_slice(type_name_bytes);
 
         let data = if let Some(ser_fn) = &self.serialize_fn {
-            ser_fn(inner, keystore.as_ref(), resolver)
+            ser_fn(inner, keystore.as_ref(), resolver, network_id)
         } else {
             return Err(anyhow!("No serialize function available"));
         }?;
@@ -344,19 +351,7 @@ impl ArcValue {
                 .as_ref()
                 .ok_or(anyhow!("Keystore required for encryption"))?;
 
-            // Determine network_id: require that the resolver provides a 'system' label mapping.
-            let net_id = if let Some(res) = resolver {
-                match res.resolve_label_info("system")? {
-                    Some(info) if info.scope == crate::traits::KeyScope::Network => {
-                        runar_common::compact_ids::compact_id(&info.public_key)
-                    }
-                    _ => return Err(anyhow!("Resolver must provide a 'system' label mapped to a Network key for outer envelope encryption")),
-                }
-            } else {
-                return Err(anyhow!("Resolver required for outer envelope encryption"));
-            };
-
-            let env = ks.encrypt_with_envelope(&data, &net_id, Vec::new())?;
+            let env = ks.encrypt_with_envelope(&data, Some(&network_id), Vec::new())?;
             buf.extend(env.encode_to_vec());
         } else {
             buf.extend(data);
@@ -365,11 +360,11 @@ impl ArcValue {
         Ok(buf)
     }
 
-    pub fn as_type_ref<T>(&mut self) -> Result<Arc<T>>
+    pub fn as_type_ref<T>(&self) -> Result<Arc<T>>
     where
         T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
     {
-        let inner = self.value.as_mut().ok_or(anyhow!("No value"))?;
+        let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
 
         if inner.is_lazy {
             let lazy = inner.get_lazy_data()?;
@@ -394,34 +389,79 @@ impl ArcValue {
             };
 
             let arc = Arc::new(decoded);
-            *inner = ErasedArc::new(arc.clone());
+            // *inner = ErasedArc::new(arc.clone());
 
             // Set serialize_fn based on category
-            self.serialize_fn = Some(Arc::new(move |erased, ks, res| {
-                let val = erased.as_arc::<T>()?;
-                T::to_binary(&*val, ks, res)
-            }));
+            // self.serialize_fn = Some(Arc::new(move |erased, ks, res| {
+            //     let val = erased.as_arc::<T>()?;
+            //     T::to_binary(&*val, ks, res)
+            // }));
             Ok(arc)
         } else {
             inner.as_arc::<T>()
         }
     }
 
-    pub fn as_list_ref(&mut self) -> Result<Arc<Vec<ArcValue>>> {
+    pub fn as_typed_list_ref<T>(&self) -> Result<Vec<Arc<T>>>
+    where
+        T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+    {
+        if self.category != ValueCategory::List {
+            return Err(anyhow!("Not a list"));
+        }
+        let list_arc = self.as_type_ref::<Vec<ArcValue>>()?;
+
+        let list_of_type: Vec<Arc<T>> = list_arc
+            .iter()
+            .map(|entry| {
+                (entry
+                    .as_type_ref::<T>()
+                    .expect("can't convert list entry to type"))
+            })
+            .collect();
+
+        Ok(list_of_type)
+    }
+
+    pub fn as_list_ref(&self) -> Result<Arc<Vec<ArcValue>>> {
         if self.category != ValueCategory::List {
             return Err(anyhow!("Not a list"));
         }
         self.as_type_ref::<Vec<ArcValue>>()
     }
 
-    pub fn as_map_ref(&mut self) -> Result<Arc<HashMap<String, ArcValue>>> {
+    pub fn as_typed_map_ref<T>(&self) -> Result<HashMap<String, Arc<T>>>
+    where
+        T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+    {
+        if self.category != ValueCategory::Map {
+            return Err(anyhow!("Not a map"));
+        }
+        let map_arc = self.as_type_ref::<HashMap<String, ArcValue>>()?;
+
+        let map_of_type: HashMap<String, Arc<T>> = map_arc
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    value
+                        .as_type_ref::<T>()
+                        .expect("can't convert map entry to type"),
+                )
+            })
+            .collect();
+
+        Ok(map_of_type)
+    }
+
+    pub fn as_map_ref(&self) -> Result<Arc<HashMap<String, ArcValue>>> {
         if self.category != ValueCategory::Map {
             return Err(anyhow!("Not a map"));
         }
         self.as_type_ref::<HashMap<String, ArcValue>>()
     }
 
-    pub fn as_struct_ref<T>(&mut self) -> Result<Arc<T>>
+    pub fn as_struct_ref<T>(&self) -> Result<Arc<T>>
     where
         T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
     {
@@ -431,14 +471,14 @@ impl ArcValue {
         self.as_type_ref::<T>()
     }
 
-    pub fn as_bytes_ref(&mut self) -> Result<Arc<Vec<u8>>> {
+    pub fn as_bytes_ref(&self) -> Result<Arc<Vec<u8>>> {
         if self.category != ValueCategory::Bytes {
             return Err(anyhow!("Not bytes"));
         }
         self.as_type_ref::<Vec<u8>>()
     }
 
-    pub fn as_json_ref(&mut self) -> Result<Arc<JsonValue>> {
+    pub fn as_json_ref(&self) -> Result<Arc<JsonValue>> {
         if self.category != ValueCategory::Json {
             return Err(anyhow!("Not JSON"));
         }
@@ -526,6 +566,7 @@ impl CustomFromBytes for String {
         &self,
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.as_bytes().to_vec())
     }
@@ -551,6 +592,7 @@ impl CustomFromBytes for i64 {
         &self,
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -576,6 +618,7 @@ impl CustomFromBytes for bool {
         &self,
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(vec![if *self { 1 } else { 0 }])
     }
@@ -601,6 +644,7 @@ impl CustomFromBytes for f64 {
         &self,
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.to_be_bytes().to_vec())
     }
@@ -620,6 +664,7 @@ impl CustomFromBytes for Vec<u8> {
         &self,
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
     ) -> Result<Vec<u8>> {
         Ok(self.clone())
     }
@@ -640,6 +685,7 @@ impl CustomFromBytes for JsonValue {
         &self,
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
     ) -> Result<Vec<u8>> {
         serde_json::to_vec(self).map_err(anyhow::Error::from)
     }
@@ -665,12 +711,13 @@ impl CustomFromBytes for Vec<ArcValue> {
         &self,
         keystore: Option<&Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
+        network_id: &String,
     ) -> Result<Vec<u8>> {
         let mut proto = vec_types::VecArcValue::default();
         for item in self {
             proto
                 .entries
-                .push(item.serialize(keystore.cloned(), resolver)?);
+                .push(item.serialize(keystore.cloned(), resolver, network_id)?);
         }
         Ok(proto.encode_to_vec())
     }
@@ -696,68 +743,298 @@ impl CustomFromBytes for HashMap<String, ArcValue> {
         &self,
         keystore: Option<&Arc<KeyStore>>,
         resolver: Option<&dyn LabelResolver>,
+        network_id: &String,
     ) -> Result<Vec<u8>> {
         let mut proto = map_types::StringToArcValueMap::default();
         for (k, v) in self {
-            proto
-                .entries
-                .insert(k.clone(), v.serialize(keystore.cloned(), resolver)?);
+            proto.entries.insert(
+                k.clone(),
+                v.serialize(keystore.cloned(), resolver, network_id)?,
+            );
         }
         Ok(proto.encode_to_vec())
     }
 }
 
-// Add AsArcValue impls for convenience
-pub trait AsArcValue {
+// --- BEGIN: CustomFromBytes for all common primitives ---
+
+impl CustomFromBytes for i8 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 1 {
+            return Err(anyhow!("Invalid byte length for i8"));
+        }
+        Ok(bytes[0] as i8)
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(vec![*self as u8])
+    }
+}
+
+impl CustomFromBytes for u8 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 1 {
+            return Err(anyhow!("Invalid byte length for u8"));
+        }
+        Ok(bytes[0])
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(vec![*self])
+    }
+}
+
+impl CustomFromBytes for i16 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 2 {
+            return Err(anyhow!("Invalid byte length for i16"));
+        }
+        let mut buf = [0u8; 2];
+        buf.copy_from_slice(bytes);
+        Ok(i16::from_be_bytes(buf))
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
+    }
+}
+
+impl CustomFromBytes for u16 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 2 {
+            return Err(anyhow!("Invalid byte length for u16"));
+        }
+        let mut buf = [0u8; 2];
+        buf.copy_from_slice(bytes);
+        Ok(u16::from_be_bytes(buf))
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
+    }
+}
+
+impl CustomFromBytes for i32 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 4 {
+            return Err(anyhow!("Invalid byte length for i32"));
+        }
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(bytes);
+        Ok(i32::from_be_bytes(buf))
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
+    }
+}
+
+impl CustomFromBytes for u32 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 4 {
+            return Err(anyhow!("Invalid byte length for u32"));
+        }
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(bytes);
+        Ok(u32::from_be_bytes(buf))
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
+    }
+}
+
+impl CustomFromBytes for u64 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 8 {
+            return Err(anyhow!("Invalid byte length for u64"));
+        }
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(bytes);
+        Ok(u64::from_be_bytes(buf))
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
+    }
+}
+
+impl CustomFromBytes for f32 {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 4 {
+            return Err(anyhow!("Invalid byte length for f32"));
+        }
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(bytes);
+        Ok(f32::from_be_bytes(buf))
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
+    }
+}
+
+impl CustomFromBytes for char {
+    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        if bytes.len() != 4 {
+            return Err(anyhow!("Invalid byte length for char"));
+        }
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(bytes);
+        let u = u32::from_be_bytes(buf);
+        std::char::from_u32(u).ok_or_else(|| anyhow!("Invalid char encoding"))
+    }
+    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
+        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
+        let decrypted = decrypt_bytes(bytes, ks)?;
+        Self::from_plain_bytes(&decrypted, keystore)
+    }
+    fn to_binary(
+        &self,
+        _keystore: Option<&Arc<KeyStore>>,
+        _resolver: Option<&dyn LabelResolver>,
+        _network_id: &String,
+    ) -> Result<Vec<u8>> {
+        Ok((*self as u32).to_be_bytes().to_vec())
+    }
+}
+// --- END: CustomFromBytes for all common primitives ---
+
+// ---------------------------------------------------------------------------
+// Trait: AsArcValue
+// ---------------------------------------------------------------------------
+/// Bidirectional conversion between concrete Rust values and `ArcValue`.
+///
+/// * `as_arc_value` consumes `self` and produces an `ArcValue` for serialization.
+/// * `from_arc_value` attempts to reconstruct `Self` from the given `ArcValue`.
+///
+/// `from_arc_value` has a default implementation that works for any type
+/// implementing [`CustomFromBytes`].  This covers the vast majority of cases
+/// once the `#[derive(Serializable)]` macro is applied.  Custom/value-category
+/// specific impls can still be provided to optimise the binary layout (e.g.
+/// primitives vs. structs).
+pub trait AsArcValue: Sized + Clone {
+    /// Convert `self` into an [`ArcValue`].
     fn as_arc_value(self) -> ArcValue;
-}
 
-impl AsArcValue for String {
-    fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_primitive(self)
+    /// Attempt to reconstruct `Self` from the provided [`ArcValue`].
+    fn from_arc_value(value: ArcValue) -> Result<Self>
+    where
+        Self: 'static + Debug + Send + Sync + CustomFromBytes,
+    {
+        value.as_type_ref::<Self>().map(|arc| (*arc).clone())
     }
 }
 
-impl AsArcValue for i64 {
+// Identity conversion for ArcValue itself
+impl AsArcValue for ArcValue {
     fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_primitive(self)
+        self
+    }
+
+    fn from_arc_value(value: ArcValue) -> Result<Self> {
+        Ok(value)
     }
 }
 
-impl AsArcValue for bool {
+// Unit type maps to / from a `Null` ArcValue.
+impl AsArcValue for () {
     fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_primitive(self)
+        ArcValue::null()
+    }
+
+    fn from_arc_value(value: ArcValue) -> Result<Self> {
+        if value.is_null() {
+            Ok(())
+        } else {
+            Err(anyhow!("Expected null ArcValue for unit type"))
+        }
     }
 }
 
-impl AsArcValue for f64 {
+// Blanket impl leveraging `CustomFromBytes` for all other types.  This must be
+// **after** the concrete impls above to avoid overlap.
+impl<T> AsArcValue for T
+where
+    T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+{
     fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_primitive(self)
+        ArcValue::new_struct(self)
+    }
+
+    fn from_arc_value(value: ArcValue) -> Result<Self> {
+        value.as_type_ref::<T>().map(|arc| (*arc).clone())
     }
 }
-
-impl AsArcValue for Vec<u8> {
-    fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_bytes(self)
-    }
-}
-
-impl AsArcValue for JsonValue {
-    fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_json(self)
-    }
-}
-
-impl AsArcValue for Vec<ArcValue> {
-    fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_list(self)
-    }
-}
-
-impl AsArcValue for HashMap<String, ArcValue> {
-    fn as_arc_value(self) -> ArcValue {
-        ArcValue::new_map(self)
-    }
-}
-
-// For custom structs, the macro will generate AsArcValue impl calling new_struct

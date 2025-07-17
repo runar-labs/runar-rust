@@ -19,7 +19,8 @@ distributed_slice = ["node_implementation", "dep:linkme"]
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = { version = "2.0", features = ["full", "extra-traits"] }
+syn = { version = "2.0", features = ["full"] }
+runar-schemas = { path = "../runar-schemas" }
 rand = "0.8"
 darling = "0.20"
 serde_json = "1.0"

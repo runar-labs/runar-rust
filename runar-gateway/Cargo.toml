@@ -21,6 +21,7 @@ runar_node = { path = "../runar-node" }
 axum = { version = "0.7", features = ["macros", "json"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 runar-serializer = { path = "../runar-serializer" }
+runar-schemas = { path = "../runar-schemas" }
 
 [dev-dependencies]
 tempfile = "3.10"

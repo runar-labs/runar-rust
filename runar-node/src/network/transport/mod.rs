@@ -18,11 +18,13 @@ use rustls_pki_types::{CertificateDer, ServerName};
 
 // Internal module declarations
 pub mod connection_pool;
+pub mod keystore_proxy;
 pub mod peer_state;
 pub mod quic_transport;
 pub mod stream_pool;
 
 pub use connection_pool::ConnectionPool;
+pub use keystore_proxy::KeystoreReadProxy;
 pub use peer_state::PeerState;
 pub use stream_pool::StreamPool;
 
@@ -204,11 +206,6 @@ pub enum NetworkMessageType {
     Heartbeat,
 }
 
-/// Represents a payload item in a network message
-///
-/// IMPORTANT: This is implemented as a struct with fields, not as a tuple.
-/// The serialized data is stored in value_bytes and should be deserialized
-/// using SerializerRegistry when needed.
 #[derive(Serialize, Deserialize, Clone, Message)]
 pub struct NetworkMessagePayloadItem {
     /// The path/topic associated with this payload
@@ -308,6 +305,12 @@ pub trait NetworkTransport: Send + Sync {
     /// INTENTION: Allow callers to subscribe to peer node info updates when they are received
     /// during handshakes. This is used by the Node to create RemoteService instances.
     async fn subscribe_to_peer_node_info(&self) -> tokio::sync::broadcast::Receiver<NodeInfo>;
+
+    /// Expose the transport-owned keystore (read-only).
+    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
+
+    /// Expose the transport-owned label resolver.
+    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver>;
 }
 
 /// Error type for network operations

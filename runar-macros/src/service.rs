@@ -235,55 +235,28 @@ fn generate_abstract_service_impl(
         })
         .collect::<Vec<_>>();
 
-    // Generate logging code for collected types
-    let type_collection_code = if sorted_types.is_empty() {
-        // No complex types collected – generate a simple debug log
-        quote! {
-            context.debug("No complex types to register for this service");
-        }
-    } else {
-        quote! {
-            context.info(format!("Types used by service {}:\n    {}", stringify!(#struct_type), #types_str));
-        }
-    };
+    // // Generate logging code for collected types
+    // let type_collection_code = if sorted_types.is_empty() {
+    //     // No complex types collected – generate a simple debug log
+    //     quote! {
+    //         context.debug("No complex types to register for this service");
+    //     }
+    // } else {
+    //     quote! {
+    //         context.info(format!("Types used by service {}:\n    {}", stringify!(#struct_type), #types_str));
+    //     }
+    // };
 
-    // Generate debug line for the full list when registering types
-    let join_debug_code = if sorted_types.is_empty() {
-        quote! {
-            context.debug("All types registered: []");
-        }
-    } else {
-        quote! {
-            context.debug(format!("All types registered: [{}]", [#(stringify!(#type_idents)),*].join(", ")));
-        }
-    };
-
-    // Generate per-type registration or skip tokens depending on whether the type is a plain struct
-    let register_tokens = sorted_types
-        .iter()
-        .map(|t| {
-            let type_ident = syn::parse_str::<syn::Type>(t)
-                .unwrap_or_else(|_| panic!("Failed to parse type: {t}"));
-
-            // Very simple container detection based on the formatted type string. This avoids
-            // attempting to register container types like Vec<...> or HashMap<..., ...> which do
-            // not implement `prost::Message` and therefore fail to compile when passed to
-            // `serializer.register::<T>()`.
-            if t.contains("Vec") || t.contains("HashMap") {
-                // Skip explicit registration – converters for container types are provided by the
-                // serializer itself during initialisation.
-                quote! {
-                    context.debug(format!("Skipping registration for container type {}", stringify!(#type_ident)));
-                }
-            } else {
-                // Plain struct / enum that should implement `prost::Message` or `RunarEncrypt`.
-                quote! {
-                    context.debug(format!("Registering type {}", stringify!(#type_ident)));
-                    serializer.register::<#type_ident>()?;
-                }
-            }
-        })
-        .collect::<Vec<_>>();
+    // // Generate debug line for the full list when registering types
+    // let join_debug_code = if sorted_types.is_empty() {
+    //     quote! {
+    //         context.debug("All types registered: []");
+    //     }
+    // } else {
+    //     quote! {
+    //         context.debug(format!("All types registered: [{}]", [#(stringify!(#type_idents)),*].join(", ")));
+    //     }
+    // };
 
     quote! {
         #[async_trait::async_trait]
@@ -319,9 +292,6 @@ fn generate_abstract_service_impl(
                 // Register all action and subscription methods defined with the #[action] or #[subscribe] macro
                 #(#method_registrations)*
 
-                // Register complex types with the serializer
-                Self::register_types(context_ref).await?;
-
                 Ok(())
             }
 
@@ -336,22 +306,7 @@ fn generate_abstract_service_impl(
 
         // Helper utilities inherent to the service
         impl #struct_type {
-            // Helper method to register complex types with the serializer
-            async fn register_types(context: &runar_node::services::LifecycleContext) -> anyhow::Result<()> {
-                // Acquire a write lock on the serializer
-                let mut serializer = context.serializer.write().await;
 
-                // Log all the collected types
-                #type_collection_code
-
-                // Register each collected type, skipping container types handled by built-in converters
-                #join_debug_code
-
-                // Auto-generated per-type registration logic
-                #(#register_tokens)*
-
-                Ok(())
-            }
         }
     }
 }
