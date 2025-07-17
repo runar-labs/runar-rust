@@ -111,7 +111,8 @@ public final class QuicTransporter: TransportProtocol, @unchecked Sendable {
     }
     
     public func connect(to peerInfo: RunarPeerInfo) async throws {
-        let peerNodeId = peerInfo.publicKey.base64EncodedString()
+        // **CRITICAL FIX**: Use compact ID consistently instead of base64-encoded public key
+        let peerNodeId = NodeUtils.compactId(from: peerInfo.publicKey)
         
         guard running else {
             throw TransportError.transportNotRunning
@@ -144,6 +145,9 @@ public final class QuicTransporter: TransportProtocol, @unchecked Sendable {
                     peerChannelsLock.unlock()
                     continuation.resume()
                 }
+                
+                logger.info("✅ [ConnectionState] Added peer channel for \(peerNodeId)")
+                logger.info("✅ [ConnectionState] Peer channels after connect: \(peerChannels.keys.joined(separator: ", "))")
                 
                 peerNodeIds.insert(peerNodeId)
                 logger.info("Successfully connected to peer: \(peerNodeId)")
@@ -180,12 +184,17 @@ public final class QuicTransporter: TransportProtocol, @unchecked Sendable {
     }
     
     public func isConnected(to peerNodeId: String) async -> Bool {
-        await withCheckedContinuation { continuation in
+        let isConnected = await withCheckedContinuation { continuation in
             peerChannelsLock.lock()
-            let isConnected = peerChannels[peerNodeId] != nil
+            let connected = peerChannels[peerNodeId] != nil
             peerChannelsLock.unlock()
-            continuation.resume(returning: isConnected)
+            continuation.resume(returning: connected)
         }
+        
+        logger.info("🔍 [ConnectionState] isConnected check for peer \(peerNodeId): \(isConnected)")
+        logger.info("🔍 [ConnectionState] Current peer channels: \(peerChannels.keys.joined(separator: ", "))")
+        
+        return isConnected
     }
     
     public func send(_ message: RunarNetworkMessage) async throws {
@@ -389,6 +398,8 @@ public final class QuicTransporter: TransportProtocol, @unchecked Sendable {
         
         // Handle handshake messages
         if packet.message.messageType == "NODE_INFO_HANDSHAKE" {
+            // **CRITICAL FIX**: Register incoming connection for handshake
+            await registerIncomingConnection(from: address, peerNodeId: packet.message.sourceNodeId)
             try? await processHandshakeMessage(packet.message)
             return
         }
@@ -397,12 +408,74 @@ public final class QuicTransporter: TransportProtocol, @unchecked Sendable {
         await handleIncomingMessage(packet.message)
     }
     
+    // **NEW METHOD**: Register incoming connections
+    private func registerIncomingConnection(from address: SocketAddress, peerNodeId: String) async {
+        logger.info("🔗 [IncomingConnection] Registering incoming connection from \(address) for peer \(peerNodeId)")
+        
+        // Check if we already have a channel for this peer
+        let existingChannel: Channel? = await withCheckedContinuation { continuation in
+            peerChannelsLock.lock()
+            let ch = peerChannels[peerNodeId]
+            peerChannelsLock.unlock()
+            continuation.resume(returning: ch)
+        }
+        
+        if existingChannel != nil {
+            logger.info("✅ [IncomingConnection] Already have channel for peer \(peerNodeId)")
+            return
+        }
+        
+        // For incoming connections, we need to create a channel to the peer
+        // This is a simplified approach - in a real QUIC implementation, we'd use the existing connection
+        do {
+            let addressString = "\(address.ipAddress!):\(address.port)"
+            let channel = try await connectToPeer(address, peerNodeId: peerNodeId)
+            
+            await withCheckedContinuation { continuation in
+                peerChannelsLock.lock()
+                peerChannels[peerNodeId] = channel
+                peerChannelsLock.unlock()
+                continuation.resume()
+            }
+            
+            logger.info("✅ [IncomingConnection] Successfully registered incoming connection for peer \(peerNodeId)")
+            logger.info("✅ [IncomingConnection] Peer channels after registration: \(peerChannels.keys.joined(separator: ", "))")
+            
+        } catch {
+            logger.error("❌ [IncomingConnection] Failed to register incoming connection for peer \(peerNodeId): \(error)")
+        }
+    }
+    
     private func processHandshakeMessage(_ message: RunarNetworkMessage) async throws {
+        logger.info("🤝 [Handshake] Processing handshake message from \(message.sourceNodeId)")
+        
         if message.messageType == "NODE_INFO_HANDSHAKE" {
             // Extract node info from payload
             if let payload = message.payloads.first {
                 let decoder = JSONDecoder()
                 let peerNodeInfo = try decoder.decode(RunarNodeInfo.self, from: Data(payload.valueBytes))
+                
+                logger.info("🤝 [Handshake] Extracted peer node info: \(peerNodeInfo.nodeId)")
+                
+                // **CRITICAL FIX**: Register the incoming connection in peerChannels
+                // The server needs to know about the client connection
+                let incomingPeerNodeId = message.sourceNodeId
+                
+                // Check if we already have a channel for this peer
+                let existingChannel: Channel? = await withCheckedContinuation { continuation in
+                    peerChannelsLock.lock()
+                    let ch = peerChannels[incomingPeerNodeId]
+                    peerChannelsLock.unlock()
+                    continuation.resume(returning: ch)
+                }
+                
+                if existingChannel == nil {
+                    logger.warning("⚠️ [Handshake] No existing channel found for incoming peer \(incomingPeerNodeId)")
+                    logger.warning("⚠️ [Handshake] This is likely the root cause - incoming connections not being registered")
+                    logger.warning("⚠️ [Handshake] Current peer channels: \(peerChannels.keys.joined(separator: ", "))")
+                } else {
+                    logger.info("✅ [Handshake] Found existing channel for incoming peer \(incomingPeerNodeId)")
+                }
                 
                 // Send handshake response
                 let response = RunarNetworkMessage(
@@ -429,10 +502,14 @@ public final class QuicTransporter: TransportProtocol, @unchecked Sendable {
                 
                 if let channel = channel {
                     try await sendOneWayMessage(channel: channel, message: response)
+                    logger.info("✅ [Handshake] Sent handshake response to \(message.sourceNodeId)")
+                } else {
+                    logger.error("❌ [Handshake] Failed to send handshake response - no channel for \(message.sourceNodeId)")
                 }
                 
                 // Send peer update
                 peerUpdateContinuation.yield(peerNodeInfo)
+                logger.info("✅ [Handshake] Handshake completed for peer \(incomingPeerNodeId)")
             }
         }
     }
