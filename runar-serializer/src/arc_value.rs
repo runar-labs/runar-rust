@@ -10,7 +10,7 @@ use serde_json::Value as JsonValue;
 
 use super::encryption::decrypt_bytes;
 use super::erased_arc::ErasedArc;
-use super::traits::{CustomFromBytes, KeyStore, LabelResolver};
+use super::traits::{KeyStore, LabelResolver, RunarSerializer};
 use crate::map_types;
 use crate::vec_types;
 
@@ -110,7 +110,7 @@ impl ArcValue {
         self.category == ValueCategory::Null && self.value.is_none()
     }
 
-    pub fn new_primitive<T: 'static + Clone + Debug + Send + Sync + CustomFromBytes>(
+    pub fn new_primitive<T: 'static + Clone + Debug + Send + Sync + RunarSerializer>(
         value: T,
     ) -> Self {
         let arc = Arc::new(value);
@@ -195,7 +195,7 @@ impl ArcValue {
         }
     }
 
-    pub fn new_struct<T: 'static + Clone + Debug + Send + Sync + CustomFromBytes>(
+    pub fn new_struct<T: 'static + Clone + Debug + Send + Sync + RunarSerializer>(
         value: T,
     ) -> Self {
         let arc = Arc::new(value);
@@ -374,7 +374,7 @@ impl ArcValue {
 
     pub fn as_type_ref<T>(&self) -> Result<Arc<T>>
     where
-        T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
     {
         let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
 
@@ -416,7 +416,7 @@ impl ArcValue {
 
     pub fn as_typed_list_ref<T>(&self) -> Result<Vec<Arc<T>>>
     where
-        T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
     {
         if self.category != ValueCategory::List {
             return Err(anyhow!("Not a list"));
@@ -444,7 +444,7 @@ impl ArcValue {
 
     pub fn as_typed_map_ref<T>(&self) -> Result<HashMap<String, Arc<T>>>
     where
-        T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
     {
         if self.category != ValueCategory::Map {
             return Err(anyhow!("Not a map"));
@@ -475,7 +475,7 @@ impl ArcValue {
 
     pub fn as_struct_ref<T>(&self) -> Result<Arc<T>>
     where
-        T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
     {
         if self.category != ValueCategory::Struct {
             return Err(anyhow!("Not a struct"));
@@ -563,7 +563,7 @@ impl ArcValue {
     }
 }
 
-impl CustomFromBytes for String {
+impl RunarSerializer for String {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         String::from_utf8(bytes.to_vec()).map_err(anyhow::Error::from)
     }
@@ -585,7 +585,7 @@ impl CustomFromBytes for String {
     }
 }
 
-impl CustomFromBytes for i64 {
+impl RunarSerializer for i64 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 8 {
             return Err(anyhow!("Invalid byte length for i64"));
@@ -614,7 +614,7 @@ impl CustomFromBytes for i64 {
 
 // Implement for other primitives like bool, f64, i32 similarly
 
-impl CustomFromBytes for bool {
+impl RunarSerializer for bool {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 1 {
             return Err(anyhow!("Invalid byte length for bool"));
@@ -639,7 +639,7 @@ impl CustomFromBytes for bool {
     }
 }
 
-impl CustomFromBytes for f64 {
+impl RunarSerializer for f64 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 8 {
             return Err(anyhow!("Invalid byte length for f64"));
@@ -666,7 +666,7 @@ impl CustomFromBytes for f64 {
     }
 }
 
-impl CustomFromBytes for Vec<u8> {
+impl RunarSerializer for Vec<u8> {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         Ok(bytes.to_vec())
     }
@@ -687,7 +687,7 @@ impl CustomFromBytes for Vec<u8> {
     }
 }
 
-impl CustomFromBytes for JsonValue {
+impl RunarSerializer for JsonValue {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         serde_json::from_slice(bytes).map_err(anyhow::Error::from)
     }
@@ -709,7 +709,7 @@ impl CustomFromBytes for JsonValue {
     }
 }
 
-impl CustomFromBytes for Vec<ArcValue> {
+impl RunarSerializer for Vec<ArcValue> {
     fn from_plain_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let proto = vec_types::VecArcValue::decode(bytes)?;
         let mut vec = Vec::with_capacity(proto.entries.len());
@@ -745,7 +745,7 @@ impl CustomFromBytes for Vec<ArcValue> {
     }
 }
 
-impl CustomFromBytes for HashMap<String, ArcValue> {
+impl RunarSerializer for HashMap<String, ArcValue> {
     fn from_plain_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         let proto = map_types::StringToArcValueMap::decode(bytes)?;
         let mut map = HashMap::with_capacity(proto.entries.len());
@@ -781,7 +781,7 @@ impl CustomFromBytes for HashMap<String, ArcValue> {
 
 // --- BEGIN: CustomFromBytes for all common primitives ---
 
-impl CustomFromBytes for i8 {
+impl RunarSerializer for i8 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 1 {
             return Err(anyhow!("Invalid byte length for i8"));
@@ -804,7 +804,7 @@ impl CustomFromBytes for i8 {
     }
 }
 
-impl CustomFromBytes for u8 {
+impl RunarSerializer for u8 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 1 {
             return Err(anyhow!("Invalid byte length for u8"));
@@ -827,7 +827,7 @@ impl CustomFromBytes for u8 {
     }
 }
 
-impl CustomFromBytes for i16 {
+impl RunarSerializer for i16 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 2 {
             return Err(anyhow!("Invalid byte length for i16"));
@@ -852,7 +852,7 @@ impl CustomFromBytes for i16 {
     }
 }
 
-impl CustomFromBytes for u16 {
+impl RunarSerializer for u16 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 2 {
             return Err(anyhow!("Invalid byte length for u16"));
@@ -877,7 +877,7 @@ impl CustomFromBytes for u16 {
     }
 }
 
-impl CustomFromBytes for i32 {
+impl RunarSerializer for i32 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 4 {
             return Err(anyhow!("Invalid byte length for i32"));
@@ -902,7 +902,7 @@ impl CustomFromBytes for i32 {
     }
 }
 
-impl CustomFromBytes for u32 {
+impl RunarSerializer for u32 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 4 {
             return Err(anyhow!("Invalid byte length for u32"));
@@ -927,7 +927,7 @@ impl CustomFromBytes for u32 {
     }
 }
 
-impl CustomFromBytes for u64 {
+impl RunarSerializer for u64 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 8 {
             return Err(anyhow!("Invalid byte length for u64"));
@@ -952,7 +952,7 @@ impl CustomFromBytes for u64 {
     }
 }
 
-impl CustomFromBytes for f32 {
+impl RunarSerializer for f32 {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 4 {
             return Err(anyhow!("Invalid byte length for f32"));
@@ -977,7 +977,7 @@ impl CustomFromBytes for f32 {
     }
 }
 
-impl CustomFromBytes for char {
+impl RunarSerializer for char {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
         if bytes.len() != 4 {
             return Err(anyhow!("Invalid byte length for char"));
@@ -1024,7 +1024,7 @@ pub trait AsArcValue: Sized + Clone {
     /// Attempt to reconstruct `Self` from the provided [`ArcValue`].
     fn from_arc_value(value: ArcValue) -> Result<Self>
     where
-        Self: 'static + Debug + Send + Sync + CustomFromBytes,
+        Self: 'static + Debug + Send + Sync + RunarSerializer,
     {
         value.as_type_ref::<Self>().map(|arc| (*arc).clone())
     }
@@ -1060,7 +1060,7 @@ impl AsArcValue for () {
 // **after** the concrete impls above to avoid overlap.
 impl<T> AsArcValue for T
 where
-    T: 'static + Clone + Debug + Send + Sync + CustomFromBytes,
+    T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
 {
     fn as_arc_value(self) -> ArcValue {
         ArcValue::new_struct(self)

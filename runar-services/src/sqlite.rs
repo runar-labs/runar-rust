@@ -11,7 +11,7 @@ use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use runar_serializer::CustomFromBytes;
+use runar_serializer::RunarSerializer;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
@@ -486,7 +486,7 @@ impl SqlQuery {
     }
 }
 
-impl CustomFromBytes for SqlQuery {
+impl RunarSerializer for SqlQuery {
     fn from_plain_bytes(
         bytes: &[u8],
         _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,

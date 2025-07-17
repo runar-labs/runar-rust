@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::sqlite::{
     DataType, Params as SqlParams, Schema as SqliteSchemaDef, SqlQuery, Value as SqliteValue,
 };
-use runar_serializer::CustomFromBytes;
+use runar_serializer::RunarSerializer;
 
 /// Represents a request to insert a single document into a collection.
 ///
@@ -629,7 +629,7 @@ impl Clone for CrudSqliteService {
 // CustomFromBytes implementations for CRUD request/response structs
 // -----------------------------------------------------------------------------
 
-impl CustomFromBytes for InsertOneRequest {
+impl RunarSerializer for InsertOneRequest {
     fn from_plain_bytes(
         bytes: &[u8],
         _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
@@ -653,7 +653,7 @@ impl CustomFromBytes for InsertOneRequest {
     }
 }
 
-impl CustomFromBytes for InsertOneResponse {
+impl RunarSerializer for InsertOneResponse {
     fn from_plain_bytes(
         bytes: &[u8],
         _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
@@ -675,7 +675,7 @@ impl CustomFromBytes for InsertOneResponse {
     }
 }
 
-impl CustomFromBytes for FindOneRequest {
+impl RunarSerializer for FindOneRequest {
     fn from_plain_bytes(
         bytes: &[u8],
         _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
@@ -697,7 +697,7 @@ impl CustomFromBytes for FindOneRequest {
     }
 }
 
-impl CustomFromBytes for FindOneResponse {
+impl RunarSerializer for FindOneResponse {
     fn from_plain_bytes(
         bytes: &[u8],
         _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,

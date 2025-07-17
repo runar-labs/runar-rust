@@ -105,7 +105,7 @@ pub trait RunarDecrypt {
     fn decrypt_with_keystore(&self, keystore: &KeyStore) -> Result<Self::Decrypted>;
 }
 
-pub trait CustomFromBytes: Sized + 'static + Clone + Debug + Send + Sync {
+pub trait RunarSerializer: Sized + 'static + Clone + Debug + Send + Sync {
     fn from_plain_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self>
     where
         Self: Sized;

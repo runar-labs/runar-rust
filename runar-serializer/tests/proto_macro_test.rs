@@ -1,6 +1,6 @@
 use prost::Message;
 use runar_serializer::encryption::EncryptedLabelGroup;
-use runar_serializer::CustomFromBytes;
+use runar_serializer::RunarSerializer;
 use runar_serializer_macros::Encrypt;
 
 #[derive(Encrypt, serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -21,7 +21,9 @@ fn generated_proto_structs_compile() {
     };
 
     // Round-trip to binary (prost) and back using the generated CustomFromBytes impl
-    let bytes = encrypted.to_binary(None, None).expect("serialise");
+    let bytes = encrypted
+        .to_binary(None, None, &"".to_string(), &"".to_string())
+        .expect("serialise");
     let decrypted = EncryptedSampleStruct::from_plain_bytes(&bytes, None).expect("decode");
 
     assert_eq!(decrypted.id, 42);

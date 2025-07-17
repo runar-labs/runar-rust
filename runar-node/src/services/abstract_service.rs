@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::services::LifecycleContext;
-use runar_serializer::traits::{CustomFromBytes, KeyStore, LabelResolver};
+use runar_serializer::traits::{KeyStore, LabelResolver, RunarSerializer};
 use std::sync::Arc;
 
 /// Represents a service's current state
@@ -55,7 +55,7 @@ impl fmt::Display for ServiceState {
     }
 }
 
-impl CustomFromBytes for ServiceState {
+impl RunarSerializer for ServiceState {
     fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> anyhow::Result<Self> {
         if bytes.is_empty() {
             return Ok(ServiceState::Unknown);
