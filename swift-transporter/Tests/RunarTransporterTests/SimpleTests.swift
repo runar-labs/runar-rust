@@ -67,6 +67,9 @@ final class SimpleTests: XCTestCase {
         
         let transporter = RunarTransporter.createQuicTransporter(
             nodeInfo: nodeInfo,
+            bindAddress: "127.0.0.1:9090",
+            messageHandler: TestMessageHandler(),
+            options: QuicTransportOptions(),
             logger: logger
         )
         
@@ -126,6 +129,8 @@ final class SimpleTests: XCTestCase {
         let quicTransporter = TransportFactory.createTransporter(
             type: "quic",
             nodeInfo: nodeInfo,
+            bindAddress: "127.0.0.1:9090",
+            messageHandler: TestMessageHandler(),
             logger: logger
         )
         XCTAssertEqual(quicTransporter.localAddress, "127.0.0.1:9090")

@@ -23,12 +23,36 @@ public struct RunarTransporter {
         return BasicTransporter(nodeInfo: nodeInfo, logger: logger)
     }
     
-    /// Create a QUIC transporter instance (placeholder)
+    /// Create a QUIC transporter instance
     public static func createQuicTransporter(
         nodeInfo: RunarNodeInfo,
+        bindAddress: String,
+        messageHandler: MessageHandlerProtocol,
+        options: QuicTransportOptions,
         logger: Logger
     ) -> TransportProtocol {
-        return QuicTransporter(nodeInfo: nodeInfo, logger: logger)
+        return QuicTransporter(
+            nodeInfo: nodeInfo,
+            bindAddress: bindAddress,
+            messageHandler: messageHandler,
+            options: options,
+            logger: logger
+        )
+    }
+    
+    /// Create a TCP transporter instance
+    public static func createTcpTransporter(
+        nodeInfo: RunarNodeInfo,
+        bindAddress: String,
+        messageHandler: MessageHandlerProtocol,
+        logger: Logger
+    ) -> TransportProtocol {
+        return TcpTransporter(
+            nodeInfo: nodeInfo,
+            bindAddress: bindAddress,
+            messageHandler: messageHandler,
+            logger: logger
+        )
     }
 }
 
@@ -39,6 +63,8 @@ public struct TransportFactory {
     public static func createTransporter(
         type: String,
         nodeInfo: RunarNodeInfo,
+        bindAddress: String? = nil,
+        messageHandler: MessageHandlerProtocol? = nil,
         logger: Logger
     ) -> TransportProtocol {
         switch type.lowercased() {
@@ -47,7 +73,28 @@ public struct TransportFactory {
         case "basic":
             return RunarTransporter.createBasicTransporter(nodeInfo: nodeInfo, logger: logger)
         case "quic":
-            return RunarTransporter.createQuicTransporter(nodeInfo: nodeInfo, logger: logger)
+            guard let bindAddress = bindAddress, let messageHandler = messageHandler else {
+                logger.warning("QUIC transport requires bindAddress and messageHandler, falling back to SimpleTransporter")
+                return RunarTransporter.createSimpleTransporter(nodeInfo: nodeInfo, logger: logger)
+            }
+            return RunarTransporter.createQuicTransporter(
+                nodeInfo: nodeInfo,
+                bindAddress: bindAddress,
+                messageHandler: messageHandler,
+                options: QuicTransportOptions(), // Placeholder options, adjust as needed
+                logger: logger
+            )
+        case "tcp":
+            guard let bindAddress = bindAddress, let messageHandler = messageHandler else {
+                logger.warning("TCP transport requires bindAddress and messageHandler, falling back to SimpleTransporter")
+                return RunarTransporter.createSimpleTransporter(nodeInfo: nodeInfo, logger: logger)
+            }
+            return RunarTransporter.createTcpTransporter(
+                nodeInfo: nodeInfo,
+                bindAddress: bindAddress,
+                messageHandler: messageHandler,
+                logger: logger
+            )
         default:
             logger.warning("Unknown transporter type '\(type)', using SimpleTransporter")
             return RunarTransporter.createSimpleTransporter(nodeInfo: nodeInfo, logger: logger)
