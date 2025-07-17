@@ -19,7 +19,6 @@ use async_trait::async_trait;
 use prost::Message;
 use quinn::{self, Endpoint};
 use quinn::{ClientConfig, ServerConfig};
-// Using Quinn 0.11.x API - no need for proto imports
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use tokio::sync::Mutex;

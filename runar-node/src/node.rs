@@ -203,6 +203,8 @@ pub struct Node {
     registry_version: Arc<AtomicI64>,
 
     keys_manager: Arc<RwLock<NodeKeyManager>>,
+
+    keystore: Arc<KeystoreReadProxy>,
 }
 
 // Implementation for Node
@@ -864,10 +866,10 @@ impl Node {
                 .error("❌ [Node] Received request message with no payloads");
             return Err(anyhow!("Received request message with no payloads"));
         }
-        let params = ArcValue::deserialize(
-            &message.payloads[0].value_bytes,
-            None, // TODO: Pass keystore from transport layer
-        )?;
+
+        let keystore = self.keys_manager.read().await;
+
+        let params = ArcValue::deserialize(&message.payloads[0].value_bytes, keystore)?;
         let params_option = if params.is_null() { None } else { Some(params) };
 
         let local_peer_id = self.node_id.clone();

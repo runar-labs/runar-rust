@@ -27,7 +27,7 @@ impl EnvelopeCrypto for KeystoreReadProxy {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_id: Option<&String>,
         profile_ids: Vec<String>,
     ) -> Result<EnvelopeEncryptedData> {
         // Synchronous read – transports operate in non-async contexts.
