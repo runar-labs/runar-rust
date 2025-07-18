@@ -3,6 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use prost::Message;
 use rand;
+use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -26,8 +27,8 @@ pub mod stream_pool;
 pub use connection_pool::ConnectionPool;
 pub use keystore_proxy::KeystoreReadProxy;
 pub use peer_state::PeerState;
-pub use stream_pool::StreamPool;
-
+pub use stream_pool::StreamPool; 
+use crate::routing::TopicPath;
 // --- Moved from quic_transport.rs ---
 /// Custom certificate verifier that skips verification for testing
 ///
@@ -304,6 +305,8 @@ pub trait NetworkTransport: Send + Sync {
     /// Send a message to a remote node
     async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError>;
 
+    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError>;
+
     /// connect to a discovered node
     ///
     /// Returns the NodeInfo of the connected peer after successful handshake
@@ -314,12 +317,6 @@ pub trait NetworkTransport: Send + Sync {
 
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
-
-    // /// Register a message handler for incoming messages
-    // async fn register_message_handler(
-    //     &self,
-    //     handler: Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>,
-    // ) -> Result<(), NetworkError>;
 
     /// Subscribe to peer node info updates
     ///

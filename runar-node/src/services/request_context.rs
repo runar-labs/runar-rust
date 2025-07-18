@@ -51,6 +51,8 @@ pub struct RequestContext {
     /// Path parameters extracted from template matching
     pub path_params: HashMap<String, String>,
 
+    pub user_profile_public_key: Vec<u8>,
+
     /// Node delegate for making requests or publishing events
     pub(crate) node_delegate: Arc<Node>,
 }
@@ -78,6 +80,7 @@ impl Clone for RequestContext {
             logger: self.logger.clone(),
             path_params: self.path_params.clone(),
             node_delegate: self.node_delegate.clone(),
+            user_profile_public_key: self.user_profile_public_key.clone(),
         }
     }
 }
@@ -113,6 +116,7 @@ impl RequestContext {
             logger: action_logger,
             node_delegate,
             path_params: HashMap::new(),
+            user_profile_public_key: vec![],
         }
     }
 
@@ -121,6 +125,11 @@ impl RequestContext {
     /// Use builder-style methods instead of specialized constructors.
     pub fn with_metadata(mut self, metadata: ArcValue) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    pub fn with_user_profile_public_key(mut self, user_profile_public_key: Vec<u8>) -> Self {
+        self.user_profile_public_key = user_profile_public_key;
         self
     }
 

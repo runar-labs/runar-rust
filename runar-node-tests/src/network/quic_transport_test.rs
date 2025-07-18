@@ -1,5 +1,6 @@
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
+use runar_node::network::transport::{MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_EVENT};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -23,12 +24,12 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        _network_id: &str,
+        _network_id: Option<&String>,
         _profile_ids: Vec<String>,
     ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
         Ok(runar_keys::mobile::EnvelopeEncryptedData {
             encrypted_data: data.to_vec(),
-            network_id: "test-network".to_string(),
+            network_id: Some("test-network".to_string()),
             network_encrypted_key: Vec::new(),
             profile_encrypted_keys: std::collections::HashMap::new(),
         })
@@ -88,6 +89,8 @@ async fn test_quic_transport_complete_api_validation(
         "CA Certificate Issuer: {}",
         mobile_ca.get_ca_certificate().issuer()
     );
+
+    // let _user_profile_public_key =   mobile_ca.derive_user_profile_key("user")?;
 
     // ==================================================
     // STEP 2: Setup Node 1 Certificate (Following keys_integration.rs pattern)
@@ -436,11 +439,12 @@ async fn test_quic_transport_complete_api_validation(
     let announcement_message = NetworkMessage {
         source_node_id: compact_id(&sender_info.node_public_key),
         destination_node_id: compact_id(&receiver_info.node_public_key),
-        message_type: "ANNOUNCEMENT".to_string(),
+        message_type: MESSAGE_TYPE_ANNOUNCEMENT,
         payloads: vec![NetworkMessagePayloadItem {
             path: "".to_string(),
             value_bytes: "Test announcement data".as_bytes().to_vec(),
             correlation_id: "announcement_test".to_string(),
+            context: None,
         }],
     };
 
@@ -452,7 +456,7 @@ async fn test_quic_transport_complete_api_validation(
     let receiver_msgs = receiver_messages.lock().await;
     let announcement_received = receiver_msgs
         .iter()
-        .any(|msg| msg.message_type == "ANNOUNCEMENT");
+        .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
     assert!(
         announcement_received,
         "Receiver should receive announcement message"
@@ -500,16 +504,17 @@ async fn test_quic_transport_complete_api_validation(
     map.insert("a".to_string(), ArcValue::new_primitive(5));
     map.insert("b".to_string(), ArcValue::new_primitive(3));
     let arc_value = ArcValue::new_map(map);
-    let value_bytes = arc_value.serialize(None, None)?;
+    let value_bytes = arc_value.serialize(None, None, &"".to_string(), &"".to_string())?; 
 
     let request_message = NetworkMessage {
         source_node_id: compact_id(&request_sender_info.node_public_key),
         destination_node_id: compact_id(&request_receiver_info.node_public_key),
-        message_type: "REQUEST".to_string(),
+        message_type: MESSAGE_TYPE_REQUEST,
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/add".to_string(),
             value_bytes: value_bytes.to_vec(),
             correlation_id: "math-request-1".to_string(),
+            context: None,
         }],
     };
 
@@ -521,7 +526,7 @@ async fn test_quic_transport_complete_api_validation(
     let receiver_msgs = request_receiver_messages.lock().await;
     let request_received = receiver_msgs
         .iter()
-        .any(|msg| msg.message_type == "REQUEST");
+        .any(|msg| msg.message_type == MESSAGE_TYPE_REQUEST);
     assert!(
         request_received,
         "Request receiver should receive request message"
@@ -531,16 +536,17 @@ async fn test_quic_transport_complete_api_validation(
     let mut map = std::collections::HashMap::new();
     map.insert("result".to_string(), ArcValue::new_primitive(8));
     let arc_value_result = ArcValue::new_map(map);
-    let value_bytes_result = arc_value_result.serialize(None, None)?;
+    let value_bytes_result = arc_value_result.serialize(None, None, &"".to_string(), &"".to_string())?;
 
     let response_message = NetworkMessage {
         source_node_id: compact_id(&request_receiver_info.node_public_key),
         destination_node_id: compact_id(&request_sender_info.node_public_key),
-        message_type: "RESPONSE".to_string(),
+        message_type: MESSAGE_TYPE_RESPONSE,
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/add".to_string(),
             value_bytes: value_bytes_result.to_vec(),
             correlation_id: "math-request-1".to_string(),
+            context: None,
         }],
     };
 
@@ -550,7 +556,7 @@ async fn test_quic_transport_complete_api_validation(
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     let sender_msgs = response_sender_messages.lock().await;
-    let response_received = sender_msgs.iter().any(|msg| msg.message_type == "RESPONSE");
+    let response_received = sender_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_RESPONSE);
     assert!(
         response_received,
         "Response sender should receive response message"
@@ -572,16 +578,17 @@ async fn test_quic_transport_complete_api_validation(
     );
     map.insert("result".to_string(), ArcValue::new_primitive(8));
     let arc_value_event = ArcValue::new_map(map);
-    let value_bytes_event = arc_value_event.serialize(None, None)?;
+    let value_bytes_event = arc_value_event.serialize(None, None, &"".to_string(), &"".to_string())?;
 
     let event_message = NetworkMessage {
         source_node_id: compact_id(&sender_info.node_public_key),
         destination_node_id: compact_id(&receiver_info.node_public_key),
-        message_type: "EVENT".to_string(),
+        message_type: MESSAGE_TYPE_EVENT,
         payloads: vec![NetworkMessagePayloadItem {
             path: "test:math1/calculated".to_string(),
             value_bytes: value_bytes_event.to_vec(),
             correlation_id: format!("event-{}", uuid::Uuid::new_v4()),
+            context: None,
         }],
     };
 
@@ -591,7 +598,7 @@ async fn test_quic_transport_complete_api_validation(
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     let receiver_msgs = receiver_messages.lock().await;
-    let event_received = receiver_msgs.iter().any(|msg| msg.message_type == "EVENT");
+    let event_received = receiver_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
     assert!(event_received, "Receiver should receive event message");
     drop(receiver_msgs);
 
@@ -628,10 +635,10 @@ async fn test_quic_transport_complete_api_validation(
             "    - {}: {} from {}",
             msg.message_type, msg.source_node_id, msg.message_type
         );
-        match msg.message_type.as_str() {
-            "REQUEST" => request_count += 1,
-            "RESPONSE" => response_count += 1,
-            "EVENT" => event_count += 1,
+        match msg.message_type  {
+            MESSAGE_TYPE_REQUEST => request_count += 1,
+            MESSAGE_TYPE_RESPONSE => response_count += 1,
+            MESSAGE_TYPE_EVENT => event_count += 1,
             _ => {}
         }
     }
@@ -646,10 +653,10 @@ async fn test_quic_transport_complete_api_validation(
             "    - {}: {} from {}",
             msg.message_type, msg.source_node_id, msg.message_type
         );
-        match msg.message_type.as_str() {
-            "REQUEST" => _request_count_b += 1,
-            "RESPONSE" => _response_count_b += 1,
-            "EVENT" => _event_count_b += 1,
+        match msg.message_type  {
+            MESSAGE_TYPE_REQUEST => _request_count_b += 1,
+            MESSAGE_TYPE_RESPONSE => _response_count_b += 1,
+            MESSAGE_TYPE_EVENT => _event_count_b += 1,
             _ => {}
         }
     }

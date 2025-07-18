@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::network::transport::{NetworkMessage, NetworkMessagePayloadItem, NetworkTransport};
+use crate::network::transport::{MessageContext, NetworkTransport};
 use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
 use crate::services::{ActionHandler, LifecycleContext};
@@ -189,7 +189,7 @@ impl RemoteService {
         let service = self.clone();
 
         // Create a handler that forwards requests to the remote service
-        Arc::new(move |params, _context| {
+        Arc::new(move |params, request_context| {
             // let service_clone = service.clone();
             let action = action_name.clone();
 
@@ -212,7 +212,7 @@ impl RemoteService {
                 // Generate a unique request ID
                 let request_id = Uuid::new_v4().to_string();
 
-                logger.info(format!(
+                logger.debug(format!(
                     "🚀 [RemoteService] Starting remote request - Action: {action}, Request ID: {request_id}, Target: {peer_node_id}"
                 ));
 
@@ -229,36 +229,17 @@ impl RemoteService {
                     "📝 [RemoteService] Stored response channel for request ID: {request_id}"
                 ));
 
-                //TODO fix this.. is not using the proper resolver and keystore
-                //let network_id = service.network_id();
-                // Serialize the parameters and convert from Arc<[u8]> to Vec<u8>
-                let payload_vec: Vec<u8> = if let Some(params) = params {
-                    params.serialize(None, None, &network_id)?
-                } else {
-                    ArcValue::null().serialize(None, None, &network_id)?
-                };
+                let profile_public_key = request_context.user_profile_public_key;
+           
 
-                let payload_size = payload_vec.len();
-                logger.info(format!(
-                    "📤 [RemoteService] Sending request - ID: {request_id}, Path: {action_topic_path}, Size: {payload_size} bytes"
-                ));
-
-                // Create the network message
-                let message = NetworkMessage {
-                    source_node_id: local_node_id.clone(),
-                    destination_node_id: peer_node_id.clone(),
-                    message_type: "Request".to_string(),
-                    payloads: vec![NetworkMessagePayloadItem::new(
-                        action_topic_path.as_str().to_string(),
-                        payload_vec,
-                        request_id.clone(),
-                    )],
+                let context = MessageContext {
+                    profile_public_key
                 };
 
                 // Send the request
-                if let Err(e) = network_transport.send_message(message).await {
+                if let Err(e) = network_transport.send_request(&action_topic_path, params, &request_id, &peer_node_id, context).await {
                     logger.error(format!(
-                        "❌ [RemoteService] Failed to send request {request_id}: {e}"
+                        "❌ [RemoteService] Failed to send request {request_id_ref}: {e}", request_id_ref = &request_id
                     ));
                     // Clean up the pending request
                     pending_requests.write().await.remove(&request_id);

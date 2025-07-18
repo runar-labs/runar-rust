@@ -24,6 +24,9 @@ use runar_common::logging::Logger;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
+use crate::routing::TopicPath;
+use runar_serializer::ArcValue;
+
 // Import rustls explicitly - these types need clear namespacing to avoid conflicts with quinn's types
 // Quinn uses rustls internally but we need to reference specific rustls types
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
@@ -37,7 +40,7 @@ use super::{
 // Import PeerInfo and NodeInfo consistently with the module structure
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::NodeInfo;
-use crate::network::transport::{MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_DISCOVERY, MESSAGE_TYPE_ERROR, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_HEARTBEAT, MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE, MESSAGE_TYPE_NODE_INFO_UPDATE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE};
+use crate::network::transport::{MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_DISCOVERY, MESSAGE_TYPE_ERROR, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_HEARTBEAT, MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE, MESSAGE_TYPE_NODE_INFO_UPDATE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE};
 
 type MessageHandlerFn =
     Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>;
@@ -1660,6 +1663,47 @@ impl QuicTransportImpl {
         self.connection_pool.is_peer_connected(&peer_node_id).await
     }
 
+    async fn send_request(self: &Arc<Self>, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError> {
+        let network_id = topic_path.network_id();
+
+        let profile_id = compact_id(&context.profile_public_key);
+
+        let payload_vec: Vec<u8> = if let Some(params) = params {
+            params.serialize(
+                Some(self.keystore.clone()),
+                Some(self.label_resolver.as_ref()),
+                &network_id,
+                &profile_id,
+            )
+            .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
+        } else {
+            ArcValue::null().serialize(
+                Some(self.keystore.clone()),
+                Some(self.label_resolver.as_ref()),
+                &network_id,
+                &profile_id,
+            )
+            .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
+        };
+
+        // Create the network message
+        let message = NetworkMessage {
+            source_node_id: self.node_id.clone(),
+            destination_node_id: peer_node_id.clone(),
+            message_type: MESSAGE_TYPE_REQUEST,
+            payloads: vec![NetworkMessagePayloadItem {
+                path: topic_path.as_str().to_string(),
+                value_bytes: payload_vec,
+                correlation_id: request_id.clone(),
+                context: Some(context),
+            }],
+        };
+
+        // Send the message using the existing send_message infrastructure
+        self.send_message(message).await
+    }
+
+
     /// Send a message to a peer using appropriate stream patterns
     ///
     /// INTENTION: Route messages through proper stream types based on communication patterns
@@ -1819,6 +1863,10 @@ impl NetworkTransport for QuicTransport {
 
     async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError> {
         self.inner.send_message(message).await
+    }
+
+    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError> {
+        self.inner.send_request(topic_path, params, request_id, peer_node_id, context).await
     }
 
     async fn connect_peer(&self, discovery_msg: PeerInfo) -> Result<(), NetworkError> {
