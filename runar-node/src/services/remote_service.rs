@@ -4,7 +4,7 @@
 // This service forwards requests to the remote node and returns responses, making
 // remote services appear as local services to the node.
 
-use anyhow::{anyhow, Result};
+use anyhow::{ Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -85,6 +85,7 @@ impl RunarSerializer for ServiceState {
         _keystore: Option<&Arc<KeyStore>>,
         _resolver: Option<&dyn LabelResolver>,
         _network_id: &String,
+        _profile_id: &String,
     ) -> anyhow::Result<Vec<u8>> {
         let byte = match self {
             ServiceState::Created => 0u8,

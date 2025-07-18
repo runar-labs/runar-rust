@@ -37,6 +37,7 @@ use super::{
 // Import PeerInfo and NodeInfo consistently with the module structure
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::NodeInfo;
+use crate::network::transport::{MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_DISCOVERY, MESSAGE_TYPE_ERROR, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_HEARTBEAT, MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE, MESSAGE_TYPE_NODE_INFO_UPDATE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE};
 
 type MessageHandlerFn =
     Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>;
@@ -365,14 +366,14 @@ impl QuicTransportImpl {
     /// INTENTION: Classify messages to use appropriate stream types and lifecycle management
     /// NOTE: Now using unidirectional streams for all messages including requests and responses
     fn classify_message_pattern(&self, message: &NetworkMessage) -> MessagePattern {
-        match message.message_type.as_str() {
+        match message.message_type {
             // One-way messages that don't expect responses
-            "Handshake" | "Discovery" | "Announcement" | "Heartbeat" => MessagePattern::OneWay,
+            MESSAGE_TYPE_HANDSHAKE  | MESSAGE_TYPE_DISCOVERY | MESSAGE_TYPE_ANNOUNCEMENT | MESSAGE_TYPE_HEARTBEAT => MessagePattern::OneWay,
             // **CHANGE**: Request messages now use unidirectional streams too
             // The response will come back as a separate unidirectional stream
-            "Request" => MessagePattern::OneWay,
+            MESSAGE_TYPE_REQUEST => MessagePattern::OneWay,
             // Response messages are sent back via separate unidirectional streams
-            "Response" | "Error" => MessagePattern::OneWay,
+            MESSAGE_TYPE_RESPONSE | MESSAGE_TYPE_ERROR => MessagePattern::OneWay,
             // Default to one-way for unknown message types
             _ => {
                 self.logger.warn(format!(
@@ -800,7 +801,7 @@ impl QuicTransportImpl {
             let message = NetworkMessage {
                 source_node_id: self.node_id.clone(),
                 destination_node_id: peer_node_id.clone(),
-                message_type: "NODE_INFO_UPDATE".to_string(),
+                message_type: MESSAGE_TYPE_NODE_INFO_UPDATE,
                 payloads: vec![NetworkMessagePayloadItem {
                     path: "".to_string(),
                     value_bytes: {
@@ -809,6 +810,7 @@ impl QuicTransportImpl {
                         bytes
                     },
                     correlation_id: "".to_string(),
+                    context: None,
                 }],
             };
             self.send_message(message).await?;
@@ -861,7 +863,7 @@ impl QuicTransportImpl {
         let handshake_message = NetworkMessage {
             source_node_id: self.node_id.clone(),
             destination_node_id: peer_node_id.clone(),
-            message_type: "NODE_INFO_HANDSHAKE".to_string(),
+            message_type: MESSAGE_TYPE_HANDSHAKE,
             payloads: vec![NetworkMessagePayloadItem {
                 path: "".to_string(),
                 value_bytes: {
@@ -872,6 +874,7 @@ impl QuicTransportImpl {
                     bytes
                 },
                 correlation_id,
+                context: None,
             }],
         };
 
@@ -894,10 +897,10 @@ impl QuicTransportImpl {
         self: &Arc<Self>,
         message: NetworkMessage,
     ) -> Result<(), NetworkError> {
-        // Special handling for handshake messages
-        if message.message_type == "NODE_INFO_HANDSHAKE"
-            || message.message_type == "NODE_INFO_HANDSHAKE_RESPONSE"
-            || message.message_type == "NODE_INFO_UPDATE"
+        // Special handling for handshake messages  
+        if message.message_type == MESSAGE_TYPE_HANDSHAKE
+            || message.message_type == MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE
+            || message.message_type == MESSAGE_TYPE_NODE_INFO_UPDATE
         {
             self.logger.debug(format!(
                 "Received message from {} with type: {}",
@@ -919,12 +922,12 @@ impl QuicTransportImpl {
                         {
                             peer_state.set_node_info(peer_node_info.clone()).await;
 
-                            if message.message_type == "NODE_INFO_HANDSHAKE" {
+                            if message.message_type == MESSAGE_TYPE_HANDSHAKE {
                                 // Create the response message
                                 let response = NetworkMessage {
                                     source_node_id: self.node_id.clone(),
                                     destination_node_id: message.source_node_id.clone(),
-                                    message_type: "NODE_INFO_HANDSHAKE_RESPONSE".to_string(),
+                                    message_type: MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE,
                                     payloads: vec![NetworkMessagePayloadItem {
                                         // Preserve the original path from the request
                                         path: payload.path.clone(),
@@ -938,6 +941,7 @@ impl QuicTransportImpl {
                                             bytes
                                         },
                                         correlation_id: payload.correlation_id.clone(),
+                                        context: None,
                                     }],
                                 };
 
@@ -1032,7 +1036,7 @@ impl QuicTransportImpl {
                     // **STEP 2**: Read and parse the handshake message to get real peer ID
                     match inner_arc.read_handshake_message(recv_stream).await {
                         Ok(message) => {
-                            if message.message_type == "NODE_INFO_HANDSHAKE" {
+                            if message.message_type == MESSAGE_TYPE_HANDSHAKE {
                                 // **STEP 3**: Extract the real peer ID from the handshake message
                                 let real_peer_node_id = message.source_node_id.clone();
 
@@ -1348,7 +1352,7 @@ impl QuicTransportImpl {
         if let Some(send_stream) = send_stream {
             if let Some(payload) = message.payloads.first() {
                 // Only store if this is a request (expects a response)
-                if message.message_type == "Request" {
+                if message.message_type == MESSAGE_TYPE_REQUEST {
                     self.logger.debug(format!(
                         "🔗 [QuicTransport] Storing send stream for incoming request - Correlation ID: {}, From: {}",
                         payload.correlation_id, peer_node_id

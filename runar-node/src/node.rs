@@ -13,7 +13,7 @@ use runar_schemas::EventMetadata;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
-use runar_serializer::ArcValue;
+use runar_serializer::{ArcValue, LabelKeyInfo};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -28,7 +28,7 @@ use tokio::sync::{oneshot, RwLock};
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
 use crate::network::transport::{
-    KeystoreReadProxy, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport,
+    KeystoreReadProxy, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
@@ -198,7 +198,7 @@ pub struct Node {
     /// Pending requests waiting for responses, keyed by correlation ID
     pub(crate) pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
 
-    pub(crate) label_resolver: Arc<dyn LabelResolver>,
+    label_resolver: Arc<dyn LabelResolver>,
 
     registry_version: Arc<AtomicI64>,
 
@@ -267,6 +267,23 @@ impl Node {
         logger.info("Successfully loaded existing node credentials.");
         logger.info(format!("Node ID: {node_id}"));
 
+        let keys_manager_locked = Arc::new(tokio::sync::RwLock::new(keys_manager));
+        let keystore_proxy = Arc::new(KeystoreReadProxy::new(keys_manager_locked.clone()));
+
+        // TODO Create a mechanis for this mappint to be config driven
+        let label_resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+            label_mappings: HashMap::from([
+                  (
+                    "system".to_string(),
+                    LabelKeyInfo {
+                        profile_ids: vec![],
+                        network_id: Some(default_network_id.clone()),
+                    },
+                ),
+            ]),
+        }));
+
+
         let mut node = Self {
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: default_network_id,
@@ -283,11 +300,10 @@ impl Node {
             network_discovery_providers: Arc::new(RwLock::new(None)),
             load_balancer: Arc::new(RwLock::new(RoundRobinLoadBalancer::new())),
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
-            label_resolver: Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
-                label_mappings: std::collections::HashMap::new(),
-            })),
+            label_resolver: label_resolver,
             registry_version: Arc::new(AtomicI64::new(0)),
-            keys_manager: Arc::new(tokio::sync::RwLock::new(keys_manager)),
+            keys_manager: keys_manager_locked,
+            keystore: keystore_proxy
         };
 
         // Register the registry service
@@ -830,10 +846,10 @@ impl Node {
             .debug(format!("Received network message: {message:?}"));
 
         // Match on message type
-        match message.message_type.as_str() {
-            "Request" => self.handle_network_request(message).await,
-            "Response" => self.handle_network_response(message).await,
-            "Event" => self.handle_network_event(message).await,
+        match message.message_type {
+            MESSAGE_TYPE_REQUEST => self.handle_network_request(message).await,
+            MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
+            MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
             // "Discovery" => self.handle_network_discovery(message).await,
             _ => {
                 self.logger.warn(format!(
@@ -854,7 +870,7 @@ impl Node {
             return Ok(());
         }
 
-        self.logger.info(format!(
+        self.logger.debug(format!(
             "📥 [Node] Handling network request from {} - Type: {}, Payloads: {}",
             message.source_node_id,
             message.message_type,
@@ -865,149 +881,139 @@ impl Node {
             self.logger
                 .error("❌ [Node] Received request message with no payloads");
             return Err(anyhow!("Received request message with no payloads"));
-        }
+        } 
 
-        let keystore = self.keys_manager.read().await;
-
-        let params = ArcValue::deserialize(&message.payloads[0].value_bytes, keystore)?;
-        let params_option = if params.is_null() { None } else { Some(params) };
-
+        let mut responses: Vec<NetworkMessagePayloadItem> = Vec::new();
         let local_peer_id = self.node_id.clone();
 
-        // Process the request locally using extracted topic and params
-        self.logger
-            .info(format!("⚙️ [Node] Processing local request",));
-        match self
-            .local_request(message.payloads[0].path.clone(), params_option)
-            .await
-        {
-            Ok(response) => {
-                self.logger
-                    .info(format!("✅ [Node] Local request completed successfully",));
+        for payload in &message.payloads {
+            let params = ArcValue::deserialize(&payload.value_bytes, Some(self.keystore.clone()))?;
+            let params_option = if params.is_null() { None } else { Some(params) };
+             
+            // Process the request locally using extracted topic and params
+            self.logger
+                .debug(format!("[handle_network_request] will call local_request for path {}", &payload.path));
 
-                // Serialize the response data
-                let serialized_data = response.serialize(
-                    None,             // TODO: Pass keystore from transport layer
-                    None,             // TODO: Pass resolver from transport layer
-                    &self.network_id, //TODO pass the correct network id. NOT HE DEFAULT netword id.
-                )?;
+            let topic_path = match TopicPath::from_full_path(&payload.path) {
+                Ok(tp) => tp,
+                Err(e) => {
+                    self.logger.error(format!("Failed to parse topic path: {path} : {e}", path=&payload.path, e=e));
+                    continue;
+                },
+            };
+            let network_id = topic_path.network_id();
+            let profile_public_key = payload.context.as_ref()
+                .map(|c| c.profile_public_key.clone())
+                .context("No context found in payload")?;    
+            let profile_id = compact_id(&profile_public_key);
 
-                self.logger.info(format!(
-                    "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
-                    message.source_node_id,
-                    message.payloads[0].correlation_id,
-                    serialized_data.len()
-                ));
-
-                // Create a payload item with the serialized response
-                let response_payload = NetworkMessagePayloadItem {
-                    path: message.payloads[0].path.clone(),
-                    value_bytes: serialized_data,
-                    correlation_id: message.payloads[0].correlation_id.clone(),
-                };
-
-                // Create response message - destination is the original source
-                let response_message = NetworkMessage {
-                    source_node_id: local_peer_id, // Source is now self
-                    destination_node_id: message.source_node_id.clone(), // Destination is the original request source
-                    message_type: "Response".to_string(),
-                    payloads: vec![response_payload],
-                };
-
-                // Check if networking is still enabled before trying to send response
-                if !self.supports_networking {
+            match self
+                .local_request(&topic_path, params_option)
+                .await
+            {
+                Ok(response) => {
                     self.logger
-                        .warn("⚠️ [Node] Can't send response - networking is disabled");
-                    return Ok(());
+                        .info(format!("✅ [Node] Local request completed successfully",));
+
+                    // Serialize the response data
+                    let serialized_data = response.serialize(
+                        Some(self.keystore.clone()),             
+                        Some(self.label_resolver.as_ref()),              
+                        &network_id, 
+                        &profile_id
+                    )?;
+
+                    self.logger.info(format!(
+                        "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
+                        message.source_node_id,
+                        message.payloads[0].correlation_id,
+                        serialized_data.len()
+                    ));
+
+                    // Create a payload item with the serialized response
+                    let response_payload = NetworkMessagePayloadItem {
+                        path: message.payloads[0].path.clone(),
+                        value_bytes: serialized_data,
+                        correlation_id: message.payloads[0].correlation_id.clone(),
+                        context: payload.context.clone(),
+                    };
+
+                    responses.push(response_payload);
                 }
-
-                // Send the response via transport
-                let transport_guard = self.network_transport.read().await;
-                if let Some(transport) = transport_guard.as_ref() {
-                    if let Err(e) = transport.send_message(response_message).await {
-                        self.logger
-                            .error(format!(
-                                "❌ [Node] Failed to send response message - To: {}, Correlation: {}, Error: {}", 
-                                message.source_node_id, message.payloads[0].correlation_id, e
-                            ));
-                        // Consider returning error or just logging?
-                    } else {
-                        self.logger.info(format!(
-                            "✅ [Node] Response sent successfully - To: {}, Correlation: {}",
-                            message.source_node_id, message.payloads[0].correlation_id
-                        ));
-                    }
-                } else {
+                Err(e) => {
                     self.logger
-                        .warn("⚠️ [Node] No network transport available to send response");
-                }
-            }
-            Err(e) => {
-                self.logger
-                    .error(format!("❌ [Node] Local request failed - Error: {e}",));
+                        .error(format!("❌ [Node] Local request failed - Error: {e}",));
 
-                // Create a map for the error response
-                let mut error_map = HashMap::new();
-                error_map.insert("error".to_string(), ArcValue::new_primitive(true));
-                error_map.insert(
-                    "message".to_string(),
-                    ArcValue::new_primitive(e.to_string()),
-                );
-                let error_value = ArcValue::new_map(error_map);
+                    // Create a map for the error response
+                    let mut error_map = HashMap::new();
+                    error_map.insert("error".to_string(), ArcValue::new_primitive(true));
+                    error_map.insert(
+                        "message".to_string(),
+                        ArcValue::new_primitive(e.to_string()),
+                    );
+                    let error_value = ArcValue::new_map(error_map);
 
-                // Serialize the error value
-                let serialized_error = error_value.serialize(
-                    None,             // TODO: Pass keystore from transport layer
-                    None,             // TODO: Pass resolver from transport layer
-                    &self.network_id, //TODO pass the correct network id. NOT HE DEFAULT netword id.
-                )?;
+                    // Serialize the error value
+                    let serialized_error = error_value.serialize(
+                        Some(self.keystore.clone()),             
+                        Some(self.label_resolver.as_ref()),              
+                        &network_id, 
+                        &profile_id
+                    )?;
 
-                self.logger.info(format!(
-                    "📤 [Node] Sending error response - To: {}, Size: {} bytes",
-                    message.source_node_id,
-                    serialized_error.len()
-                ));
+                    self.logger.debug(format!(
+                        "📤 [Node] Sending error response - To: {}, Size: {} bytes",
+                        message.source_node_id,
+                        serialized_error.len()
+                    ));
 
-                // Create payload item with serialized error
-                let error_payload = NetworkMessagePayloadItem {
-                    path: message.payloads[0].path.clone(),
-                    value_bytes: serialized_error,
-                    correlation_id: message.payloads[0].correlation_id.clone(),
-                };
+                    // Create payload item with serialized error
+                    let error_payload = NetworkMessagePayloadItem {
+                        path: message.payloads[0].path.clone(),
+                        value_bytes: serialized_error,
+                        correlation_id: message.payloads[0].correlation_id.clone(),
+                        context: payload.context.clone(),
+                    };
 
-                let response_message = NetworkMessage {
-                    source_node_id: local_peer_id,                       // Source is self
-                    destination_node_id: message.source_node_id.clone(), // Destination is the original request source
-                    message_type: "Error".to_string(),                   // Use Error type
-                    payloads: vec![error_payload],
-                };
-
-                // Check if networking is still enabled before trying to send error response
-                if !self.supports_networking {
-                    self.logger
-                        .warn("⚠️ [Node] Can't send error response - networking is disabled");
-                    return Ok(());
-                }
-
-                // Send the error response via transport
-                let transport_guard = self.network_transport.read().await;
-                if let Some(transport) = transport_guard.as_ref() {
-                    if let Err(e) = transport.send_message(response_message).await {
-                        self.logger.error(format!(
-                            "❌ [Node] Failed to send error response message - To: {}, Error: {}",
-                            message.source_node_id, e
-                        ));
-                    } else {
-                        self.logger.info(format!(
-                            "✅ [Node] Error response sent successfully - To: {}",
-                            message.source_node_id
-                        ));
-                    }
-                } else {
-                    self.logger
-                        .warn("⚠️ [Node] No network transport available to send error response");
+                    responses.push(error_payload);
                 }
             }
+        }
+
+        // Check if networking is still enabled before trying to send response
+        if !self.supports_networking {
+            self.logger
+                .warn("⚠️ [Node] Can't send response - networking is disabled");
+            return Ok(());
+        }
+
+        // Create response message - destination is the original source
+        let response_message = NetworkMessage {
+            source_node_id: local_peer_id, // Source is now self
+            destination_node_id: message.source_node_id.clone(), // Destination is the original request source
+            message_type: MESSAGE_TYPE_RESPONSE,
+            payloads: responses,
+        };
+
+        // Send the response via transport
+        let transport_guard = self.network_transport.read().await;
+        if let Some(transport) = transport_guard.as_ref() {
+            if let Err(e) = transport.send_message(response_message).await {
+                self.logger
+                    .error(format!(
+                        "❌ [Node] Failed to send response message - To: {}, Correlation: {}, Error: {}", 
+                        message.source_node_id, message.payloads[0].correlation_id, e
+                    ));
+                // Consider returning error or just logging?
+            } else {
+                self.logger.info(format!(
+                    "✅ [Node] Response sent successfully - To: {}, Correlation: {}",
+                    message.source_node_id, message.payloads[0].correlation_id
+                ));
+            }
+        } else {
+            self.logger
+                .warn("⚠️ [Node] No network transport available to send response");
         }
 
         Ok(())
@@ -1149,15 +1155,9 @@ impl Node {
 
     pub async fn local_request(
         &self,
-        path: impl Into<String>,
+        topic_path: &TopicPath,
         payload: Option<ArcValue>,
     ) -> Result<ArcValue> {
-        let path_string = path.into();
-        let topic_path = match TopicPath::new(&path_string, &self.network_id) {
-            Ok(tp) => tp,
-            Err(e) => return Err(anyhow!("Failed to parse topic path: {path_string} : {e}",)),
-        };
-
         self.logger
             .debug(format!("Processing request: {topic_path}"));
 
@@ -1976,6 +1976,7 @@ impl Clone for Node {
             label_resolver: self.label_resolver.clone(),
             registry_version: self.registry_version.clone(),
             keys_manager: self.keys_manager.clone(),
+            keystore: self.keystore.clone(),
         }
     }
 }
