@@ -6,10 +6,10 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
-use runar_common::types::ArcValue;
 use runar_node::{
     AbstractService, ActionHandler, LifecycleContext, Node, NodeConfig, NodeDelegate,
 };
+use runar_serializer::ArcValue;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;

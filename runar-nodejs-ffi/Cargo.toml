@@ -18,6 +18,7 @@ napi-derive = "2.16.0"
 runar_node = { path = "../runar-node" }
 runar_common = { path = "../runar-common" }
 runar-test-utils = { path = "../runar-test-utils" }
+runar-serializer = { path = "../runar-serializer" }
 
 # Utilities
 serde_json = "1.0"

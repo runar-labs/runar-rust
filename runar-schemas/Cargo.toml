@@ -1,0 +1,14 @@
+[package]
+name = "runar-schemas"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Protobuf schema types for Runar (ServiceMetadata, etc.)"
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+prost = { version = "0.12", default-features = false, features = ["std", "derive"] }
+runar-serializer = { path = "../runar-serializer" }
+runar-serializer-macros = { path = "../runar-serializer-macros" }
+anyhow = { workspace = true } 

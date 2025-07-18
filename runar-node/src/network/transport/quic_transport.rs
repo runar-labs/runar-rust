@@ -16,14 +16,16 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use bincode;
+use prost::Message;
 use quinn::{self, Endpoint};
 use quinn::{ClientConfig, ServerConfig};
-// Using Quinn 0.11.x API - no need for proto imports
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+
+use crate::routing::TopicPath;
+use runar_serializer::ArcValue;
 
 // Import rustls explicitly - these types need clear namespacing to avoid conflicts with quinn's types
 // Quinn uses rustls internally but we need to reference specific rustls types
@@ -38,6 +40,7 @@ use super::{
 // Import PeerInfo and NodeInfo consistently with the module structure
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::NodeInfo;
+use crate::network::transport::{MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_DISCOVERY, MESSAGE_TYPE_ERROR, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_HEARTBEAT, MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE, MESSAGE_TYPE_NODE_INFO_UPDATE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE};
 
 type MessageHandlerFn =
     Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>;
@@ -108,6 +111,9 @@ struct QuicTransportImpl {
     // Channel for sending peer node info updates
     peer_node_info_sender: tokio::sync::broadcast::Sender<NodeInfo>,
     running: Arc<AtomicBool>,
+    // Encryption context
+    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
     // Enhanced stream management for request-response pairs
     bidirectional_streams:
         Arc<tokio::sync::RwLock<std::collections::HashMap<String, BidirectionalStream>>>,
@@ -131,6 +137,9 @@ pub struct QuicTransport {
     // Keep logger and node_id at this level for compatibility
     logger: Arc<Logger>,
     node_id: String,
+    // Encryption context owned by this transport
+    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
     // Background tasks for connection handling and message processing
     background_tasks: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -214,6 +223,8 @@ pub struct QuicTransportConfig {
         Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>,
     pub options: QuicTransportOptions,
     pub logger: Arc<Logger>,
+    pub keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    pub label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
 }
 
 impl QuicTransportOptions {
@@ -341,6 +352,8 @@ impl QuicTransportImpl {
             local_node: config.local_node_info,
             peer_node_info_sender,
             running: Arc::new(AtomicBool::new(false)),
+            keystore: config.keystore,
+            label_resolver: config.label_resolver,
             // Initialize enhanced stream management
             bidirectional_streams: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
@@ -356,14 +369,14 @@ impl QuicTransportImpl {
     /// INTENTION: Classify messages to use appropriate stream types and lifecycle management
     /// NOTE: Now using unidirectional streams for all messages including requests and responses
     fn classify_message_pattern(&self, message: &NetworkMessage) -> MessagePattern {
-        match message.message_type.as_str() {
+        match message.message_type {
             // One-way messages that don't expect responses
-            "Handshake" | "Discovery" | "Announcement" | "Heartbeat" => MessagePattern::OneWay,
+            MESSAGE_TYPE_HANDSHAKE  | MESSAGE_TYPE_DISCOVERY | MESSAGE_TYPE_ANNOUNCEMENT | MESSAGE_TYPE_HEARTBEAT => MessagePattern::OneWay,
             // **CHANGE**: Request messages now use unidirectional streams too
             // The response will come back as a separate unidirectional stream
-            "Request" => MessagePattern::OneWay,
+            MESSAGE_TYPE_REQUEST => MessagePattern::OneWay,
             // Response messages are sent back via separate unidirectional streams
-            "Response" | "Error" => MessagePattern::OneWay,
+            MESSAGE_TYPE_RESPONSE | MESSAGE_TYPE_ERROR => MessagePattern::OneWay,
             // Default to one-way for unknown message types
             _ => {
                 self.logger.warn(format!(
@@ -616,7 +629,9 @@ impl QuicTransportImpl {
         use tokio::io::AsyncWriteExt;
 
         // Serialize the message
-        let serialized_message = bincode::serialize(message)
+        let mut serialized_message = Vec::new();
+        message
+            .encode(&mut serialized_message)
             .map_err(|e| NetworkError::MessageError(format!("Failed to serialize message: {e}")))?;
 
         // Write message length first (4 bytes)
@@ -789,11 +804,16 @@ impl QuicTransportImpl {
             let message = NetworkMessage {
                 source_node_id: self.node_id.clone(),
                 destination_node_id: peer_node_id.clone(),
-                message_type: "NODE_INFO_UPDATE".to_string(),
+                message_type: MESSAGE_TYPE_NODE_INFO_UPDATE,
                 payloads: vec![NetworkMessagePayloadItem {
                     path: "".to_string(),
-                    value_bytes: bincode::serialize(&node_info).unwrap(),
+                    value_bytes: {
+                        let mut bytes = Vec::new();
+                        node_info.encode(&mut bytes).unwrap();
+                        bytes
+                    },
                     correlation_id: "".to_string(),
+                    context: None,
                 }],
             };
             self.send_message(message).await?;
@@ -846,13 +866,18 @@ impl QuicTransportImpl {
         let handshake_message = NetworkMessage {
             source_node_id: self.node_id.clone(),
             destination_node_id: peer_node_id.clone(),
-            message_type: "NODE_INFO_HANDSHAKE".to_string(),
+            message_type: MESSAGE_TYPE_HANDSHAKE,
             payloads: vec![NetworkMessagePayloadItem {
                 path: "".to_string(),
-                value_bytes: bincode::serialize(&self.local_node).map_err(|e| {
-                    NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
-                })?,
+                value_bytes: {
+                    let mut bytes = Vec::new();
+                    self.local_node.encode(&mut bytes).map_err(|e| {
+                        NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
+                    })?;
+                    bytes
+                },
                 correlation_id,
+                context: None,
             }],
         };
 
@@ -875,10 +900,10 @@ impl QuicTransportImpl {
         self: &Arc<Self>,
         message: NetworkMessage,
     ) -> Result<(), NetworkError> {
-        // Special handling for handshake messages
-        if message.message_type == "NODE_INFO_HANDSHAKE"
-            || message.message_type == "NODE_INFO_HANDSHAKE_RESPONSE"
-            || message.message_type == "NODE_INFO_UPDATE"
+        // Special handling for handshake messages  
+        if message.message_type == MESSAGE_TYPE_HANDSHAKE
+            || message.message_type == MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE
+            || message.message_type == MESSAGE_TYPE_NODE_INFO_UPDATE
         {
             self.logger.debug(format!(
                 "Received message from {} with type: {}",
@@ -887,7 +912,7 @@ impl QuicTransportImpl {
 
             // Extract the node info from the message
             if let Some(payload) = message.payloads.first() {
-                match bincode::deserialize::<NodeInfo>(&payload.value_bytes) {
+                match NodeInfo::decode(payload.value_bytes.as_slice()) {
                     Ok(peer_node_info) => {
                         self.logger.debug(format!(
                             "Received node info from {}: {:?}",
@@ -900,23 +925,26 @@ impl QuicTransportImpl {
                         {
                             peer_state.set_node_info(peer_node_info.clone()).await;
 
-                            if message.message_type == "NODE_INFO_HANDSHAKE" {
+                            if message.message_type == MESSAGE_TYPE_HANDSHAKE {
                                 // Create the response message
                                 let response = NetworkMessage {
                                     source_node_id: self.node_id.clone(),
                                     destination_node_id: message.source_node_id.clone(),
-                                    message_type: "NODE_INFO_HANDSHAKE_RESPONSE".to_string(),
+                                    message_type: MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE,
                                     payloads: vec![NetworkMessagePayloadItem {
                                         // Preserve the original path from the request
                                         path: payload.path.clone(),
-                                        value_bytes: bincode::serialize(&self.local_node).map_err(
-                                            |e| {
+                                        value_bytes: {
+                                            let mut bytes = Vec::new();
+                                            self.local_node.encode(&mut bytes).map_err(|e| {
                                                 NetworkError::MessageError(format!(
                                                     "Failed to serialize node info: {e}"
                                                 ))
-                                            },
-                                        )?,
+                                            })?;
+                                            bytes
+                                        },
                                         correlation_id: payload.correlation_id.clone(),
+                                        context: None,
                                     }],
                                 };
 
@@ -1011,7 +1039,7 @@ impl QuicTransportImpl {
                     // **STEP 2**: Read and parse the handshake message to get real peer ID
                     match inner_arc.read_handshake_message(recv_stream).await {
                         Ok(message) => {
-                            if message.message_type == "NODE_INFO_HANDSHAKE" {
+                            if message.message_type == MESSAGE_TYPE_HANDSHAKE {
                                 // **STEP 3**: Extract the real peer ID from the handshake message
                                 let real_peer_node_id = message.source_node_id.clone();
 
@@ -1126,7 +1154,7 @@ impl QuicTransportImpl {
             })?;
 
         // Deserialize the message
-        bincode::deserialize(&message_data).map_err(|e| {
+        NetworkMessage::decode(message_data.as_slice()).map_err(|e| {
             NetworkError::MessageError(format!("Failed to deserialize handshake message: {e}"))
         })
     }
@@ -1308,7 +1336,7 @@ impl QuicTransportImpl {
             .map_err(|e| NetworkError::MessageError(format!("Failed to read message data: {e}")))?;
 
         // Deserialize the message
-        let message: NetworkMessage = bincode::deserialize(&message_data).map_err(|e| {
+        let message = NetworkMessage::decode(message_data.as_slice()).map_err(|e| {
             NetworkError::MessageError(format!("Failed to deserialize message: {e}"))
         })?;
 
@@ -1327,7 +1355,7 @@ impl QuicTransportImpl {
         if let Some(send_stream) = send_stream {
             if let Some(payload) = message.payloads.first() {
                 // Only store if this is a request (expects a response)
-                if message.message_type == "Request" {
+                if message.message_type == MESSAGE_TYPE_REQUEST {
                     self.logger.debug(format!(
                         "🔗 [QuicTransport] Storing send stream for incoming request - Correlation ID: {}, From: {}",
                         payload.correlation_id, peer_node_id
@@ -1635,6 +1663,47 @@ impl QuicTransportImpl {
         self.connection_pool.is_peer_connected(&peer_node_id).await
     }
 
+    async fn send_request(self: &Arc<Self>, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError> {
+        let network_id = topic_path.network_id();
+
+        let profile_id = compact_id(&context.profile_public_key);
+
+        let payload_vec: Vec<u8> = if let Some(params) = params {
+            params.serialize(
+                Some(self.keystore.clone()),
+                Some(self.label_resolver.as_ref()),
+                &network_id,
+                &profile_id,
+            )
+            .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
+        } else {
+            ArcValue::null().serialize(
+                Some(self.keystore.clone()),
+                Some(self.label_resolver.as_ref()),
+                &network_id,
+                &profile_id,
+            )
+            .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
+        };
+
+        // Create the network message
+        let message = NetworkMessage {
+            source_node_id: self.node_id.clone(),
+            destination_node_id: peer_node_id.clone(),
+            message_type: MESSAGE_TYPE_REQUEST,
+            payloads: vec![NetworkMessagePayloadItem {
+                path: topic_path.as_str().to_string(),
+                value_bytes: payload_vec,
+                correlation_id: request_id.clone(),
+                context: Some(context),
+            }],
+        };
+
+        // Send the message using the existing send_message infrastructure
+        self.send_message(message).await
+    }
+
+
     /// Send a message to a peer using appropriate stream patterns
     ///
     /// INTENTION: Route messages through proper stream types based on communication patterns
@@ -1759,7 +1828,7 @@ impl QuicTransportImpl {
             })?;
 
         // Deserialize the response message
-        let message: NetworkMessage = bincode::deserialize(&message_data).map_err(|e| {
+        let message = NetworkMessage::decode(message_data.as_slice()).map_err(|e| {
             NetworkError::MessageError(format!(
                 "Failed to deserialize response for {correlation_id}: {e}"
             ))
@@ -1794,6 +1863,10 @@ impl NetworkTransport for QuicTransport {
 
     async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError> {
         self.inner.send_message(message).await
+    }
+
+    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError> {
+        self.inner.send_request(topic_path, params, request_id, peer_node_id, context).await
     }
 
     async fn connect_peer(&self, discovery_msg: PeerInfo) -> Result<(), NetworkError> {
@@ -1835,6 +1908,14 @@ impl NetworkTransport for QuicTransport {
     async fn subscribe_to_peer_node_info(&self) -> tokio::sync::broadcast::Receiver<NodeInfo> {
         self.inner.peer_node_info_sender.subscribe()
     }
+
+    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto> {
+        self.keystore.clone()
+    }
+
+    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver> {
+        self.label_resolver.clone()
+    }
 }
 
 impl QuicTransport {
@@ -1854,6 +1935,8 @@ impl QuicTransport {
         >,
         options: QuicTransportOptions,
         logger: Arc<Logger>,
+        keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+        label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Create the config struct to pass to the inner implementation
         let config = QuicTransportConfig {
@@ -1862,6 +1945,8 @@ impl QuicTransport {
             message_handler,
             options,
             logger: logger.clone(), // Clone for the inner impl
+            keystore: keystore.clone(),
+            label_resolver: label_resolver.clone(),
         };
 
         // Create the inner implementation using the config struct
@@ -1872,6 +1957,8 @@ impl QuicTransport {
             inner: Arc::new(inner_impl),
             logger, // Use the original logger passed to QuicTransport::new
             node_id: compact_id(&local_node_info.node_public_key), // local_node_info is already cloned for config, can move peer_node_id here
+            keystore,
+            label_resolver,
             background_tasks: Mutex::new(Vec::new()),
         })
     }

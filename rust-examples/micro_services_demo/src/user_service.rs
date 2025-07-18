@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
-use runar_common::types::ArcValue;
 use runar_macros::{action, service, service_impl};
 use runar_node::services::RequestContext;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::User;
 
@@ -21,14 +21,23 @@ impl UserService {
         &self,
         username: String,
         email: String,
+        password: String,
         _ctx: &RequestContext,
-    ) -> Result<ArcValue> {
+    ) -> Result<User> {
         // Placeholder implementation
         println!("UserService: Called create_user with username: {username}, email: {email}");
-        Ok(ArcValue::from_struct(User {
-            id: "user_123".to_string(), // Dummy ID
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(User {
+            id: format!("user_{}", now), // Generate ID based on timestamp
             username,
             email,
-        }))
+            password_hash: format!("hash_{}", password), // In real app, this would be properly hashed
+            created_at: now,
+        })
     }
 }

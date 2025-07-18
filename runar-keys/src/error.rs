@@ -73,6 +73,9 @@ pub enum KeyError {
 
     #[error("Symmetric cipher error: {0}")]
     SymmetricCipherError(String),
+
+    #[error("Key already initialized: {0}")]
+    KeyAlreadyInitialized(String),
 }
 
 // Convert from rcgen errors

@@ -30,6 +30,7 @@ pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificat
 pub use error::{KeyError, Result};
 pub use mobile::MobileKeyManager;
 pub use node::NodeKeyManager;
+// expose profile public key registration convenience re-export
 
 // ---------------------------------------------------------------------------
 // Common envelope crypto abstraction (shared with serializer)
@@ -41,7 +42,7 @@ pub trait EnvelopeCrypto: Send + Sync {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_id: Option<&String>,
         profile_ids: Vec<String>,
     ) -> Result<EnvelopeEncryptedData>;
 

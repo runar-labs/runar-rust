@@ -2350,9 +2350,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "prost",
+ "runar-keys",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
  "serde",
  "serde_json",
@@ -3308,7 +3312,11 @@ dependencies = [
  "async-trait",
  "axum",
  "futures",
+ "prost",
+ "prost-derive",
  "reqwest",
+ "runar-schemas",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
@@ -3352,6 +3360,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-node-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "prost",
+ "rand 0.8.5",
+ "runar-keys",
+ "runar-schemas",
+ "runar-serializer",
+ "runar-test-utils",
+ "runar_common",
+ "runar_macros_common",
+ "runar_node",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-test",
+ "uuid",
+]
+
+[[package]]
 name = "runar-nodejs-ffi"
 version = "0.1.0"
 dependencies = [
@@ -3363,6 +3393,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "once_cell",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_node",
@@ -3373,15 +3404,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-schemas"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "prost",
+ "runar-serializer",
+ "runar-serializer-macros",
+ "serde",
+]
+
+[[package]]
 name = "runar-serializer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
+ "bincode",
  "log",
  "prost",
  "runar-keys",
  "runar-serializer-macros",
  "runar_common",
+ "rustc-hash 1.1.0",
  "serde",
  "serde_json",
 ]
@@ -3390,6 +3435,7 @@ dependencies = [
 name = "runar-serializer-macros"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "proc-macro2",
  "prost",
  "quote",
@@ -3423,6 +3469,8 @@ dependencies = [
  "env_logger",
  "lazy_static",
  "log",
+ "prost",
+ "prost-derive",
  "rustc-hash 1.1.0",
  "serde",
  "serde_bytes",
@@ -3448,10 +3496,15 @@ dependencies = [
  "linkme",
  "once_cell",
  "proc-macro2",
+ "prost",
+ "prost-derive",
  "quote",
  "rand 0.8.5",
+ "runar-schemas",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
+ "runar_macros_common",
  "runar_node",
  "rusqlite",
  "serde",
@@ -3459,6 +3512,15 @@ dependencies = [
  "syn 2.0.104",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "runar_macros_common"
+version = "0.1.0"
+dependencies = [
+ "runar-serializer",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3477,15 +3539,20 @@ dependencies = [
  "futures-util",
  "hex",
  "log",
+ "once_cell",
  "p256",
  "pkcs8",
+ "prost",
  "quinn",
  "rand 0.9.1",
  "rcgen 0.11.3",
  "ring 0.17.14",
  "runar-keys",
+ "runar-schemas",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
+ "runar_macros_common",
  "rustls 0.23.28",
  "rustls-native-certs 0.6.3",
  "rustls-pemfile",
@@ -3509,11 +3576,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
  "futures",
  "hex",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
  "rusqlite",
  "serde",
@@ -3989,9 +4059,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
  "tokio",
 ]

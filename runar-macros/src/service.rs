@@ -174,6 +174,8 @@ fn format_type_string(type_str: &str) -> Option<String> {
         // Primitive types
         "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
         | "usize" | "f32" | "f64" | "bool" | "char" | "()" | "String" => None,
+        // Skip ArcValue as it doesn't implement prost::Message and Default
+        "ArcValue" | "runar_serializer::ArcValue" => None,
         _ => Some(formatted),
     }
 }
@@ -233,28 +235,28 @@ fn generate_abstract_service_impl(
         })
         .collect::<Vec<_>>();
 
-    // Generate logging code for collected types
-    let type_collection_code = if sorted_types.is_empty() {
-        // No complex types collected – generate a simple debug log
-        quote! {
-            context.debug("No complex types to register for this service");
-        }
-    } else {
-        quote! {
-            context.info(format!("Types used by service {}:\n    {}", stringify!(#struct_type), #types_str));
-        }
-    };
+    // // Generate logging code for collected types
+    // let type_collection_code = if sorted_types.is_empty() {
+    //     // No complex types collected – generate a simple debug log
+    //     quote! {
+    //         context.debug("No complex types to register for this service");
+    //     }
+    // } else {
+    //     quote! {
+    //         context.info(format!("Types used by service {}:\n    {}", stringify!(#struct_type), #types_str));
+    //     }
+    // };
 
-    // Generate debug line for the full list when registering types
-    let join_debug_code = if sorted_types.is_empty() {
-        quote! {
-            context.debug("All types registered: []");
-        }
-    } else {
-        quote! {
-            context.debug(format!("All types registered: [{}]", [#(stringify!(#type_idents)),*].join(", ")));
-        }
-    };
+    // // Generate debug line for the full list when registering types
+    // let join_debug_code = if sorted_types.is_empty() {
+    //     quote! {
+    //         context.debug("All types registered: []");
+    //     }
+    // } else {
+    //     quote! {
+    //         context.debug(format!("All types registered: [{}]", [#(stringify!(#type_idents)),*].join(", ")));
+    //     }
+    // };
 
     quote! {
         #[async_trait::async_trait]
@@ -290,9 +292,6 @@ fn generate_abstract_service_impl(
                 // Register all action and subscription methods defined with the #[action] or #[subscribe] macro
                 #(#method_registrations)*
 
-                // Register complex types with the serializer
-                Self::register_types(context_ref).await?;
-
                 Ok(())
             }
 
@@ -307,26 +306,7 @@ fn generate_abstract_service_impl(
 
         // Helper utilities inherent to the service
         impl #struct_type {
-            // Helper method to register complex types with the serializer
-            async fn register_types(context: &runar_node::services::LifecycleContext) -> anyhow::Result<()> {
-                // Acquire a write lock on the serializer
-                let mut serializer = context.serializer.write().await;
 
-                // Log all the collected types
-                #type_collection_code
-
-                // Register each type with the serializer
-                #({
-                    context.debug(format!("Registering type: {}", stringify!(#type_idents)));
-                })*
-                // Print all types being registered for macro transparency
-                #join_debug_code
-                #({
-                    serializer.register::<#type_idents>()?;
-                })*
-
-                Ok(())
-            }
         }
     }
 }

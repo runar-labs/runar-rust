@@ -1,7 +1,9 @@
 // Network Transport Module
 use anyhow::Result;
 use async_trait::async_trait;
+use prost::Message;
 use rand;
+use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -17,14 +19,16 @@ use rustls_pki_types::{CertificateDer, ServerName};
 
 // Internal module declarations
 pub mod connection_pool;
+pub mod keystore_proxy;
 pub mod peer_state;
 pub mod quic_transport;
 pub mod stream_pool;
 
 pub use connection_pool::ConnectionPool;
+pub use keystore_proxy::KeystoreReadProxy;
 pub use peer_state::PeerState;
-pub use stream_pool::StreamPool;
-
+pub use stream_pool::StreamPool; 
+use crate::routing::TopicPath;
 // --- Moved from quic_transport.rs ---
 /// Custom certificate verifier that skips verification for testing
 ///
@@ -203,47 +207,70 @@ pub enum NetworkMessageType {
     Heartbeat,
 }
 
-/// Represents a payload item in a network message
-///
-/// IMPORTANT: This is implemented as a struct with fields, not as a tuple.
-/// The serialized data is stored in value_bytes and should be deserialized
-/// using SerializerRegistry when needed.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, Message)]
+pub struct MessageContext {
+    #[prost(bytes, tag = "1")]
+    pub profile_public_key: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Message)]
 pub struct NetworkMessagePayloadItem {
     /// The path/topic associated with this payload
+    #[prost(string, tag = "1")]
     pub path: String,
 
     /// The serialized value/payload data as bytes
+    #[prost(bytes, tag = "2")]
     pub value_bytes: Vec<u8>,
 
+    #[prost(message, tag = "3")]
+    pub context: Option<MessageContext>,
+
     /// Correlation ID for request/response tracking
+    #[prost(string, tag = "4")]
     pub correlation_id: String,
 }
 
 impl NetworkMessagePayloadItem {
     /// Create a new NetworkMessagePayloadItem
-    pub fn new(path: String, value_bytes: Vec<u8>, correlation_id: String) -> Self {
+    pub fn new(path: String, value_bytes: Vec<u8>, correlation_id: String, context: MessageContext) -> Self {
         Self {
             path,
             value_bytes,
             correlation_id,
+            context: Some(context),
         }
     }
 }
 
+pub const MESSAGE_TYPE_DISCOVERY: u32 = 1;
+pub const MESSAGE_TYPE_HEARTBEAT: u32 = 2;
+pub const MESSAGE_TYPE_ANNOUNCEMENT: u32 = 3;
+pub const MESSAGE_TYPE_HANDSHAKE: u32 = 4;
+pub const MESSAGE_TYPE_REQUEST: u32 = 5;
+pub const MESSAGE_TYPE_RESPONSE: u32 = 6;
+pub const MESSAGE_TYPE_EVENT: u32 = 7;
+pub const MESSAGE_TYPE_ERROR: u32 = 8;
+pub const MESSAGE_TYPE_NODE_INFO_UPDATE: u32 = 9;
+pub const MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE: u32 = 10;
+
 /// Represents a message exchanged between nodes
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone, Message)]
 pub struct NetworkMessage {
     /// Source node identifier
+    #[prost(string, tag = "1")]
     pub source_node_id: String,
 
     /// Destination node identifier (MUST be specified)
+    #[prost(string, tag = "2")]
     pub destination_node_id: String,
 
     /// Message type (Request, Response, Event, etc.)
-    pub message_type: String,
+    #[prost(uint32, tag = "3")]
+    pub message_type: u32,
 
     /// List of payloads  
+    #[prost(message, repeated, tag = "4")]
     pub payloads: Vec<NetworkMessagePayloadItem>,
 }
 
@@ -278,6 +305,8 @@ pub trait NetworkTransport: Send + Sync {
     /// Send a message to a remote node
     async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError>;
 
+    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError>;
+
     /// connect to a discovered node
     ///
     /// Returns the NodeInfo of the connected peer after successful handshake
@@ -289,17 +318,17 @@ pub trait NetworkTransport: Send + Sync {
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
 
-    // /// Register a message handler for incoming messages
-    // async fn register_message_handler(
-    //     &self,
-    //     handler: Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>,
-    // ) -> Result<(), NetworkError>;
-
     /// Subscribe to peer node info updates
     ///
     /// INTENTION: Allow callers to subscribe to peer node info updates when they are received
     /// during handshakes. This is used by the Node to create RemoteService instances.
     async fn subscribe_to_peer_node_info(&self) -> tokio::sync::broadcast::Receiver<NodeInfo>;
+
+    /// Expose the transport-owned keystore (read-only).
+    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
+
+    /// Expose the transport-owned label resolver.
+    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver>;
 }
 
 /// Error type for network operations

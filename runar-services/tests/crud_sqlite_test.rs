@@ -1,7 +1,7 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValue;
-use runar_common::vmap; // Added for vmap!
+use runar_macros_common::vmap;
+use runar_serializer::ArcValue; // Updated vmap!
 
 use runar_node::Node;
 use runar_test_utils::create_node_test_config;
