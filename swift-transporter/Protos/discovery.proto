@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package runar.discovery;
+
+// PeerInfo matches the Rust PeerInfo struct
+message PeerInfo {
+  bytes public_key = 1;
+  repeated string addresses = 2;
+}
+
+// MulticastMessage matches the Rust MulticastMessage struct
+message MulticastMessage {
+  optional PeerInfo announce = 1;
+  optional string goodbye = 2;
+} 

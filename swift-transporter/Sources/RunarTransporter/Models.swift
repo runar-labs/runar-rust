@@ -4,43 +4,50 @@ import Crypto
 // MARK: - Core Models
 
 /// Represents a node in the Runar network
+/// Matches the Rust NodeInfo structure
 public struct RunarNodeInfo: Codable, Equatable, Hashable {
-    /// Unique identifier for the node (derived from public key)
-    public let nodeId: String
-    
     /// Public key of the node
     public let nodePublicKey: Data
     
-    /// Human-readable name for the node
-    public let nodeName: String
+    /// Network IDs this node participates in
+    public let networkIds: [String]
     
     /// Network addresses where this node can be reached
     public let addresses: [String]
     
-    /// Additional metadata about the node
-    public let metadata: [String: String]
+    /// Services/capabilities provided by this node
+    public let services: [ServiceMetadata]
+    
+    /// Version number for tracking updates
+    public let version: Int64
     
     /// Timestamp when this node info was created
     public let createdAt: Date
     
     public init(
-        nodeId: String,
         nodePublicKey: Data,
-        nodeName: String,
+        networkIds: [String] = [],
         addresses: [String] = [],
-        metadata: [String: String] = [:],
+        services: [ServiceMetadata] = [],
+        version: Int64 = 0,
         createdAt: Date = Date()
     ) {
-        self.nodeId = nodeId
         self.nodePublicKey = nodePublicKey
-        self.nodeName = nodeName
+        self.networkIds = networkIds
         self.addresses = addresses
-        self.metadata = metadata
+        self.services = services
+        self.version = version
         self.createdAt = createdAt
+    }
+    
+    /// Get the node ID (derived from public key)
+    public var nodeId: String {
+        return NodeUtils.compactId(from: nodePublicKey)
     }
 }
 
 /// Represents information about a peer discovered on the network
+/// Matches the Rust PeerInfo structure
 public struct RunarPeerInfo: Codable, Equatable, Hashable {
     /// Public key of the peer
     public let publicKey: Data
@@ -65,9 +72,15 @@ public struct RunarPeerInfo: Codable, Equatable, Hashable {
         self.name = name
         self.metadata = metadata
     }
+    
+    /// Get the peer ID (derived from public key)
+    public var peerId: String {
+        return NodeUtils.compactId(from: publicKey)
+    }
 }
 
 /// Represents a network message sent between nodes
+/// Matches the Rust NetworkMessage structure
 public struct RunarNetworkMessage: Codable, Equatable {
     /// ID of the source node
     public let sourceNodeId: String
@@ -75,7 +88,7 @@ public struct RunarNetworkMessage: Codable, Equatable {
     /// ID of the destination node
     public let destinationNodeId: String
     
-    /// Type of the message (e.g., "Request",Response", "Handshake")
+    /// Type of the message (e.g., "Request", "Response", "Handshake")
     public let messageType: String
     
     /// Payload items contained in the message
@@ -100,6 +113,7 @@ public struct RunarNetworkMessage: Codable, Equatable {
 }
 
 /// Represents a single payload item in a network message
+/// Matches the Rust NetworkMessagePayloadItem structure
 public struct NetworkMessagePayloadItem: Codable, Equatable {
     /// Path identifier for the payload
     public let path: String
@@ -121,9 +135,104 @@ public struct NetworkMessagePayloadItem: Codable, Equatable {
     }
 }
 
+/// Service metadata for node capabilities
+/// Matches the Rust ServiceMetadata structure
+public struct ServiceMetadata: Codable, Equatable, Hashable {
+    /// Service path/identifier
+    public let servicePath: String
+    
+    /// Network ID this service belongs to
+    public let networkId: String
+    
+    /// Service name
+    public let serviceName: String
+    
+    /// Service description
+    public let description: String
+    
+    /// Actions provided by this service
+    public let actions: [ActionMetadata]
+    
+    /// Events published by this service
+    public let events: [EventMetadata]
+    
+    public init(
+        servicePath: String,
+        networkId: String,
+        serviceName: String,
+        description: String = "",
+        actions: [ActionMetadata] = [],
+        events: [EventMetadata] = []
+    ) {
+        self.servicePath = servicePath
+        self.networkId = networkId
+        self.serviceName = serviceName
+        self.description = description
+        self.actions = actions
+        self.events = events
+    }
+}
+
+/// Action metadata for service capabilities
+/// Matches the Rust ActionMetadata structure
+public struct ActionMetadata: Codable, Equatable, Hashable {
+    /// Action path/identifier
+    public let actionPath: String
+    
+    /// Action name
+    public let actionName: String
+    
+    /// Action description
+    public let description: String
+    
+    /// Input schema for the action
+    public let inputSchema: String?
+    
+    /// Output schema for the action
+    public let outputSchema: String?
+    
+    public init(
+        actionPath: String,
+        actionName: String,
+        description: String = "",
+        inputSchema: String? = nil,
+        outputSchema: String? = nil
+    ) {
+        self.actionPath = actionPath
+        self.actionName = actionName
+        self.description = description
+        self.inputSchema = inputSchema
+        self.outputSchema = outputSchema
+    }
+}
+
+/// Event metadata for service capabilities
+/// Matches the Rust EventMetadata structure
+public struct EventMetadata: Codable, Equatable, Hashable {
+    /// Event path/identifier
+    public let path: String
+    
+    /// Event description
+    public let description: String
+    
+    /// Data schema for the event
+    public let dataSchema: String?
+    
+    public init(
+        path: String,
+        description: String = "",
+        dataSchema: String? = nil
+    ) {
+        self.path = path
+        self.description = description
+        self.dataSchema = dataSchema
+    }
+}
+
 // MARK: - Error Types
 
 /// Errors that can occur in the transport layer
+/// Matches the Rust NetworkError structure
 public enum RunarTransportError: Error, LocalizedError {
     case configurationError(String)
     case connectionError(String)
@@ -132,6 +241,7 @@ public enum RunarTransportError: Error, LocalizedError {
     case serializationError(String)
     case timeoutError(String)
     case certificateError(String)
+    case peerNotConnected(String)
     
     public var errorDescription: String? {
         switch self {
@@ -149,6 +259,8 @@ public enum RunarTransportError: Error, LocalizedError {
             return "Timeout error: \(message)"
         case .certificateError(let message):
             return "Certificate error: \(message)"
+        case .peerNotConnected(let peerId):
+            return "Peer not connected: \(peerId)"
         }
     }
 }
@@ -158,6 +270,7 @@ public enum RunarTransportError: Error, LocalizedError {
 /// Utility functions for working with node IDs and keys
 public struct NodeUtils {
     /// Generate a compact node ID from a public key
+    /// Matches the Rust compact_id function
     public static func compactId(from publicKey: Data) -> String {
         let hash = SHA256.hash(data: publicKey)
         return hash.compactMap { String(format: "%02x", $0) }.joined()
@@ -166,5 +279,10 @@ public struct NodeUtils {
     /// Generate a correlation ID for request-response matching
     public static func generateCorrelationId() -> String {
         return UUID().uuidString
+    }
+    
+    /// Generate a correlation ID with prefix
+    public static func generateCorrelationId(withPrefix prefix: String) -> String {
+        return "\(prefix)-\(UUID().uuidString)"
     }
 } 
