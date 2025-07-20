@@ -937,10 +937,6 @@ impl Node {
                 .as_ref()
                 .map(|c| c.profile_public_key.clone())
                 .context("No context found in payload")?;
-
-            match self.local_request(&topic_path, params_option).await {
-                Ok(response) => {
-                    self.logger
                         .info("✅ [Node] Local request completed successfully");
 
                     // Create serialization context for encryption

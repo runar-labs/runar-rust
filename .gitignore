@@ -42,4 +42,4 @@ runar-nodejs-ffi/runar-nodejs-ffi.node
 runar-nodejs-ffi/*.node
 cargo-wrapper.sh
 
-swift-transporter/.build/
+**/.build/
