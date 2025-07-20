@@ -3,15 +3,15 @@ use async_trait::async_trait;
 use runar_common::logging::Logger;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
-use runar_serializer::erased_arc::ErasedArc;
-use runar_serializer::{ArcValue, ValueCategory};
+use runar_serializer::{ArcValue};
 use rusqlite::types::ToSqlOutput;
 use rusqlite::types::{Null, ValueRef as RusqliteValueRef};
 use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use runar_serializer::RunarSerializer;
+ 
+use runar_serializer_macros::Serializable;
+use prost::Message;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
@@ -149,20 +149,24 @@ impl SqliteWorker {
                 }
                 SqliteWorkerCommand::Execute { query, reply_to } => {
                     self.logger.debug("Processing Execute command");
+                    let default_params = Params::new();
+                    let params = query.params.as_ref().unwrap_or(&default_params);
                     let res = execute_internal(
                         &self.connection,
                         &query.statement,
-                        &query.params,
+                        params,
                         &self.logger,
                     );
                     let _ = reply_to.send(res);
                 }
                 SqliteWorkerCommand::Query { query, reply_to } => {
                     self.logger.debug("Processing Query command");
+                    let default_params = Params::new();
+                    let params = query.params.as_ref().unwrap_or(&default_params);
                     let res = query_internal(
                         &self.connection,
                         &query.statement,
-                        &query.params,
+                        params,
                         &self.logger,
                     );
                     let _ = reply_to.send(res);
@@ -275,7 +279,12 @@ fn execute_internal(
     logger: &Arc<Logger>,
 ) -> Result<usize, String> {
     let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> =
-        params.values.iter().map(value_to_to_sql).collect(); // Changed: uses value_to_to_sql
+        params.values.iter().map(|bytes| {
+            // Deserialize bytes back to Value
+            let value: Value = bincode::deserialize(bytes)
+                .map_err(|e| format!("Failed to deserialize Value from bytes: {e}"))?;
+            value_to_to_sql(&value)
+        }).collect();
 
     match rusqlite_params_results {
         Ok(rusqlite_params) => {
@@ -303,7 +312,12 @@ fn query_internal(
     logger: &Arc<Logger>,
 ) -> Result<Vec<HashMap<String, Value>>, String> {
     let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> =
-        params.values.iter().map(value_to_to_sql).collect(); // Changed: uses value_to_to_sql
+        params.values.iter().map(|bytes| {
+            // Deserialize bytes back to Value
+            let value: Value = bincode::deserialize(bytes)
+                .map_err(|e| format!("Failed to deserialize Value from bytes: {e}"))?;
+            value_to_to_sql(&value)
+        }).collect();
 
     let rusqlite_params = match rusqlite_params_results {
         Ok(p) => p,
@@ -449,64 +463,46 @@ impl From<rusqlite::types::Value> for Value {
 ///
 /// Intention: Encapsulates positional parameter values for SQLite queries.
 /// Only supports positional binding, not named parameters.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, prost::Message, Serializable)]
 pub struct Params {
-    pub values: Vec<Value>,
+    #[prost(bytes, repeated, tag = "1")]
+    pub values: Vec<Vec<u8>>,
 }
 
 impl Params {
     /// Create a new Params object
     pub fn new() -> Self {
-        Self::default()
+        Self { values: Vec::new() }
     }
     /// Add a value to the parameter list (positional)
     pub fn with_value(mut self, value: impl Into<Value>) -> Self {
-        self.values.push(value.into());
+        let value: Value = value.into();
+        let bytes = bincode::serialize(&value)
+            .expect("Failed to serialize Value to bytes");
+        self.values.push(bytes);
         self
     }
 } // No more named parameter logic
 
 /// SQL Query with typed parameters
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, prost::Message, Serializable)]
 pub struct SqlQuery {
+    #[prost(string, tag = "1")]
     pub statement: String,
-    pub params: Params,
+    #[prost(message, optional, tag = "2")]
+    pub params: Option<Params>,
 }
 
 impl SqlQuery {
     pub fn new(statement: &str) -> Self {
         Self {
             statement: statement.to_string(),
-            params: Params::new(),
+            params: Some(Params::new()),
         }
     }
     pub fn with_params(mut self, params: Params) -> Self {
-        self.params = params;
+        self.params = Some(params);
         self
-    }
-}
-
-impl RunarSerializer for SqlQuery {
-    fn from_plain_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> anyhow::Result<Self> {
-        Ok(bincode::deserialize(bytes)?)
-    }
-
-    fn from_encrypted_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> anyhow::Result<Self> {
-        Self::from_plain_bytes(bytes, None)
-    }
-
-    fn to_binary(
-        &self,
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
-    ) -> anyhow::Result<Vec<u8>> {
-        Ok(bincode::serialize(self)?)
     }
 }
 
@@ -847,10 +843,11 @@ impl AbstractService for SqliteService {
                 self.version,
                 self.network_id.as_ref().expect("network_id is required")
             );
-            let key: Vec<u8> = context
+            let key_ac = context
                 .request("$keys/ensure_symmetric_key", Some(key_name))
                 .await?;
-            encryption_key = Some(key);
+            let key = key_ac.as_type_ref::<Vec<u8>>()?;
+            encryption_key = Some(key.as_ref().clone());
         } else {
             context.warn("SqliteService encryption disabled.");
         }

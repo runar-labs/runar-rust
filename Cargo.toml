@@ -9,6 +9,7 @@ members = [
     "runar-keys",
     "runar-gateway",
     "rust-examples/simple",
+    "runar-serializer-old",
     "runar-serializer",
     "runar-serializer-macros",
     "runar-nodejs-ffi",

@@ -20,6 +20,8 @@ runar_common = { path = "../runar-common", features = ["abstract_service"] }
 runar_node = { path = "../runar-node" }
 hex = "0.4"
 runar-serializer = { path = "../runar-serializer" }
+runar-serializer-macros = { path = "../runar-serializer-macros" }
+prost = "0.12"
 bincode = "1.3.3"
 
 [dev-dependencies]

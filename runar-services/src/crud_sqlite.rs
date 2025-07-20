@@ -2,8 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
-use runar_serializer::{ArcValue, ValueCategory};
-use serde::{Deserialize, Serialize};
+use runar_serializer::{ArcValue, ValueCategory}; 
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,17 +10,20 @@ use uuid::Uuid;
 
 use crate::sqlite::{
     DataType, Params as SqlParams, Schema as SqliteSchemaDef, SqlQuery, Value as SqliteValue,
-};
-use runar_serializer::RunarSerializer;
+}; 
+use runar_serializer_macros::Serializable;
+use prost::Message;
 
 /// Represents a request to insert a single document into a collection.
 ///
 /// Intention: To provide a structured way to specify the collection and document for an insert operation.
 /// The document is represented as a map of field names to ArcValue values.
-#[derive(Debug, Serialize, Deserialize, Clone)] // Clone for potential re-use if request fails and retries
+#[derive(Clone, prost::Message, Serializable)]
 pub struct InsertOneRequest {
+    #[prost(string, tag = "1")]
     pub collection: String,
-    pub document: HashMap<String, ArcValue>,
+    #[prost(map = "string, bytes", tag = "2")]
+    pub document: HashMap<String, Vec<u8>>, // Serialized ArcValue
 }
 
 /// Represents the response from an insert_one operation.

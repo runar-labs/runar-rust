@@ -30,7 +30,7 @@ pub fn derive_serializable(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         impl runar_serializer::RunarSerializer for #name {
             fn from_plain_bytes(bytes: &[u8], _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-                Self::decode(bytes).map_err(anyhow::Error::from)
+                serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
             }
 
             fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
@@ -39,10 +39,8 @@ pub fn derive_serializable(input: TokenStream) -> TokenStream {
                 Self::from_plain_bytes(&decrypted, keystore)
             }
 
-            fn to_binary(&self, _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, _resolver: Option<&dyn runar_serializer::LabelResolver>, _network_id: &String, _profile_id: &String) -> anyhow::Result<Vec<u8>> {
-                let mut buf = Vec::new();
-                self.encode(&mut buf)?;
-                Ok(buf)
+            fn to_binary(&self, context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> {
+                serde_cbor::to_vec(self).map_err(anyhow::Error::from)
             }
         }
     };
@@ -112,7 +110,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
     let mut enc_label_tokens = Vec::new();
     let mut proto_plaintext_fields = Vec::new();
 
-    for (idx, label) in label_order.iter().enumerate() {
+    for label in label_order.iter() {
         let fields = &label_groups[label];
         let cap_label = capitalize(label);
         let substruct_ident = format_ident!("{}{}Fields", struct_name, cap_label);
@@ -131,22 +129,11 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         });
 
         let mut sub_fields_proto_tokens = Vec::new();
-        for (fidx, (fid, fty)) in fields.iter().enumerate() {
-            let tag_num = fidx + 1;
-            let proto_ty = match quote!(#fty).to_string().replace(" ", "").as_str() {
-                "String" => "string",
-                "i64" => "int64",
-                "u64" => "uint64",
-                "bool" => "bool",
-                "Vec<u8>" => "bytes",
-                _ => "bytes", // Default to bytes for unknown
-            };
-            let proto_ty_ident = syn::Ident::new(proto_ty, proc_macro2::Span::call_site());
-            sub_fields_proto_tokens
-                .push(quote! { #[prost(#proto_ty_ident, tag = #tag_num)] pub #fid: #fty, });
+        for (fid, fty) in fields.iter() {
+            sub_fields_proto_tokens.push(quote! { pub #fid: #fty, });
         }
         proto_substruct_defs.push(quote! {
-            #[derive(serde::Serialize, serde::Deserialize, Clone, prost::Message)]
+            #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
             pub struct #substruct_proto_ident {
                 #(#sub_fields_proto_tokens)*
             }
@@ -178,27 +165,15 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             }
         });
 
-        let tag_num = plaintext_fields.len() + idx + 1;
-        enc_label_tokens.push(quote! { #[prost(message, optional, tag = #tag_num)] pub #group_field_ident: ::core::option::Option<runar_serializer::encryption::EncryptedLabelGroup>, });
+        enc_label_tokens.push(quote! { pub #group_field_ident: ::core::option::Option<runar_serializer::encryption::EncryptedLabelGroup>, });
     }
 
-    for (idx, (fid, fty)) in plaintext_fields.iter().enumerate() {
-        let tag_num = idx + 1;
-        let proto_ty = match quote!(#fty).to_string().replace(" ", "").as_str() {
-            "String" => "string",
-            "i64" => "int64",
-            "u64" => "uint64",
-            "bool" => "bool",
-            "Vec<u8>" => "bytes",
-            _ => "bytes",
-        };
-        let proto_ty_ident = syn::Ident::new(proto_ty, proc_macro2::Span::call_site());
-        proto_plaintext_fields
-            .push(quote! { #[prost(#proto_ty_ident, tag = #tag_num)] pub #fid: #fty, });
+    for (fid, fty) in plaintext_fields.iter() {
+        proto_plaintext_fields.push(quote! { pub #fid: #fty, });
     }
 
     let encrypted_struct_def = quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Clone, prost::Message)]
+        #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
         pub struct #encrypted_name {
             #(#proto_plaintext_fields)*
             #(#enc_label_tokens)*
@@ -206,7 +181,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
         impl runar_serializer::RunarSerializer for #encrypted_name {
             fn from_plain_bytes(bytes: &[u8], _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-                Self::decode(bytes).map_err(anyhow::Error::from)
+                serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
             }
 
             fn from_encrypted_bytes(bytes: &[u8], _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
@@ -214,10 +189,8 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
                 Self::from_plain_bytes(bytes, None)
             }
 
-            fn to_binary(&self, _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, _resolver: Option<&dyn runar_serializer::LabelResolver>, _network_id: &String, _profile_id: &String) -> anyhow::Result<Vec<u8>> {
-                let mut buf = Vec::new();
-                self.encode(&mut buf)?;
-                Ok(buf)
+            fn to_binary(&self, context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> {
+                serde_cbor::to_vec(self).map_err(anyhow::Error::from)
             }
         }
     };
@@ -249,7 +222,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
     let decrypt_impl = quote! { let mut decrypted = #struct_name { #(#decrypted_plaintext_init)* #(#labeled_field_defaults)* }; #(#decrypt_label_blocks)* Ok(decrypted) };
 
-    let expanded = quote! { #(#substruct_defs)* #(#proto_substruct_defs)* #encrypted_struct_def impl #struct_name { fn encrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>, resolver: &dyn runar_serializer::LabelResolver) -> anyhow::Result<#encrypted_name> { #encrypt_impl } } impl #encrypted_name { fn decrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>) -> anyhow::Result<#struct_name> { #decrypt_impl } } impl runar_serializer::RunarSerializer for #struct_name { fn from_plain_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { Self::from_encrypted_bytes(bytes, keystore) } fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for decryption"))?; let encrypted = #encrypted_name::decode(bytes)?; encrypted.decrypt_with_keystore(ks) } fn to_binary(&self, keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>, resolver: Option<&dyn runar_serializer::LabelResolver>, _network_id: &String, _profile_id: &String,) -> anyhow::Result<Vec<u8>> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for encryption"))?; let res = resolver.ok_or(anyhow::anyhow!("LabelResolver required for encryption"))?; let encrypted = self.encrypt_with_keystore(ks, res)?; let mut buf = Vec::new(); encrypted.encode(&mut buf)?; Ok(buf) } } };
+    let expanded = quote! { #(#substruct_defs)* #(#proto_substruct_defs)* #encrypted_struct_def impl #struct_name { fn encrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>, resolver: &dyn runar_serializer::LabelResolver) -> anyhow::Result<#encrypted_name> { #encrypt_impl } } impl #encrypted_name { fn decrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>) -> anyhow::Result<#struct_name> { #decrypt_impl } } impl runar_serializer::RunarSerializer for #struct_name { fn from_plain_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { Self::from_encrypted_bytes(bytes, keystore) } fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for decryption"))?; let encrypted = serde_cbor::from_slice::<#encrypted_name>(bytes)?; encrypted.decrypt_with_keystore(ks) } fn to_binary(&self, context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> { let context = context.ok_or(anyhow::anyhow!("SerializationContext required for encryption"))?; let encrypted = self.encrypt_with_keystore(&context.keystore, context.resolver.as_ref())?; serde_cbor::to_vec(&encrypted).map_err(anyhow::Error::from) } } };
 
     TokenStream::from(expanded)
 }
