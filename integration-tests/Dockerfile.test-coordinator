@@ -1,0 +1,38 @@
+# Test Coordinator Dockerfile
+FROM rust:1.75-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy Rust project files
+COPY test-coordinator/ ./
+
+# Build the test coordinator
+RUN cargo build --release
+
+# Create necessary directories
+RUN mkdir -p /app/test-data /app/logs /app/test-results
+
+# Expose port for test coordination
+EXPOSE 8080
+
+# Set environment variables
+ENV RUST_LOG=debug
+ENV TEST_TIMEOUT=30000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Default command
+CMD ["./target/release/test-coordinator"] 

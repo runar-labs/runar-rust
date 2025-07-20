@@ -1,0 +1,22 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rust-transport-test"
+path = "rust-transport-test.rs"
+
+[dependencies]
+runar_common = { path = "../runar-common" }
+runar-keys = { path = "../runar-keys" }
+runar_node = { path = "../runar-node" }
+runar-serializer = { path = "../runar-serializer" }
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] } 

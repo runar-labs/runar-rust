@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # Rust QUIC Transport Service
+  rust-transport:
+    build:
+      context: ../runar-rust
+      dockerfile: integration-tests/Dockerfile.rust-transport
+    container_name: rust-quic-transport
+    ports:
+      - "50001:50001"
+      - "50002:50002"
+    environment:
+      - RUST_LOG=debug
+      - NODE_ID=rust-node-001
+      - BIND_ADDR=0.0.0.0:50001
+      - PEER_PORT=50002
+    volumes:
+      - ./test-data:/app/test-data
+      - ./logs:/app/logs
+    networks:
+      - runar-test-network
+    command: ["cargo", "run", "--bin", "rust-transport-test", "--", "--bind-addr", "0.0.0.0:50001", "--peer-port", "50002"]
+
+  # Swift QUIC Transport Service
+  swift-transport:
+    build:
+      context: ../swift-transporter
+      dockerfile: integration-tests/Dockerfile.swift-transport
+    container_name: swift-quic-transport
+    ports:
+      - "50003:50003"
+      - "50004:50004"
+    environment:
+      - SWIFT_LOG_LEVEL=debug
+      - NODE_ID=swift-node-001
+      - BIND_ADDR=0.0.0.0:50003
+      - PEER_PORT=50004
+    volumes:
+      - ./test-data:/app/test-data
+      - ./logs:/app/logs
+    networks:
+      - runar-test-network
+    command: ["swift", "run", "SwiftTransportTest", "--bind-addr", "0.0.0.0:50003", "--peer-port", "50004"]
+
+  # Test Coordinator Service
+  test-coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-coordinator
+    container_name: test-coordinator
+    depends_on:
+      - rust-transport
+      - swift-transport
+    environment:
+      - RUST_LOG=debug
+      - TEST_TIMEOUT=30000
+    volumes:
+      - ./test-data:/app/test-data
+      - ./logs:/app/logs
+      - ./test-results:/app/test-results
+    networks:
+      - runar-test-network
+    command: ["cargo", "run", "--bin", "test-coordinator"]
+
+  # Network Monitor Service
+  network-monitor:
+    image: nicolaka/netshoot:latest
+    container_name: network-monitor
+    depends_on:
+      - rust-transport
+      - swift-transport
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - runar-test-network
+    command: ["sh", "-c", "while true; do echo '=== Network Status ==='; netstat -tuln; echo '=== QUIC Connections ==='; ss -tuln | grep :5000; sleep 10; done"]
+
+networks:
+  runar-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  test-data:
+  logs:
+  test-results: 
