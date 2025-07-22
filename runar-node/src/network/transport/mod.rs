@@ -19,13 +19,11 @@ use rustls_pki_types::{CertificateDer, ServerName};
 
 // Internal module declarations
 pub mod connection_pool;
-pub mod keystore_proxy;
 pub mod peer_state;
 pub mod quic_transport;
 pub mod stream_pool;
 
 pub use connection_pool::ConnectionPool;
-pub use keystore_proxy::KeystoreReadProxy;
 pub use peer_state::PeerState;
 pub use stream_pool::StreamPool; 
 use crate::routing::TopicPath;

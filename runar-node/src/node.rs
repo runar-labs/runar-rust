@@ -22,13 +22,13 @@ use std::pin::Pin;
 use tokio::time::{sleep, Duration};
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{oneshot, RwLock};
 
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
 use crate::network::transport::{
-    KeystoreReadProxy, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE
+    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
@@ -202,9 +202,9 @@ pub struct Node {
 
     registry_version: Arc<AtomicI64>,
 
-    keys_manager: Arc<RwLock<NodeKeyManager>>,
+    keys_manager: Arc<NodeKeyManager>,
 
-    keystore: Arc<KeystoreReadProxy>,
+    keys_manager_mut: Arc<Mutex<NodeKeyManager>>,
 }
 
 // Implementation for Node
@@ -258,7 +258,8 @@ impl Node {
         let key_manager_state: NodeKeyManagerState = bincode::deserialize(&key_manager_state_bytes)
             .context("Failed to deserialize node keys state")?;
 
-        let keys_manager = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
+        let keys_manager = NodeKeyManager::from_state(key_manager_state.clone(), logger.clone())?;
+        let keys_manager_mut = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
 
         //TODO check if we shuold use the compact ID here instead of just a hex of the key
         let node_public_key = keys_manager.get_node_public_key();
@@ -267,8 +268,9 @@ impl Node {
         logger.info("Successfully loaded existing node credentials.");
         logger.info(format!("Node ID: {node_id}"));
 
-        let keys_manager_locked = Arc::new(tokio::sync::RwLock::new(keys_manager));
-        let keystore_proxy = Arc::new(KeystoreReadProxy::new(keys_manager_locked.clone()));
+        let keys_manager  = Arc::new( keys_manager );
+        let keys_manager_mut = Arc::new(Mutex::new(keys_manager_mut));
+         
 
         // TODO Create a mechanis for this mappint to be config driven
         let label_resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
@@ -302,8 +304,8 @@ impl Node {
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
             label_resolver,
             registry_version: Arc::new(AtomicI64::new(0)),
-            keys_manager: keys_manager_locked,
-            keystore: keystore_proxy
+            keys_manager,
+            keys_manager_mut,
         };
 
         // Register the registry service
@@ -709,8 +711,6 @@ impl Node {
 
                 let cert_config = self
                     .keys_manager
-                    .read()
-                    .await
                     .get_quic_certificate_config()
                     .context("Failed to get QUIC certificates")?;
 
@@ -720,16 +720,13 @@ impl Node {
                     .with_certificates(cert_config.certificate_chain)
                     .with_private_key(cert_config.private_key);
 
-                // Build a read-only keystore proxy for the transport
-                let keystore_proxy = Arc::new(KeystoreReadProxy::new(self.keys_manager.clone()));
-
                 let transport = QuicTransport::new(
                     local_node_info,
                     bind_addr,
                     message_handler,
                     configured_quic_options,
                     self.logger.clone(),
-                    keystore_proxy,
+                    self.keys_manager.clone(),
                     self.label_resolver.clone(),
                 )
                 .map_err(|e| anyhow!("Failed to create QUIC transport: {}", e))?;
@@ -887,7 +884,7 @@ impl Node {
         let local_peer_id = self.node_id.clone();
 
         for payload in &message.payloads {
-            let params = ArcValue::deserialize(&payload.value_bytes, Some(self.keystore.clone()))?;
+            let params = ArcValue::deserialize(&payload.value_bytes, Some(self.keys_manager.clone()))?;
             let params_option = if params.is_null() { None } else { Some(params) };
              
             // Process the request locally using extracted topic and params
@@ -917,7 +914,7 @@ impl Node {
 
                     // Create serialization context for encryption
                     let serialization_context = runar_serializer::traits::SerializationContext::new(
-                        self.keystore.clone(),
+                        self.keys_manager.clone(),
                         self.label_resolver.clone(),
                         network_id.clone(),
                         profile_id.clone(),
@@ -949,7 +946,7 @@ impl Node {
 
                     // Create serialization context for encryption
                     let serialization_context = runar_serializer::traits::SerializationContext::new(
-                        self.keystore.clone(),
+                        self.keys_manager.clone(),
                         self.label_resolver.clone(),
                         network_id.clone(),
                         profile_id.clone(),
@@ -1891,7 +1888,7 @@ impl NodeDelegate for Node {
 #[async_trait]
 impl KeysDelegate for Node {
     async fn ensure_symmetric_key(&self, key_name: &str) -> Result<ArcValue> {
-        let mut keys_manager = self.keys_manager.write().await;
+        let mut keys_manager = self.keys_manager_mut.lock().unwrap();
         let key = keys_manager.ensure_symmetric_key(key_name)?;
         Ok(ArcValue::new_bytes(key))
     }
@@ -1978,7 +1975,7 @@ impl Clone for Node {
             label_resolver: self.label_resolver.clone(),
             registry_version: self.registry_version.clone(),
             keys_manager: self.keys_manager.clone(),
-            keystore: self.keystore.clone(),
+            keys_manager_mut: self.keys_manager_mut.clone(),
         }
     }
 }
