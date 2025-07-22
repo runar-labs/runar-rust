@@ -18,6 +18,7 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 use prost::Message;
 use quinn::{self, Endpoint};
+use serde_cbor;
 use quinn::{ClientConfig, ServerConfig};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
@@ -809,7 +810,7 @@ impl QuicTransportImpl {
                     path: "".to_string(),
                     value_bytes: {
                         let mut bytes = Vec::new();
-                        node_info.encode(&mut bytes).unwrap();
+                        serde_cbor::to_writer(&mut bytes, &node_info).unwrap();
                         bytes
                     },
                     correlation_id: "".to_string(),
@@ -871,7 +872,7 @@ impl QuicTransportImpl {
                 path: "".to_string(),
                 value_bytes: {
                     let mut bytes = Vec::new();
-                    self.local_node.encode(&mut bytes).map_err(|e| {
+                    serde_cbor::to_writer(&mut bytes, &self.local_node).map_err(|e| {
                         NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
                     })?;
                     bytes
@@ -912,7 +913,7 @@ impl QuicTransportImpl {
 
             // Extract the node info from the message
             if let Some(payload) = message.payloads.first() {
-                match NodeInfo::decode(payload.value_bytes.as_slice()) {
+                match serde_cbor::from_slice::<NodeInfo>(payload.value_bytes.as_slice()) {
                     Ok(peer_node_info) => {
                         self.logger.debug(format!(
                             "Received node info from {}: {:?}",
@@ -936,7 +937,7 @@ impl QuicTransportImpl {
                                         path: payload.path.clone(),
                                         value_bytes: {
                                             let mut bytes = Vec::new();
-                                            self.local_node.encode(&mut bytes).map_err(|e| {
+                                            serde_cbor::to_writer(&mut bytes, &self.local_node).map_err(|e| {
                                                 NetworkError::MessageError(format!(
                                                     "Failed to serialize node info: {e}"
                                                 ))
@@ -1663,38 +1664,36 @@ impl QuicTransportImpl {
         self.connection_pool.is_peer_connected(&peer_node_id).await
     }
 
-    async fn send_request(self: &Arc<Self>, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError> {
+    async fn send_request(self: &Arc<Self>, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &str, peer_node_id: &str, context: MessageContext) -> Result<(), NetworkError> {
         let network_id = topic_path.network_id();
 
         let profile_id = compact_id(&context.profile_public_key);
 
+        // Create serialization context for encryption
+        let serialization_context = runar_serializer::traits::SerializationContext::new(
+            self.keystore.clone(),
+            self.label_resolver.clone(),
+            network_id,
+            profile_id,
+        );
+
         let payload_vec: Vec<u8> = if let Some(params) = params {
-            params.serialize(
-                Some(self.keystore.clone()),
-                Some(self.label_resolver.as_ref()),
-                &network_id,
-                &profile_id,
-            )
-            .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
+            params.serialize(Some(&serialization_context))
+                .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
         } else {
-            ArcValue::null().serialize(
-                Some(self.keystore.clone()),
-                Some(self.label_resolver.as_ref()),
-                &network_id,
-                &profile_id,
-            )
-            .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
+            ArcValue::null().serialize(Some(&serialization_context))
+                .map_err(|e| NetworkError::TransportError(format!("Failed to serialize params: {e}")))?
         };
 
         // Create the network message
         let message = NetworkMessage {
             source_node_id: self.node_id.clone(),
-            destination_node_id: peer_node_id.clone(),
+            destination_node_id: peer_node_id.to_string(),
             message_type: MESSAGE_TYPE_REQUEST,
             payloads: vec![NetworkMessagePayloadItem {
                 path: topic_path.as_str().to_string(),
                 value_bytes: payload_vec,
-                correlation_id: request_id.clone(),
+                correlation_id: request_id.to_string(),
                 context: Some(context),
             }],
         };
@@ -1865,7 +1864,7 @@ impl NetworkTransport for QuicTransport {
         self.inner.send_message(message).await
     }
 
-    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError> {
+    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &str, peer_node_id: &str, context: MessageContext) -> Result<(), NetworkError> {
         self.inner.send_request(topic_path, params, request_id, peer_node_id, context).await
     }
 

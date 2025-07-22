@@ -201,7 +201,6 @@ impl RemoteService {
 
             // Clone all necessary fields before the async block
             let peer_node_id = service.peer_node_id.clone();
-            let local_node_id = service.local_node_id.clone();
             let pending_requests = service.pending_requests.clone();
             let network_transport = service.network_transport.clone();
             // no keystore/resolver

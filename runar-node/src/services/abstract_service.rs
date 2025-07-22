@@ -16,14 +16,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::services::LifecycleContext;
-use runar_serializer::traits::{KeyStore, LabelResolver, RunarSerializer};
-use std::sync::Arc;
+use runar_serializer_macros::Plain;
 
 /// Represents a service's current state
 ///
 /// INTENTION: Track the lifecycle stage of a service
 /// for proper initialization and operational management.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Plain)]
 pub enum ServiceState {
     /// Service is created but not initialized
     Created,
@@ -55,50 +54,7 @@ impl fmt::Display for ServiceState {
     }
 }
 
-impl RunarSerializer for ServiceState {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> anyhow::Result<Self> {
-        if bytes.is_empty() {
-            return Ok(ServiceState::Unknown);
-        }
-        let state = match bytes[0] {
-            0 => ServiceState::Created,
-            1 => ServiceState::Initialized,
-            2 => ServiceState::Running,
-            3 => ServiceState::Stopped,
-            4 => ServiceState::Paused,
-            5 => ServiceState::Error,
-            _ => ServiceState::Unknown,
-        };
-        Ok(state)
-    }
 
-    fn from_encrypted_bytes(
-        bytes: &[u8],
-        keystore: Option<&Arc<KeyStore>>,
-    ) -> anyhow::Result<Self> {
-        // No encryption support for simple enum; treat same as plain
-        Self::from_plain_bytes(bytes, keystore)
-    }
-
-    fn to_binary(
-        &self,
-        _keystore: Option<&Arc<KeyStore>>,
-        _resolver: Option<&dyn LabelResolver>,
-        _network_id: &String,
-        _profile_id: &String,
-    ) -> anyhow::Result<Vec<u8>> {
-        let byte = match self {
-            ServiceState::Created => 0u8,
-            ServiceState::Initialized => 1,
-            ServiceState::Running => 2,
-            ServiceState::Stopped => 3,
-            ServiceState::Paused => 4,
-            ServiceState::Error => 5,
-            ServiceState::Unknown => 255,
-        };
-        Ok(vec![byte])
-    }
-}
 
 /// Abstract service interface
 ///

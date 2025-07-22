@@ -19,7 +19,7 @@ use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
 use std::fmt;
-use std::fmt::Debug;
+
 use std::sync::Arc;
 
 /// Context for handling events

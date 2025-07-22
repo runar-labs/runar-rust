@@ -305,7 +305,7 @@ pub trait NetworkTransport: Send + Sync {
     /// Send a message to a remote node
     async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError>;
 
-    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &String, peer_node_id: &String, context: MessageContext) -> Result<(), NetworkError>;
+    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &str, peer_node_id: &str, context: MessageContext) -> Result<(), NetworkError>;
 
     /// connect to a discovered node
     ///

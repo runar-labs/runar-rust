@@ -6,7 +6,7 @@
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_node::ServiceMetadata;
-use runar_serializer::arc_value::AsArcValue;
+
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
 use std::future::Future;
@@ -19,7 +19,7 @@ use tokio::time::timeout;
 use runar_node::services::EventContext;
 use runar_node::NodeDelegate;
 
-use std::collections::HashMap;
+
 
 use runar_macros_common::params;
 
@@ -315,8 +315,8 @@ async fn test_node_events() {
             // Verify the data matches what we published
             // For ArcValue, extract the string value
             if let Some(av) = data {
-                if let Ok(s) = String::from_arc_value(av) {
-                    assert_eq!(s, "test data");
+                if let Ok(s_arc) = av.as_type_ref::<String>() {
+                    assert_eq!(*s_arc, "test data");
                     // Mark that the handler was called with correct data
                     was_called_clone.store(true, Ordering::SeqCst);
                 }
@@ -370,24 +370,14 @@ async fn test_path_params_in_context() {
 
     // Make a request to a path that matches the template
     let av = node
-        .request("test/abc123/items/xyz789", None::<()>)
+        .request("test/abc123/items/xyz789", None::<ArcValue>)
         .await
         .unwrap();
-
-    let mut av_mut = av.clone();
-    let map_arc = av_mut.as_map_ref().expect("expect map");
-    let params_map: HashMap<String, String> = map_arc
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                String::from_arc_value(v.clone()).expect("str val"),
-            )
-        })
-        .collect();
-
+ 
+    let params_map = av.as_typed_map_ref::<String>().expect("expect map");
+     
     // Verify the path parameters were correctly extracted
     // params_map is now HashMap<String, String>
-    assert_eq!(params_map.get("param_1").unwrap(), "abc123");
-    assert_eq!(params_map.get("param_2").unwrap(), "xyz789");
+    assert_eq!(params_map.get("param_1").unwrap().as_ref(), "abc123");
+    assert_eq!(params_map.get("param_2").unwrap().as_ref(), "xyz789");
 }

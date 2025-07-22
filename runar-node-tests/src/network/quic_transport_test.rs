@@ -504,7 +504,7 @@ async fn test_quic_transport_complete_api_validation(
     map.insert("a".to_string(), ArcValue::new_primitive(5));
     map.insert("b".to_string(), ArcValue::new_primitive(3));
     let arc_value = ArcValue::new_map(map);
-    let value_bytes = arc_value.serialize(None, None, &"".to_string(), &"".to_string())?; 
+    let value_bytes = arc_value.serialize(None)?; 
 
     let request_message = NetworkMessage {
         source_node_id: compact_id(&request_sender_info.node_public_key),
@@ -536,7 +536,7 @@ async fn test_quic_transport_complete_api_validation(
     let mut map = std::collections::HashMap::new();
     map.insert("result".to_string(), ArcValue::new_primitive(8));
     let arc_value_result = ArcValue::new_map(map);
-    let value_bytes_result = arc_value_result.serialize(None, None, &"".to_string(), &"".to_string())?;
+    let value_bytes_result = arc_value_result.serialize(None)?;
 
     let response_message = NetworkMessage {
         source_node_id: compact_id(&request_receiver_info.node_public_key),
@@ -578,7 +578,7 @@ async fn test_quic_transport_complete_api_validation(
     );
     map.insert("result".to_string(), ArcValue::new_primitive(8));
     let arc_value_event = ArcValue::new_map(map);
-    let value_bytes_event = arc_value_event.serialize(None, None, &"".to_string(), &"".to_string())?;
+    let value_bytes_event = arc_value_event.serialize(None)?;
 
     let event_message = NetworkMessage {
         source_node_id: compact_id(&sender_info.node_public_key),

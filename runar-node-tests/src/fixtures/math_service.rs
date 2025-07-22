@@ -173,14 +173,14 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling add operation request".to_string());
-        let mut data = params.expect("params are required");
+        let data = params.expect("params are required");
         let map = data
             .as_map_ref()
             .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
 
         let extract = |key: &str| -> Result<f64> {
             match map.get(key) {
-                Some(v) => f64::from_arc_value(v.clone()).map_err(|e| anyhow!(e)),
+                Some(v) => v.as_type_ref::<f64>().map(|arc| *arc).map_err(|e| anyhow!(e)),
                 None => {
                     context.error(format!("Missing parameter '{key}'"));
                     Ok(0.0)
@@ -202,18 +202,18 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling subtract operation request".to_string());
-        let mut data = params.unwrap_or_else(ArcValue::null);
+        let data = params.unwrap_or_else(ArcValue::null);
         let map = data
             .as_map_ref()
             .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
 
         let a = map
             .get("a")
-            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
             .unwrap_or(0.0);
         let b = map
             .get("b")
-            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
             .unwrap_or(0.0);
         let result = self.subtract(a, b, &context);
         context.info(format!("Subtraction successful: {a} - {b} = {result}"));
@@ -227,18 +227,18 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling multiply operation request".to_string());
-        let mut data = params.unwrap_or_else(ArcValue::null);
+        let data = params.unwrap_or_else(ArcValue::null);
         let map = data
             .as_map_ref()
             .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
 
         let a = map
             .get("a")
-            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
             .unwrap_or(0.0);
         let b = map
             .get("b")
-            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
             .unwrap_or(0.0);
         let result = self.multiply(a, b, &context);
         context.info(format!("Multiplication successful: {a} * {b} = {result}"));
@@ -252,18 +252,18 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling divide operation request".to_string());
-        let mut data = params.unwrap_or_else(ArcValue::null);
+        let data = params.unwrap_or_else(ArcValue::null);
         let map = data
             .as_map_ref()
             .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
 
         let a = map
             .get("a")
-            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
             .unwrap_or(0.0);
         let b = map
             .get("b")
-            .map(|v| f64::from_arc_value(v.clone()).unwrap_or(0.0))
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
             .unwrap_or(0.0);
         match self.divide(a, b, &context) {
             Ok(result) => {
@@ -386,35 +386,35 @@ impl AbstractService for MathService {
             ),
             data_schema: Some(FieldSchema {
                 name: "ConfigUpdatePayload".to_string(),
-                data_type: SchemaDataType::OBJECT,
+                data_type: SchemaDataType::Object,
                 description: Some("Payload describing the configuration changes.".to_string()),
                 nullable: Some(false),
                 properties: {
                     let mut props = HashMap::new();
                     props.insert(
                         "updated_setting".to_string(),
-                        FieldSchema {
+                        Box::new(FieldSchema {
                             name: "updated_setting".to_string(),
-                            data_type: SchemaDataType::STRING,
+                            data_type: SchemaDataType::String,
                             description: Some("Name of the setting that was updated.".to_string()),
                             nullable: Some(false),
                             ..FieldSchema::string("updated_setting") // Base with defaults
-                        },
+                        }),
                     );
                     props.insert(
                         "new_value".to_string(),
-                        FieldSchema {
+                        Box::new(FieldSchema {
                             name: "new_value".to_string(),
-                            data_type: SchemaDataType::STRING,
+                            data_type: SchemaDataType::String,
                             description: Some("The new value of the setting.".to_string()),
                             nullable: Some(false),
                             ..FieldSchema::string("new_value") // Base with defaults
-                        },
+                        }),
                     );
-                    props
+                    Some(props)
                 },
-                required: vec!["updated_setting".to_string(), "new_value".to_string()],
-                ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::OBJECT) // Base with defaults
+                required: Some(vec!["updated_setting".to_string(), "new_value".to_string()]),
+                ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::Object) // Base with defaults
             }),
         };
 

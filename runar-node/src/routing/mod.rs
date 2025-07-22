@@ -318,7 +318,7 @@ impl TopicPath {
             let path_without_network = parts[1];
             Self::new(path_without_network, network_id)
         }else {
-            return Err(format!("Invalid path format - missing network_id: {path}"));
+            Err(format!("Invalid path format - missing network_id: {path}"))
         } 
     }
 

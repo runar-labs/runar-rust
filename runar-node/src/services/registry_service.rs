@@ -18,7 +18,7 @@ use crate::routing::TopicPath;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::AbstractService;
 use runar_common::logging::Logger;
-use runar_serializer::{arc_value::AsArcValue, ArcValue};
+use runar_serializer::ArcValue;
 
 /// Registry Info Service - provides information about registered services without holding state
 pub struct RegistryService {

@@ -30,7 +30,7 @@ use crate::fixtures::math_service::MathService;
 #[tokio::test]
 async fn test_remote_action_call() -> Result<()> {
     // Configure logging to ensure test logs are displayed
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     // Set up logger
@@ -84,7 +84,7 @@ async fn test_remote_action_call() -> Result<()> {
     let response_av: ArcValue = node1
         .request("math2/multiply", Some(params! { "a" => 4.0, "b" => 7.0 }))
         .await?;
-    let response: f64 = f64::from_arc_value(response_av)?;
+    let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 28.0);
 
     logger.debug("🔄 Testing dynamic service addition and discovery...");
@@ -103,7 +103,7 @@ async fn test_remote_action_call() -> Result<()> {
     let response_av: ArcValue = node2
         .request("math3/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
         .await?;
-    let response: f64 = f64::from_arc_value(response_av)?;
+    let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 15.0);
     logger.info(format!(
         "✅ Dynamic service call succeeded: 10 + 5 = {response}"
@@ -117,7 +117,7 @@ async fn test_remote_action_call() -> Result<()> {
     let response_av: ArcValue = node2
         .request("math1/subtract", Some(params! { "a" => 20.0, "b" => 8.0 }))
         .await?;
-    let response: f64 = f64::from_arc_value(response_av)?;
+    let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 12.0);
     logger.info(format!("✅ Secure subtract operation: 20 - 8 = {response}"));
 
@@ -126,7 +126,7 @@ async fn test_remote_action_call() -> Result<()> {
     let response_av: ArcValue = node1
         .request("math2/divide", Some(params! { "a" => 15.0, "b" => 3.0 }))
         .await?;
-    let response: f64 = f64::from_arc_value(response_av)?;
+    let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 5.0);
     logger.info(format!("✅ Secure divide operation: 15 / 3 = {response}"));
 

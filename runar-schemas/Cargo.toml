@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 prost = { version = "0.12", default-features = false, features = ["std", "derive"] }
 runar-serializer = { path = "../runar-serializer" }
 runar-serializer-macros = { path = "../runar-serializer-macros" }

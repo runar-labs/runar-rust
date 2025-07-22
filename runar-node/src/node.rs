@@ -247,7 +247,7 @@ impl Node {
         ));
 
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
-        let serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
+        let _serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
         // at this stage the node credentials must already exist and must be in a secure store
         let key_manager_state_bytes = config
@@ -300,7 +300,7 @@ impl Node {
             network_discovery_providers: Arc::new(RwLock::new(None)),
             load_balancer: Arc::new(RwLock::new(RoundRobinLoadBalancer::new())),
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
-            label_resolver: label_resolver,
+            label_resolver,
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager: keys_manager_locked,
             keystore: keystore_proxy
@@ -913,15 +913,18 @@ impl Node {
             {
                 Ok(response) => {
                     self.logger
-                        .info(format!("✅ [Node] Local request completed successfully",));
+                        .info("✅ [Node] Local request completed successfully");
+
+                    // Create serialization context for encryption
+                    let serialization_context = runar_serializer::traits::SerializationContext::new(
+                        self.keystore.clone(),
+                        self.label_resolver.clone(),
+                        network_id.clone(),
+                        profile_id.clone(),
+                    );
 
                     // Serialize the response data
-                    let serialized_data = response.serialize(
-                        Some(self.keystore.clone()),             
-                        Some(self.label_resolver.as_ref()),              
-                        &network_id, 
-                        &profile_id
-                    )?;
+                    let serialized_data = response.serialize(Some(&serialization_context))?;
 
                     self.logger.info(format!(
                         "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
@@ -944,6 +947,14 @@ impl Node {
                     self.logger
                         .error(format!("❌ [Node] Local request failed - Error: {e}",));
 
+                    // Create serialization context for encryption
+                    let serialization_context = runar_serializer::traits::SerializationContext::new(
+                        self.keystore.clone(),
+                        self.label_resolver.clone(),
+                        network_id.clone(),
+                        profile_id.clone(),
+                    );
+
                     // Create a map for the error response
                     let mut error_map = HashMap::new();
                     error_map.insert("error".to_string(), ArcValue::new_primitive(true));
@@ -954,12 +965,7 @@ impl Node {
                     let error_value = ArcValue::new_map(error_map);
 
                     // Serialize the error value
-                    let serialized_error = error_value.serialize(
-                        Some(self.keystore.clone()),             
-                        Some(self.label_resolver.as_ref()),              
-                        &network_id, 
-                        &profile_id
-                    )?;
+                    let serialized_error = error_value.serialize(Some(&serialization_context))?;
 
                     self.logger.debug(format!(
                         "📤 [Node] Sending error response - To: {}, Size: {} bytes",
@@ -1034,8 +1040,7 @@ impl Node {
 
         // Only process if we have an actual correlation ID
         self.logger.debug(format!(
-            "Processing response for topic {}, correlation ID: {}",
-            topic, correlation_id
+            "Processing response for topic {topic}, correlation ID: {correlation_id}"
         ));
 
         // Find any pending response handlers
@@ -1043,8 +1048,7 @@ impl Node {
             self.pending_requests.write().await.remove(correlation_id)
         {
             self.logger.debug(format!(
-                "Found response handler for correlation ID: {}",
-                correlation_id
+                "Found response handler for correlation ID: {correlation_id}"
             ));
 
             // Deserialize the payload data
@@ -1058,19 +1062,16 @@ impl Node {
             // serializer.deserialize_value should produce ArcValue::null().
             match pending_request_sender.send(Ok(payload_data)) {
                 Ok(_) => self.logger.debug(format!(
-                    "Successfully sent response for correlation ID: {}",
-                    correlation_id
+                    "Successfully sent response for correlation ID: {correlation_id}"
                 )),
                 Err(e) => self.logger.error(format!(
-                    "Failed to send response data for correlation ID {}: {:?}",
-                    correlation_id, e
+                    "Failed to send response data for correlation ID {correlation_id}: {e:?}"
                 )),
             } // Closes match pending_request_sender.send(Ok(payload_data))
         } else {
             // This is the else for `if let Some(pending_request_sender)`
             self.logger.warn(format!(
-                "No response handler found for correlation ID: {}",
-                correlation_id
+                "No response handler found for correlation ID: {correlation_id}"
             ));
         } // Closes else block for if let Some
         Ok(())
@@ -1153,6 +1154,7 @@ impl Node {
         Ok(())
     }
 
+    #[allow(clippy::needless_borrow)]
     pub async fn local_request(
         &self,
         topic_path: &TopicPath,
@@ -1202,7 +1204,7 @@ impl Node {
     where
         P: AsArcValue + Send + Sync,
     {
-        let request_payload_av = payload.map(P::as_arc_value);
+        let request_payload_av = payload.map(|p| p.into_arc_value());
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
             Ok(tp) => tp,

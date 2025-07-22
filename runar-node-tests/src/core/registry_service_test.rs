@@ -128,7 +128,7 @@ async fn test_registry_service_get_service_info() {
 
         // Debug log available handlers using logger
         let list_av: ArcValue = node
-            .request("$registry/services/list", None::<()>)
+            .request("$registry/services/list", None::<ArcValue>)
             .await
             .unwrap();
         let mut list_av_clone = list_av.clone();

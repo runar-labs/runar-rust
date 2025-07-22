@@ -3418,6 +3418,7 @@ dependencies = [
  "runar-serializer",
  "runar-serializer-macros",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3558,6 +3559,7 @@ dependencies = [
  "runar-keys",
  "runar-schemas",
  "runar-serializer",
+ "runar-serializer-macros",
  "runar-test-utils",
  "runar_common",
  "runar_macros_common",
@@ -3566,6 +3568,7 @@ dependencies = [
  "rustls-pemfile",
  "rustls-pki-types",
  "serde",
+ "serde_cbor",
  "serde_json",
  "socket2 0.5.10",
  "thiserror 1.0.69",

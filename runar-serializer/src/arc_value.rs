@@ -798,4 +798,15 @@ where
     }
 }
 
+// Make ArcValue implement AsArcValue for direct usage
+impl AsArcValue for ArcValue {
+    fn into_arc_value(self) -> ArcValue {
+        self
+    }
+
+    fn from_arc_value(value: ArcValue) -> Result<Self> {
+        Ok(value)
+    }
+}
+
 
