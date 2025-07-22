@@ -3,6 +3,7 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use prost::Message;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -181,10 +182,6 @@ impl ArcValue {
             } else {
                 serde_cbor::to_vec(&*val).map_err(anyhow::Error::from)
             }
-        });
-        let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
-            let val = erased.as_arc::<T>()?;
-            serde_json::to_value(val.as_ref().clone()).map_err(anyhow::Error::from)
         });
         Self {
             category: ValueCategory::Struct,
@@ -365,11 +362,8 @@ impl ArcValue {
                 return Err(anyhow!("No serialize function available"));
             }?;
 
-            let data = ks.encrypt_with_envelope(
-                &bytes,
-                Some(network_id),
-                vec![profile_public_key.clone()],
-            )?;
+            let data =
+                ks.encrypt_with_envelope(&bytes, Some(network_id), vec![profile_id.clone()])?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);
@@ -408,8 +402,6 @@ impl ArcValue {
     {
         let inner = self.value.as_ref().ok_or_else(|| anyhow!("No value"))?;
 
-        let target_name = std::any::type_name::<T>();
-
         // Fast path – already materialised object stored inside ErasedArc.
         if !inner.is_lazy {
             // if is not lazy.. and is of categoty JSON and the requested type is not JSON..
@@ -428,23 +420,10 @@ impl ArcValue {
             return inner.as_arc::<T>();
         }
 
-        // Use unified lazy data handling
-        self.handle_lazy_data(|payload, type_name| {
-            //handle the case when the serialized type is JSON and the requested type is not JSON
-            if type_name == "serde_json::value::Value" && target_name != type_name {
-                if let Ok(json_value) = serde_cbor::from_slice::<serde_json::value::Value>(payload)
-                {
-                    if target_name.contains("ArcValue") {
-                        let converted_arc = Self::json_to_arc_value(&json_value);
-                        return converted_arc.as_type_ref::<T>();
-                    } else {
-                        let result: T = serde_json::from_value::<T>(json_value)?;
-                        return Ok(Arc::new(result));
-                    }
-                } else {
-                    return Err(anyhow!("Failed to deserialize JSON from CBOR"));
-                }
-            }
+        // Lazy path – must reconstruct from serialized bytes.
+        let lazy = inner.get_lazy_data()?;
+        let mut payload: Vec<u8> =
+            lazy.original_buffer[lazy.start_offset..lazy.end_offset].to_vec();
 
             // Attempt direct deserialisation (primitives, Plain structs, or when
             // the caller asked for the *encrypted* representation itself).

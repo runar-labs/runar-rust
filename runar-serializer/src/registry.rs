@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use serde_json::Value as JsonValue;
 
 use crate::traits::{KeyStore, RunarDecrypt};
 use serde::de::DeserializeOwned;
@@ -52,29 +51,6 @@ where
     );
 }
 
-/// Register a JSON conversion function for type `T`.
-///
-/// This is intended to be invoked automatically by the `Plain` and `Encrypt` derive macros
-/// through a `#[ctor]`-annotated function, so user code never calls it directly.
-pub fn register_to_json<T>()
-where
-    T: 'static + serde::Serialize + serde::de::DeserializeOwned,
-{
-    // Mono-morphise a concrete JSON conversion function and insert it.
-    fn to_json_impl<T>(bytes: &[u8]) -> Result<JsonValue>
-    where
-        T: 'static + serde::Serialize + serde::de::DeserializeOwned,
-    {
-        let value: T = serde_cbor::from_slice(bytes)?;
-        serde_json::to_value(&value).map_err(anyhow::Error::from)
-    }
-
-    let type_name = std::any::type_name::<T>();
-    let func = to_json_impl::<T>;
-
-    JSON_REGISTRY.insert(type_name.to_string(), func);
-}
-
 /// Attempt to decrypt the payload into `T` using the registered decryptor.
 /// Returns an error if no decryptor is found.
 pub fn try_decrypt_into<T>(bytes: &[u8], ks: &Arc<KeyStore>) -> Result<T>
@@ -96,10 +72,4 @@ where
             std::any::type_name::<T>()
         )
     })
-}
-
-/// Get a JSON conversion function for a type name.
-/// Returns None if no converter is registered for the type name.
-pub fn get_json_converter(type_name: &str) -> Option<ToJsonFn> {
-    JSON_REGISTRY.get(type_name).map(|entry| *entry.value())
 }

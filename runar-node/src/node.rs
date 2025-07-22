@@ -29,7 +29,7 @@ use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
 use crate::network::transport::{
     NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT,
-    MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
+    MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;

@@ -2,8 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
-use runar_serializer::{ArcValue, Plain, ValueCategory};
-use serde::{Deserialize, Serialize};
+use runar_serializer::{ArcValue, ValueCategory};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +11,8 @@ use uuid::Uuid;
 use crate::sqlite::{
     DataType, Params as SqlParams, Schema as SqliteSchemaDef, SqlQuery, Value as SqliteValue,
 };
+use prost::Message;
+use runar_serializer_macros::Serializable;
 
 /// Represents a request to insert a single document into a collection.
 ///

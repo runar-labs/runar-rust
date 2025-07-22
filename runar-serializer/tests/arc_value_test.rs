@@ -216,8 +216,8 @@ fn test_new_json() -> Result<()> {
         "object": {"key": "value"}
     });
 
-    let val = ArcValue::new_json(json_val.clone());
-    assert_eq!(val.category, ValueCategory::Json);
+    let mut val = ArcValue::from_json(json_val.clone());
+    assert_eq!(val.category, ValueCategory::Map);
 
     let back_to_json = val.to_json()?;
     assert_eq!(back_to_json, json_val);

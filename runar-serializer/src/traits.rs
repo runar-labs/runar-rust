@@ -145,5 +145,22 @@ pub struct SerializationContext {
     pub keystore: Arc<KeyStore>,
     pub resolver: Arc<dyn LabelResolver>,
     pub network_id: String,
-    pub profile_public_key: Vec<u8>,
+    pub profile_id: String,
+}
+
+impl SerializationContext {
+    /// Create a new serialization context
+    pub fn new(
+        keystore: Arc<KeyStore>,
+        resolver: Arc<dyn LabelResolver>,
+        network_id: String,
+        profile_id: String,
+    ) -> Self {
+        Self {
+            keystore,
+            resolver,
+            network_id,
+            profile_id,
+        }
+    }
 }

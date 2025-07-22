@@ -316,9 +316,14 @@ pub trait NetworkTransport: Send + Sync {
         context: MessageContext,
     ) -> Result<ArcValue, NetworkError>;
 
-    /// Fire-and-forget / broadcast message (pattern B) such as announcements,
-    /// events or heart-beats.
-    async fn publish(&self, message: NetworkMessage) -> Result<(), NetworkError>;
+    async fn send_request(
+        &self,
+        topic_path: &TopicPath,
+        params: Option<ArcValue>,
+        request_id: &str,
+        peer_node_id: &str,
+        context: MessageContext,
+    ) -> Result<(), NetworkError>;
 
     /// connect to a discovered node and perform the NodeInfo handshake.
     async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError>;

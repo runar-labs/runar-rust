@@ -1,9 +1,8 @@
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
-use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::network::transport::{
-    MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
-    MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
+    MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST,
+    MESSAGE_TYPE_RESPONSE,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -602,7 +601,157 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     );
     drop(announcement_msgs);
 
-    logger.info("Announcement messages working correctly");
+    logger.info("✅ [QUIC Transport API] Unidirectional messaging working correctly");
+
+    // ==================================================
+    // STEP 11: Test Bidirectional Messaging (Request-Response)
+    // ==================================================
+
+    logger.info("🔄 [QUIC Transport API] Testing bidirectional request-response messaging...");
+
+    // **FIXED**: Use the established connection for request-response
+    let (
+        request_sender,
+        request_receiver,
+        request_sender_info,
+        request_receiver_info,
+        request_receiver_messages,
+        response_sender_messages,
+    ) = if t2_connected {
+        (
+            &transport2,
+            &transport1,
+            &node2_info,
+            &node1_info,
+            &node1_messages,
+            &node2_messages,
+        )
+    } else {
+        (
+            &transport1,
+            &transport2,
+            &node1_info,
+            &node2_info,
+            &node2_messages,
+            &node1_messages,
+        )
+    };
+
+    // Build payload for request
+    let mut map = std::collections::HashMap::new();
+    map.insert("a".to_string(), ArcValue::new_primitive(5));
+    map.insert("b".to_string(), ArcValue::new_primitive(3));
+    let arc_value = ArcValue::new_map(map);
+    let value_bytes = arc_value.serialize(None)?;
+
+    let request_message = NetworkMessage {
+        source_node_id: compact_id(&request_sender_info.node_public_key),
+        destination_node_id: compact_id(&request_receiver_info.node_public_key),
+        message_type: MESSAGE_TYPE_REQUEST,
+        payloads: vec![NetworkMessagePayloadItem {
+            path: "test:math1/add".to_string(),
+            value_bytes: value_bytes.to_vec(),
+            correlation_id: "math-request-1".to_string(),
+            context: None,
+        }],
+    };
+
+    request_sender.send_message(request_message).await?;
+
+    // Allow message to be processed
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    let receiver_msgs = request_receiver_messages.lock().await;
+    let request_received = receiver_msgs
+        .iter()
+        .any(|msg| msg.message_type == MESSAGE_TYPE_REQUEST);
+    assert!(
+        request_received,
+        "Request receiver should receive request message"
+    );
+    drop(receiver_msgs);
+
+    let mut map = std::collections::HashMap::new();
+    map.insert("result".to_string(), ArcValue::new_primitive(8));
+    let arc_value_result = ArcValue::new_map(map);
+    let value_bytes_result = arc_value_result.serialize(None)?;
+
+    let response_message = NetworkMessage {
+        source_node_id: compact_id(&request_receiver_info.node_public_key),
+        destination_node_id: compact_id(&request_sender_info.node_public_key),
+        message_type: MESSAGE_TYPE_RESPONSE,
+        payloads: vec![NetworkMessagePayloadItem {
+            path: "test:math1/add".to_string(),
+            value_bytes: value_bytes_result.to_vec(),
+            correlation_id: "math-request-1".to_string(),
+            context: None,
+        }],
+    };
+
+    request_receiver.send_message(response_message).await?;
+
+    // Allow message to be processed
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    let sender_msgs = response_sender_messages.lock().await;
+    let response_received = sender_msgs
+        .iter()
+        .any(|msg| msg.message_type == MESSAGE_TYPE_RESPONSE);
+    assert!(
+        response_received,
+        "Response sender should receive response message"
+    );
+    drop(sender_msgs);
+
+    logger.info("✅ [QUIC Transport API] Bidirectional messaging working correctly");
+
+    // ==================================================
+    // STEP 12: Test Unidirectional Events
+    // ==================================================
+
+    logger.info("📡 Testing unidirectional event broadcasting...");
+
+    let mut map = std::collections::HashMap::new();
+    map.insert(
+        "operation".to_string(),
+        ArcValue::new_primitive("add".to_string()),
+    );
+    map.insert("result".to_string(), ArcValue::new_primitive(8));
+    let arc_value_event = ArcValue::new_map(map);
+    let value_bytes_event = arc_value_event.serialize(None)?;
+
+    let event_message = NetworkMessage {
+        source_node_id: compact_id(&sender_info.node_public_key),
+        destination_node_id: compact_id(&receiver_info.node_public_key),
+        message_type: MESSAGE_TYPE_EVENT,
+        payloads: vec![NetworkMessagePayloadItem {
+            path: "test:math1/calculated".to_string(),
+            value_bytes: value_bytes_event.to_vec(),
+            correlation_id: format!("event-{}", uuid::Uuid::new_v4()),
+            context: None,
+        }],
+    };
+
+    sender_transport.send_message(event_message).await?;
+
+    // Allow message to be processed
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    let receiver_msgs = receiver_messages.lock().await;
+    let event_received = receiver_msgs
+        .iter()
+        .any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
+    assert!(event_received, "Receiver should receive event message");
+    drop(receiver_msgs);
+
+    logger.info("✅ [QUIC Transport API] Unidirectional event broadcasting working correctly");
+
+    // ==================================================
+    // STEP 13: Wait and Analyze Results
+    // ==================================================
+
+    println!("⏱️  Waiting for all messages to be processed...");
+    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
 
     // ==================================================
     // STEP 14: Comprehensive Analysis
@@ -623,10 +772,16 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         node1_msgs.len()
     ));
     for msg in node1_msgs.iter() {
-        logger.debug(format!(
-            "    - {type}: from {source}",
-            type=map_message_type_to_string(msg.message_type), source=msg.source_node_id
-        ));
+        println!(
+            "    - {}: {} from {}",
+            msg.message_type, msg.source_node_id, msg.message_type
+        );
+        match msg.message_type {
+            MESSAGE_TYPE_REQUEST => request_count += 1,
+            MESSAGE_TYPE_RESPONSE => response_count += 1,
+            MESSAGE_TYPE_EVENT => event_count += 1,
+            _ => {}
+        }
     }
 
     logger.debug(format!(
@@ -634,10 +789,16 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         node2_msgs.len()
     ));
     for msg in node2_msgs.iter() {
-        logger.debug(format!(
-            "    - {type}: from {source}",
-            type=map_message_type_to_string(msg.message_type), source=msg.source_node_id
-        ));
+        println!(
+            "    - {}: {} from {}",
+            msg.message_type, msg.source_node_id, msg.message_type
+        );
+        match msg.message_type {
+            MESSAGE_TYPE_REQUEST => _request_count_b += 1,
+            MESSAGE_TYPE_RESPONSE => _response_count_b += 1,
+            MESSAGE_TYPE_EVENT => _event_count_b += 1,
+            _ => {}
+        }
     }
 
     // Check connection status

@@ -16,7 +16,6 @@ members = [
     "runar-test-utils",
     "runar-node-tests",
     "runar-schemas",
-    "integration-tests",
 ]
 exclude = [
     "quinn",

@@ -627,8 +627,8 @@ mod tests {
         });
 
         // Convert JSON to ArcValue using from_json
-        let arc_value = ArcValue::new_json(json_service_metadata.clone());
-        assert_eq!(arc_value.category, runar_serializer::ValueCategory::Json);
+        let mut arc_value = ArcValue::from_json(json_service_metadata.clone());
+        assert_eq!(arc_value.category, runar_serializer::ValueCategory::Map);
 
         // Convert ArcValue back to JSON to verify the conversion
         let back_to_json = arc_value.to_json()?;
@@ -695,7 +695,7 @@ mod tests {
             "max_length": 100
         });
 
-        let field_arc_value = ArcValue::new_json(json_field_schema.clone());
+        let mut field_arc_value = ArcValue::from_json(json_field_schema.clone());
         let field_back_to_json = field_arc_value.to_json()?;
         assert_eq!(field_back_to_json, json_field_schema);
 

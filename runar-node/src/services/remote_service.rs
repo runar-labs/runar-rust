@@ -210,8 +210,35 @@ impl RemoteService {
                 let context = MessageContext { profile_public_key };
 
                 // Send the request
-                match network_transport
-                    .request(&action_topic_path, params, &peer_node_id, context)
+                if let Err(e) = network_transport
+                    .send_request(
+                        &action_topic_path,
+                        params,
+                        &request_id,
+                        &peer_node_id,
+                        context,
+                    )
+                    .await
+                {
+                    logger.error(format!(
+                        "❌ [RemoteService] Failed to send request {request_id_ref}: {e}",
+                        request_id_ref = &request_id
+                    ));
+                    // Clean up the pending request
+                    pending_requests.write().await.remove(&request_id);
+                    return Err(anyhow::anyhow!("Failed to send request: {e}"));
+                } else {
+                    logger.info(format!(
+                        "✅ [RemoteService] Request sent successfully - ID: {request_id}, waiting for response..."
+                    ));
+                }
+
+                logger.info(format!(
+                    "⏳ [RemoteService] Waiting for response - ID: {request_id}, Timeout: {request_timeout_ms}ms"
+                ));
+
+                // Wait for the response with a timeout
+                match tokio::time::timeout(std::time::Duration::from_millis(request_timeout_ms), rx)
                     .await
                 {
                     Ok(response) => {
