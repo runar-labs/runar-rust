@@ -42,9 +42,6 @@ pub struct RemoteService {
     /// Logger instance
     logger: Arc<Logger>,
 
-    /// Local node identifier (for sending messages)
-    local_node_id: String,
-
     /// Pending requests awaiting responses
     pending_requests: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
 
@@ -92,7 +89,6 @@ impl RemoteService {
             network_transport: dependencies.network_transport,
             actions: Arc::new(RwLock::new(HashMap::new())),
             logger: dependencies.logger,
-            local_node_id: dependencies.local_node_id,
             pending_requests: dependencies.pending_requests,
             request_timeout_ms: config.request_timeout_ms,
         }
@@ -118,14 +114,14 @@ impl RemoteService {
         let mut remote_services = Vec::new();
 
         for service_metadata in config.capabilities {
-            // Create a topic path using the service name as the path
+            // Create a topic path using the service path (not the name)
             let service_path =
-                match TopicPath::new(&service_metadata.name, &service_metadata.network_id) {
+                match TopicPath::new(&service_metadata.service_path, &service_metadata.network_id) {
                     Ok(path) => path,
                     Err(e) => {
                         dependencies.logger.error(format!(
-                            "Invalid service path '{}': {e}",
-                            service_metadata.name
+                            "Invalid service path '{path}': {e}",
+                            path=service_metadata.service_path
                         ));
                         continue;
                     }
