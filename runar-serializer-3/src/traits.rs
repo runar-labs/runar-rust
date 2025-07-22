@@ -116,11 +116,11 @@ pub trait RunarEncryptable {}
 
 /// Trait for encrypting structs with selective field encryption
 pub trait RunarEncrypt: RunarEncryptable {
-    type Encrypted: RunarDecrypt<Decrypted = Self>;
-
+    type Encrypted: RunarDecrypt<Decrypted = Self> + Serialize;
+ 
     fn encrypt_with_keystore(
         &self,
-        keystore: &KeyStore,
+        keystore: &Arc<KeyStore>,
         resolver: &dyn LabelResolver,
     ) -> Result<Self::Encrypted>;
 }
@@ -129,9 +129,12 @@ pub trait RunarEncrypt: RunarEncryptable {
 pub trait RunarDecrypt {
     type Decrypted: RunarEncrypt<Encrypted = Self>;
 
-    fn decrypt_with_keystore(&self, keystore: &KeyStore) -> Result<Self::Decrypted>;
+    fn decrypt_with_keystore(&self, keystore: &Arc<KeyStore>) -> Result<Self::Decrypted>;
 }
 
+// (identity RunarEncrypt/RunarDecrypt impls for primitives are no longer
+// required – primitives never hit the decrypt registry path because they
+// succeed in the direct `serde_cbor` deserialisation fast-path.)
 // ---------------------------------------------------------------------------
 // Serialization Context for consolidated parameters
 // ---------------------------------------------------------------------------
@@ -161,17 +164,5 @@ impl SerializationContext {
         }
     }
 
-
-}
-
-pub trait RunarSerializer: Sized + 'static + Clone + Debug + Send + Sync {
-    fn from_plain_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self>
-    where
-        Self: Sized;
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self>;
-    
-    /// Serialize to binary format using consolidated context
-    fn to_binary(&self, context: Option<&SerializationContext>) -> Result<Vec<u8>>;
-    
 
 }

@@ -2,60 +2,25 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use runar_serializer::{ArcValue, RunarSerializer, ValueCategory};
+use runar_serializer::{ArcValue, Plain, ValueCategory};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 
 // Simple test struct without protobuf
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
 struct TestStruct {
     pub a: i64,
     pub b: String,
 }
 
-impl RunarSerializer for TestStruct {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-        let decrypted = runar_serializer::encryption::decrypt_bytes(bytes, keystore.ok_or(anyhow::anyhow!("Keystore required"))?)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
 
 // Simple test profile without encryption
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
 struct TestProfile {
     pub id: String,
     pub name: String,
     pub email: String,
 }
-
-
-
-
-
-impl RunarSerializer for TestProfile {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-        let decrypted = runar_serializer::encryption::decrypt_bytes(bytes, keystore.ok_or(anyhow::anyhow!("Keystore required"))?)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-
 
 #[test]
 fn test_primitive_string() -> Result<()> {
@@ -98,7 +63,7 @@ fn test_primitive_bool() -> Result<()> {
 
 #[test]
 fn test_primitive_f64() -> Result<()> {
-    let original = 3.14f64;
+    let original = std::f64::consts::PI;
     let val = ArcValue::new_primitive(original);
     assert_eq!(val.category, ValueCategory::Primitive);
 

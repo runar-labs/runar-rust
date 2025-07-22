@@ -20,7 +20,7 @@ runar_common = { path = "../runar-common", features = ["abstract_service"] }
 runar_node = { path = "../runar-node" }
 axum = { version = "0.7", features = ["macros", "json"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
-runar-serializer = { path = "../runar-serializer" }
+runar-serializer = { path = "../runar-serializer-3" }
 runar-schemas = { path = "../runar-schemas" }
 
 [dev-dependencies]

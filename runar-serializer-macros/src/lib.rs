@@ -14,33 +14,46 @@ fn parse_runar_labels(attr: &Attribute) -> Vec<String> {
     parsed.iter().map(|ident| ident.to_string()).collect()
 }
 
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
+fn label_to_camel_case(s: &str) -> String {
+    s.split(['_', '-'])
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect()
 }
 
-#[proc_macro_derive(Serializable)]
-pub fn derive_serializable(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Plain)]
+pub fn derive_plain(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let name = &input.ident;
+    let struct_name = input.ident.clone();
 
     let expanded = quote! {
-        impl runar_serializer::RunarSerializer for #name {
-            fn from_plain_bytes(bytes: &[u8], _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-                serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-            }
+        impl runar_serializer::traits::RunarEncryptable for #struct_name {}
 
-            fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-                let ks = keystore.ok_or(anyhow::anyhow!("Keystore required"))?;
-                let decrypted = runar_serializer::decrypt_bytes(bytes, ks)?;
-                Self::from_plain_bytes(&decrypted, keystore)
-            }
+        impl runar_serializer::traits::RunarEncrypt for #struct_name {
+            type Encrypted = #struct_name;
 
-            fn to_binary(&self, context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> {
-                serde_cbor::to_vec(self).map_err(anyhow::Error::from)
+            fn encrypt_with_keystore(
+                &self,
+                _keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+                _resolver: &dyn runar_serializer::LabelResolver,
+            ) -> anyhow::Result<Self::Encrypted> {
+                Ok(self.clone())
+            }
+        }
+
+        impl runar_serializer::traits::RunarDecrypt for #struct_name {
+            type Decrypted = #struct_name;
+
+            fn decrypt_with_keystore(
+                &self,
+                _keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+            ) -> anyhow::Result<Self::Decrypted> {
+                Ok(self.clone())
             }
         }
     };
@@ -104,7 +117,6 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
     });
 
     let mut substruct_defs = Vec::new();
-    let mut proto_substruct_defs = Vec::new();
     let mut encrypt_label_match_arms = Vec::new();
     let mut decrypt_label_blocks = Vec::new();
     let mut enc_label_tokens = Vec::new();
@@ -112,9 +124,8 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
     for label in label_order.iter() {
         let fields = &label_groups[label];
-        let cap_label = capitalize(label);
+        let cap_label = label_to_camel_case(label);
         let substruct_ident = format_ident!("{}{}Fields", struct_name, cap_label);
-        let substruct_proto_ident = format_ident!("{}{}FieldsProto", struct_name, cap_label);
         let group_field_ident = format_ident!("{}_encrypted", label);
 
         let sub_fields_tokens: Vec<_> = fields
@@ -122,20 +133,9 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             .map(|(id, ty)| quote! { pub #id: #ty, })
             .collect();
         substruct_defs.push(quote! {
-            #[derive(Clone)]
+            #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
             struct #substruct_ident {
                 #(#sub_fields_tokens)*
-            }
-        });
-
-        let mut sub_fields_proto_tokens = Vec::new();
-        for (fid, fty) in fields.iter() {
-            sub_fields_proto_tokens.push(quote! { pub #fid: #fty, });
-        }
-        proto_substruct_defs.push(quote! {
-            #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
-            pub struct #substruct_proto_ident {
-                #(#sub_fields_proto_tokens)*
             }
         });
 
@@ -146,7 +146,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         let label_lit = syn::LitStr::new(label, proc_macro2::Span::call_site());
         encrypt_label_match_arms.push(quote! {
             #group_field_ident: if resolver.can_resolve(#label_lit) {
-                let group_struct = #substruct_proto_ident { #(#substruct_build_fields)* };
+                let group_struct = #substruct_ident { #(#substruct_build_fields)* };
                 Some(runar_serializer::encryption::encrypt_label_group(#label_lit, &group_struct, keystore.as_ref(), resolver)?)
             } else {
                 None
@@ -159,7 +159,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             .collect();
         decrypt_label_blocks.push(quote! {
             if let Some(ref group) = self.#group_field_ident {
-                if let Ok(tmp) = runar_serializer::encryption::decrypt_label_group::<#substruct_proto_ident>(group, keystore.as_ref()) {
+                if let Ok(tmp) = runar_serializer::encryption::decrypt_label_group::<#substruct_ident>(group, keystore.as_ref()) {
                     #(#assign_fields)*
                 }
             }
@@ -177,21 +177,6 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         pub struct #encrypted_name {
             #(#proto_plaintext_fields)*
             #(#enc_label_tokens)*
-        }
-
-        impl runar_serializer::RunarSerializer for #encrypted_name {
-            fn from_plain_bytes(bytes: &[u8], _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-                serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-            }
-
-            fn from_encrypted_bytes(bytes: &[u8], _keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-                // The encrypted representation is already the serialized form; treat the same as plain.
-                Self::from_plain_bytes(bytes, None)
-            }
-
-            fn to_binary(&self, context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> {
-                serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-            }
         }
     };
 
@@ -222,7 +207,68 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 
     let decrypt_impl = quote! { let mut decrypted = #struct_name { #(#decrypted_plaintext_init)* #(#labeled_field_defaults)* }; #(#decrypt_label_blocks)* Ok(decrypted) };
 
-    let expanded = quote! { #(#substruct_defs)* #(#proto_substruct_defs)* #encrypted_struct_def impl #struct_name { fn encrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>, resolver: &dyn runar_serializer::LabelResolver) -> anyhow::Result<#encrypted_name> { #encrypt_impl } } impl #encrypted_name { fn decrypt_with_keystore(&self, keystore: &std::sync::Arc<runar_serializer::KeyStore>) -> anyhow::Result<#struct_name> { #decrypt_impl } } impl runar_serializer::RunarSerializer for #struct_name { fn from_plain_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { Self::from_encrypted_bytes(bytes, keystore) } fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&std::sync::Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> { let ks = keystore.ok_or(anyhow::anyhow!("KeyStore required for decryption"))?; let encrypted = serde_cbor::from_slice::<#encrypted_name>(bytes)?; encrypted.decrypt_with_keystore(ks) } fn to_binary(&self, context: Option<&runar_serializer::SerializationContext>) -> anyhow::Result<Vec<u8>> { let context = context.ok_or(anyhow::anyhow!("SerializationContext required for encryption"))?; let encrypted = self.encrypt_with_keystore(&context.keystore, context.resolver.as_ref())?; serde_cbor::to_vec(&encrypted).map_err(anyhow::Error::from) } } };
+    let expanded = quote! {
+        #(#substruct_defs)*
+        #encrypted_struct_def
+
+        impl runar_serializer::traits::RunarEncryptable for #struct_name {}
+
+        impl runar_serializer::traits::RunarEncrypt for #struct_name {
+            type Encrypted = #encrypted_name;
+
+            fn encrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+                resolver: &dyn runar_serializer::LabelResolver,
+            ) -> anyhow::Result<Self::Encrypted> {
+                let encrypted = #encrypted_name { #(#encrypt_plaintext_inits)* #(#encrypt_label_match_arms)* };
+                Ok(encrypted)
+            }
+        }
+
+        impl runar_serializer::traits::RunarDecrypt for #encrypted_name {
+            type Decrypted = #struct_name;
+
+            fn decrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+            ) -> anyhow::Result<Self::Decrypted> {
+                let mut decrypted = #struct_name { #(#decrypted_plaintext_init)* #(#labeled_field_defaults)* };
+                #(#decrypt_label_blocks)*
+                Ok(decrypted)
+            }
+        }
+
+        impl #struct_name {
+            fn encrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+                resolver: &dyn runar_serializer::LabelResolver,
+            ) -> anyhow::Result<#encrypted_name> {
+                #encrypt_impl
+            }
+        }
+
+        impl #encrypted_name {
+            fn decrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+            ) -> anyhow::Result<#struct_name> {
+                #decrypt_impl
+            }
+        }
+
+        // Automatically register decryptor for this struct at program start.
+        const _: () = {
+            #[ctor::ctor]
+            fn register_decryptor() {
+                runar_serializer::registry::register_decrypt::<#struct_name, #encrypted_name>();
+            }
+        };
+
+        // Mark encrypted struct as RunarEncryptable so it can appear inside ArcValue without further bounds.
+        impl runar_serializer::traits::RunarEncryptable for #encrypted_name {}
+    };
 
     TokenStream::from(expanded)
 }

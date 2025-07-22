@@ -3425,7 +3425,10 @@ name = "runar-serializer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ctor 0.2.9",
+ "dashmap",
  "log",
+ "once_cell",
  "prost",
  "runar-keys",
  "runar-serializer-macros",
@@ -3440,27 +3443,11 @@ name = "runar-serializer-macros"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ctor 0.2.9",
  "proc-macro2",
  "quote",
  "serde_cbor",
  "syn 2.0.104",
-]
-
-[[package]]
-name = "runar-serializer-old"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.21.7",
- "bincode",
- "log",
- "prost",
- "runar-keys",
- "runar-serializer-macros",
- "runar_common",
- "rustc-hash 1.1.0",
- "serde",
- "serde_json",
 ]
 
 [[package]]

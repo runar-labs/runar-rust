@@ -7,67 +7,56 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use prost::Message;
 use serde_json::Value as JsonValue;
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
+
+use crate::RunarEncrypt;
 
 use super::encryption::decrypt_bytes;
 
-// Simplified serialization format for ArcValue
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum SerializedArcValue {
-    Null,
-    Primitive {
-        type_name: String,
-        data: Vec<u8>,
-    },
-    List {
-        items: Vec<SerializedArcValue>,
-    },
-    Map {
-        entries: HashMap<String, SerializedArcValue>,
-    },
-    Struct {
-        type_name: String,
-        data: Vec<u8>,
-    },
-    Bytes {
-        data: Vec<u8>,
-    },
-    Json {
-        data: JsonValue,
-    },
-}
 use super::erased_arc::ErasedArc;
-use super::traits::{KeyStore, LabelResolver, RunarSerializer, SerializationContext};
+use super::traits::{KeyStore, LabelResolver, SerializationContext};
 
+// Type alias to simplify very complex function pointer type used for serialization functions.
+type SerializeFn = dyn Fn(
+        &ErasedArc,
+        Option<&Arc<KeyStore>>,
+        Option<&dyn LabelResolver>,
+    ) -> Result<Vec<u8>>
+    + Send
+    + Sync;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ValueCategory {
-    Primitive,
-    List,
-    Map,
-    Struct,
-    Null,
-    Bytes,
-    Json,
+    Null = 0,
+    Primitive = 1,
+    List = 2,
+    Map = 3,
+    Struct = 4,
+    Bytes = 5,
+    Json = 6,
+}
+
+impl ValueCategory {
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(ValueCategory::Null),
+            1 => Some(ValueCategory::Primitive),
+            2 => Some(ValueCategory::List),
+            3 => Some(ValueCategory::Map),
+            4 => Some(ValueCategory::Struct),
+            5 => Some(ValueCategory::Bytes),
+            6 => Some(ValueCategory::Json),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct ArcValue {
     pub category: ValueCategory,
     pub value: Option<ErasedArc>,
-    serialize_fn: Option<
-        Arc<
-            dyn Fn(
-                    &ErasedArc,
-                    Option<&Arc<KeyStore>>,
-                    Option<&dyn LabelResolver>,
-                    &String,
-                    &String,
-                ) -> Result<Vec<u8>>
-                + Send
-                + Sync,
-        >,
-    >,
+    serialize_fn: Option<Arc<SerializeFn>>, // Reduced type complexity with alias
 }
 
 impl fmt::Debug for ArcValue {
@@ -109,6 +98,7 @@ pub struct LazyDataWithOffset {
     pub start_offset: usize,
     pub end_offset: usize,
     pub keystore: Option<Arc<KeyStore>>,
+    pub encrypted: bool,
 }
 
 impl fmt::Debug for LazyDataWithOffset {
@@ -136,33 +126,16 @@ impl ArcValue {
         self.category == ValueCategory::Null && self.value.is_none()
     }
 
-    pub fn new_primitive<T: 'static + Clone + Debug + Send + Sync + RunarSerializer>(
+    pub fn new_primitive<T>(
         value: T,
-    ) -> Self {
+    ) -> Self
+    where
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
+    {
         let arc = Arc::new(value);
-        let ser_fn: Arc<
-            dyn Fn(
-                    &ErasedArc,
-                    Option<&Arc<KeyStore>>,
-                    Option<&dyn LabelResolver>,
-                    &String,
-                    &String,
-                ) -> Result<Vec<u8>>
-                + Send
-                + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
             let val = erased.as_arc::<T>()?;
-            let context = if let (Some(ks), Some(res)) = (keystore, resolver) {
-                Some(SerializationContext::new(
-                    Arc::clone(ks),
-                    Arc::new(res.clone_box()),
-                    network_id.clone(),
-                    profile_id.clone(),
-                ))
-            } else {
-                None
-            };
-            T::to_binary(&*val, context.as_ref())
+            serde_cbor::to_vec(&*val).map_err(anyhow::Error::from)
         });
         Self {
             category: ValueCategory::Primitive,
@@ -173,35 +146,9 @@ impl ArcValue {
 
     pub fn new_list(list: Vec<ArcValue>) -> Self {
         let arc = Arc::new(list);
-        let ser_fn: Arc<
-            dyn Fn(
-                    &ErasedArc,
-                    Option<&Arc<KeyStore>>,
-                    Option<&dyn LabelResolver>,
-                    &String,
-                    &String,
-                ) -> Result<Vec<u8>>
-                + Send
-                + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
             let list = erased.as_arc::<Vec<ArcValue>>()?;
-            let context = if let (Some(ks), Some(res)) = (keystore, resolver) {
-                Some(SerializationContext::new(
-                    Arc::clone(ks),
-                    Arc::new(res.clone_box()),
-                    network_id.clone(),
-                    profile_id.clone(),
-                ))
-            } else {
-                None
-            };
-            
-            // Convert to simplified serializable format and use serde_cbor
-            let mut serialized = Vec::with_capacity(list.len());
-            for item in list.iter() {
-                serialized.push(item.to_serializable(context.as_ref())?);
-            }
-            serde_cbor::to_vec(&serialized).map_err(anyhow::Error::from)
+            serde_cbor::to_vec(list.as_ref()).map_err(anyhow::Error::from)
         });
         Self {
             category: ValueCategory::List,
@@ -212,35 +159,9 @@ impl ArcValue {
 
     pub fn new_map(map: HashMap<String, ArcValue>) -> Self {
         let arc = Arc::new(map);
-        let ser_fn: Arc<
-            dyn Fn(
-                    &ErasedArc,
-                    Option<&Arc<KeyStore>>,
-                    Option<&dyn LabelResolver>,
-                    &String,
-                    &String,
-                ) -> Result<Vec<u8>>
-                + Send
-                + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
-            let map = erased.as_arc::<HashMap<String, ArcValue>>()?;
-            let context = if let (Some(ks), Some(res)) = (keystore, resolver) {
-                Some(SerializationContext::new(
-                    Arc::clone(ks),
-                    Arc::new(res.clone_box()),
-                    network_id.clone(),
-                    profile_id.clone(),
-                ))
-            } else {
-                None
-            };
-            
-            // Convert to simplified serializable format and use serde_cbor
-            let mut serialized = HashMap::with_capacity(map.len());
-            for (k, v) in map.iter() {
-                serialized.insert(k.clone(), v.to_serializable(context.as_ref())?);
-            }
-            serde_cbor::to_vec(&serialized).map_err(anyhow::Error::from)
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
+            let map = erased.as_arc::<HashMap<String, ArcValue>>()?;           
+            serde_cbor::to_vec(map.as_ref()).map_err(anyhow::Error::from)
         });
         Self {
             category: ValueCategory::Map,
@@ -249,33 +170,19 @@ impl ArcValue {
         }
     }
 
-    pub fn new_struct<T: 'static + Clone + Debug + Send + Sync + RunarSerializer>(
-        value: T,
-    ) -> Self {
+    pub fn new_struct<T>(value: T) -> Self
+    where
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned + RunarEncrypt,
+    {
         let arc = Arc::new(value);
-        let ser_fn: Arc<
-            dyn Fn(
-                    &ErasedArc,
-                    Option<&Arc<KeyStore>>,
-                    Option<&dyn LabelResolver>,
-                    &String,
-                    &String,
-                ) -> Result<Vec<u8>>
-                + Send
-                + Sync,
-        > = Arc::new(move |erased, keystore, resolver, network_id, profile_id| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, keystore, resolver| {
             let val = erased.as_arc::<T>()?;
-            let context = if let (Some(ks), Some(res)) = (keystore, resolver) {
-                Some(SerializationContext::new(
-                    Arc::clone(ks),
-                    Arc::new(res.clone_box()),
-                    network_id.clone(),
-                    profile_id.clone(),
-                ))
+            if let (Some(ks), Some(res)) = (keystore, resolver) {
+                let result = val.encrypt_with_keystore(ks, res)?;
+                serde_cbor::to_vec(&result).map_err(anyhow::Error::from)
             } else {
-                None
-            };
-            T::to_binary(&*val, context.as_ref())
+                serde_cbor::to_vec(&*val).map_err(anyhow::Error::from)
+            }   
         });
         Self {
             category: ValueCategory::Struct,
@@ -286,17 +193,7 @@ impl ArcValue {
 
     pub fn new_bytes(bytes: Vec<u8>) -> Self {
         let arc = Arc::new(bytes);
-        let ser_fn: Arc<
-            dyn Fn(
-                    &ErasedArc,
-                    Option<&Arc<KeyStore>>,
-                    Option<&dyn LabelResolver>,
-                    &String,
-                    &String,
-                ) -> Result<Vec<u8>>
-                + Send
-                + Sync,
-        > = Arc::new(move |erased, _, _, _, _| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased ,_,_| {
             let bytes = erased.as_arc::<Vec<u8>>()?;
             Ok((*bytes).clone())
         });
@@ -309,17 +206,7 @@ impl ArcValue {
 
     pub fn new_json(json: JsonValue) -> Self {
         let arc = Arc::new(json);
-        let ser_fn: Arc<
-            dyn Fn(
-                    &ErasedArc,
-                    Option<&Arc<KeyStore>>,
-                    Option<&dyn LabelResolver>,
-                    &String,
-                    &String,
-                ) -> Result<Vec<u8>>
-                + Send
-                + Sync,
-        > = Arc::new(move |erased, _, _, _, _| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased,_,_| {
             let json = erased.as_arc::<JsonValue>()?;
             Ok(serde_cbor::to_vec(&*json)?)
         });
@@ -351,27 +238,86 @@ impl ArcValue {
             return Ok(Self::null());
         }
 
-        let type_name_len = bytes[1] as usize;
+        let is_encrypted_byte = bytes[1];
+        let is_encrypted = is_encrypted_byte == 0x01;
+
+        let type_name_len = bytes[2] as usize;
         if type_name_len + 2 > bytes.len() {
             return Err(anyhow!("Invalid type name length"));
         }
-        let type_name_bytes = &bytes[2..2 + type_name_len];
+        let type_name_bytes = &bytes[3..3 + type_name_len];
         let type_name = String::from_utf8(type_name_bytes.to_vec())?;
 
-        let data_start = 2 + type_name_len;
-        let lazy = LazyDataWithOffset {
-            type_name,
-            original_buffer: Arc::from(bytes),
-            start_offset: data_start,
-            end_offset: bytes.len(),
-            keystore,
-        };
+        let data_start = 3 + type_name_len;
+        let data_bytes = &bytes[data_start..];
 
-        Ok(Self {
-            category,
-            value: Some(ErasedArc::from_value(lazy)),
-            serialize_fn: None, // Serialize fn will be set when resolved
-        })
+        match category {
+            ValueCategory::Primitive => {
+                // Eagerly deserialize primitives
+                let bytes = if is_encrypted {
+                    decrypt_bytes(
+                        data_bytes,
+                        keystore
+                            .as_ref()
+                            .ok_or(anyhow!("Keystore required for decryption"))?,
+                    )?
+                } else {
+                    data_bytes.to_vec()
+                };
+
+                // Try to deserialize as different primitive types based on type_name
+                match type_name.as_str() {
+                    "alloc::string::String" => {
+                        let value: String = serde_cbor::from_slice(&bytes)?;
+                        Ok(ArcValue::new_primitive(value))
+                    }
+                    "i64" => {
+                        let value: i64 = serde_cbor::from_slice(&bytes)?;
+                        Ok(ArcValue::new_primitive(value))
+                    }
+                    "f64" => {
+                        let value: f64 = serde_cbor::from_slice(&bytes)?;
+                        Ok(ArcValue::new_primitive(value))
+                    }
+                    "bool" => {
+                        let value: bool = serde_cbor::from_slice(&bytes)?;
+                        Ok(ArcValue::new_primitive(value))
+                    }
+                    _ => Err(anyhow!("Unknown primitive type: {}", type_name)),
+                }
+            }
+            ValueCategory::Bytes => {
+                // Bytes can also be eagerly deserialized
+                let bytes = if is_encrypted {
+                    decrypt_bytes(
+                        data_bytes,
+                        keystore
+                            .as_ref()
+                            .ok_or(anyhow!("Keystore required for decryption"))?,
+                    )?
+                } else {
+                    data_bytes.to_vec()
+                };
+                Ok(ArcValue::new_bytes(bytes))
+            }
+            _ => {
+                // For complex types (List, Map, Struct, Json), create lazy structure
+                let lazy = LazyDataWithOffset {
+                    type_name,
+                    original_buffer: Arc::from(bytes),
+                    start_offset: data_start,
+                    end_offset: bytes.len(),
+                    keystore,
+                    encrypted: is_encrypted
+                };
+
+                Ok(Self {
+                    category,
+                    value: Some(ErasedArc::from_value(lazy)),
+                    serialize_fn: None, // Serialize fn will be set when resolved
+                })
+            }
+        }
     }
 
     /// Serialize using consolidated SerializationContext
@@ -400,88 +346,89 @@ impl ArcValue {
         if type_name_bytes.len() > 255 {
             return Err(anyhow!("Type name too long: {}", type_name));
         }
-        buf.push(type_name_bytes.len() as u8);
-        buf.extend_from_slice(type_name_bytes);
+        
+        if let Some(ctx) = context {
+            let ks = &ctx.keystore;
+            let network_id = &ctx.network_id;
+            let profile_id = &ctx.profile_id;
+            let resolver = &ctx.resolver;
 
-        // Extract parameters from context for existing serialize_fn
-        let (keystore, resolver, network_id, profile_id) = if let Some(ctx) = context {
-            (Some(&ctx.keystore), Some(&*ctx.resolver), &ctx.network_id, &ctx.profile_id)
+            let bytes = if let Some(ser_fn) = &self.serialize_fn {
+                ser_fn(inner,Some( ks ), Some(resolver.as_ref()))
+            } else {
+                return Err(anyhow!("No serialize function available"));
+            }?;
+
+            let data = ks.encrypt_with_envelope(&bytes, Some(network_id), vec![profile_id.clone()])?;
+            let is_encrypted_byte = 0x01;
+            buf.push(is_encrypted_byte);
+            buf.push(type_name_bytes.len() as u8);
+            buf.extend_from_slice(type_name_bytes);
+            buf.extend(data.encode_to_vec());
         } else {
-            (None, None, &String::new(), &String::new())
-        };
-
-        let data = if let Some(ser_fn) = &self.serialize_fn {
-            ser_fn(inner, keystore, resolver, network_id, profile_id)
-        } else {
-            return Err(anyhow!("No serialize function available"));
-        }?;
-
-        // Decide if we need to envelope-encrypt the produced bytes.
-        // 1. If the underlying type is already an Encrypted* wrapper we always encrypt (double layer) as before.
-        // 2. If this is a plain struct *and* the caller provided both keystore & resolver (meaning encryption context)
-        //    we also envelope-encrypt so that application code never sends raw struct bytes over the wire.
-        let should_encrypt_entire_payload = type_name.starts_with("Encrypted")
-            || (self.category == ValueCategory::Struct && keystore.is_some() && resolver.is_some());
-
-        if should_encrypt_entire_payload {
-            let ks = keystore
-                .ok_or(anyhow!("Keystore required for encryption"))?;
-
-            let env =
-                ks.encrypt_with_envelope(&data, Some(network_id), vec![profile_id.clone()])?;
-            buf.extend(env.encode_to_vec());
-        } else {
-            buf.extend(data);
+            let bytes = if let Some(ser_fn) = &self.serialize_fn {
+                ser_fn(inner,None, None)
+            } else {
+                return Err(anyhow!("No serialize function available"));
+            }?;
+            let is_encrypted_byte = 0x00;
+            buf.push(is_encrypted_byte);
+            buf.push(type_name_bytes.len() as u8);
+            buf.extend_from_slice(type_name_bytes);
+            buf.extend(bytes);
         }
 
         Ok(buf)
     }
 
+    // ============================================================
+    // Generic getter with automatic decrypt fallback via registry
+    // ============================================================
     pub fn as_type_ref<T>(&self) -> Result<Arc<T>>
     where
-        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
-        let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
+        let inner = self
+            .value
+            .as_ref()
+            .ok_or_else(|| anyhow!("No value"))?;
 
-        if inner.is_lazy {
-            let lazy = inner.get_lazy_data()?;
-            let bytes = &lazy.original_buffer[lazy.start_offset..lazy.end_offset];
-            let is_encrypted = lazy.type_name.starts_with("Encrypted<")
-                || (self.category == ValueCategory::Struct && lazy.keystore.is_some());
-            let bytes = if is_encrypted {
-                decrypt_bytes(
-                    bytes,
-                    lazy.keystore
-                        .as_ref()
-                        .ok_or(anyhow!("Keystore required for decryption"))?,
-                )?
-            } else {
-                bytes.to_vec()
-            };
-
-            let decoded = if is_encrypted {
-                T::from_encrypted_bytes(&bytes, lazy.keystore.as_ref())?
-            } else {
-                T::from_plain_bytes(&bytes, lazy.keystore.as_ref())?
-            };
-
-            let arc = Arc::new(decoded);
-            // *inner = ErasedArc::new(arc.clone());
-
-            // Set serialize_fn based on category
-            // self.serialize_fn = Some(Arc::new(move |erased, ks, res| {
-            //     let val = erased.as_arc::<T>()?;
-            //     T::to_binary(&*val, ks, res)
-            // }));
-            Ok(arc)
-        } else {
-            inner.as_arc::<T>()
+        // Fast path – already materialised object stored inside ErasedArc.
+        if !inner.is_lazy {
+            return inner.as_arc::<T>();
         }
+
+        // Lazy path – must reconstruct from serialized bytes.
+        let lazy = inner.get_lazy_data()?;
+        let mut payload: Vec<u8> = lazy.original_buffer[lazy.start_offset..lazy.end_offset].to_vec();
+
+        // If the outer envelope is present, unwrap it first.
+        if lazy.encrypted {
+            let ks = lazy
+                .keystore
+                .as_ref()
+                .ok_or_else(|| anyhow!("Keystore required for outer decryption"))?;
+            payload = decrypt_bytes(&payload, ks)?;
+        }
+
+        // Attempt direct deserialisation (primitives, Plain structs, or when
+        // the caller asked for the *encrypted* representation itself).
+        if let Ok(val) = serde_cbor::from_slice::<T>(&payload) {
+            return Ok(Arc::new(val));
+        }
+
+        // Registry fallback – decrypt into the requested plain type.
+        let ks = lazy
+            .keystore
+            .as_ref()
+            .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
+        let plain: T = crate::registry::try_decrypt_into::<T>(&payload, ks)?;
+        Ok(Arc::new(plain))
     }
 
     pub fn as_typed_list_ref<T>(&self) -> Result<Vec<Arc<T>>>
     where
-        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         if self.category != ValueCategory::List {
             return Err(anyhow!("Not a list"));
@@ -509,7 +456,7 @@ impl ArcValue {
 
     pub fn as_typed_map_ref<T>(&self) -> Result<HashMap<String, Arc<T>>>
     where
-        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         if self.category != ValueCategory::Map {
             return Err(anyhow!("Not a map"));
@@ -540,7 +487,7 @@ impl ArcValue {
 
     pub fn as_struct_ref<T>(&self) -> Result<Arc<T>>
     where
-        T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         if self.category != ValueCategory::Struct {
             return Err(anyhow!("Not a struct"));
@@ -552,7 +499,26 @@ impl ArcValue {
         if self.category != ValueCategory::Bytes {
             return Err(anyhow!("Not bytes"));
         }
-        self.as_type_ref::<Vec<u8>>()
+        let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
+        if inner.is_lazy {
+            let lazy = inner.get_lazy_data()?;
+            let bytes = &lazy.original_buffer[lazy.start_offset..lazy.end_offset];
+            let is_encrypted = lazy.type_name.starts_with("Encrypted<")
+                || (self.category == ValueCategory::Struct && lazy.keystore.is_some());
+            let bytes = if is_encrypted {
+                decrypt_bytes(
+                    bytes,
+                    lazy.keystore
+                        .as_ref()
+                        .ok_or(anyhow!("Keystore required for decryption"))?,
+                )?
+            } else {
+                bytes.to_vec()
+            };
+            Ok(Arc::new(bytes))
+        } else {
+            inner.as_arc::<Vec<u8>>()
+        }
     }
 
     pub fn as_json_ref(&self) -> Result<Arc<JsonValue>> {
@@ -627,428 +593,167 @@ impl ArcValue {
         }
     }
 
-    /// Convert to simplified serializable format
-    pub fn to_serializable(&self, context: Option<&SerializationContext>) -> Result<SerializedArcValue> {
-        match self.category {
-            ValueCategory::Null => Ok(SerializedArcValue::Null),
-            ValueCategory::Primitive => {
-                if let Some(ser_fn) = &self.serialize_fn {
-                    let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
-                    let data = ser_fn(
-                        inner,
-                        context.map(|ctx| &ctx.keystore),
-                        context.map(|ctx| ctx.resolver.as_ref()),
-                        &context.map(|ctx| ctx.network_id.clone()).unwrap_or_default(),
-                        &context.map(|ctx| ctx.profile_id.clone()).unwrap_or_default(),
-                    )?;
-                    Ok(SerializedArcValue::Primitive {
-                        type_name: inner.type_name().to_string(),
-                        data,
-                    })
-                } else {
-                    Err(anyhow!("No serialize function available"))
-                }
+    pub fn serialize_serde<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+    
+        let mut state = serializer.serialize_struct("ArcValue", 3)?;
+        
+        // Serialize category as integer using the enum directly
+        let category_int = self.category as u8;
+        state.serialize_field("category", &category_int)?;
+
+        let inner = self
+            .value
+            .as_ref()
+            .ok_or(serde::ser::Error::custom("No value to serialize"))?;
+        let type_name = inner.type_name();
+        state.serialize_field("typename", type_name)?;
+        
+        // Serialize the actual value using the existing serialize_fn
+        if let Some(inner) = &self.value {
+            if let Some(ser_fn) = &self.serialize_fn {
+                let serialized_data = ser_fn(inner,None, None)
+                    .map_err(serde::ser::Error::custom)?;
+                state.serialize_field("value", &serialized_data)?;
+            } else {
+                return Err(serde::ser::Error::custom("No serialize function available"));
             }
-            ValueCategory::List => {
-                let list = self.as_list_ref()?;
-                let mut items = Vec::new();
-                for item in list.iter() {
-                    items.push(item.to_serializable(context)?);
-                }
-                Ok(SerializedArcValue::List { items })
-            }
-            ValueCategory::Map => {
-                let map = self.as_map_ref()?;
-                let mut entries = HashMap::new();
-                for (k, v) in map.iter() {
-                    entries.insert(k.clone(), v.to_serializable(context)?);
-                }
-                Ok(SerializedArcValue::Map { entries })
-            }
-            ValueCategory::Struct => {
-                if let Some(ser_fn) = &self.serialize_fn {
-                    let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
-                    let data = ser_fn(
-                        inner,
-                        context.map(|ctx| &ctx.keystore),
-                        context.map(|ctx| ctx.resolver.as_ref()),
-                        &context.map(|ctx| ctx.network_id.clone()).unwrap_or_default(),
-                        &context.map(|ctx| ctx.profile_id.clone()).unwrap_or_default(),
-                    )?;
-                    Ok(SerializedArcValue::Struct {
-                        type_name: inner.type_name().to_string(),
-                        data,
-                    })
-                } else {
-                    Err(anyhow!("No serialize function available"))
-                }
-            }
-            ValueCategory::Bytes => {
-                let bytes = self.as_bytes_ref()?;
-                Ok(SerializedArcValue::Bytes {
-                    data: bytes.to_vec(),
-                })
-            }
-            ValueCategory::Json => {
-                let json = self.as_json_ref()?;
-                Ok(SerializedArcValue::Json {
-                    data: (*json).clone(),
-                })
-            }
+        } else {
+            // For null values
+            state.serialize_field("value", &serde_json::Value::Null)?;
         }
+        
+        state.end()
     }
 
-    /// Create from simplified serializable format
-    pub fn from_serializable(serialized: SerializedArcValue, keystore: Option<Arc<KeyStore>>) -> Result<Self> {
-        match serialized {
-            SerializedArcValue::Null => Ok(Self::null()),
-            SerializedArcValue::Primitive { type_name, data } => {
-                // For primitives, we can deserialize directly based on type name
-                match type_name.as_str() {
-                    "alloc::string::String" => {
-                        let value = String::from_plain_bytes(&data, keystore.as_ref())?;
-                        Ok(Self::new_primitive(value))
-                    }
-                    "i64" => {
-                        let value = i64::from_plain_bytes(&data, keystore.as_ref())?;
-                        Ok(Self::new_primitive(value))
-                    }
-                    "bool" => {
-                        let value = bool::from_plain_bytes(&data, keystore.as_ref())?;
-                        Ok(Self::new_primitive(value))
-                    }
-                    "f64" => {
-                        let value = f64::from_plain_bytes(&data, keystore.as_ref())?;
-                        Ok(Self::new_primitive(value))
-                    }
-                    // Add more primitive types as needed
-                    _ => Err(anyhow!("Unknown primitive type: {}", type_name)),
-                }
+    pub fn deserialize_serde<'de, D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor, MapAccess};
+        use std::fmt;
+        
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field { Category, Value, TypeName }
+        
+        struct ArcValueVisitor;
+        
+        impl<'de> Visitor<'de> for ArcValueVisitor {
+            type Value = ArcValue;
+            
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct ArcValue")
             }
-            SerializedArcValue::List { items } => {
-                let mut list = Vec::new();
-                for item in items {
-                    list.push(Self::from_serializable(item, keystore.clone())?);
+            
+            fn visit_map<V>(self, mut map: V) -> Result<ArcValue, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut category = None;
+                let mut value = None;
+                let mut type_name: Option<String> = None;                
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Category => {
+                            if category.is_some() {
+                                return Err(de::Error::duplicate_field("category"));
+                            }
+                            let category_int: u8 = map.next_value()?;
+                            category = Some(ValueCategory::from_u8(category_int)
+                                .ok_or_else(|| de::Error::unknown_variant(&category_int.to_string(), &["0", "1", "2", "3", "4", "5", "6"]))?);
+                        }
+                        Field::Value => {
+                            if value.is_some() {
+                                return Err(de::Error::duplicate_field("value"));
+                            }
+                            value = Some(map.next_value()?);
+                        }
+                        Field::TypeName => {
+                            if type_name.is_some() {
+                                return Err(de::Error::duplicate_field("typename"));
+                            }
+                            type_name = Some(map.next_value()?);
+                        }
+                    }
                 }
-                Ok(Self::new_list(list))
-            }
-            SerializedArcValue::Map { entries } => {
-                let mut map = HashMap::new();
-                for (k, v) in entries {
-                    map.insert(k, Self::from_serializable(v, keystore.clone())?);
-                }
-                Ok(Self::new_map(map))
-            }
-            SerializedArcValue::Struct { type_name, data } => {
-                // For structs, we create a lazy ArcValue that contains the type info and raw data
-                // The actual deserialization happens only when as_type_ref<T>() is called
-                let data_len = data.len();
-                let lazy_data = LazyDataWithOffset {
-                    type_name,
-                    original_buffer: Arc::from(data),
-                    start_offset: 0,
-                    end_offset: data_len,
-                    keystore,
-                };
                 
-                let erased_arc = ErasedArc::from_value(lazy_data);
-                
-                Ok(Self {
-                    category: ValueCategory::Struct,
-                    value: Some(erased_arc),
-                    serialize_fn: None, // Will be set when needed
-                })
+                let category = category.ok_or_else(|| de::Error::missing_field("category"))?;
+                let type_name = type_name.ok_or_else(|| de::Error::missing_field("typename"))?;
+
+                match category {
+                    ValueCategory::Null => {
+                        Ok(ArcValue::null())
+                    }
+                    ValueCategory::Primitive => {
+                        // Eagerly deserialize primitives
+                        let value: Vec<u8> = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        // Try to deserialize as different primitive types
+                        if let Ok(s) = serde_cbor::from_slice::<String>(&value) {
+                            Ok(ArcValue::new_primitive(s))
+                        } else if let Ok(i) = serde_cbor::from_slice::<i64>(&value) {
+                            Ok(ArcValue::new_primitive(i))
+                        } else if let Ok(f) = serde_cbor::from_slice::<f64>(&value) {
+                            Ok(ArcValue::new_primitive(f))
+                        } else if let Ok(b) = serde_cbor::from_slice::<bool>(&value) {
+                            Ok(ArcValue::new_primitive(b))
+                        } else {
+                            Err(de::Error::custom("Failed to deserialize primitive value"))
+                        }
+                    }
+                    ValueCategory::Bytes => {
+                        // Bytes can also be eagerly deserialized
+                        let value: Vec<u8> = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        Ok(ArcValue::new_bytes(value))
+                    }
+                    _ => {
+                        // For complex types (List, Map, Struct, Json), create lazy structure
+                        let value: Vec<u8> = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        let value_len = value.len();
+                        // Create LazyDataWithOffset structure for complex types
+                        let lazy_data = LazyDataWithOffset {
+                            type_name: type_name.to_string(),
+                            original_buffer: Arc::from(value),
+                            start_offset: 0,
+                            end_offset: value_len,
+                            keystore: None,
+                            encrypted: false,
+                        };
+                        
+                        Ok(ArcValue {
+                            category,
+                            value: Some(ErasedArc::from_value(lazy_data)),
+                            serialize_fn: None,
+                        })
+                    }
+                }
             }
-            SerializedArcValue::Bytes { data } => {
-                Ok(Self::new_bytes(data))
-            }
-            SerializedArcValue::Json { data } => {
-                Ok(Self::new_json(data))
-            }
         }
+        
+        deserializer.deserialize_struct("ArcValue", &["category", "value", "typename"], ArcValueVisitor)
     }
 }
 
-impl RunarSerializer for String {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
+impl serde::Serialize for ArcValue {
+    fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.serialize_serde(serializer)    
     }
 }
 
-impl RunarSerializer for i64 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
+impl<'de> serde::Deserialize<'de> for ArcValue {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::deserialize_serde(deserializer)
     }
 }
-
-// Implement for other primitives like bool, f64, i32 similarly
-
-impl RunarSerializer for bool {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for f64 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for Vec<u8> {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        Ok(bytes.to_vec())
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        Ok(self.clone())
-    }
-}
-
-impl RunarSerializer for JsonValue {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for Vec<ArcValue> {
-    fn from_plain_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        // Use the new simplified serialization format
-        let serialized: Vec<SerializedArcValue> = serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)?;
-        let mut vec = Vec::with_capacity(serialized.len());
-        for item in serialized {
-            vec.push(ArcValue::from_serializable(item, keystore.cloned())?);
-        }
-        Ok(vec)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        // Convert to simplified serializable format and use serde_cbor
-        let mut serialized = Vec::with_capacity(self.len());
-        for item in self {
-            serialized.push(item.to_serializable(context)?);
-        }
-        serde_cbor::to_vec(&serialized).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for HashMap<String, ArcValue> {
-    fn from_plain_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        // Use the new simplified serialization format
-        let serialized: HashMap<String, SerializedArcValue> = serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)?;
-        let mut map = HashMap::with_capacity(serialized.len());
-        for (k, v) in serialized {
-            map.insert(k, ArcValue::from_serializable(v, keystore.cloned())?);
-        }
-        Ok(map)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        // Convert to simplified serializable format and use serde_cbor
-        let mut serialized = HashMap::with_capacity(self.len());
-        for (k, v) in self {
-            serialized.insert(k.clone(), v.to_serializable(context)?);
-        }
-        serde_cbor::to_vec(&serialized).map_err(anyhow::Error::from)
-    }
-}
-
-// --- BEGIN: CustomFromBytes for all common primitives ---
-
-impl RunarSerializer for i8 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for u8 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for i16 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for u16 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for i32 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for u32 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for u64 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for f32 {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-
-impl RunarSerializer for char {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<KeyStore>>) -> Result<Self> {
-        let ks = keystore.ok_or(anyhow!("Keystore required"))?;
-        let decrypted = decrypt_bytes(bytes, ks)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
-}
-// --- END: RunarSerializer for all common primitives ---
 
 // ---------------------------------------------------------------------------
 // Trait: AsArcValue
@@ -1063,6 +768,7 @@ impl RunarSerializer for char {
 /// once the `#[derive(Serializable)]` macro is applied.  Custom/value-category
 /// specific impls can still be provided to optimise the binary layout (e.g.
 /// primitives vs. structs).
+#[allow(clippy::wrong_self_convention)]
 pub trait AsArcValue: Sized + Clone {
     /// Convert `self` into an [`ArcValue`].
     fn as_arc_value(self) -> ArcValue;
@@ -1070,43 +776,21 @@ pub trait AsArcValue: Sized + Clone {
     /// Attempt to reconstruct `Self` from the provided [`ArcValue`].
     fn from_arc_value(value: ArcValue) -> Result<Self>
     where
-        Self: 'static + Debug + Send + Sync + RunarSerializer,
+        Self: 'static + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         value.as_type_ref::<Self>().map(|arc| (*arc).clone())
     }
 }
 
-// Identity conversion for ArcValue itself
-impl AsArcValue for ArcValue {
-    fn as_arc_value(self) -> ArcValue {
-        self
-    }
-
-    fn from_arc_value(value: ArcValue) -> Result<Self> {
-        Ok(value)
-    }
-}
-
-// Unit type maps to / from a `Null` ArcValue.
-impl AsArcValue for () {
-    fn as_arc_value(self) -> ArcValue {
+impl Default for ArcValue {
+    fn default() -> Self {
         ArcValue::null()
     }
-
-    fn from_arc_value(value: ArcValue) -> Result<Self> {
-        if value.is_null() {
-            Ok(())
-        } else {
-            Err(anyhow!("Expected null ArcValue for unit type"))
-        }
-    }
 }
 
-// Blanket impl leveraging `RunarSerializer` for all other types.  This must be
-// **after** the concrete impls above to avoid overlap.
 impl<T> AsArcValue for T
 where
-    T: 'static + Clone + Debug + Send + Sync + RunarSerializer,
+    T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned + RunarEncrypt,
 {
     fn as_arc_value(self) -> ArcValue {
         ArcValue::new_struct(self)
@@ -1116,3 +800,5 @@ where
         value.as_type_ref::<T>().map(|arc| (*arc).clone())
     }
 }
+
+

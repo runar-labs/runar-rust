@@ -9,13 +9,13 @@ use runar_common::{
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_serializer::{
     traits::{ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, SerializationContext},
-    ArcValue, ValueCategory, RunarSerializer,
+    ArcValue, Plain, ValueCategory,
 };
-use runar_serializer_macros::{Encrypt, Serializable};
+use runar_serializer_macros::Encrypt;
 
 // Test struct with encryption
-#[derive(Clone, PartialEq, Debug, Encrypt)]
-struct TestProfile {
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize, Encrypt)]
+pub struct TestProfile {
     pub id: String,
     #[runar(system)]
     pub name: String,
@@ -28,20 +28,23 @@ struct TestProfile {
 }
 
 // Simple struct for basic serialization test
-#[derive(Clone, PartialEq, Debug, Serializable, serde::Serialize, serde::Deserialize)]
-struct SimpleStruct {
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize, Plain)]
+pub struct SimpleStruct {
     pub a: i64,
     pub b: String,
 }
 
 // Build keystores + resolver for testing
-fn build_test_context() -> Result<(
+
+type TestContext = (
     Arc<dyn EnvelopeCrypto>,
     Arc<dyn EnvelopeCrypto>,
     Arc<dyn runar_serializer::traits::LabelResolver>,
     String,
     String,
-)> {
+);
+
+fn build_test_context() -> Result<TestContext> {
     let logger = Arc::new(Logger::new_root(Component::System, "encryption-test"));
 
     // This mimics a proper setup, where one mobile key store is used to setup the network and nodes
@@ -104,23 +107,8 @@ fn build_test_context() -> Result<(
 }
 
 #[test]
-fn test_simple_serialization() -> Result<()> {
-    let original = SimpleStruct {
-        a: 123,
-        b: "test".to_string(),
-    };
-
-    // Test serialization
-    let bytes = original.to_binary(None)?;
-    let decoded: SimpleStruct = SimpleStruct::from_plain_bytes(&bytes, None)?;
-    assert_eq!(original, decoded);
-
-    Ok(())
-}
-
-#[test]
 fn test_encryption_basic() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id, profile_id) = build_test_context()?;
+    let (mobile_ks, node_ks, resolver, _network_id, _profile_id) = build_test_context()?;
 
     let original = TestProfile {
         id: "123".to_string(),
@@ -129,17 +117,9 @@ fn test_encryption_basic() -> Result<()> {
         email: "test@example.com".to_string(),
         system_metadata: "system_data".to_string(),
     };
-
-    // Create serialization context
-    let context = SerializationContext::new(
-        mobile_ks.clone(),
-        resolver.clone(),
-        network_id.clone(),
-        profile_id.clone(),
-    );
-
+ 
     // Test encryption
-    let encrypted = original.encrypt_with_keystore(&mobile_ks, resolver.as_ref())?;
+    let encrypted: EncryptedTestProfile = original.encrypt_with_keystore(&mobile_ks, resolver.as_ref())?;
     
     // Verify encrypted struct has the expected fields
     assert_eq!(encrypted.id, "123");
@@ -168,58 +148,8 @@ fn test_encryption_basic() -> Result<()> {
 }
 
 #[test]
-fn test_encryption_serialization_roundtrip() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id, profile_id) = build_test_context()?;
-
-    let original = TestProfile {
-        id: "456".to_string(),
-        name: "Another User".to_string(),
-        private: "another_secret".to_string(),
-        email: "another@example.com".to_string(),
-        system_metadata: "more_system_data".to_string(),
-    };
-
-    // Create serialization context
-    let context = SerializationContext::new(
-        mobile_ks.clone(),
-        resolver.clone(),
-        network_id.clone(),
-        profile_id.clone(),
-    );
-
-    // Create ArcValue with struct and serialize with encryption
-    let val = ArcValue::new_struct(original.clone());
-    let bytes = val.serialize(Some(&context))?;
-
-    // Deserialize without keystore (should fail to access encrypted data)
-    let av_no_key = ArcValue::deserialize(&bytes, None)?;
-    assert!(av_no_key.as_struct_ref::<TestProfile>().is_err());
-
-    // Deserialize with node keystore (should work but with limited access)
-    let av_node = ArcValue::deserialize(&bytes, Some(node_ks.clone()))?;
-    let node_profile: Arc<TestProfile> = av_node.as_struct_ref()?;
-    assert_eq!(node_profile.id, original.id);
-    assert_eq!(node_profile.name, original.name);
-    assert!(node_profile.private.is_empty()); // Should be empty for node
-    assert_eq!(node_profile.email, original.email);
-    assert_eq!(node_profile.system_metadata, original.system_metadata); // Node should have access to system_metadata
-
-    // Deserialize with mobile keystore (should have access to user fields but not system_only)
-    let av_mobile = ArcValue::deserialize(&bytes, Some(mobile_ks.clone()))?;
-    let mobile_profile: Arc<TestProfile> = av_mobile.as_struct_ref()?;
-    assert_eq!(mobile_profile.id, original.id);
-    assert_eq!(mobile_profile.name, original.name);
-    assert_eq!(mobile_profile.private, original.private);
-    assert_eq!(mobile_profile.email, original.email);
-    // Mobile doesn't have access to system_only fields
-    assert!(mobile_profile.system_metadata.is_empty());
-
-    Ok(())
-}
-
-#[test]
 fn test_encryption_in_arcvalue() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id, profile_id) = build_test_context()?;
+    let (mobile_ks, node_ks, resolver, network_id, profile_id) = build_test_context()?; // keep network_id & profile_id used below
 
     let profile = TestProfile {
         id: "789".to_string(),
@@ -262,5 +192,18 @@ fn test_encryption_in_arcvalue() -> Result<()> {
     assert_eq!(mobile_profile.email, profile.email);
     assert!(mobile_profile.system_metadata.is_empty()); // Mobile should NOT have access to system_metadata
 
+    let node_profile_encrypted: Arc<EncryptedTestProfile> = de_node.as_struct_ref()?;
+    assert_eq!(node_profile_encrypted.id, profile.id);
+    assert!(node_profile_encrypted.search_encrypted.is_some());
+    assert!(node_profile_encrypted.system_encrypted.is_some());
+    assert!(node_profile_encrypted.system_only_encrypted.is_some());
+    assert!(node_profile_encrypted.user_encrypted.is_some());
+
+    let node_profile = node_profile_encrypted.decrypt_with_keystore(&node_ks)?;
+    assert_eq!(node_profile.id, profile.id);
+    assert_eq!(node_profile.name, profile.name);
+    assert!(node_profile.private.is_empty());
+    assert_eq!(node_profile.email, profile.email);
+    assert_eq!(node_profile.system_metadata, profile.system_metadata); 
     Ok(())
 } 

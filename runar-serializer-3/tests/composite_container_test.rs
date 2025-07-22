@@ -4,30 +4,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use runar_serializer::{ArcValue, RunarSerializer, SerializationContext};
+use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
 
 // Simple test struct without encryption
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
 struct TestProfile {
     pub id: String,
     pub name: String,
     pub email: String,
-}
-
-impl RunarSerializer for TestProfile {
-    fn from_plain_bytes(bytes: &[u8], _keystore: Option<&Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-        serde_cbor::from_slice(bytes).map_err(anyhow::Error::from)
-    }
-
-    fn from_encrypted_bytes(bytes: &[u8], keystore: Option<&Arc<runar_serializer::KeyStore>>) -> anyhow::Result<Self> {
-        let decrypted = runar_serializer::encryption::decrypt_bytes(bytes, keystore.ok_or(anyhow::anyhow!("Keystore required"))?)?;
-        Self::from_plain_bytes(&decrypted, keystore)
-    }
-
-    fn to_binary(&self, _context: Option<&SerializationContext>) -> anyhow::Result<Vec<u8>> {
-        serde_cbor::to_vec(self).map_err(anyhow::Error::from)
-    }
 }
 
 #[test]

@@ -1,3 +1,6 @@
+//! Allow specific clippy lint scopes for this module
+#![allow(clippy::type_id_on_box)]
+
 use std::any::{Any, TypeId};
 use std::fmt;
 use std::sync::Arc;
