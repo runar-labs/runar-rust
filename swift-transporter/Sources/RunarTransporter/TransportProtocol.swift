@@ -22,6 +22,18 @@ public protocol TransportProtocol: AnyObject {
     
     /// Get list of connected peers
     func getConnectedPeers() async -> [String]
+    
+    /// Update connected peers with new node info
+    /// Matches Rust update_peers method
+    func updatePeers(nodeInfo: RunarNodeInfo) async throws
+    
+    /// Get local address where transport is bound
+    /// Matches Rust get_local_address method
+    func getLocalAddress() -> String
+    
+    /// Subscribe to peer node info updates
+    /// Matches Rust subscribe_to_peer_node_info method
+    func subscribeToPeerNodeInfo() -> AsyncStream<RunarNodeInfo>
 }
 
 /// Protocol for handling incoming messages and peer events

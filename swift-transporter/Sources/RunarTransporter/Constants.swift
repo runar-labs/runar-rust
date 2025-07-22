@@ -3,34 +3,38 @@ import Foundation
 // MARK: - Message Type Constants
 
 /// Constants for message types used in the Runar network
+/// Matches the Rust implementation with numeric constants
 public struct MessageTypes {
-    /// Handshake message type
-    public static let NODE_INFO_HANDSHAKE = "NODE_INFO_HANDSHAKE"
+    /// Discovery message type (1)
+    public static let DISCOVERY = "1"
     
-    /// Handshake response message type
-    public static let NODE_INFO_HANDSHAKE_RESPONSE = "NODE_INFO_HANDSHAKE_RESPONSE"
+    /// Heartbeat message type (2)
+    public static let HEARTBEAT = "2"
     
-    /// Node info update message type
-    public static let NODE_INFO_UPDATE = "NODE_INFO_UPDATE"
+    /// Announcement message type (3)
+    public static let ANNOUNCEMENT = "3"
     
-    /// Request message type
-    public static let REQUEST = "Request"
+    /// Handshake message type (4)
+    public static let HANDSHAKE = "4"
     
-    /// Response message type
-    public static let RESPONSE = "Response"
+    /// Request message type (5)
+    public static let REQUEST = "5"
     
-    /// Error message type
-    public static let ERROR = "Error"
+    /// Response message type (6)
+    public static let RESPONSE = "6"
     
-    /// Handshake message type
-    public static let HANDSHAKE = "Handshake"
+    /// Event message type (7)
+    public static let EVENT = "7"
     
-    /// Discovery message type
-    public static let DISCOVERY = "Discovery"
+    /// Error message type (8)
+    public static let ERROR = "8"
     
-    /// Announcement message type
-    public static let ANNOUNCEMENT = "Announcement"
+    /// Node info update message type (9)
+    public static let NODE_INFO_UPDATE = "9"
     
-    /// Heartbeat message type
-    public static let HEARTBEAT = "Heartbeat"
+    /// Node info handshake response message type (10)
+    public static let NODE_INFO_HANDSHAKE_RESPONSE = "10"
+    
+    /// Node info handshake message type (4) - alias for HANDSHAKE
+    public static let NODE_INFO_HANDSHAKE = "4"
 } 

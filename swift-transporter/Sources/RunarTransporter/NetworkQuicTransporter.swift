@@ -15,6 +15,8 @@ public class NetworkQuicTransporter: TransportProtocol, @unchecked Sendable {
     private let options: NetworkQuicTransportOptions
     private let logger: Logger
     private let messageHandler: MessageHandlerProtocol
+    private let keystore: EnvelopeCrypto?
+    private let labelResolver: LabelResolver?
     
     // Network.framework components
     private var listener: NWListener?
@@ -30,6 +32,10 @@ public class NetworkQuicTransporter: TransportProtocol, @unchecked Sendable {
     private var pendingRequests: [String: RequestState] = [:]
     private let requestQueue = DispatchQueue(label: "com.runar.quic.request", qos: .userInitiated)
     
+    // Peer node info subscription
+    private var peerNodeInfoStream: AsyncStream<RunarNodeInfo>.Continuation?
+    private let subscriptionQueue = DispatchQueue(label: "com.runar.quic.subscription", qos: .userInitiated)
+    
     // MARK: - Initialization
     
     public init(
@@ -37,13 +43,17 @@ public class NetworkQuicTransporter: TransportProtocol, @unchecked Sendable {
         bindAddress: String,
         messageHandler: MessageHandlerProtocol,
         options: NetworkQuicTransportOptions,
-        logger: Logger
+        logger: Logger,
+        keystore: EnvelopeCrypto? = nil,
+        labelResolver: LabelResolver? = nil
     ) {
         self.nodeInfo = nodeInfo
         self.bindAddress = bindAddress
         self.messageHandler = messageHandler
         self.options = options
         self.logger = logger
+        self.keystore = keystore
+        self.labelResolver = labelResolver
         
         logger.info("🚀 [NetworkQuicTransporter] Initialized - Node: \(nodeInfo.nodeId), Address: \(bindAddress)")
     }
@@ -153,6 +163,40 @@ public class NetworkQuicTransporter: TransportProtocol, @unchecked Sendable {
     public func getConnectedPeers() async -> [String] {
         connectionQueue.sync {
             Array(connections.keys)
+        }
+    }
+    
+    public func updatePeers(nodeInfo: RunarNodeInfo) async throws {
+        logger.info("🔄 [NetworkQuicTransporter] Updating peers with node info")
+        
+        let peers = await getConnectedPeers()
+        for peerId in peers {
+            let message = RunarNetworkMessage(
+                sourceNodeId: nodeInfo.nodeId,
+                destinationNodeId: peerId,
+                messageType: MessageTypes.NODE_INFO_UPDATE,
+                payloads: [
+                    NetworkMessagePayloadItem(
+                        path: "",
+                        valueBytes: try encodeNodeInfo(nodeInfo),
+                        correlationId: ""
+                    )
+                ]
+            )
+            try await send(message: message)
+            logger.info("📤 [NetworkQuicTransporter] Sent NODE_INFO_UPDATE to peer \(peerId)")
+        }
+    }
+    
+    public func getLocalAddress() -> String {
+        return bindAddress
+    }
+    
+    public func subscribeToPeerNodeInfo() -> AsyncStream<RunarNodeInfo> {
+        return AsyncStream { continuation in
+            subscriptionQueue.async {
+                self.peerNodeInfoStream = continuation
+            }
         }
     }
     
@@ -477,10 +521,20 @@ public class NetworkQuicTransporter: TransportProtocol, @unchecked Sendable {
                     self.messageHandler.peerConnected(peerNodeInfo)
                 }
                 
+                // Send to subscription stream
+                subscriptionQueue.async {
+                    self.peerNodeInfoStream?.yield(peerNodeInfo)
+                }
+                
             } else if message.messageType == MessageTypes.NODE_INFO_HANDSHAKE_RESPONSE {
                 // Notify about new peer
                 messageQueue.async {
                     self.messageHandler.peerConnected(peerNodeInfo)
+                }
+                
+                // Send to subscription stream
+                subscriptionQueue.async {
+                    self.peerNodeInfoStream?.yield(peerNodeInfo)
                 }
             }
             
