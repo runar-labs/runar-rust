@@ -102,19 +102,25 @@ enum ValueCategory: UInt8 {
 
 **Rust Approach**: Uses `serde_cbor` for binary serialization.
 
-**Swift Design**: Use CBOR library for binary serialization
+**Swift Design**: Use SwiftCBOR library for binary serialization
 ```swift
 // CBOR serialization for binary compatibility with Rust
 func serialize(context: SerializationContext?) throws -> Data {
-    // Use CBOR encoding for binary format
+    // Use SwiftCBOR for binary format
     let cborData = try CBOR.encode(value)
     // Apply encryption if context provided
     if let context = context {
         return try encryptData(cborData, context: context)
     }
-    return cborData
+    return Data(cborData)
 }
 ```
+
+**Decision**: Use SwiftCBOR library instead of custom implementation
+- **Library**: SwiftCBOR (valpackett/SwiftCBOR) - 150 stars, most popular
+- **Benefits**: Reduced maintenance, better reliability, full RFC 7049 compliance
+- **Migration**: Replace custom CBORSerialization with SwiftCBOR
+- **Compatibility**: Maintains full Rust compatibility
 
 ### 6. Serialization Context
 
