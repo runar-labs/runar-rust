@@ -1,6 +1,13 @@
 import Foundation
 import SwiftCBOR
 
+/// Plain macro for automatic struct serialization
+/// Usage: @Plain struct MyStruct { ... }
+@attached(member)
+public macro Plain() = #externalMacro(module: "RunarSerializerMacros", type: "PlainMacro")
+
+
+
 /// Error types for serialization operations
 public enum SerializerError: Error {
     case deserializationFailed(String)
@@ -9,6 +16,7 @@ public enum SerializerError: Error {
     case invalidCategory(UInt8)
     case emptyData
     case typeNameTooLong(String)
+    case serializationFailed(String)
 }
 
 /// Categories for different value types, matching Rust implementation
@@ -70,7 +78,7 @@ public class AnyValue {
     public let category: ValueCategory
     
     // Lazy deserialization support
-    private var materializedValue: AnyValueProtocol?
+    private var materializedValue: Any?
     private var lazyData: LazyData?
     
     /// Create a null value
@@ -134,10 +142,63 @@ public class AnyValue {
         return AnyValue(box: box, category: .bytes)
     }
     
+    /// Create a struct value
+    public static func `struct`<T: Codable>(_ value: T) -> AnyValue {
+        let typeName = String(describing: T.self)
+        let serializeFn: (SerializationContext?) throws -> Data = { context in
+            // Use pure CBOR encoding for structs
+            // Convert struct to dictionary and encode as CBOR map
+            let mirror = Mirror(reflecting: value)
+            var dict: [String: Any] = [:]
+            
+            for child in mirror.children {
+                if let label = child.label {
+                    dict[label] = child.value
+                }
+            }
+            
+            return Data(try encodeToCBOR(dict))
+        }
+        
+        let asTypeFn: (Any.Type) -> Any? = { targetType in
+            if targetType == T.self {
+                return value
+            }
+            return nil
+        }
+        
+        let box = AnyValueBox(
+            value: value,
+            typeName: typeName,
+            category: .struct,
+            serializeFn: serializeFn,
+            asTypeFn: asTypeFn
+        )
+        
+        return AnyValue(box: box, category: .struct)
+    }
+    
+    /// Create a lazy value for deferred deserialization
+    public static func lazy(category: ValueCategory, lazyData: LazyData) -> AnyValue {
+        let box = AnyValueBox(
+            value: lazyData,
+            typeName: lazyData.typeName,
+            category: category,
+            serializeFn: { context in
+                // Return the original serialized data
+                return lazyData.data
+            },
+            asTypeFn: { _ in nil } // Will be handled by lazy deserialization
+        )
+        
+        return AnyValue(box: box, category: category, lazyData: lazyData)
+    }
+    
     /// Private initializer
-    private init(box: AnyValueBox, category: ValueCategory) {
+    private init(box: AnyValueBox, category: ValueCategory, lazyData: LazyData? = nil) {
         self.box = box
         self.category = category
+        self.lazyData = lazyData
     }
     
     /// Private initializer for null values
@@ -207,22 +268,92 @@ public class AnyValue {
     }
     
     /// Get the value as a specific type
-    public func asType<T>() throws -> T {
+    public func asType<T>() async throws -> T {
+        // First, try to get from materialized value
         if let value = materializedValue {
-            // TODO: Implement proper type casting
             guard let result = value as? T else {
                 throw SerializerError.typeMismatch("Cannot cast \(typeName) to \(T.self)")
             }
             return result
         }
         
-        // Try to get from box
+        // Try to get from box (for already loaded values)
         if let result = box.asType() as T? {
             return result
         }
         
-        // TODO: Implement lazy deserialization
+        // Try lazy deserialization
+        if let lazyData = lazyData {
+            let value = try await deserializeLazyData(lazyData)
+            materializedValue = value
+            
+            guard let result = value as? T else {
+                throw SerializerError.typeMismatch("Cannot cast deserialized value to \(T.self)")
+            }
+            return result
+        }
+        
         throw SerializerError.typeMismatch("Cannot get value as \(T.self)")
+    }
+    
+    /// Deserialize lazy data into a concrete value
+    private func deserializeLazyData(_ lazyData: LazyData) async throws -> Any {
+        // TODO: Implement decryption if needed
+        if lazyData.encrypted {
+            throw SerializerError.deserializationFailed("Encrypted deserialization not yet implemented")
+        }
+        
+        // For now, handle basic primitive types
+        switch lazyData.typeName {
+        case "String":
+            // Try to decode as CBOR string
+            let cborData = Array(lazyData.data)
+            if let cbor = try? CBOR.decode(cborData) {
+                switch cbor {
+                case .utf8String(let string):
+                    return string
+                default:
+                    throw SerializerError.deserializationFailed("Invalid CBOR format for String")
+                }
+            }
+            throw SerializerError.deserializationFailed("Failed to decode String from CBOR")
+            
+        case "Int":
+            // Try to decode as CBOR integer
+            let cborData = Array(lazyData.data)
+            if let cbor = try? CBOR.decode(cborData) {
+                switch cbor {
+                case .unsignedInt(let int):
+                    return Int(int)
+                case .negativeInt(let int):
+                    return -Int(int) - 1
+                default:
+                    throw SerializerError.deserializationFailed("Invalid CBOR format for Int")
+                }
+            }
+            throw SerializerError.deserializationFailed("Failed to decode Int from CBOR")
+            
+        case "Bool":
+            // Try to decode as CBOR boolean
+            let cborData = Array(lazyData.data)
+            if let cbor = try? CBOR.decode(cborData) {
+                switch cbor {
+                case .boolean(let bool):
+                    return bool
+                default:
+                    throw SerializerError.deserializationFailed("Invalid CBOR format for Bool")
+                }
+            }
+            throw SerializerError.deserializationFailed("Failed to decode Bool from CBOR")
+            
+        default:
+            // Try to find a registered decoder for this type
+            if let decoder = await TypeRegistry.shared.getDecoder(for: lazyData.typeName) {
+                return try decoder(lazyData.data)
+            }
+            
+            throw SerializerError.deserializationFailed("Unsupported type for lazy deserialization: \(lazyData.typeName)")
+        }
     }
     
     /// Deserialize from data
@@ -261,18 +392,73 @@ public class AnyValue {
         let valueData = data[dataStart...]
         let isEncrypted = isEncryptedByte == 0x01
         
-        // TODO: Implement full deserialization for different categories
-        // For now, handle basic cases
+        // Create lazy data for deferred deserialization
+        let lazyData = LazyData(
+            typeName: typeName,
+            data: Data(valueData),
+            keystore: keystore,
+            encrypted: isEncrypted
+        )
+        
+        // For now, handle basic cases that can be immediately deserialized
         switch category {
-        case .primitive:
-            // TODO: Implement primitive deserialization
-            throw SerializerError.deserializationFailed("Primitive deserialization not yet implemented")
         case .bytes:
             // For bytes, the data is already in the correct format
             return AnyValue.bytes(Data(valueData))
         default:
-            throw SerializerError.deserializationFailed("Category \(category) deserialization not yet implemented")
+            // For other categories, create lazy deserialization
+            return AnyValue.lazy(category: category, lazyData: lazyData)
         }
+    }
+}
+
+/// CBOR encoding helper using SwiftCBOR
+private func encodeToCBOR(_ value: Any) throws -> [UInt8] {
+    switch value {
+    case let dict as [String: Any]:
+        // Encode as CBOR map
+        var map: [CBOR: CBOR] = [:]
+        for (key, val) in dict {
+            let keyCBOR = CBOR.utf8String(key)
+            let valueCBOR = try encodeToCBORValue(val)
+            map[keyCBOR] = valueCBOR
+        }
+        return CBOR.map(map).encode()
+        
+    case let array as [Any]:
+        // Encode as CBOR array
+        let arrayCBOR = try array.map { try encodeToCBORValue($0) }
+        return CBOR.array(arrayCBOR).encode()
+        
+    default:
+        return try encodeToCBORValue(value).encode()
+    }
+}
+
+/// Helper to convert Any to CBOR value
+private func encodeToCBORValue(_ value: Any) throws -> CBOR {
+    switch value {
+    case let string as String:
+        return CBOR.utf8String(string)
+        
+    case let int as Int:
+        if int >= 0 {
+            return CBOR.unsignedInt(UInt64(int))
+        } else {
+            return CBOR.negativeInt(UInt64(-int - 1))
+        }
+        
+    case let bool as Bool:
+        return CBOR.boolean(bool)
+        
+    case let double as Double:
+        return CBOR.double(double)
+        
+    case is NSNull:
+        return CBOR.null
+        
+    default:
+        throw SerializerError.serializationFailed("Unsupported type for CBOR encoding: \(type(of: value))")
     }
 }
 
@@ -282,6 +468,47 @@ public struct LazyData {
     let data: Data
     let keystore: KeyStore?
     let encrypted: Bool
+}
+
+/// Protocol for types that can be automatically serialized
+public protocol PlainSerializable: Codable {
+    /// Convert this type to an AnyValue
+    func toAnyValue() -> AnyValue
+    
+    /// Create this type from an AnyValue
+    static func fromAnyValue(_ value: AnyValue) async throws -> Self
+}
+
+/// Default implementation for PlainSerializable
+public extension PlainSerializable {
+    func toAnyValue() -> AnyValue {
+        return AnyValue.struct(self)
+    }
+    
+    static func fromAnyValue(_ value: AnyValue) async throws -> Self {
+        return try await value.asType()
+    }
+}
+
+/// Type registry for custom types
+public actor TypeRegistry {
+    private var decoders: [String: @Sendable (Data) throws -> Any] = [:]
+    
+    /// Register a decoder for a custom type
+    public func register<T: Codable>(_ type: T.Type, decoder: @escaping @Sendable (Data) throws -> T) {
+        let typeName = String(describing: type)
+        decoders[typeName] = { data in
+            return try decoder(data)
+        }
+    }
+    
+    /// Get decoder for a type name
+    public func getDecoder(for typeName: String) -> (@Sendable (Data) throws -> Any)? {
+        return decoders[typeName]
+    }
+    
+    /// Shared instance for global access
+    public static let shared = TypeRegistry()
 }
 
 /// Placeholder types - these will be implemented later

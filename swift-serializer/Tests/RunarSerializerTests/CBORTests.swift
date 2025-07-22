@@ -74,7 +74,7 @@ final class CBORTests: XCTestCase {
         }
     }
     
-    func testAnyValueDeserialization() {
+    func testAnyValueDeserialization() async {
         let testData = "Test bytes".data(using: .utf8)!
         let bytesValue = AnyValue.bytes(testData)
         
@@ -83,7 +83,7 @@ final class CBORTests: XCTestCase {
             let deserialized = try AnyValue.deserialize(serialized)
             
             XCTAssertEqual(deserialized.category, .bytes)
-            let retrievedData: Data = try deserialized.asType()
+            let retrievedData: Data = try await deserialized.asType()
             XCTAssertEqual(retrievedData, testData)
             
         } catch {
@@ -91,7 +91,7 @@ final class CBORTests: XCTestCase {
         }
     }
     
-    static var allTests = [
+    static let allTests = [
         ("testCBORStringEncoding", testCBORStringEncoding),
         ("testCBORIntEncoding", testCBORIntEncoding),
         ("testCBORBoolEncoding", testCBORBoolEncoding),

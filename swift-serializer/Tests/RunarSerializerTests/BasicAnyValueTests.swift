@@ -20,7 +20,7 @@ final class BasicAnyValueTests: XCTestCase {
         }
     }
     
-    func testPrimitiveString() {
+    func testPrimitiveString() async {
         let testString = "Hello, World!"
         let primitiveValue = AnyValue.primitive(testString)
         
@@ -30,7 +30,7 @@ final class BasicAnyValueTests: XCTestCase {
         
         // Test type retrieval
         do {
-            let retrievedString: String = try primitiveValue.asType()
+            let retrievedString: String = try await primitiveValue.asType()
             XCTAssertEqual(retrievedString, testString)
         } catch {
             XCTFail("Failed to get string value: \(error)")
@@ -45,7 +45,7 @@ final class BasicAnyValueTests: XCTestCase {
         }
     }
     
-    func testBytesValue() {
+    func testBytesValue() async {
         let testData = "Test bytes".data(using: .utf8)!
         let bytesValue = AnyValue.bytes(testData)
         
@@ -55,7 +55,7 @@ final class BasicAnyValueTests: XCTestCase {
         
         // Test type retrieval
         do {
-            let retrievedData: Data = try bytesValue.asType()
+            let retrievedData: Data = try await bytesValue.asType()
             XCTAssertEqual(retrievedData, testData)
         } catch {
             XCTFail("Failed to get bytes value: \(error)")
@@ -76,13 +76,13 @@ final class BasicAnyValueTests: XCTestCase {
         }
     }
     
-    func testTypeMismatch() {
+    func testTypeMismatch() async {
         let testString = "Hello"
         let primitiveValue = AnyValue.primitive(testString)
         
         // Try to get as wrong type
         do {
-            let _: Data = try primitiveValue.asType()
+            let _: Data = try await primitiveValue.asType()
             XCTFail("Should have thrown type mismatch error")
         } catch SerializerError.typeMismatch {
             // Expected error
@@ -140,7 +140,7 @@ final class BasicAnyValueTests: XCTestCase {
         XCTAssertNil(ValueCategory.from(255))
     }
     
-    static var allTests = [
+    static let allTests = [
         ("testNullValue", testNullValue),
         ("testPrimitiveString", testPrimitiveString),
         ("testBytesValue", testBytesValue),
