@@ -9,6 +9,6 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 prost = { version = "0.12", default-features = false, features = ["std", "derive"] }
-runar-serializer = { path = "../runar-serializer-3" }
+runar-serializer = { path = "../runar-serializer" }
 runar-serializer-macros = { path = "../runar-serializer-macros" }
 anyhow = { workspace = true } 
