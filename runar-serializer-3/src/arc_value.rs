@@ -1,5 +1,3 @@
-// New file content starting from scratch
-
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -768,10 +766,9 @@ impl<'de> serde::Deserialize<'de> for ArcValue {
 /// once the `#[derive(Serializable)]` macro is applied.  Custom/value-category
 /// specific impls can still be provided to optimise the binary layout (e.g.
 /// primitives vs. structs).
-#[allow(clippy::wrong_self_convention)]
 pub trait AsArcValue: Sized + Clone {
     /// Convert `self` into an [`ArcValue`].
-    fn as_arc_value(self) -> ArcValue;
+    fn into_arc_value(self) -> ArcValue;
 
     /// Attempt to reconstruct `Self` from the provided [`ArcValue`].
     fn from_arc_value(value: ArcValue) -> Result<Self>
@@ -792,7 +789,7 @@ impl<T> AsArcValue for T
 where
     T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned + RunarEncrypt,
 {
-    fn as_arc_value(self) -> ArcValue {
+    fn into_arc_value(self) -> ArcValue {
         ArcValue::new_struct(self)
     }
 
