@@ -17,7 +17,7 @@ use crate::services::abstract_service::AbstractService;
 use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
-use runar_serializer::ArcValue;
+
 // No direct key-store or label resolver – encryption handled by transport layer
 
 /// Represents a service running on a remote node
@@ -42,9 +42,6 @@ pub struct RemoteService {
     /// Logger instance
     logger: Arc<Logger>,
 
-    /// Pending requests awaiting responses
-    pending_requests: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
-
     /// Request timeout in milliseconds
     request_timeout_ms: u64,
 }
@@ -63,8 +60,6 @@ pub struct RemoteServiceConfig {
 pub struct RemoteServiceDependencies {
     pub network_transport: Arc<dyn NetworkTransport>,
     pub local_node_id: String, // ID of the local node
-    pub pending_requests:
-        Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<Result<ArcValue>>>>>,
     pub logger: Arc<Logger>,
 }
 
@@ -89,7 +84,6 @@ impl RemoteService {
             network_transport: dependencies.network_transport,
             actions: Arc::new(RwLock::new(HashMap::new())),
             logger: dependencies.logger,
-            pending_requests: dependencies.pending_requests,
             request_timeout_ms: config.request_timeout_ms,
         }
     }
@@ -142,7 +136,6 @@ impl RemoteService {
                 network_transport: dependencies.network_transport.clone(),
                 // no keystore/resolver
                 local_node_id: dependencies.local_node_id.clone(),
-                pending_requests: dependencies.pending_requests.clone(),
                 logger: dependencies.logger.clone(),
             };
 
@@ -197,10 +190,9 @@ impl RemoteService {
 
             // Clone all necessary fields before the async block
             let peer_node_id = service.peer_node_id.clone();
-            let pending_requests = service.pending_requests.clone();
             let network_transport = service.network_transport.clone();
             // no keystore/resolver
-            let request_timeout_ms = service.request_timeout_ms;
+            let _request_timeout_ms = service.request_timeout_ms;
             let logger = service.logger.clone();
 
             Box::pin(async move {
@@ -211,75 +203,26 @@ impl RemoteService {
                     "🚀 [RemoteService] Starting remote request - Action: {action}, Request ID: {request_id}, Target: {peer_node_id}"
                 ));
 
-                // Create a channel for receiving the response
-                let (tx, rx) = tokio::sync::oneshot::channel();
-
-                // Store the response channel
-                pending_requests
-                    .write()
-                    .await
-                    .insert(request_id.clone(), tx);
-
-                logger.debug(format!(
-                    "📝 [RemoteService] Stored response channel for request ID: {request_id}"
-                ));
-
                 let profile_public_key = request_context.user_profile_public_key;
-           
 
-                let context = MessageContext {
-                    profile_public_key
-                };
+                let context = MessageContext { profile_public_key };
 
                 // Send the request
-                if let Err(e) = network_transport.send_request(&action_topic_path, params, &request_id, &peer_node_id, context).await {
-                    logger.error(format!(
-                        "❌ [RemoteService] Failed to send request {request_id_ref}: {e}", request_id_ref = &request_id
-                    ));
-                    // Clean up the pending request
-                    pending_requests.write().await.remove(&request_id);
-                    return Err(anyhow::anyhow!("Failed to send request: {e}"));
-                } else {
-                    logger.info(format!(
-                        "✅ [RemoteService] Request sent successfully - ID: {request_id}, waiting for response..."
-                    ));
-                }
-
-                logger.info(format!(
-                    "⏳ [RemoteService] Waiting for response - ID: {request_id}, Timeout: {request_timeout_ms}ms"
-                ));
-
-                // Wait for the response with a timeout
-                match tokio::time::timeout(std::time::Duration::from_millis(request_timeout_ms), rx)
+                match network_transport
+                    .request(&action_topic_path, params, &peer_node_id, context)
                     .await
                 {
-                    Ok(Ok(Ok(response))) => {
+                    Ok(response) => {
                         logger.info(format!(
                             "✅ [RemoteService] Response received successfully - ID: {request_id}"
                         ));
                         Ok(response)
                     }
-                    Ok(Ok(Err(e))) => {
+                    Err(e) => {
                         logger.error(format!(
-                            "❌ [RemoteService] Remote service error for request {request_id}: {e}"
+                            "❌ [RemoteService] Remote request failed {request_id}: {e}"
                         ));
                         Err(anyhow::anyhow!("Remote service error: {e}"))
-                    }
-                    Ok(Err(_)) => {
-                        // Clean up the pending request
-                        pending_requests.write().await.remove(&request_id);
-                        logger.error(format!(
-                            "❌ [RemoteService] Response channel closed for request {request_id}",
-                        ));
-                        Err(anyhow::anyhow!("Response channel closed"))
-                    }
-                    Err(_) => {
-                        // Clean up the pending request
-                        pending_requests.write().await.remove(&request_id);
-                        logger.error(format!(
-                            "⏰ [RemoteService] Request timeout after {request_timeout_ms}ms - ID: {request_id}",
-                        ));
-                        Err(anyhow::anyhow!("Request timeout"))
                     }
                 }
             })

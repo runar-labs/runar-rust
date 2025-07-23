@@ -696,17 +696,12 @@ impl Node {
                     .clone()
                     .ok_or_else(|| anyhow!("QUIC options not provided"))?;
 
-                let message_handler = Box::new(move |message: NetworkMessage| {
+                let message_handler: crate::network::transport::MessageHandler = Box::new(move |message: NetworkMessage| {
                     let self_arc = self_arc.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = self_arc.handle_network_message(message).await {
-                            self_arc
-                                .logger
-                                .error(format!("Error handling network message: {e}"));
-                        }
-                    });
-                    // Return success immediately since we've spawned the task
-                    Ok(())
+                    Box::pin(async move {
+                        self_arc.handle_network_message(message).await
+                            .map_err(|e| crate::network::transport::NetworkError::TransportError(e.to_string()))
+                    })
                 });
 
                 let cert_config = self
@@ -720,16 +715,16 @@ impl Node {
                     .with_certificates(cert_config.certificate_chain)
                     .with_private_key(cert_config.private_key);
 
-                let transport = QuicTransport::new(
-                    local_node_info,
-                    bind_addr,
-                    message_handler,
-                    configured_quic_options,
-                    self.logger.clone(),
-                    self.keys_manager.clone(),
-                    self.label_resolver.clone(),
-                )
-                .map_err(|e| anyhow!("Failed to create QUIC transport: {}", e))?;
+                let transport_options = configured_quic_options
+                    .with_local_node_info(local_node_info)
+                    .with_bind_addr(bind_addr)
+                    .with_message_handler(message_handler)
+                    .with_logger(self.logger.clone())
+                    .with_keystore(self.keys_manager.clone())
+                    .with_label_resolver(self.label_resolver.clone());
+
+                let transport = QuicTransport::new(transport_options)
+                    .map_err(|e| anyhow!("Failed to create QUIC transport: {e}"))?;
 
                 self.logger.debug("QUIC transport created");
                 let transport_arc: Arc<dyn NetworkTransport> = Arc::new(transport);
@@ -810,7 +805,7 @@ impl Node {
             }
 
             // Attempt to connect to the discovered peer
-            match transport.connect_peer(peer_info).await {
+            match transport.clone().connect_peer(peer_info).await {
                 Ok(()) => {
                     self.logger
                         .info(format!("Connected to node: {discovered_peer_id}"));
@@ -831,12 +826,12 @@ impl Node {
     }
 
     /// Handle a network message
-    async fn handle_network_message(&self, message: NetworkMessage) -> Result<()> {
+    async fn handle_network_message(&self, message: NetworkMessage) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
             self.logger
                 .warn("Received network message but networking is disabled");
-            return Ok(());
+            return Ok(None);
         }
 
         self.logger
@@ -844,7 +839,14 @@ impl Node {
 
         // Match on message type
         match message.message_type {
-            MESSAGE_TYPE_REQUEST => self.handle_network_request(message).await,
+            MESSAGE_TYPE_REQUEST => {
+                let response = self.handle_network_request(message).await?;
+                if let Some(response_message) = response {
+                    Ok(Some(response_message))
+                } else {
+                    Ok(None)
+                }
+            }
             MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
             MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
             // "Discovery" => self.handle_network_discovery(message).await,
@@ -853,18 +855,18 @@ impl Node {
                     "Unknown message type: {message_type}",
                     message_type = message.message_type
                 ));
-                Ok(())
+                Ok(None)
             }
         }
     }
 
     /// Handle a network request
-    async fn handle_network_request(&self, message: NetworkMessage) -> Result<()> {
+    async fn handle_network_request(&self, message: NetworkMessage) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
             self.logger
                 .warn("Received network request but networking is disabled");
-            return Ok(());
+            return Ok(None);
         }
 
         self.logger.debug(format!(
@@ -983,13 +985,6 @@ impl Node {
             }
         }
 
-        // Check if networking is still enabled before trying to send response
-        if !self.supports_networking {
-            self.logger
-                .warn("⚠️ [Node] Can't send response - networking is disabled");
-            return Ok(());
-        }
-
         // Create response message - destination is the original source
         let response_message = NetworkMessage {
             source_node_id: local_peer_id, // Source is now self
@@ -998,37 +993,18 @@ impl Node {
             payloads: responses,
         };
 
-        // Send the response via transport
-        let transport_guard = self.network_transport.read().await;
-        if let Some(transport) = transport_guard.as_ref() {
-            if let Err(e) = transport.send_message(response_message).await {
-                self.logger
-                    .error(format!(
-                        "❌ [Node] Failed to send response message - To: {}, Correlation: {}, Error: {}", 
-                        message.source_node_id, message.payloads[0].correlation_id, e
-                    ));
-                // Consider returning error or just logging?
-            } else {
-                self.logger.info(format!(
-                    "✅ [Node] Response sent successfully - To: {}, Correlation: {}",
-                    message.source_node_id, message.payloads[0].correlation_id
-                ));
-            }
-        } else {
-            self.logger
-                .warn("⚠️ [Node] No network transport available to send response");
-        }
+        // Transport will handle writing the response on the incoming stream; just return it.
 
-        Ok(())
+        Ok(Some(response_message))
     }
 
     /// Handle a network response
-    async fn handle_network_response(&self, message: NetworkMessage) -> Result<()> {
+    async fn handle_network_response(&self, message: NetworkMessage) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
             self.logger
                 .warn("Received network response but networking is disabled");
-            return Ok(());
+            return Ok(None);
         }
 
         let payload_item = &message.payloads[0];
@@ -1071,16 +1047,16 @@ impl Node {
                 "No response handler found for correlation ID: {correlation_id}"
             ));
         } // Closes else block for if let Some
-        Ok(())
+        Ok(None)
     } // Closes async fn handle_network_response
 
     /// Handle a network event
-    async fn handle_network_event(&self, message: NetworkMessage) -> Result<()> {
+    async fn handle_network_event(&self, message: NetworkMessage) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
             self.logger
                 .warn("Received network event but networking is disabled");
-            return Ok(());
+            return Ok(None);
         }
 
         self.logger
@@ -1148,7 +1124,7 @@ impl Node {
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 
     #[allow(clippy::needless_borrow)]
@@ -1413,7 +1389,7 @@ impl Node {
         let rs_dependencies = RemoteServiceDependencies {
             network_transport: transport_arc,
             local_node_id: local_peer_id,
-            pending_requests: self.pending_requests.clone(),
+            // pending_requests: self.pending_requests.clone(),
             logger: self.logger.clone(),
         };
 
@@ -1741,6 +1717,7 @@ impl Node {
 
             self.logger.info("starting network transport layer...");
             transport
+                .clone()
                 .start()
                 .await
                 .map_err(|e| anyhow!("Failed to initialize transport: {e}"))?;

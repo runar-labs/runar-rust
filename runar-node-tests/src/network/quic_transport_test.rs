@@ -1,6 +1,7 @@
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
-use runar_node::network::transport::{MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_EVENT};
+use runar_node::config::{LogLevel, LoggingConfig};
+use runar_node::network::transport::{MessageContext, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_ANNOUNCEMENT};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -10,12 +11,14 @@ use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
-    NetworkError, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
+    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, MessageHandler,
 };
 use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
 use runar_serializer::ArcValue;
+use runar_node::routing::TopicPath;
 use std::collections::HashMap;
+use std::time::Duration;
 
 // Dummy crypto that performs no-op encryption for tests
 struct NoCrypto;
@@ -50,23 +53,21 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
 /// 4. Connection lifecycle management
 /// 5. Certificate-based security
 #[tokio::test]
-async fn test_quic_transport_complete_api_validation(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("🔥 DEBUG: Test function started");
+async fn test_quic_transport_complete_api_validation_inner() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
+
     let logger = Arc::new(Logger::new_root(
-        Component::Network,
-        "quic_transport_api_test",
+        Component::Custom("quic_test"),
+        "",
     ));
 
-    println!("🔥 DEBUG: Logger created");
-    logger.info("🧪 [QUIC Transport API] Starting comprehensive API validation test");
-    println!("🔥 DEBUG: First logger message sent");
-
+    logger.debug("QUIC Test function started");
+ 
     // ==================================================
-    // STEP 1: Initialize Certificate Infrastructure (Same as keys_integration.rs)
+    // STEP 1: Initialize Certificate Infrastructure
     // ==================================================
-
-    println!("🔑 [QUIC Transport API] Setting up certificate infrastructure...");
 
     // Create ONE mobile key manager that acts as the CA for both nodes
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
@@ -78,25 +79,11 @@ async fn test_quic_transport_complete_api_validation(
 
     let _user_ca_public_key = mobile_ca.get_ca_public_key();
 
-    println!("✅ [QUIC Transport API] Created mobile CA with user root and CA keys");
-
-    // Log CA certificate subject and issuer
-    println!(
-        "CA Certificate Subject: {}",
-        mobile_ca.get_ca_certificate().subject()
-    );
-    println!(
-        "CA Certificate Issuer: {}",
-        mobile_ca.get_ca_certificate().issuer()
-    );
-
-    // let _user_profile_public_key =   mobile_ca.derive_user_profile_key("user")?;
+    logger.debug("Created mobile CA with user root and CA keys");
 
     // ==================================================
-    // STEP 2: Setup Node 1 Certificate (Following keys_integration.rs pattern)
-    // ==================================================
-
-    println!("🔐 [QUIC Transport API] Setting up Node 1 certificate...");
+    // STEP 2: Setup Node 1 Certificate
+    // ================================================== 
 
     // Create node 1 key manager and generate setup token
     let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
@@ -113,26 +100,11 @@ async fn test_quic_transport_complete_api_validation(
     node_key_manager_1
         .install_certificate(cert_1)
         .expect("Failed to install certificate for node 1");
-
-    println!("✅ [QUIC Transport API] Node 1 certificate setup completed");
-
-    // Log Node 1 certificate subject and issuer
-    if let Some(info) = node_key_manager_1.get_certificate_info() {
-        println!(
-            "Node 1 Certificate Subject: {}",
-            info.node_certificate_subject
-        );
-        println!(
-            "Node 1 Certificate Issuer: {}",
-            info.node_certificate_issuer
-        );
-    }
+ 
 
     // ==================================================
-    // STEP 3: Setup Node 2 Certificate (Same pattern)
-    // ==================================================
-
-    logger.info("🔐 [QUIC Transport API] Setting up Node 2 certificate...");
+    // STEP 3: Setup Node 2 Certificate
+    // ================================================== 
 
     // Create node 2 key manager and generate setup token
     let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
@@ -149,26 +121,12 @@ async fn test_quic_transport_complete_api_validation(
     node_key_manager_2
         .install_certificate(cert_2)
         .expect("Failed to install certificate for node 2");
-
-    logger.info("✅ [QUIC Transport API] Node 2 certificate setup completed");
-
-    // Log Node 2 certificate subject and issuer
-    if let Some(info) = node_key_manager_2.get_certificate_info() {
-        println!(
-            "Node 2 Certificate Subject: {}",
-            info.node_certificate_subject
-        );
-        println!(
-            "Node 2 Certificate Issuer: {}",
-            info.node_certificate_issuer
-        );
-    }
-
+ 
     // ==================================================
-    // STEP 4: Get QUIC Certificates (Now nodes have valid certificates)
+    // STEP 4: Get QUIC Certificates
     // ==================================================
 
-    println!("🛡️  [QUIC Transport API] Retrieving QUIC certificates...");
+    logger.debug("🛡️ Retrieving QUIC certificates...");
 
     // NOW both nodes can get QUIC certificates because they have valid certificates
     let node1_cert_config = node_key_manager_1.get_quic_certificate_config()?;
@@ -176,15 +134,12 @@ async fn test_quic_transport_complete_api_validation(
 
     // Get the CA certificate to use as root certificate for validation
     let ca_certificate = mobile_ca.get_ca_certificate().to_rustls_certificate();
-
-    println!("✅ [QUIC Transport API] Retrieved QUIC certificates for both nodes");
+ 
 
     // ==================================================
     // STEP 5: Get Real Node Public Keys for Proper Peer Identification
     // ==================================================
-
-    println!("🔑 [QUIC Transport API] Getting real node public keys...");
-
+ 
     // Get the actual node public keys (not hardcoded values)
     let node1_public_key_bytes = node_key_manager_1.get_node_public_key();
     let node1_id = compact_id(&node1_public_key_bytes);
@@ -192,14 +147,12 @@ async fn test_quic_transport_complete_api_validation(
     let node2_public_key_bytes = node_key_manager_2.get_node_public_key();
     let node2_id = compact_id(&node2_public_key_bytes);
 
-    println!(
-        "✅ [QUIC Transport API] Node 1 public key: {}",
-        compact_id(&node1_public_key_bytes)
-    );
-    println!(
-        "✅ [QUIC Transport API] Node 2 public key: {}",
-        compact_id(&node2_public_key_bytes)
-    );
+    logger.debug(format!(
+        "Node 1 node1_id: {node1_id}" 
+    ));
+    logger.debug(format!(
+        "Node 2 node2_id: {node2_id}"
+    ));
 
     // ==================================================
     // STEP 6: Create Message Tracking for Validation
@@ -214,47 +167,97 @@ async fn test_quic_transport_complete_api_validation(
     let logger_1 = logger.clone();
     let logger_2 = logger.clone();
 
-    // Message handlers that track all received messages
-    let node1_handler = Box::new(move |message: NetworkMessage| -> Result<(), NetworkError> {
+    // Clone node IDs before moving into closures
+    let node1_id_clone = node1_id.clone();
+    let node2_id_clone = node2_id.clone();
+
+    // Message handlers that track all received messages and return responses
+    let node1_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
         let logger = logger_1.clone();
         let messages = node1_messages_clone.clone();
         let msg_type = message.message_type.clone();
         let source = message.source_node_id.clone();
+        let node1_id = node1_id_clone.clone();
 
-        logger.debug(format!(
-            "📥 [Transport1] Received message: Type={}, From={}, Payloads={}",
-            msg_type,
-            source,
-            message.payloads.len()
+        logger.info(format!(
+            "📥 [Transport1] Received message: Type={type}, From={source}, Payloads={payloads}",
+            type=msg_type,
+            source=source,
+            payloads=message.payloads.len()
         ));
 
-        tokio::spawn(async move {
-            let mut msgs = messages.lock().await;
-            msgs.push(message);
-        });
-
-        Ok(())
+        let messages_clone = messages.clone();
+        Box::pin(async move {
+            let mut msgs = messages_clone.lock().await;
+            msgs.push(message.clone());
+            
+            // Return response for requests
+            if message.message_type == MESSAGE_TYPE_REQUEST {
+                logger.info("📤 [Transport1] Sending response for request");
+                let response = NetworkMessage {
+                    source_node_id: node1_id.clone(),
+                    destination_node_id: message.source_node_id,
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payloads: message.payloads.iter().map(|payload| {
+                        // Create a proper ArcValue response
+                        let response_value = ArcValue::new_primitive(format!("Response from Node1: {}", payload.path));
+                        NetworkMessagePayloadItem {
+                            path: payload.path.clone(),
+                            value_bytes: response_value.serialize(None).unwrap_or_default(),
+                            correlation_id: payload.correlation_id.clone(),
+                            context: payload.context.clone(),
+                        }
+                    }).collect(),
+                };
+                Ok(Some(response))
+            } else {
+                Ok(None)
+            }
+        })
     });
 
-    let node2_handler = Box::new(move |message: NetworkMessage| -> Result<(), NetworkError> {
+    let node2_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
         let logger = logger_2.clone();
         let messages = node2_messages_clone.clone();
         let msg_type = message.message_type.clone();
         let source = message.source_node_id.clone();
+        let node2_id = node2_id_clone.clone();
 
-        logger.debug(format!(
+        logger.info(format!(
             "📥 [Transport2] Received message: Type={}, From={}, Payloads={}",
             msg_type,
             source,
             message.payloads.len()
         ));
 
-        tokio::spawn(async move {
-            let mut msgs = messages.lock().await;
-            msgs.push(message);
-        });
-
-        Ok(())
+        let messages_clone = messages.clone();
+        Box::pin(async move {
+            let mut msgs = messages_clone.lock().await;
+            msgs.push(message.clone());
+            
+            // Return response for requests
+            if message.message_type == MESSAGE_TYPE_REQUEST {
+                logger.info("📤 [Transport2] Sending response for request");
+                let response = NetworkMessage {
+                    source_node_id: node2_id.clone(),
+                    destination_node_id: message.source_node_id,
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payloads: message.payloads.iter().map(|payload| {
+                        // Create a proper ArcValue response
+                        let response_value = ArcValue::new_primitive(format!("Response from Node2: {}", payload.path));
+                        NetworkMessagePayloadItem {
+                            path: payload.path.clone(),
+                            value_bytes: response_value.serialize(None).unwrap_or_default(),
+                            correlation_id: payload.correlation_id.clone(),
+                            context: payload.context.clone(),
+                        }
+                    }).collect(),
+                };
+                Ok(Some(response))
+            } else {
+                Ok(None)
+            }
+        })
     });
 
     // ==================================================
@@ -346,95 +349,197 @@ async fn test_quic_transport_complete_api_validation(
             label_mappings: HashMap::new(),
         }));
 
-    let transport1 = QuicTransport::new(
-        node1_info.clone(),
-        "127.0.0.1:50069".parse::<SocketAddr>()?,
-        node1_handler,
-        transport1_options,
-        logger.clone(),
-        Arc::new(NoCrypto),
-        empty_resolver.clone(),
-    )?;
+    let transport1_options = transport1_options
+        .with_local_node_info(node1_info.clone())
+        .with_bind_addr("127.0.0.1:50069".parse::<SocketAddr>()?)
+        .with_message_handler(node1_handler)
+        .with_logger(logger.clone())
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(empty_resolver.clone());
 
-    let transport2 = QuicTransport::new(
-        node2_info.clone(),
-        "127.0.0.1:50044".parse::<SocketAddr>()?,
-        node2_handler,
-        transport2_options,
-        logger.clone(),
-        Arc::new(NoCrypto),
-        empty_resolver.clone(),
-    )?;
+    let transport1 = Arc::new(QuicTransport::new(transport1_options)?);
 
-    println!("✅ [QUIC Transport API] Created QuicTransport instances with proper certificates");
+    let transport2_options = transport2_options
+        .with_local_node_info(node2_info.clone())
+        .with_bind_addr("127.0.0.1:50044".parse::<SocketAddr>()?)
+        .with_message_handler(node2_handler)
+        .with_logger(logger.clone())
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(empty_resolver.clone());
+
+    let transport2 = Arc::new(QuicTransport::new(transport2_options)?);
 
     // ==================================================
     // STEP 8: Start Transport Services
     // ==================================================
 
-    println!("🚀 [QUIC Transport API] Starting transport services...");
-    transport1.start().await?;
-    transport2.start().await?;
+    logger.debug("Starting transport services...");
+    transport1.clone().start().await?;
+    transport2.clone().start().await?;
 
-    println!("✅ [QUIC Transport API] Started both transport services");
+    logger.debug("Started both transport services");
 
     // Allow transport services to initialize
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // ==================================================
     // STEP 9: Test Transport API - Connection Management
     // ==================================================
 
-    println!("🔄 [QUIC Transport API] Testing connection management...");
+    logger.debug("Connecting peers...");
 
     // Test connection establishment
     let peer_info_1 = PeerInfo::new(node1_public_key_bytes.clone(), node1_info.addresses.clone());
     let peer_info_2 = PeerInfo::new(node2_public_key_bytes.clone(), node2_info.addresses.clone());
 
-    // **FIXED**: Use lexicographic ordering to determine which node should initiate
-    // Only the node with the smaller peer ID should initiate the connection
-    let should_node1_initiate = node1_id < node2_id;
-    let should_node2_initiate = node2_id < node1_id;
+    // Force both transports to connect to each other for bidirectional communication
+    logger.debug(" Establishing bidirectional connections...");
+    transport1.clone().connect_peer(peer_info_2).await?;
+    transport2.clone().connect_peer(peer_info_1).await?;
 
-    if should_node1_initiate {
-        println!("🔗 [QUIC Transport API] Node1 initiating connection (smaller peer ID)...");
-        transport1.connect_peer(peer_info_2).await?;
-    } else if should_node2_initiate {
-        println!("🔗 [QUIC Transport API] Node2 initiating connection (smaller peer ID)...");
-        transport2.connect_peer(peer_info_1).await?;
-    }
-
-    println!("⏱️  [QUIC Transport API] Waiting for connections to establish...");
+    logger.debug("⏱️  Waiting for connections to establish...");
     // Allow connections to establish
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    // tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Verify connections
     let t1_connected = transport1.is_connected(node2_id.clone()).await;
     let t2_connected = transport2.is_connected(node1_id.clone()).await;
-    println!(
-        "🔗 [QUIC Transport API] Connection status: T1→T2={t1_connected}, T2→T1={t2_connected}"
-    );
+    logger.debug(format!(
+        " Connection status: T1→T2={t1_connected}, T2→T1={t2_connected}"
+    ));
 
-    // **FIXED**: Only one direction should be connected due to lexicographic ordering
+    // Both directions should be connected
     assert!(
-        t1_connected || t2_connected,
-        "At least one connection should be established"
+        t1_connected && t2_connected,
+        "Both connections should be established for bidirectional communication"
     );
 
-    println!("✅ [QUIC Transport API] Connection management working correctly");
+    logger.debug("Connection management working correctly");
 
     // ==================================================
-    // STEP 10: Test Unidirectional Messaging (Handshakes, Announcements)
+    // STEP 10: Test Handshake
     // ==================================================
 
-    logger.info("🔄 [QUIC Transport API] Testing unidirectional messaging...");
+    logger.info(" Testing handshake..."); 
 
-    // **FIXED**: Send message from the node that has a connection established
-    let (sender_transport, sender_info, receiver_info, receiver_messages) = if t1_connected {
-        (&transport1, &node1_info, &node2_info, &node2_messages)
-    } else {
-        (&transport2, &node2_info, &node1_info, &node1_messages)
+    let node1_msgs = match tokio::time::timeout(Duration::from_secs(2), node1_messages.lock()).await {
+        Ok(guard) => guard,
+        Err(_) => {
+            logger.error("Timeout acquiring lock on node1_messages");
+            panic!("Timeout acquiring lock on node1_messages");
+        }
     };
+    logger.info(" Acquired lock on node1_messages, about to lock node2_messages...");
+
+    let node2_msgs = match tokio::time::timeout(Duration::from_secs(2), node2_messages.lock()).await {
+        Ok(guard) => guard,
+        Err(_) => {
+            logger.error("Timeout acquiring lock on node2_messages");
+            panic!("Timeout acquiring lock on node2_messages");
+        }
+    }; 
+
+    logger.info(format!("📊 Handshake check - Node1 messages: {}", node1_msgs.len()));
+    for (i, msg) in node1_msgs.iter().enumerate() {
+        logger.info(format!("📊 Node1 message {}: type={}", i, msg.message_type));
+    }
+    
+    logger.info(format!("📊 Handshake check - Node2 messages: {}", node2_msgs.len()));
+    for (i, msg) in node2_msgs.iter().enumerate() {
+        logger.info(format!("📊 Node2 message {}: type={}", i, msg.message_type));
+    }
+
+    let handshake_received = node1_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_HANDSHAKE) ||
+                            node2_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_HANDSHAKE);
+    
+    logger.info(format!("📊 Handshake received: {}", handshake_received));
+    
+    assert!(handshake_received, "Handshake messages should be exchanged");
+    drop(node1_msgs);
+    drop(node2_msgs);
+
+    logger.info("Handshake working correctly");
+
+    // ==================================================
+    // STEP 11: Test Request-Response Messaging
+    // ==================================================
+
+    // Determine which transport to use for sending (both should be connected now)
+    let (sender_transport, sender_info, receiver_info) = (transport1.clone(), &node1_info, &node2_info);
+
+    // Create a test request
+    let test_data = ArcValue::new_primitive("test_value".to_string());
+
+    let context = MessageContext {
+        profile_public_key: sender_info.node_public_key.clone(),
+    };
+ 
+    logger.info(format!("sending request from Sender: {}, to Receiver: {}", 
+                       compact_id(&sender_info.node_public_key), 
+                       compact_id(&receiver_info.node_public_key)));
+
+    // Check message counts before sending
+    let node1_count_before = node1_messages.lock().await.len();
+    let node2_count_before = node2_messages.lock().await.len();
+    logger.info(format!("📊 Message counts before request: Node1={node1_count_before}, Node2={node2_count_before}"));
+
+    // Send request using the transport's request method with timeout
+    let response = 
+        sender_transport.request(
+            &TopicPath::new("test:api1/get", "test")?,
+            Some(test_data),
+            &compact_id(&receiver_info.node_public_key),
+            context,
+        ).await?;
+
+    // Check message counts after sending
+    let node1_count_after = node1_messages.lock().await.len();
+    let node2_count_after = node2_messages.lock().await.len();
+    logger.info(format!("📊 Message counts after request: Node1={node1_count_after}, Node2={node2_count_after}"));
+
+    // Verify we got a response
+    assert!(!response.is_null(), "Should receive a response");
+
+    logger.info("Request-response working correctly");
+
+    // ==================================================
+    // STEP 12: Test Event Publishing
+    // ==================================================
+
+    logger.info("📡 Testing event publishing...");
+
+    let event_data = ArcValue::new_primitive("event_data".to_string());
+    let event_message = NetworkMessage {
+        source_node_id: compact_id(&sender_info.node_public_key),
+        destination_node_id: compact_id(&receiver_info.node_public_key),
+        message_type: MESSAGE_TYPE_EVENT,
+        payloads: vec![NetworkMessagePayloadItem {
+            path: "test:api1/data_processed".to_string(),
+            value_bytes: event_data.serialize(None)?,
+            correlation_id: format!("event-{}", uuid::Uuid::new_v4()),
+            context: None,
+        }],
+    };
+
+    sender_transport.publish(event_message).await?;
+
+    // Allow message to be processed
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Check that event was received
+    let receiver_msgs = if t1_connected { &node2_messages } else { &node1_messages };
+    let event_msgs = receiver_msgs.lock().await;
+    let event_received = event_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
+    assert!(event_received, "Event message should be received");
+    drop(event_msgs);
+
+    logger.info("Event publishing working correctly");
+
+    // ==================================================
+    // STEP 13: Test Announcement Messages
+    // ==================================================
+
+    logger.info("Testing announcement messages...");
 
     let announcement_message = NetworkMessage {
         source_node_id: compact_id(&sender_info.node_public_key),
@@ -448,279 +553,117 @@ async fn test_quic_transport_complete_api_validation(
         }],
     };
 
-    sender_transport.send_message(announcement_message).await?;
+    sender_transport.publish(announcement_message).await?;
 
     // Allow message to be processed
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let receiver_msgs = receiver_messages.lock().await;
-    let announcement_received = receiver_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
-    assert!(
-        announcement_received,
-        "Receiver should receive announcement message"
-    );
-    drop(receiver_msgs);
+    // Check that announcement was received
+    let announcement_msgs = receiver_msgs.lock().await;
+    let announcement_received = announcement_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
+    assert!(announcement_received, "Announcement message should be received");
+    drop(announcement_msgs);
 
-    logger.info("✅ [QUIC Transport API] Unidirectional messaging working correctly");
-
-    // ==================================================
-    // STEP 11: Test Bidirectional Messaging (Request-Response)
-    // ==================================================
-
-    logger.info("🔄 [QUIC Transport API] Testing bidirectional request-response messaging...");
-
-    // **FIXED**: Use the established connection for request-response
-    let (
-        request_sender,
-        request_receiver,
-        request_sender_info,
-        request_receiver_info,
-        request_receiver_messages,
-        response_sender_messages,
-    ) = if t2_connected {
-        (
-            &transport2,
-            &transport1,
-            &node2_info,
-            &node1_info,
-            &node1_messages,
-            &node2_messages,
-        )
-    } else {
-        (
-            &transport1,
-            &transport2,
-            &node1_info,
-            &node2_info,
-            &node2_messages,
-            &node1_messages,
-        )
-    };
-
-    // Build payload for request
-    let mut map = std::collections::HashMap::new();
-    map.insert("a".to_string(), ArcValue::new_primitive(5));
-    map.insert("b".to_string(), ArcValue::new_primitive(3));
-    let arc_value = ArcValue::new_map(map);
-    let value_bytes = arc_value.serialize(None)?; 
-
-    let request_message = NetworkMessage {
-        source_node_id: compact_id(&request_sender_info.node_public_key),
-        destination_node_id: compact_id(&request_receiver_info.node_public_key),
-        message_type: MESSAGE_TYPE_REQUEST,
-        payloads: vec![NetworkMessagePayloadItem {
-            path: "test:math1/add".to_string(),
-            value_bytes: value_bytes.to_vec(),
-            correlation_id: "math-request-1".to_string(),
-            context: None,
-        }],
-    };
-
-    request_sender.send_message(request_message).await?;
-
-    // Allow message to be processed
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    let receiver_msgs = request_receiver_messages.lock().await;
-    let request_received = receiver_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_REQUEST);
-    assert!(
-        request_received,
-        "Request receiver should receive request message"
-    );
-    drop(receiver_msgs);
-
-    let mut map = std::collections::HashMap::new();
-    map.insert("result".to_string(), ArcValue::new_primitive(8));
-    let arc_value_result = ArcValue::new_map(map);
-    let value_bytes_result = arc_value_result.serialize(None)?;
-
-    let response_message = NetworkMessage {
-        source_node_id: compact_id(&request_receiver_info.node_public_key),
-        destination_node_id: compact_id(&request_sender_info.node_public_key),
-        message_type: MESSAGE_TYPE_RESPONSE,
-        payloads: vec![NetworkMessagePayloadItem {
-            path: "test:math1/add".to_string(),
-            value_bytes: value_bytes_result.to_vec(),
-            correlation_id: "math-request-1".to_string(),
-            context: None,
-        }],
-    };
-
-    request_receiver.send_message(response_message).await?;
-
-    // Allow message to be processed
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    let sender_msgs = response_sender_messages.lock().await;
-    let response_received = sender_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_RESPONSE);
-    assert!(
-        response_received,
-        "Response sender should receive response message"
-    );
-    drop(sender_msgs);
-
-    logger.info("✅ [QUIC Transport API] Bidirectional messaging working correctly");
-
-    // ==================================================
-    // STEP 12: Test Unidirectional Events
-    // ==================================================
-
-    logger.info("📡 Testing unidirectional event broadcasting...");
-
-    let mut map = std::collections::HashMap::new();
-    map.insert(
-        "operation".to_string(),
-        ArcValue::new_primitive("add".to_string()),
-    );
-    map.insert("result".to_string(), ArcValue::new_primitive(8));
-    let arc_value_event = ArcValue::new_map(map);
-    let value_bytes_event = arc_value_event.serialize(None)?;
-
-    let event_message = NetworkMessage {
-        source_node_id: compact_id(&sender_info.node_public_key),
-        destination_node_id: compact_id(&receiver_info.node_public_key),
-        message_type: MESSAGE_TYPE_EVENT,
-        payloads: vec![NetworkMessagePayloadItem {
-            path: "test:math1/calculated".to_string(),
-            value_bytes: value_bytes_event.to_vec(),
-            correlation_id: format!("event-{}", uuid::Uuid::new_v4()),
-            context: None,
-        }],
-    };
-
-    sender_transport.send_message(event_message).await?;
-
-    // Allow message to be processed
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    let receiver_msgs = receiver_messages.lock().await;
-    let event_received = receiver_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
-    assert!(event_received, "Receiver should receive event message");
-    drop(receiver_msgs);
-
-    logger.info("✅ [QUIC Transport API] Unidirectional event broadcasting working correctly");
-
-    // ==================================================
-    // STEP 13: Wait and Analyze Results
-    // ==================================================
-
-    println!("⏱️  Waiting for all messages to be processed...");
-    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+    logger.info("Announcement messages working correctly");
 
     // ==================================================
     // STEP 14: Comprehensive Analysis
     // ==================================================
 
-    println!("\n🔍 COMPREHENSIVE DATAFLOW ANALYSIS");
-    println!(
-        "===================================================================================="
-    );
+    logger.debug("\n🔍 DATAFLOW ANALYSIS");
+    logger.debug("====================================================================================");
 
     // Analyze message flows
     let node1_msgs = node1_messages.lock().await;
     let node2_msgs = node2_messages.lock().await;
 
-    println!("\n📨 MESSAGE FLOW ANALYSIS:");
-    println!("  - Node A received {} messages:", node1_msgs.len());
-    let mut request_count = 0;
-    let mut response_count = 0;
-    let mut event_count = 0;
-
+    logger.debug("\nMESSAGE FLOW ANALYSIS:");
+    logger.debug(format!("  - Node 1 received {} messages:", node1_msgs.len()));
     for msg in node1_msgs.iter() {
-        println!(
-            "    - {}: {} from {}",
-            msg.message_type, msg.source_node_id, msg.message_type
-        );
-        match msg.message_type  {
-            MESSAGE_TYPE_REQUEST => request_count += 1,
-            MESSAGE_TYPE_RESPONSE => response_count += 1,
-            MESSAGE_TYPE_EVENT => event_count += 1,
-            _ => {}
-        }
+        logger.debug(format!(   
+            "    - {type}: from {source}",
+            type=map_message_type_to_string(msg.message_type), source=msg.source_node_id
+        ));
     }
 
-    println!("  - Node B received {} messages:", node2_msgs.len());
-    let mut _request_count_b = 0;
-    let mut _response_count_b = 0;
-    let mut _event_count_b = 0;
-
+    logger.debug(format!("  - Node 2 received {} messages:", node2_msgs.len()));
     for msg in node2_msgs.iter() {
-        println!(
-            "    - {}: {} from {}",
-            msg.message_type, msg.source_node_id, msg.message_type
-        );
-        match msg.message_type  {
-            MESSAGE_TYPE_REQUEST => _request_count_b += 1,
-            MESSAGE_TYPE_RESPONSE => _response_count_b += 1,
-            MESSAGE_TYPE_EVENT => _event_count_b += 1,
-            _ => {}
-        }
+        logger.debug(format!(
+            "    - {type}: from {source}",
+            type=map_message_type_to_string(msg.message_type), source=msg.source_node_id
+        ));
     }
 
     // Check connection status
     let a_connected_to_b = transport1.is_connected(node2_id.clone()).await;
     let b_connected_to_a = transport2.is_connected(node1_id.clone()).await;
 
-    logger.info("\n🔗 CONNECTION STATUS:");
-    logger.info(format!("  - Node A → Node B: {a_connected_to_b}"));
-    logger.info(format!("  - Node B → Node A: {b_connected_to_a}"));
+    logger.info("\n CONNECTION STATUS:");
+    logger.info(format!("  - Node 1 → Node 2: {a_connected_to_b}"));
+    logger.info(format!("  - Node 2 → Node 1: {b_connected_to_a}"));
 
     // ==================================================
     // STEP 15: Validation and Assertions
     // ==================================================
 
-    logger.info("\n✅ DATAFLOW VALIDATION:");
+    logger.info("\nDATAFLOW VALIDATION:");
 
     // Validate connection establishment
     assert!(
         a_connected_to_b || b_connected_to_a,
         "At least one direction should be connected"
     );
-    logger.info("  ✅ QUIC connections established successfully");
+    logger.info("QUIC connections established successfully");
 
     // Validate message reception
     assert!(
         !node1_msgs.is_empty() || !node2_msgs.is_empty(),
         "At least one node should have received messages"
     );
-    logger.info("  ✅ Message callbacks invoked successfully");
+    logger.info("Message callbacks invoked successfully");
 
-    // Validate bidirectional patterns
-    logger.info("  📊 Message type distribution:");
-    logger.info(format!(
-        "    - Node A: {request_count} requests, {response_count} responses, {event_count} events"
-    ));
+    // Validate different message types
+    let has_handshake = node1_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_HANDSHAKE) ||
+                       node2_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_HANDSHAKE);
+    let has_request = node1_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_REQUEST) ||
+                     node2_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_REQUEST);
+    let has_response = node1_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_RESPONSE) ||
+                      node2_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_RESPONSE);
+    let has_event = node1_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_EVENT) ||
+                   node2_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
+    let has_announcement = node1_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT) ||
+                          node2_msgs.iter().any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
 
-    if request_count > 0 || response_count > 0 {
-        logger.info("  ✅ Request and response messages processed successfully");
+    if has_handshake {
+        logger.info("Handshake messages processed successfully");
     }
-
-    if event_count > 0 {
-        logger.info("  ✅ Event messages processed successfully");
+    if has_request && has_response {
+        logger.info("Request and response messages processed successfully");
+    }
+    if has_event {
+        logger.info("Event messages processed successfully");
+    }
+    if has_announcement {
+        logger.info("Announcement messages processed successfully");
     }
 
     // Clean up
-    logger.info("\n🧹 Cleaning up...");
+    logger.info("\nCleaning up...");
     transport1.stop().await?;
     transport2.stop().await?;
-    logger.info("✅ Transports stopped successfully!");
-
-    logger.info("\n🎉 COMPREHENSIVE QUIC TRANSPORT DATAFLOW TEST COMPLETED!");
-    logger.info("📋 Summary:");
-    logger.info("  - Certificate infrastructure: ✅");
-    logger.info("  - QUIC transport startup: ✅");
-    logger.info("  - Connection establishment: ✅");
-    logger.info("  - Unidirectional messaging: ✅");
-    logger.info("  - Event broadcasting: ✅");
-    logger.info("  - Message callback invocation: ✅");
-    logger.info("  - Stream lifecycle management: ✅");
-    logger.info("  - Peer info channel communication: ✅");
-    logger.info("");
-    logger.info("✨ QUIC transport meets all Node requirements and dataflow expectations!");
+    logger.info("Transports stopped successfully!");
 
     Ok(())
+} 
+
+
+fn map_message_type_to_string(message_type:u32     ) -> String {
+    match message_type {
+        MESSAGE_TYPE_HANDSHAKE => "HANDSHAKE".to_string(),
+        MESSAGE_TYPE_REQUEST => "REQUEST".to_string(),
+        MESSAGE_TYPE_RESPONSE => "RESPONSE".to_string(),
+        MESSAGE_TYPE_EVENT => "EVENT".to_string(),
+        MESSAGE_TYPE_ANNOUNCEMENT => "ANNOUNCEMENT".to_string(),
+        _ => "UNKNOWN".to_string(),
+    }
 }

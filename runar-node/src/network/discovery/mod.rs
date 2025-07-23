@@ -70,8 +70,8 @@ pub struct NodeInfo {
     pub addresses: Vec<String>,
     /// Node services representing the services provided by this node
     pub services: Vec<ServiceMetadata>,
-    /// incremental version counter that change everytime the ndoe chagnes (new services added, new event subscriptions, etc)
-    /// //when taht happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
+    /// incremental version counter that change everytime the node changes (new services added, new event subscriptions, etc)
+    /// when that happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
     pub version: i64,
 }
 

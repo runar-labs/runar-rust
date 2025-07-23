@@ -20,7 +20,8 @@ use rustls_pki_types::{CertificateDer, ServerName};
 // Internal module declarations
 pub mod connection_pool;
 pub mod peer_state;
-pub mod quic_transport;
+// legacy implementation removed.  New best-practice transport lives in `quic_transport.rs`.
+pub mod quic_transport;     // new best-practice implementation
 pub mod stream_pool;
 
 pub use connection_pool::ConnectionPool;
@@ -88,7 +89,6 @@ impl ServerCertVerifier for SkipServerVerification {
 // Re-export types/traits from submodules or parent modules
 // pub use peer_registry::{PeerEntry, PeerRegistry, PeerRegistryOptions, PeerStatus};
 pub use quic_transport::{QuicTransport, QuicTransportOptions};
-// Don't re-export pick_free_port since it's defined in this module
 
 use super::discovery::multicast_discovery::PeerInfo;
 // Import NodeInfo from the discovery module
@@ -273,7 +273,9 @@ pub struct NetworkMessage {
 }
 
 /// Handler function type for incoming network messages
-pub type MessageHandler = Box<dyn Fn(NetworkMessage) -> Result<()> + Send + Sync>;
+pub type MessageHandler = Box<
+    dyn Fn(NetworkMessage) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<NetworkMessage>, NetworkError>> + Send>> + Send + Sync,
+>;
 
 /// Callback type for message handling with future
 pub type MessageCallback =
@@ -289,7 +291,7 @@ pub trait NetworkTransport: Send + Sync {
     // No init method - all required fields should be provided in constructor
 
     /// Start listening for incoming connections
-    async fn start(&self) -> Result<(), NetworkError>;
+    async fn start(self: Arc<Self>) -> Result<(), NetworkError>;
 
     /// Stop listening for incoming connections
     async fn stop(&self) -> Result<(), NetworkError>;
@@ -300,15 +302,23 @@ pub trait NetworkTransport: Send + Sync {
     /// Check if connected to a specific node
     async fn is_connected(&self, node_id: String) -> bool;
 
-    /// Send a message to a remote node
-    async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError>;
+    /// Perform an RPC request/response exchange (pattern A). The transport
+    /// opens a fresh bidirectional stream, writes the request, finishes the
+    /// send half, reads the response and returns the deserialized `ArcValue`.
+    async fn request(
+        &self,
+        topic_path: &TopicPath,
+        params: Option<ArcValue>,
+        peer_node_id: &str,
+        context: MessageContext,
+    ) -> Result<ArcValue, NetworkError>;
 
-    async fn send_request(&self, topic_path: &TopicPath, params: Option<ArcValue>, request_id: &str, peer_node_id: &str, context: MessageContext) -> Result<(), NetworkError>;
+    /// Fire-and-forget / broadcast message (pattern B) such as announcements,
+    /// events or heart-beats.
+    async fn publish(&self, message: NetworkMessage) -> Result<(), NetworkError>;
 
-    /// connect to a discovered node
-    ///
-    /// Returns the NodeInfo of the connected peer after successful handshake
-    async fn connect_peer(&self, discovery_msg: PeerInfo) -> Result<(), NetworkError>;
+    /// connect to a discovered node and perform the NodeInfo handshake.
+    async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError>;
 
     /// Get the local address this transport is bound to as a string
     fn get_local_address(&self) -> String;

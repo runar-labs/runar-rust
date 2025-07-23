@@ -55,6 +55,7 @@ ring = { version = "0.17.14", features = ["std"] }
 hex = "0.4.3"
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 pkcs8 = "0.10"
+futures = "0.3"
 
 [features]
 default = []
