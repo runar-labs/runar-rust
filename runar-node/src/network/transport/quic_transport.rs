@@ -540,9 +540,13 @@ impl QuicTransport {
             }
             let resolved_peer_id = if needs_to_correlate_peer_id {
                 let connection_id = conn.stable_id();
-                let resolved_peer_id = self_clone.state.connection_id_to_peer_id.read().await.get(&connection_id)
-                                                        .unwrap_or_else(|| panic!("connection id {connection_id} not found in connection id to peer id map")).clone();
-                resolved_peer_id
+                match self_clone.state.connection_id_to_peer_id.read().await.get(&connection_id) {
+                    Some(peer_id) => peer_id.clone(),
+                    None => {
+                        self_clone.logger.error(format!("Connection id {connection_id} not found in connection id to peer id map"));
+                        return;
+                    }
+                }
             } else {
                 peer_id
             };
@@ -1071,7 +1075,7 @@ impl NetworkTransport for QuicTransport {
             "🔍 [request] Deserializing response payload of {} bytes",
             bytes.len()
         ));
-        let av = ArcValue::deserialize(bytes, None).map_err(|e| {
+        let av = ArcValue::deserialize(bytes, Some(serialization_context.keystore.clone())).map_err(|e| {
             self.logger
                 .error(format!("❌ [request] Failed to deserialize response: {e}"));
             NetworkError::MessageError(format!("deserialize response: {e}"))

@@ -134,6 +134,8 @@ impl LoggingConfig {
             builder.filter(Some(target), level.to_level_filter());
         }
 
+        builder.filter(Some("quinn"), LogLevel::Info.to_level_filter());
+
         // Try to initialize the global logger, but don't panic if it's already initialized
         // This is especially important for tests where multiple tests might try to initialize the logger
         let _ = builder.try_init();

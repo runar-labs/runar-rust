@@ -45,7 +45,7 @@ async fn test_remote_action_call() -> Result<()> {
     let node1_config = configs[0].clone();
     let node1_id = node1_config.node_id.clone();
     let node2_config = configs[1].clone();
-
+    let node2_id = node2_config.node_id.clone();
     // Create math services with different paths using the fixture
     let math_service1 = MathService::new("math1", "math1");
     let math_service2 = MathService::new("math2", "math2");
@@ -69,6 +69,9 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("⏳ Waiting for nodes to discover each other via multicast and establish QUIC connections...");
     node2
         .wait_for_peer(node1_id, Duration::from_secs(3))
+        .await?;
+    node1
+        .wait_for_peer(node2_id, Duration::from_secs(3))
         .await?;
 
     // Test 1: Call math1/add service (on node1) from node2
@@ -101,7 +104,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Wait for service discovery debounce (increased time for reliability)
     logger.debug("⏳ Waiting for service discovery propagation...");
-    sleep(Duration::from_secs(4)).await;
+    sleep(Duration::from_secs(3)).await;
 
     // Test 3: Call the newly added math3/add service from node2
     logger.debug("📤 Testing remote action call to newly added service (math3/add)...");
