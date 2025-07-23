@@ -28,7 +28,7 @@ use tokio::sync::{oneshot, RwLock};
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
 use crate::network::transport::{
-    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE
+    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
@@ -278,7 +278,7 @@ impl Node {
                   (
                     "system".to_string(),
                     LabelKeyInfo {
-                        profile_ids: vec![],
+                        profile_public_keys: vec![],
                         network_id: Some(default_network_id.clone()),
                     },
                 ),
@@ -422,6 +422,18 @@ impl Node {
         }
 
         Ok(())
+    }
+
+    /// Wait for a peer to be known by the node with a timeout
+    pub async fn wait_for_peer(&self, peer_node_id: String, timeout: Duration) -> Result<()> {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if self.known_peers.read().await.contains_key(&peer_node_id) {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }).await.map_err(|_| anyhow::anyhow!("Timeout waiting for peer {}", peer_node_id))?
     }
 
     /// Start the Node and all registered services
@@ -598,14 +610,13 @@ impl Node {
             // let node_identifier = self.peer_node_id.clone();
             let transport = self.create_transport(network_config).await?;
 
+            transport.clone().start().await?;
+
             // Store the transport
             let mut transport_guard = self.network_transport.write().await;
             *transport_guard = Some(transport);
             //release lock
-            drop(transport_guard);
-
-            // Set up the peer node info listener
-            self.setup_peer_node_info_listener().await?;
+            drop(transport_guard); 
         }
 
         // Initialize discovery if enabled
@@ -670,14 +681,6 @@ impl Node {
     }
 
     /// Create a transport instance based on the transport type in the config
-    ///
-    /// INTENTION: Instantiate and return a boxed NetworkTransport implementation according to the
-    /// configuration. This function is responsible for enforcing the architectural boundary that
-    /// only transport-specific instantiation logic is present here. It does not leak implementation
-    /// details or handle non-transport concerns.
-    ///
-    /// ARCHITECTURAL BOUNDARIES: Only constructs and returns a transport instance. Does not mutate
-    /// other node state or perform side effects beyond instantiation.
     async fn create_transport(
         &self,
         network_config: &NetworkConfig,
@@ -780,19 +783,19 @@ impl Node {
 
         // **CRITICAL FIX**: Implement lexicographic ordering to prevent duplicate connections
         // Only the node with the smaller peer ID should initiate the connection
-        let should_initiate = self.node_id < discovered_peer_id;
+        // let should_initiate = self.node_id < discovered_peer_id;
 
-        if !should_initiate {
-            self.logger.info(format!(
-                "🚫 [ConnectionOrdering] Not initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is larger, waiting for them to connect to us", node_id=self.node_id
-            ));
-            return Ok(());
-        }
+        // if !should_initiate {
+        //     self.logger.info(format!(
+        //         "🚫 [ConnectionOrdering] Not initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is larger, waiting for them to connect to us", node_id=self.node_id
+        //     ));
+        //     return Ok(());
+        // }
 
-        self.logger.info(format!(
-            "✅ [ConnectionOrdering] Initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is smaller",
-            node_id=self.node_id
-        ));
+        // self.logger.info(format!(
+        //     "✅ [ConnectionOrdering] Initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is smaller",
+        //     node_id=self.node_id
+        // ));
 
         // Check if we're already connected to this peer
         let transport_guard = self.network_transport.read().await;
@@ -835,10 +838,18 @@ impl Node {
         }
 
         self.logger
-            .debug(format!("Received network message: {message:?}"));
+            .debug(format!("Received network message: {message_type}", message_type = message.message_type));
 
         // Match on message type
         match message.message_type {
+            MESSAGE_TYPE_HANDSHAKE => {
+                self.logger.debug("Received handshake message");
+                //save the peer node info
+                let peer_node_info =  serde_cbor::from_slice::<NodeInfo>(&message.payloads[0].value_bytes)
+                    .map_err(|e| anyhow!("Could not parse peer NodeInfo from handshake response: {e}"))?;
+                self.process_remote_capabilities(peer_node_info).await?;
+                Ok(None)
+            }
             MESSAGE_TYPE_REQUEST => {
                 let response = self.handle_network_request(message).await?;
                 if let Some(response_message) = response {
@@ -904,8 +915,7 @@ impl Node {
             let profile_public_key = payload.context.as_ref()
                 .map(|c| c.profile_public_key.clone())
                 .context("No context found in payload")?;    
-            let profile_id = compact_id(&profile_public_key);
-
+            
             match self
                 .local_request(&topic_path, params_option)
                 .await
@@ -915,12 +925,12 @@ impl Node {
                         .info("✅ [Node] Local request completed successfully");
 
                     // Create serialization context for encryption
-                    let serialization_context = runar_serializer::traits::SerializationContext::new(
-                        self.keys_manager.clone(),
-                        self.label_resolver.clone(),
-                        network_id.clone(),
-                        profile_id.clone(),
-                    );
+                    let serialization_context = runar_serializer::traits::SerializationContext{ 
+                        keystore: self.keys_manager.clone(),
+                        resolver: self.label_resolver.clone(),
+                        network_id: network_id.clone(),
+                        profile_public_key: profile_public_key.clone(),
+                    };
 
                     // Serialize the response data
                     let serialized_data = response.serialize(Some(&serialization_context))?;
@@ -947,12 +957,12 @@ impl Node {
                         .error(format!("❌ [Node] Local request failed - Error: {e}",));
 
                     // Create serialization context for encryption
-                    let serialization_context = runar_serializer::traits::SerializationContext::new(
-                        self.keys_manager.clone(),
-                        self.label_resolver.clone(),
-                        network_id.clone(),
-                        profile_id.clone(),
-                    );
+                    let serialization_context = runar_serializer::traits::SerializationContext{ 
+                        keystore: self.keys_manager.clone(),
+                        resolver: self.label_resolver.clone(),
+                        network_id: network_id.clone(),
+                        profile_public_key: profile_public_key.clone(),
+                    };
 
                     // Create a map for the error response
                     let mut error_map = HashMap::new();
@@ -1317,11 +1327,13 @@ impl Node {
         new_peer: NodeInfo,
     ) -> Result<Vec<Arc<RemoteService>>> {
         let new_peer_node_id = compact_id(&new_peer.node_public_key);
+        self.logger.debug(format!("Processing remote capabilities from node {new_peer_node_id}"));
         //check if we alrady know about this service..
         let mut known_peers = self.known_peers.write().await;
         if let Some(existing_peer) = known_peers.get(&new_peer_node_id) {
             //check if node info is older then the stored peer
             if new_peer.version > existing_peer.version {
+                self.logger.debug(format!("Node {new_peer_node_id} has new version {new_peer_version}, removing and adding again", new_peer_version = new_peer.version));
                 self.remove_peer_services(existing_peer).await?;
                 //remove and add again
                 known_peers.remove(&new_peer_node_id);
@@ -1666,69 +1678,6 @@ impl Node {
         Ok(())
     }
 
-    /// Set up a listener for peer node info updates from the transport
-    ///
-    /// INTENTION: Subscribe to peer node info updates from the transport and process them
-    /// by creating RemoteService instances for each capability.
-    async fn setup_peer_node_info_listener(&self) -> Result<()> {
-        // Get the transport
-        let transport = self.network_transport.read().await;
-        if let Some(transport) = transport.as_ref() {
-            // Subscribe to peer node info updates directly using the Transport trait
-            let mut receiver = transport.subscribe_to_peer_node_info().await;
-
-            // Clone what we need for the task
-            let node = self.clone();
-            let logger = self.logger.clone();
-
-            // Spawn a task to listen for peer node info updates
-            tokio::spawn(async move {
-                logger.info("Started peer node info listener");
-
-                loop {
-                    // The broadcast channel's recv() returns a Result, not an Option
-                    match receiver.recv().await {
-                        Ok(peer_node_info) => {
-                            logger.info(format!(
-                                "Received peer node info from {peer_node_id}",
-                                peer_node_id = compact_id(&peer_node_info.node_public_key)
-                            ));
-
-                            // Process the peer node info
-                            if let Err(e) = node.process_remote_capabilities(peer_node_info).await {
-                                logger.error(format!("Failed to process remote capabilities: {e}"));
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            logger.info("Peer node info channel closed");
-                            break;
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            logger.warn(format!(
-                                "Peer node info receiver lagged, skipped {skipped} messages",
-                            ));
-                            // Continue receiving messages
-                        }
-                    }
-                }
-
-                logger.info("Peer node info listener stopped");
-            });
-
-            self.logger.info("starting network transport layer...");
-            transport
-                .clone()
-                .start()
-                .await
-                .map_err(|e| anyhow!("Failed to initialize transport: {e}"))?;
-
-            return Ok(());
-        }
-
-        // If we get here, we couldn't set up the listener
-        self.logger.warn("Could not set up peer node info listener");
-        Ok(())
-    }
 }
 
 #[async_trait]

@@ -199,7 +199,6 @@ fn dns_safe_node_id(node_id: &str) -> String {
 struct SharedState {
     peers: PeerMap,
     connection_id_to_peer_id: ConnectionIdToPeerIdMap,
-    tx_node_info: tokio::sync::broadcast::Sender<NodeInfo>,
 }
 type PeerMap = Arc<RwLock<HashMap<String, PeerState>>>;
 type ConnectionIdToPeerIdMap = Arc<RwLock<HashMap<usize, String>>>;
@@ -361,9 +360,9 @@ impl QuicTransport {
         let message_handler = options.message_handler
             .take()
             .ok_or("message_handler is required")?;
-        let logger = options.logger
+        let logger = (options.logger
             .take()
-            .ok_or("logger is required")?;
+            .ok_or("logger is required")?).with_component(runar_common::Component::Transporter);
         let keystore = options.keystore
             .take()
             .ok_or("keystore is required")?;
@@ -382,7 +381,7 @@ impl QuicTransport {
             bind_addr,
             options,
             endpoint: Arc::new(RwLock::new(None)),
-            logger,
+            logger: Arc::new(logger),
             message_handler,
             keystore,
             label_resolver,
@@ -396,7 +395,6 @@ impl QuicTransport {
         let certs = self.options.certificates().ok_or(NetworkError::ConfigurationError("no certs".into()))?;
         let key = self.options.private_key().ok_or(NetworkError::ConfigurationError("no key".into()))?.clone_key();
 
-        // **CRITICAL FIX**: Create custom TransportConfig with our timeout settings
         let mut transport_config = quinn::TransportConfig::default();
 
         // Apply our connection idle timeout (convert Duration to milliseconds for VarInt)
@@ -409,7 +407,7 @@ impl QuicTransport {
         transport_config.keep_alive_interval(Some(self.options.keep_alive_interval));
 
         self.logger.info(format!(
-            "🔧 [QuicTransport] Configured transport timeouts - Idle: {}ms, Keep-alive: {}ms",
+            "Configured transport timeouts - Idle: {}ms, Keep-alive: {}ms",
             idle_timeout_ms,
             self.options.keep_alive_interval.as_millis()
         ));
@@ -618,8 +616,7 @@ impl QuicTransport {
                                     peers.insert(peer_node_id.clone(), PeerState::new(conn.clone(), node_info_version));
                                 }
                             }
-                            let _ = (self.message_handler)(msg.clone()).await;
-                            let _ = self.state.tx_node_info.send(node_info);
+                            let _ = (self.message_handler)(msg.clone()).await; 
                             if needs_to_correlate_peer_id {
                                 self.state.connection_id_to_peer_id.write().await.insert(conn.stable_id(), peer_node_id); 
                             }
@@ -717,24 +714,8 @@ impl QuicTransport {
         
         self.logger.debug("🔍 [handshake_outbound] Received handshake response, processing...");
         
-        // Extract peer NodeInfo from response and send to channel
-        if let Some(payload) = reply.payloads.first() {
-            match serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes) {
-                Ok(peer_node_info) => {
-                    let _ = self.state.tx_node_info.send(peer_node_info);
-                    self.logger.info(format!("Handshake completed with peer: {peer_id}"));
-                }
-                Err(e) => {
-                    self.logger.error(format!("❌ [handshake_outbound] Failed to parse peer NodeInfo: {e}"));
-                    self.logger.error(format!("Failed to parse peer NodeInfo from handshake response: {e}"));
-                    return Err(NetworkError::MessageError(format!("Invalid handshake response: {e}")));
-                }
-            }
-        } else {
-            self.logger.error("Handshake response missing payload");
-            self.logger.error("Handshake response missing payload");
-            return Err(NetworkError::MessageError("Handshake response missing payload".into()));
-        }
+        //send to node to handle handshake response and store peer node info
+        let _ = (self.message_handler)(reply).await;
         
         Ok(())
     }
@@ -778,8 +759,7 @@ impl QuicTransport {
     }
  
     fn shared_state() -> SharedState {
-        let (tx, _) = tokio::sync::broadcast::channel(32);
-        SharedState { peers: Arc::new(RwLock::new(HashMap::new())), connection_id_to_peer_id: Arc::new(RwLock::new(HashMap::new())), tx_node_info: tx }
+        SharedState { peers: Arc::new(RwLock::new(HashMap::new())), connection_id_to_peer_id: Arc::new(RwLock::new(HashMap::new()))  }
     }
 }
 
@@ -885,17 +865,16 @@ impl NetworkTransport for QuicTransport {
         self.logger.info("🔍 [request] Bidirectional stream opened successfully");
 
         let network_id = topic_path.network_id();
-        let profile_id = compact_id(&context.profile_public_key);
 
         let correlation_id = uuid::Uuid::new_v4().to_string();
 
-        self.logger.info(format!("🔍 [request] Sending request to peer {peer_node_id} on network {network_id} profile {profile_id} with correlation id {correlation_id}", network_id = &network_id, profile_id = &profile_id, correlation_id = &correlation_id));
-       
+        let profile_public_key = context.profile_public_key.clone();
+ 
         let serialization_context = SerializationContext{ 
             keystore: self.keystore.clone(),
             resolver: self.label_resolver.clone(),
             network_id,
-            profile_id,
+            profile_public_key,
         };
         
         // build message
@@ -959,6 +938,14 @@ impl NetworkTransport for QuicTransport {
     }
 
     async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError> {
+
+        //check if transport is running
+        let running = self.running.read().await;
+        if !*running {
+            self.logger.error("❌ [connect_peer] Transport not running");
+            return Err(NetworkError::TransportError("transport not running".into()));
+        }
+
         let peer_node_id = compact_id(&discovery_msg.public_key);
         self.logger.debug(format!("🔍 [connect_peer] Starting connection to peer: {peer_node_id}"));
         // check we already know about this peer
@@ -1008,7 +995,7 @@ impl NetworkTransport for QuicTransport {
             NetworkError::ConnectionError(format!("handshake failed: {e}"))
         })?;
 
-        self.logger.debug("✅ [connect_peer] QUIC connection established successfully");
+        self.logger.debug("[connect_peer] QUIC connection established successfully");
 
         // wrap connection in Arc for sharing
         let conn_arc = Arc::new(conn);
@@ -1035,7 +1022,7 @@ impl NetworkTransport for QuicTransport {
             return Err(e);
         }
 
-        self.logger.debug("✅ [connect_peer] Application handshake completed successfully");
+        self.logger.debug("[connect_peer] Application handshake completed successfully");
         Ok(())
     }
 
@@ -1084,14 +1071,7 @@ impl NetworkTransport for QuicTransport {
         self.logger.info(format!("Updated {} peers with new node info", peers.len()));
         Ok(())
     }
-
-    async fn subscribe_to_peer_node_info(&self) -> tokio::sync::broadcast::Receiver<NodeInfo> {
-        // Return a new broadcast channel that will never send any items until we implement it.
-        let (tx, rx) = tokio::sync::broadcast::channel(1);
-        let _ = tx; // keep sender so channel never closes
-        rx
-    }
-
+ 
     fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto> {
         self.keystore.clone()
     }

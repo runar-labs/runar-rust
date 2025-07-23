@@ -43,7 +43,7 @@ pub trait EnvelopeCrypto: Send + Sync {
         &self,
         data: &[u8],
         network_id: Option<&String>,
-        profile_ids: Vec<String>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData>;
 
     fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> Result<Vec<u8>>;

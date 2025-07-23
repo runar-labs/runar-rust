@@ -107,6 +107,9 @@ impl MulticastDiscovery {
         options: DiscoveryOptions,
         logger: Logger,
     ) -> Result<Self> {
+
+        let logger = logger.with_component(Component::NetworkDiscovery);
+
         // Parse multicast group - handle both formats: "239.255.42.98" and "239.255.42.98:45678"
         let (multicast_addr, port) = if options.multicast_group.contains(':') {
             // Parse as a SocketAddr "IP:PORT"
@@ -143,7 +146,7 @@ impl MulticastDiscovery {
         ));
 
         // Create a Network component logger
-        let discovery_logger = logger.with_component(Component::Network);
+        let discovery_logger = logger.with_component(Component::Transporter);
 
         let instance = Self {
             options: Arc::new(RwLock::new(options)),

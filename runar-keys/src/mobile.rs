@@ -326,7 +326,7 @@ impl MobileKeyManager {
         &self,
         data: &[u8],
         network_id: Option<&String>,
-        profile_ids: Vec<String>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData> {
         // Generate ephemeral envelope key
         let envelope_key = self.create_envelope_key()?;
@@ -346,12 +346,11 @@ impl MobileKeyManager {
 
         // Encrypt envelope key for each profile
         let mut profile_encrypted_keys = HashMap::new();
-        for profile_id in profile_ids {
-            if let Some(profile_key) = self.user_profile_keys.get(&profile_id) {
-                let encrypted_key =
-                    self.encrypt_key_with_ecdsa(&envelope_key, &profile_key.public_key_bytes())?;
-                profile_encrypted_keys.insert(profile_id, encrypted_key);
-            }
+        for profile_public_key in profile_public_keys {
+            let encrypted_key =
+                self.encrypt_key_with_ecdsa(&envelope_key, &profile_public_key)?;
+            let profile_id = compact_id(&profile_public_key);
+            profile_encrypted_keys.insert(profile_id, encrypted_key);
         }
 
         Ok(EnvelopeEncryptedData {
@@ -715,12 +714,15 @@ impl MobileKeyManager {
 
     /// Encrypt data for a specific profile (legacy method for compatibility)
     pub fn encrypt_for_profile(&self, data: &[u8], profile_id: &str) -> Result<Vec<u8>> {
+        let profile_key_pair = self.user_profile_keys.get(profile_id).ok_or_else(|| {
+            KeyError::KeyNotFound(format!("Profile public key not found for profile: {profile_id}"))
+        })?;
         // Use envelope encryption with just this profile
         let envelope_data = MobileKeyManager::encrypt_with_envelope(
             self,
             data,
             None,
-            vec![profile_id.to_string()],
+            vec![profile_key_pair.public_key_bytes()],
         )?;
         // Return just the encrypted data for compatibility
         Ok(envelope_data.encrypted_data)
@@ -812,12 +814,12 @@ impl MobileKeyManager {
 
 impl crate::EnvelopeCrypto for MobileKeyManager {
     fn encrypt_with_envelope(
-        &self,
+        &self,  
         data: &[u8],
         network_id: Option<&String>,
-        profile_ids: Vec<String>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        MobileKeyManager::encrypt_with_envelope(self, data, network_id, profile_ids)
+        MobileKeyManager::encrypt_with_envelope(self, data, network_id, profile_public_keys)
     }
 
     fn decrypt_envelope_data(

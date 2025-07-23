@@ -38,7 +38,7 @@ pub fn encrypt_label_group<T: Serialize>(
         .ok_or_else(|| anyhow!("Label '{label}' not available in current context"))?;
 
     let envelope =
-        keystore.encrypt_with_envelope(&plain_bytes, info.network_id.as_ref(), info.profile_ids)?;
+        keystore.encrypt_with_envelope(&plain_bytes, info.network_id.as_ref(), info.profile_public_keys)?;
 
     Ok(EncryptedLabelGroup {
         label: label.to_string(),

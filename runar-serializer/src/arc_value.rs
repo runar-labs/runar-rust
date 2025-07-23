@@ -348,7 +348,7 @@ impl ArcValue {
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
             let network_id = &ctx.network_id;
-            let profile_id = &ctx.profile_id;
+            let profile_public_key: &Vec<u8> = &ctx.profile_public_key;
             let resolver = &ctx.resolver;
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
@@ -357,7 +357,7 @@ impl ArcValue {
                 return Err(anyhow!("No serialize function available"));
             }?;
 
-            let data = ks.encrypt_with_envelope(&bytes, Some(network_id), vec![profile_id.clone()])?;
+            let data = ks.encrypt_with_envelope(&bytes, Some(network_id), vec![profile_public_key.clone()])?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);

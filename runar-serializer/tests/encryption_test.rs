@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use runar_common::{
-    compact_ids::compact_id,
     logging::{Component, Logger},
 };
 use runar_keys::{MobileKeyManager, NodeKeyManager};
@@ -41,7 +40,7 @@ type TestContext = (
     Arc<dyn EnvelopeCrypto>,
     Arc<dyn runar_serializer::traits::LabelResolver>,
     String,
-    String,
+    Vec<u8>,
 );
 
 fn build_test_context() -> Result<TestContext> {
@@ -57,7 +56,6 @@ fn build_test_context() -> Result<TestContext> {
     let mut user_mobile = MobileKeyManager::new(logger.clone())?;
     user_mobile.initialize_user_root_key()?;
     let profile_pk = user_mobile.derive_user_profile_key("user")?;
-    let profile_id = compact_id(&profile_pk);
     // Install only the network public key, not the network private key
     // so this user mobile can encrypt for the network, but not decrypt
     user_mobile.install_network_public_key(&network_pub)?;
@@ -75,40 +73,40 @@ fn build_test_context() -> Result<TestContext> {
             (
                 "user".into(),
                 LabelKeyInfo {
-                    profile_ids: vec![compact_id(&profile_pk)],
+                    profile_public_keys: vec![profile_pk.clone()],
                     network_id: None,
                 },
             ),
             (
                 "system".to_string(),
                 LabelKeyInfo {
-                    profile_ids: vec![compact_id(&profile_pk)],
+                    profile_public_keys: vec![profile_pk.clone()],
                     network_id: Some(network_id.clone()),
                 },
             ),
             (
                 "system_only".to_string(),
                 LabelKeyInfo {
-                    profile_ids: vec![], // system only has no profile ids
+                    profile_public_keys: vec![], // system only has no profile ids
                     network_id: Some(network_id.clone()),
                 },
             ),
             (
                 "search".to_string(),
                 LabelKeyInfo {
-                    profile_ids: vec![compact_id(&profile_pk)],
+                    profile_public_keys: vec![profile_pk.clone()],
                     network_id: Some(network_id.clone()),
                 },
             ),
         ]),
     }));
 
-    Ok((user_mobile_ks, node_ks, resolver, network_id, profile_id))
+    Ok((user_mobile_ks, node_ks, resolver, network_id, profile_pk))
 }
 
 #[test]
 fn test_encryption_basic() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, _network_id, _profile_id) = build_test_context()?;
+    let (mobile_ks, node_ks, resolver, _network_id, _profile_pk) = build_test_context()?;
 
     let original = TestProfile {
         id: "123".to_string(),
@@ -149,7 +147,7 @@ fn test_encryption_basic() -> Result<()> {
 
 #[test]
 fn test_encryption_in_arcvalue() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id, profile_id) = build_test_context()?; // keep network_id & profile_id used below
+    let (mobile_ks, node_ks, resolver, network_id, profile_pk) = build_test_context()?; // keep network_id & profile_id used below
 
     let profile = TestProfile {
         id: "789".to_string(),
@@ -164,12 +162,12 @@ fn test_encryption_in_arcvalue() -> Result<()> {
     assert_eq!(val.category, ValueCategory::Struct);
 
     // Create serialization context
-    let context = SerializationContext::new(
-        mobile_ks.clone(),
-        resolver.clone(),
-        network_id.clone(),
-        profile_id.clone(),
-    );
+    let context = SerializationContext{ 
+        keystore: mobile_ks.clone(),
+        resolver: resolver.clone(),
+        network_id: network_id.clone(),
+        profile_public_key: profile_pk.clone(),
+    };
 
     // Serialize with encryption
     let ser = val.serialize(Some(&context))?;

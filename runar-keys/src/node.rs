@@ -383,7 +383,7 @@ impl NodeKeyManager {
     }
 
     /// Convert a compact ID to a DNS-safe format by replacing invalid characters
-    fn dns_safe_node_id(&self, node_id: &str) -> String {
+    pub fn dns_safe_node_id(&self, node_id: &str) -> String {
         node_id
             .chars()
             .map(|c| match c {
@@ -695,7 +695,7 @@ impl NodeKeyManager {
         &self,
         data: &[u8],
         network_id: Option<&String>,
-        profile_ids: Vec<String>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         let envelope_key = self.create_envelope_key()?;
 
@@ -714,15 +714,11 @@ impl NodeKeyManager {
 
         // Encrypt envelope key for each profile id using stored public key
         let mut profile_encrypted_keys = HashMap::new();
-        for pid in profile_ids {
-            if let Some(pub_key) = self.profile_public_keys.get(&pid) {
-                let enc = self.encrypt_key_with_ecdsa(&envelope_key, pub_key)?;
-                profile_encrypted_keys.insert(pid, enc);
-            } else {
-                return Err(KeyError::KeyNotFound(format!(
-                    "Profile public key not installed: {pid}"
-                )));
-            }
+        for profile_public_key in profile_public_keys {
+            let encrypted_key =
+                self.encrypt_key_with_ecdsa(&envelope_key, &profile_public_key)?;
+            let profile_id = compact_id(&profile_public_key);
+            profile_encrypted_keys.insert(profile_id, encrypted_key);
         }
 
         Ok(crate::mobile::EnvelopeEncryptedData {
@@ -846,7 +842,7 @@ impl crate::EnvelopeCrypto for NodeKeyManager {
         &self,
         data: &[u8],
         network_id: Option<&String>,
-        _profile_ids: Vec<String>,
+        _profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         // Nodes only support network-wide encryption.
         self.create_envelope_for_network(data, network_id)

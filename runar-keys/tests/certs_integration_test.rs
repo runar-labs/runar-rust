@@ -112,15 +112,18 @@ async fn test_complete_certificate_workflow() -> Result<()> {
         node1_cert_message.metadata.validity_days
     );
 
+    let safe_node_id_1 = node1.dns_safe_node_id(&node1.get_node_id());
+    let safe_node_id_2 = node2.dns_safe_node_id(&node2.get_node_id());
+
     // Verify certificate contents
     assert!(node1_cert_message
         .node_certificate
         .subject()
-        .contains(&node1.get_node_id()));
+        .contains(&safe_node_id_1));
     assert!(node2_cert_message
         .node_certificate
         .subject()
-        .contains(&node2.get_node_id()));
+        .contains(&safe_node_id_2));
     // Note: For this demo, we're creating self-signed certificates, so the CA certificate check is relaxed
     println!("      ✅ Certificate subjects verified correctly");
 
@@ -501,7 +504,7 @@ async fn test_enhanced_key_management() -> Result<()> {
     let envelope_data = mobile.encrypt_with_envelope(
         sensitive_data,
         Some(&network1_key),
-        vec![personal_id.clone(), work_id.clone()],
+        vec![profile1_key.clone(), profile2_key.clone()],
     )?;
     let envelope_network_id = envelope_data
         .network_id

@@ -326,12 +326,6 @@ pub trait NetworkTransport: Send + Sync {
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
 
-    /// Subscribe to peer node info updates
-    ///
-    /// INTENTION: Allow callers to subscribe to peer node info updates when they are received
-    /// during handshakes. This is used by the Node to create RemoteService instances.
-    async fn subscribe_to_peer_node_info(&self) -> tokio::sync::broadcast::Receiver<NodeInfo>;
-
     /// Expose the transport-owned keystore (read-only).
     fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
 

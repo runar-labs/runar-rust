@@ -34,7 +34,7 @@ impl From<Component> for ComponentKey {
             Component::Registry => ComponentKey::Registry,
             Component::Service => ComponentKey::Service,
             Component::Database => ComponentKey::Database,
-            Component::Network => ComponentKey::Network,
+            Component::Transporter => ComponentKey::Network,
             Component::System => ComponentKey::System,
             Component::NetworkDiscovery => ComponentKey::Network,
             Component::Custom(name) => ComponentKey::Custom(name.to_string()),

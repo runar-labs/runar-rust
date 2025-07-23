@@ -30,7 +30,7 @@ pub type KeyStore = dyn EnvelopeCrypto;
 /// Information required to perform envelope encryption for a label.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelKeyInfo {
-    pub profile_ids: Vec<String>,
+    pub profile_public_keys: Vec<Vec<u8>>,
     pub network_id: Option<String>,
 }
 
@@ -145,24 +145,5 @@ pub struct SerializationContext {
     pub keystore: Arc<KeyStore>,
     pub resolver: Arc<dyn LabelResolver>,
     pub network_id: String,
-    pub profile_id: String,
-}
-
-impl SerializationContext {
-    /// Create a new serialization context
-    pub fn new(
-        keystore: Arc<KeyStore>,
-        resolver: Arc<dyn LabelResolver>,
-        network_id: String,
-        profile_id: String,
-    ) -> Self {
-        Self {
-            keystore,
-            resolver,
-            network_id,
-            profile_id,
-        }
-    }
-
-
+    pub profile_public_key: Vec<u8>,
 }
