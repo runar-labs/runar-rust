@@ -19,8 +19,6 @@ use tokio::time::timeout;
 use runar_node::services::EventContext;
 use runar_node::NodeDelegate;
 
-
-
 use runar_macros_common::params;
 
 // Import the test fixtures
@@ -373,9 +371,9 @@ async fn test_path_params_in_context() {
         .request("test/abc123/items/xyz789", None::<ArcValue>)
         .await
         .unwrap();
- 
+
     let params_map = av.as_typed_map_ref::<String>().expect("expect map");
-     
+
     // Verify the path parameters were correctly extracted
     // params_map is now HashMap<String, String>
     assert_eq!(params_map.get("param_1").unwrap().as_ref(), "abc123");

@@ -21,13 +21,13 @@ use rustls_pki_types::{CertificateDer, ServerName};
 pub mod connection_pool;
 pub mod peer_state;
 // legacy implementation removed.  New best-practice transport lives in `quic_transport.rs`.
-pub mod quic_transport;     // new best-practice implementation
+pub mod quic_transport; // new best-practice implementation
 pub mod stream_pool;
 
+use crate::routing::TopicPath;
 pub use connection_pool::ConnectionPool;
 pub use peer_state::PeerState;
-pub use stream_pool::StreamPool; 
-use crate::routing::TopicPath;
+pub use stream_pool::StreamPool;
 // --- Moved from quic_transport.rs ---
 /// Custom certificate verifier that skips verification for testing
 ///
@@ -231,7 +231,12 @@ pub struct NetworkMessagePayloadItem {
 
 impl NetworkMessagePayloadItem {
     /// Create a new NetworkMessagePayloadItem
-    pub fn new(path: String, value_bytes: Vec<u8>, correlation_id: String, context: MessageContext) -> Self {
+    pub fn new(
+        path: String,
+        value_bytes: Vec<u8>,
+        correlation_id: String,
+        context: MessageContext,
+    ) -> Self {
         Self {
             path,
             value_bytes,
@@ -274,7 +279,15 @@ pub struct NetworkMessage {
 
 /// Handler function type for incoming network messages
 pub type MessageHandler = Box<
-    dyn Fn(NetworkMessage) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<NetworkMessage>, NetworkError>> + Send>> + Send + Sync,
+    dyn Fn(
+            NetworkMessage,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<Option<NetworkMessage>, NetworkError>>
+                    + Send,
+            >,
+        > + Send
+        + Sync,
 >;
 
 /// Callback type for message handling with future

@@ -366,11 +366,11 @@ impl NodeKeyManager {
     pub fn generate_csr(&mut self) -> Result<SetupToken> {
         let node_public_key = self.get_node_public_key();
         let node_id = self.get_node_id();
-        
+
         // Convert to DNS-safe format for certificate generation
         let dns_safe_node_id = self.dns_safe_node_id(&node_id);
         let subject = format!("CN={dns_safe_node_id},O=Runar Node,C=US");
-        
+
         let csr_der = CertificateRequest::create(&self.node_key_pair, &subject)?;
 
         self.certificate_status = CertificateStatus::Pending;
@@ -387,10 +387,10 @@ impl NodeKeyManager {
         node_id
             .chars()
             .map(|c| match c {
-                '-' => 'x',  // Replace hyphen with 'x'
-                '_' => 'y',  // Replace underscore with 'y'
-                c if c.is_alphanumeric() => c,  // Keep alphanumeric
-                _ => 'z',    // Replace any other invalid chars with 'z'
+                '-' => 'x',                    // Replace hyphen with 'x'
+                '_' => 'y',                    // Replace underscore with 'y'
+                c if c.is_alphanumeric() => c, // Keep alphanumeric
+                _ => 'z',                      // Replace any other invalid chars with 'z'
             })
             .collect()
     }
@@ -410,7 +410,11 @@ impl NodeKeyManager {
         let node_id = self.get_node_id();
         let dns_safe_node_id = self.dns_safe_node_id(&node_id);
         //let expected_subject = format!("CN={dns_safe_node_id},O=Runar Node,C=US");
-        if !cert_message.node_certificate.subject().contains(&dns_safe_node_id) {
+        if !cert_message
+            .node_certificate
+            .subject()
+            .contains(&dns_safe_node_id)
+        {
             return Err(KeyError::CertificateValidationError(
                 "Certificate subject doesn't match node ID".to_string(),
             ));
@@ -715,8 +719,7 @@ impl NodeKeyManager {
         // Encrypt envelope key for each profile id using stored public key
         let mut profile_encrypted_keys = HashMap::new();
         for profile_public_key in profile_public_keys {
-            let encrypted_key =
-                self.encrypt_key_with_ecdsa(&envelope_key, &profile_public_key)?;
+            let encrypted_key = self.encrypt_key_with_ecdsa(&envelope_key, &profile_public_key)?;
             let profile_id = compact_id(&profile_public_key);
             profile_encrypted_keys.insert(profile_id, encrypted_key);
         }

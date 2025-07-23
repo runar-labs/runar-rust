@@ -3,15 +3,15 @@ use async_trait::async_trait;
 use runar_common::logging::Logger;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
-use runar_serializer::{ArcValue};
+use runar_serializer::ArcValue;
 use rusqlite::types::ToSqlOutput;
 use rusqlite::types::{Null, ValueRef as RusqliteValueRef};
 use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
- 
-use runar_serializer_macros::Serializable;
+
 use prost::Message;
+use runar_serializer_macros::Serializable;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
@@ -151,24 +151,16 @@ impl SqliteWorker {
                     self.logger.debug("Processing Execute command");
                     let default_params = Params::new();
                     let params = query.params.as_ref().unwrap_or(&default_params);
-                    let res = execute_internal(
-                        &self.connection,
-                        &query.statement,
-                        params,
-                        &self.logger,
-                    );
+                    let res =
+                        execute_internal(&self.connection, &query.statement, params, &self.logger);
                     let _ = reply_to.send(res);
                 }
                 SqliteWorkerCommand::Query { query, reply_to } => {
                     self.logger.debug("Processing Query command");
                     let default_params = Params::new();
                     let params = query.params.as_ref().unwrap_or(&default_params);
-                    let res = query_internal(
-                        &self.connection,
-                        &query.statement,
-                        params,
-                        &self.logger,
-                    );
+                    let res =
+                        query_internal(&self.connection, &query.statement, params, &self.logger);
                     let _ = reply_to.send(res);
                 }
                 SqliteWorkerCommand::Shutdown { reply_to } => {
@@ -278,13 +270,16 @@ fn execute_internal(
     params: &Params, // Changed: Now takes &Params
     logger: &Arc<Logger>,
 ) -> Result<usize, String> {
-    let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> =
-        params.values.iter().map(|bytes| {
+    let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> = params
+        .values
+        .iter()
+        .map(|bytes| {
             // Deserialize bytes back to Value
             let value: Value = bincode::deserialize(bytes)
                 .map_err(|e| format!("Failed to deserialize Value from bytes: {e}"))?;
             value_to_to_sql(&value)
-        }).collect();
+        })
+        .collect();
 
     match rusqlite_params_results {
         Ok(rusqlite_params) => {
@@ -311,13 +306,16 @@ fn query_internal(
     params: &Params, // Changed: Now takes &Params
     logger: &Arc<Logger>,
 ) -> Result<Vec<HashMap<String, Value>>, String> {
-    let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> =
-        params.values.iter().map(|bytes| {
+    let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> = params
+        .values
+        .iter()
+        .map(|bytes| {
             // Deserialize bytes back to Value
             let value: Value = bincode::deserialize(bytes)
                 .map_err(|e| format!("Failed to deserialize Value from bytes: {e}"))?;
             value_to_to_sql(&value)
-        }).collect();
+        })
+        .collect();
 
     let rusqlite_params = match rusqlite_params_results {
         Ok(p) => p,
@@ -477,8 +475,7 @@ impl Params {
     /// Add a value to the parameter list (positional)
     pub fn with_value(mut self, value: impl Into<Value>) -> Self {
         let value: Value = value.into();
-        let bytes = bincode::serialize(&value)
-            .expect("Failed to serialize Value to bytes");
+        let bytes = bincode::serialize(&value).expect("Failed to serialize Value to bytes");
         self.values.push(bytes);
         self
     }

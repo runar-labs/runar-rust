@@ -291,7 +291,9 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // For our certificates, we expect the node public key in the subject
     assert!(
-        subject_str.contains(&node_keys_manager.dns_safe_node_id(&compact_id(&node_public_key_from_token))),
+        subject_str.contains(
+            &node_keys_manager.dns_safe_node_id(&compact_id(&node_public_key_from_token))
+        ),
         "Certificate subject should contain node public key"
     );
 
@@ -508,7 +510,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     // Try encrypting and decrypting data with the hydrated manager
     let test_data_2 = b"This is a second test message after key restoration";
     let envelope_2 = mobile_keys_manager
-        .encrypt_with_envelope(test_data_2, Some(&network_id), vec![profile_personal_key.clone()])
+        .encrypt_with_envelope(
+            test_data_2,
+            Some(&network_id),
+            vec![profile_personal_key.clone()],
+        )
         .expect("Mobile failed to encrypt data after restoration");
 
     // Node should be able to decrypt with the network key

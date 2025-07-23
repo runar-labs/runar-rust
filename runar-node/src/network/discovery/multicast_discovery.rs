@@ -107,7 +107,6 @@ impl MulticastDiscovery {
         options: DiscoveryOptions,
         logger: Logger,
     ) -> Result<Self> {
-
         let logger = logger.with_component(Component::NetworkDiscovery);
 
         // Parse multicast group - handle both formats: "239.255.42.98" and "239.255.42.98:45678"

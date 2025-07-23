@@ -55,7 +55,7 @@ pub trait LabelResolver: Send + Sync {
 
     /// Check if a label can be resolved
     fn can_resolve(&self, label: &str) -> bool;
-    
+
     /// Clone this trait object
     fn clone_box(&self) -> Box<dyn LabelResolver>;
 }
@@ -73,7 +73,7 @@ impl LabelResolver for Box<dyn LabelResolver> {
     fn can_resolve(&self, label: &str) -> bool {
         self.as_ref().can_resolve(label)
     }
-    
+
     fn clone_box(&self) -> Box<dyn LabelResolver> {
         self.as_ref().clone_box()
     }
@@ -103,7 +103,7 @@ impl LabelResolver for ConfigurableLabelResolver {
     fn can_resolve(&self, label: &str) -> bool {
         self.config.label_mappings.contains_key(label)
     }
-    
+
     fn clone_box(&self) -> Box<dyn LabelResolver> {
         Box::new(ConfigurableLabelResolver {
             config: self.config.clone(),
@@ -117,7 +117,7 @@ pub trait RunarEncryptable {}
 /// Trait for encrypting structs with selective field encryption
 pub trait RunarEncrypt: RunarEncryptable {
     type Encrypted: RunarDecrypt<Decrypted = Self> + Serialize;
- 
+
     fn encrypt_with_keystore(
         &self,
         keystore: &Arc<KeyStore>,

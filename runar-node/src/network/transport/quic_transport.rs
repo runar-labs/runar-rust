@@ -1,21 +1,19 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use std::time::Duration;
+use prost::Message as ProstMessage;
 use quinn::{ClientConfig, Endpoint, ServerConfig};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
-use tokio::sync::RwLock; 
-use prost::Message as ProstMessage;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
-use std::collections::HashMap;
-use tokio::sync::Mutex;
 
 use crate::network::discovery::{multicast_discovery::PeerInfo, NodeInfo};
-use crate::network::transport::{
-    MessageContext, NetworkError, NetworkMessage, NetworkTransport,
-};
+use crate::network::transport::{MessageContext, NetworkError, NetworkMessage, NetworkTransport};
 use crate::routing::TopicPath;
 use runar_serializer::{ArcValue, SerializationContext};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -30,7 +28,7 @@ pub struct QuicTransportOptions {
     root_certificates: Option<Vec<CertificateDer<'static>>>,
     connection_idle_timeout: Duration,
     keep_alive_interval: Duration,
-    
+
     // New parameters moved from constructor
     local_node_info: Option<NodeInfo>,
     bind_addr: Option<SocketAddr>,
@@ -43,17 +41,60 @@ pub struct QuicTransportOptions {
 impl std::fmt::Debug for QuicTransportOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuicTransportOptions")
-            .field("certificates", &self.certificates.as_ref().map(|c| format!("{} certificates", c.len())))
-            .field("private_key", &self.private_key.as_ref().map(|_| "Some(PrivateKey)"))
-            .field("root_certificates", &self.root_certificates.as_ref().map(|c| format!("{} root certificates", c.len())))
+            .field(
+                "certificates",
+                &self
+                    .certificates
+                    .as_ref()
+                    .map(|c| format!("{} certificates", c.len())),
+            )
+            .field(
+                "private_key",
+                &self.private_key.as_ref().map(|_| "Some(PrivateKey)"),
+            )
+            .field(
+                "root_certificates",
+                &self
+                    .root_certificates
+                    .as_ref()
+                    .map(|c| format!("{} root certificates", c.len())),
+            )
             .field("connection_idle_timeout", &self.connection_idle_timeout)
             .field("keep_alive_interval", &self.keep_alive_interval)
             .field("local_node_info", &self.local_node_info)
             .field("bind_addr", &self.bind_addr)
-            .field("message_handler", &if self.message_handler.is_some() { "Some(MessageHandler)" } else { "None" })
-            .field("logger", &if self.logger.is_some() { "Some(Logger)" } else { "None" })
-            .field("keystore", &if self.keystore.is_some() { "Some(EnvelopeCrypto)" } else { "None" })
-            .field("label_resolver", &if self.label_resolver.is_some() { "Some(LabelResolver)" } else { "None" })
+            .field(
+                "message_handler",
+                &if self.message_handler.is_some() {
+                    "Some(MessageHandler)"
+                } else {
+                    "None"
+                },
+            )
+            .field(
+                "logger",
+                &if self.logger.is_some() {
+                    "Some(Logger)"
+                } else {
+                    "None"
+                },
+            )
+            .field(
+                "keystore",
+                &if self.keystore.is_some() {
+                    "Some(EnvelopeCrypto)"
+                } else {
+                    "None"
+                },
+            )
+            .field(
+                "label_resolver",
+                &if self.label_resolver.is_some() {
+                    "Some(LabelResolver)"
+                } else {
+                    "None"
+                },
+            )
             .finish()
     }
 }
@@ -100,12 +141,18 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_keystore(mut self, keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>) -> Self {
+    pub fn with_keystore(
+        mut self,
+        keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    ) -> Self {
         self.keystore = Some(keystore);
         self
     }
 
-    pub fn with_label_resolver(mut self, resolver: Arc<dyn runar_serializer::traits::LabelResolver>) -> Self {
+    pub fn with_label_resolver(
+        mut self,
+        resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
+    ) -> Self {
         self.label_resolver = Some(resolver);
         self
     }
@@ -167,7 +214,6 @@ impl Clone for QuicTransportOptions {
     }
 }
 
-
 /// Simple peer state used by the new transport.
 #[derive(Debug)]
 struct PeerState {
@@ -177,20 +223,22 @@ struct PeerState {
 
 impl PeerState {
     fn new(connection: Arc<quinn::Connection>, node_info_version: i64) -> Self {
-        Self { connection, node_info_version }
+        Self {
+            connection,
+            node_info_version,
+        }
     }
 }
-
 
 /// Convert a compact ID to a DNS-safe format by replacing invalid characters
 fn dns_safe_node_id(node_id: &str) -> String {
     node_id
         .chars()
         .map(|c| match c {
-            '-' => 'x',  // Replace hyphen with 'x'
-            '_' => 'y',  // Replace underscore with 'y'
-            c if c.is_alphanumeric() => c,  // Keep alphanumeric
-            _ => 'z',    // Replace any other invalid chars with 'z'
+            '-' => 'x',                    // Replace hyphen with 'x'
+            '_' => 'y',                    // Replace underscore with 'y'
+            c if c.is_alphanumeric() => c, // Keep alphanumeric
+            _ => 'z',                      // Replace any other invalid chars with 'z'
         })
         .collect()
 }
@@ -203,13 +251,11 @@ struct SharedState {
 type PeerMap = Arc<RwLock<HashMap<String, PeerState>>>;
 type ConnectionIdToPeerIdMap = Arc<RwLock<HashMap<usize, String>>>;
 
-
 /// Encode a `NetworkMessage` with a 4-byte BE length prefix.
 fn encode_message(msg: &NetworkMessage) -> Result<Vec<u8>, NetworkError> {
     let mut buf = Vec::with_capacity(4096);
-    msg.encode(&mut buf).map_err(|e| {
-        NetworkError::MessageError(format!("failed to encode protobuf: {e}"))
-    })?;
+    msg.encode(&mut buf)
+        .map_err(|e| NetworkError::MessageError(format!("failed to encode protobuf: {e}")))?;
     let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
     framed.extend_from_slice(&buf);
     Ok(framed)
@@ -319,23 +365,22 @@ impl rustls::client::danger::ServerCertVerifier for NodeIdServerNameVerifier {
     }
 }
 
-
 pub struct QuicTransport {
     // immutable configuration
     local_node_info: NodeInfo,
-    bind_addr:       SocketAddr,
-    options:         QuicTransportOptions,
+    bind_addr: SocketAddr,
+    options: QuicTransportOptions,
 
     // runtime state
-    endpoint:        Arc<RwLock<Option<Endpoint>>>,
-    logger:          Arc<Logger>,
+    endpoint: Arc<RwLock<Option<Endpoint>>>,
+    logger: Arc<Logger>,
 
     // callback into Node layer
     message_handler: super::MessageHandler,
 
     // crypto helpers
-    keystore:        Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
-    label_resolver:  Arc<dyn runar_serializer::traits::LabelResolver>,
+    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
 
     // shared runtime state (peers + broadcast)
     state: SharedState,
@@ -351,22 +396,20 @@ impl QuicTransport {
         mut options: QuicTransportOptions,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Extract required parameters from options
-        let local_node_info = options.local_node_info
+        let local_node_info = options
+            .local_node_info
             .take()
             .ok_or("local_node_info is required")?;
-        let bind_addr = options.bind_addr
-            .take()
-            .ok_or("bind_addr is required")?;
-        let message_handler = options.message_handler
+        let bind_addr = options.bind_addr.take().ok_or("bind_addr is required")?;
+        let message_handler = options
+            .message_handler
             .take()
             .ok_or("message_handler is required")?;
-        let logger = (options.logger
-            .take()
-            .ok_or("logger is required")?).with_component(runar_common::Component::Transporter);
-        let keystore = options.keystore
-            .take()
-            .ok_or("keystore is required")?;
-        let label_resolver = options.label_resolver
+        let logger = (options.logger.take().ok_or("logger is required")?)
+            .with_component(runar_common::Component::Transporter);
+        let keystore = options.keystore.take().ok_or("keystore is required")?;
+        let label_resolver = options
+            .label_resolver
             .take()
             .ok_or("label_resolver is required")?;
 
@@ -375,7 +418,7 @@ impl QuicTransport {
                 .install_default()
                 .expect("Failed to install default crypto provider");
         }
-            
+
         Ok(Self {
             local_node_info,
             bind_addr,
@@ -390,10 +433,17 @@ impl QuicTransport {
             running: tokio::sync::RwLock::new(false),
         })
     }
- 
+
     fn build_quinn_configs(&self) -> Result<(ServerConfig, ClientConfig), NetworkError> {
-        let certs = self.options.certificates().ok_or(NetworkError::ConfigurationError("no certs".into()))?;
-        let key = self.options.private_key().ok_or(NetworkError::ConfigurationError("no key".into()))?.clone_key();
+        let certs = self
+            .options
+            .certificates()
+            .ok_or(NetworkError::ConfigurationError("no certs".into()))?;
+        let key = self
+            .options
+            .private_key()
+            .ok_or(NetworkError::ConfigurationError("no key".into()))?
+            .clone_key();
 
         let mut transport_config = quinn::TransportConfig::default();
 
@@ -415,18 +465,16 @@ impl QuicTransport {
         let transport_config = Arc::new(transport_config);
 
         // Create server configuration using Quinn 0.11.x API with custom transport config
-        let server_config =
-            ServerConfig::with_single_cert(certs.clone(), key.clone_key()).map_err(
-                |e| {
-                    NetworkError::ConfigurationError(format!("Failed to create server config: {e}"))
-                },
-            )?;
+        let server_config = ServerConfig::with_single_cert(certs.clone(), key.clone_key())
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!("Failed to create server config: {e}"))
+            })?;
 
         let rustls_client_config = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NodeIdServerNameVerifier))
             .with_no_client_auth();
- 
+
         let mut client_config = ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config).map_err(
                 |e| {
@@ -465,7 +513,9 @@ impl QuicTransport {
                         Ok(conn) => {
                             // For inbound, we don't have peer_id yet; handshake will identify.
                             // Spawn tasks anyway and let first bi-stream be handshake.
-                            let task = self_clone.clone().spawn_connection_tasks("inbound".to_string(), Arc::new(conn));
+                            let task = self_clone
+                                .clone()
+                                .spawn_connection_tasks("inbound".to_string(), Arc::new(conn));
                             self_clone.tasks.lock().await.push(task);
                         }
                         Err(e) => self_clone.logger.error(format!("accept failed: {e}")),
@@ -475,9 +525,13 @@ impl QuicTransport {
         })
     }
 
-    fn spawn_connection_tasks(self: Arc<Self>, peer_id: String, conn: Arc<quinn::Connection>) -> tokio::task::JoinHandle<()> {
+    fn spawn_connection_tasks(
+        self: Arc<Self>,
+        peer_id: String,
+        conn: Arc<quinn::Connection>,
+    ) -> tokio::task::JoinHandle<()> {
         let self_clone = self.clone();
-        
+
         tokio::spawn(async move {
             let needs_to_correlate_peer_id = peer_id == "inbound";
             tokio::select! {
@@ -485,7 +539,7 @@ impl QuicTransport {
                 res = self_clone.bi_accept_loop(conn.clone(), needs_to_correlate_peer_id) => if let Err(e) = res { self_clone.logger.error(format!("bi loop failed: {e}")) },
             }
             let resolved_peer_id = if needs_to_correlate_peer_id {
-                let connection_id  = conn.stable_id(); 
+                let connection_id = conn.stable_id();
                 let resolved_peer_id = self_clone.state.connection_id_to_peer_id.read().await.get(&connection_id)
                                                         .unwrap_or_else(|| panic!("connection id {connection_id} not found in connection id to peer id map")).clone();
                 resolved_peer_id
@@ -493,21 +547,30 @@ impl QuicTransport {
                 peer_id
             };
             // remove from peers on exit
-            self_clone.state.peers.write().await.remove(&resolved_peer_id);
+            self_clone
+                .state
+                .peers
+                .write()
+                .await
+                .remove(&resolved_peer_id);
             self_clone.logger.debug(format!("connection tasks exited for peer_node_id: {resolved_peer_id} - local node_id: {local_node_id}", local_node_id=compact_id(&self_clone.local_node_info.node_public_key)));
         })
     }
 
     async fn uni_accept_loop(&self, conn: Arc<quinn::Connection>) -> Result<(), NetworkError> {
         loop {
-            let mut recv = conn.accept_uni().await.map_err(|e| NetworkError::TransportError(e.to_string()))?;
+            let mut recv = conn
+                .accept_uni()
+                .await
+                .map_err(|e| NetworkError::TransportError(e.to_string()))?;
             let msg = self.read_message(&mut recv).await?;
             let response = (self.message_handler)(msg).await?;
             if response.is_some() {
                 // Handle response if needed
-                self.logger.warn("Received response from message handler when it shuold not have been");
+                self.logger
+                    .warn("Received response from message handler when it shuold not have been");
             }
-        } 
+        }
     }
 
     async fn write_message<S: tokio::io::AsyncWrite + Unpin>(
@@ -516,119 +579,156 @@ impl QuicTransport {
         msg: &NetworkMessage,
     ) -> Result<(), NetworkError> {
         use tokio::io::AsyncWriteExt;
-        
-        self.logger.debug(format!("🔍 [write_message] Encoding message: type={}, source={}, dest={}", 
-                 msg.message_type, msg.source_node_id, msg.destination_node_id));
-        
+
+        self.logger.debug(format!(
+            "🔍 [write_message] Encoding message: type={}, source={}, dest={}",
+            msg.message_type, msg.source_node_id, msg.destination_node_id
+        ));
+
         let framed = encode_message(msg)?;
-        self.logger.debug(format!("🔍 [write_message] Encoded message size: {} bytes", framed.len()));
-        
+        self.logger.debug(format!(
+            "🔍 [write_message] Encoded message size: {} bytes",
+            framed.len()
+        ));
+
         match stream.write_all(&framed).await {
             Ok(_) => {
-                self.logger.debug("✅ [write_message] Successfully wrote message to stream");
+                self.logger
+                    .debug("✅ [write_message] Successfully wrote message to stream");
                 Ok(())
             }
             Err(e) => {
-                self.logger.error(format!("❌ [write_message] Failed to write message: {e}"));
-                Err(NetworkError::MessageError(format!("failed to write message: {e}")))
+                self.logger
+                    .error(format!("❌ [write_message] Failed to write message: {e}"));
+                Err(NetworkError::MessageError(format!(
+                    "failed to write message: {e}"
+                )))
             }
         }
     }
 
     // Read a length-prefixed `NetworkMessage` fully from a RecvStream.
-    async fn read_message(&self, recv: &mut quinn::RecvStream) -> Result<NetworkMessage, NetworkError> {
-    
-        
-        self.logger.debug("🔍 [read_message] Reading message from stream");
-        
+    async fn read_message(
+        &self,
+        recv: &mut quinn::RecvStream,
+    ) -> Result<NetworkMessage, NetworkError> {
+        self.logger
+            .debug("🔍 [read_message] Reading message from stream");
+
         let mut len_buf = [0u8; 4];
-        
+
         match recv.read_exact(&mut len_buf).await {
-            Ok(_) => {
-                
-            }
+            Ok(_) => {}
             Err(e) => {
-                return Err(NetworkError::MessageError(format!("failed to read length prefix: {e}")));
+                return Err(NetworkError::MessageError(format!(
+                    "failed to read length prefix: {e}"
+                )));
             }
         }
-        
+
         let len = u32::from_be_bytes(len_buf) as usize;
-        
+
         if len > 1024 * 1024 {
             return Err(NetworkError::MessageError("message too large".into()));
         }
-        
+
         let mut msg_buf = vec![0u8; len];
 
-        self.logger.debug(format!("🔍 [read_message] Reading message payload of length {len}"));
-        
+        self.logger.debug(format!(
+            "🔍 [read_message] Reading message payload of length {len}"
+        ));
+
         match recv.read_exact(&mut msg_buf).await {
-            Ok(_) => {
-            }
+            Ok(_) => {}
             Err(e) => {
-                return Err(NetworkError::MessageError(format!("failed to read message payload: {e}")));
+                return Err(NetworkError::MessageError(format!(
+                    "failed to read message payload: {e}"
+                )));
             }
         }
-        
+
         match NetworkMessage::decode(msg_buf.as_slice()) {
             Ok(msg) => {
                 self.logger.debug(format!("🔍 [read_message] Decoded message: type={type}, source={source}, dest={dest}", 
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id));
                 Ok(msg)
             }
-            Err(e) => {
-                Err(NetworkError::MessageError(format!("failed to decode protobuf: {e}")))
-            }
+            Err(e) => Err(NetworkError::MessageError(format!(
+                "failed to decode protobuf: {e}"
+            ))),
         }
     }
 
-    async fn bi_accept_loop(&self, conn: Arc<quinn::Connection>, needs_to_correlate_peer_id: bool) -> Result<(), NetworkError> {
+    async fn bi_accept_loop(
+        &self,
+        conn: Arc<quinn::Connection>,
+        needs_to_correlate_peer_id: bool,
+    ) -> Result<(), NetworkError> {
         loop {
-            let (mut send, mut recv) = conn.accept_bi().await.map_err(|e| NetworkError::TransportError(e.to_string()))?;
+            let (mut send, mut recv) = conn
+                .accept_bi()
+                .await
+                .map_err(|e| NetworkError::TransportError(e.to_string()))?;
             let msg = self.read_message(&mut recv).await?;
-            
+
             self.logger.debug(format!("🔍 [bi_accept_loop] Received message: type={type}, source={source}, dest={dest}", 
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id));
-            
+
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
-                self.logger.debug("🔍 [bi_accept_loop] Processing handshake message");
-                 
+                self.logger
+                    .debug("🔍 [bi_accept_loop] Processing handshake message");
+
                 if let Some(payload) = msg.payloads.first() {
                     match serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes) {
                         Ok(node_info) => {
                             let peer_node_id = msg.source_node_id.clone();
                             let node_info_version = node_info.version;
-                           
+
                             self.logger.debug(format!("🔍 [bi_accept_loop] Handshake NodeInfo peer_node_id: {peer_node_id} node info version: {node_info_version}"));
                             {
                                 //check if we already know about this peer
                                 let mut peers = self.state.peers.write().await;
                                 if let Some(peer) = peers.get(&peer_node_id) {
-                                    if  node_info_version >= peer.node_info_version {
+                                    if node_info_version >= peer.node_info_version {
                                         self.logger.debug(format!("🔍 [bi_accept_loop] Known peer_node_id: {peer_node_id} with version: {node_info_version} did not increase - no update needed -  we will skip sending the handshake response"));
                                         //skip sending the handshake response - not a first time handshake
                                         continue;
-                                    } else { 
-                                        peers.insert(peer_node_id.clone(), PeerState::new(conn.clone(), node_info_version));
+                                    } else {
+                                        peers.insert(
+                                            peer_node_id.clone(),
+                                            PeerState::new(conn.clone(), node_info_version),
+                                        );
                                     }
-                                } else{
-                                    self.logger.debug(format!("🔍 [bi_accept_loop] New peer peer_node_id: {peer_node_id}"));
-                                    peers.insert(peer_node_id.clone(), PeerState::new(conn.clone(), node_info_version));
+                                } else {
+                                    self.logger.debug(format!(
+                                        "🔍 [bi_accept_loop] New peer peer_node_id: {peer_node_id}"
+                                    ));
+                                    peers.insert(
+                                        peer_node_id.clone(),
+                                        PeerState::new(conn.clone(), node_info_version),
+                                    );
                                 }
                             }
-                            let _ = (self.message_handler)(msg.clone()).await; 
+                            let _ = (self.message_handler)(msg.clone()).await;
                             if needs_to_correlate_peer_id {
-                                self.state.connection_id_to_peer_id.write().await.insert(conn.stable_id(), peer_node_id); 
+                                self.state
+                                    .connection_id_to_peer_id
+                                    .write()
+                                    .await
+                                    .insert(conn.stable_id(), peer_node_id);
                             }
                         }
                         Err(e) => {
-                            self.logger.error(format!("❌ [bi_accept_loop] Failed to parse NodeInfo: {e}"));
+                            self.logger.error(format!(
+                                "❌ [bi_accept_loop] Failed to parse NodeInfo: {e}"
+                            ));
                         }
                     }
                 }
-                
+
                 // Send handshake response
-                self.logger.debug("🔍 [bi_accept_loop] Sending handshake response");
+                self.logger
+                    .debug("🔍 [bi_accept_loop] Sending handshake response");
                 let response_msg = NetworkMessage {
                     source_node_id: compact_id(&self.local_node_info.node_public_key),
                     destination_node_id: msg.source_node_id,
@@ -636,41 +736,51 @@ impl QuicTransport {
                     payloads: vec![super::NetworkMessagePayloadItem {
                         path: "handshake".to_string(),
                         value_bytes: serde_cbor::to_vec(&self.local_node_info).unwrap_or_default(),
-                        correlation_id: msg.payloads.first().map(|p| p.correlation_id.clone()).unwrap_or_default(),
+                        correlation_id: msg
+                            .payloads
+                            .first()
+                            .map(|p| p.correlation_id.clone())
+                            .unwrap_or_default(),
                         context: None,
                     }],
                 };
-                
+
                 self.write_message(&mut send, &response_msg).await?;
-                send.finish().map_err(|e| NetworkError::TransportError(e.to_string()))?;
-                self.logger.debug("✅ [bi_accept_loop] Handshake response sent");
+                send.finish()
+                    .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+                self.logger
+                    .debug("✅ [bi_accept_loop] Handshake response sent");
                 continue;
             }
-            
+
             // Extract fields needed for error handling before moving msg
             let source_node_id = msg.source_node_id.clone();
             let payloads = msg.payloads.clone();
-            
+
             match (self.message_handler)(msg).await {
                 Ok(Some(reply)) => {
                     self.write_message(&mut send, &reply).await?;
-                    send.finish().map_err(|e| NetworkError::TransportError(e.to_string()))?;
+                    send.finish()
+                        .map_err(|e| NetworkError::TransportError(e.to_string()))?;
                 }
                 Ok(None) => {
-                    self.logger.warn("Expected response from message handler but got None");
-                },
+                    self.logger
+                        .warn("Expected response from message handler but got None");
+                }
                 Err(e) => {
                     self.logger.error(format!("Handler error: {e}"));
                     // Send error response back to caller - one error per payload
-                    let error_payloads: Vec<super::NetworkMessagePayloadItem> = payloads.iter().map(|payload| {
-                        super::NetworkMessagePayloadItem {
+                    let error_payloads: Vec<super::NetworkMessagePayloadItem> = payloads
+                        .iter()
+                        .map(|payload| super::NetworkMessagePayloadItem {
                             path: payload.path.clone(),
-                            value_bytes: serde_cbor::to_vec(&format!("Error: {e}")).unwrap_or_default(),
+                            value_bytes: serde_cbor::to_vec(&format!("Error: {e}"))
+                                .unwrap_or_default(),
                             correlation_id: payload.correlation_id.clone(),
                             context: payload.context.clone(),
-                        }
-                    }).collect();
-                    
+                        })
+                        .collect();
+
                     let error_msg = NetworkMessage {
                         source_node_id: compact_id(&self.local_node_info.node_public_key),
                         destination_node_id: source_node_id,
@@ -678,21 +788,31 @@ impl QuicTransport {
                         payloads: error_payloads,
                     };
                     self.write_message(&mut send, &error_msg).await?;
-                    send.finish().map_err(|e| NetworkError::TransportError(e.to_string()))?;
+                    send.finish()
+                        .map_err(|e| NetworkError::TransportError(e.to_string()))?;
                 }
             }
         }
     }
 
-    async fn handshake_outbound(&self, peer_id: &str, conn: &quinn::Connection) -> Result<(), NetworkError> {
-        self.logger.debug(format!("🔍 [handshake_outbound] Starting handshake with peer: {peer_id}"));
-        
-        self.logger.debug("🔍 [handshake_outbound] Serializing local NodeInfo");
+    async fn handshake_outbound(
+        &self,
+        peer_id: &str,
+        conn: &quinn::Connection,
+    ) -> Result<(), NetworkError> {
+        self.logger.debug(format!(
+            "🔍 [handshake_outbound] Starting handshake with peer: {peer_id}"
+        ));
+
+        self.logger
+            .debug("🔍 [handshake_outbound] Serializing local NodeInfo");
         let payload_bytes = serde_cbor::to_vec(&self.local_node_info).map_err(|e| {
-            self.logger.error(format!("❌ [handshake_outbound] Failed to serialize NodeInfo: {e}"));
+            self.logger.error(format!(
+                "❌ [handshake_outbound] Failed to serialize NodeInfo: {e}"
+            ));
             NetworkError::MessageError(e.to_string())
         })?;
-        
+
         let payloads = vec![super::NetworkMessagePayloadItem {
             path: "handshake".to_string(),
             value_bytes: payload_bytes,
@@ -706,60 +826,80 @@ impl QuicTransport {
             message_type: super::MESSAGE_TYPE_HANDSHAKE,
             payloads,
         };
-        
-        self.logger.debug("🔍 [handshake_outbound] Sending handshake message via request_inner");
-        
+
+        self.logger
+            .debug("🔍 [handshake_outbound] Sending handshake message via request_inner");
+
         // Send handshake and wait for response
         let reply = self.request_inner(conn, &msg).await?;
-        
-        self.logger.debug("🔍 [handshake_outbound] Received handshake response, processing...");
-        
+
+        self.logger
+            .debug("🔍 [handshake_outbound] Received handshake response, processing...");
+
         //send to node to handle handshake response and store peer node info
         let _ = (self.message_handler)(reply).await;
-        
+
         Ok(())
     }
 
-    async fn request_inner(&self, conn: &quinn::Connection, msg: &NetworkMessage) -> Result<NetworkMessage, NetworkError> {
-        self.logger.debug("🔍 [request_inner] Opening bidirectional stream");
-        
+    async fn request_inner(
+        &self,
+        conn: &quinn::Connection,
+        msg: &NetworkMessage,
+    ) -> Result<NetworkMessage, NetworkError> {
+        self.logger
+            .debug("🔍 [request_inner] Opening bidirectional stream");
+
         let (mut send, mut recv) = conn.open_bi().await.map_err(|e| {
-            self.logger.error(format!("❌ [request_inner] Failed to open bidirectional stream: {e}"));
+            self.logger.error(format!(
+                "❌ [request_inner] Failed to open bidirectional stream: {e}"
+            ));
             NetworkError::TransportError(e.to_string())
         })?;
-        
-        self.logger.debug("🔍 [request_inner] Bidirectional stream opened successfully");
-        
-        self.logger.debug("🔍 [request_inner] Writing message to stream");
+
+        self.logger
+            .debug("🔍 [request_inner] Bidirectional stream opened successfully");
+
+        self.logger
+            .debug("🔍 [request_inner] Writing message to stream");
         self.write_message(&mut send, msg).await?;
-        
-        self.logger.debug("🔍 [request_inner] Finishing send stream");
+
+        self.logger
+            .debug("🔍 [request_inner] Finishing send stream");
         send.finish().map_err(|e| {
-            self.logger.error(format!("❌ [request_inner] Failed to finish send stream: {e}"));
+            self.logger.error(format!(
+                "❌ [request_inner] Failed to finish send stream: {e}"
+            ));
             NetworkError::TransportError(e.to_string())
         })?;
-        
-        self.logger.debug("🔍 [request_inner] Reading response message");
+
+        self.logger
+            .debug("🔍 [request_inner] Reading response message");
         // Read the response message first
         let response_msg = self.read_message(&mut recv).await?;
-        
-        self.logger.debug("🔍 [request_inner] Response message read successfully, draining remaining data");
-        
+
+        self.logger.debug(
+            "🔍 [request_inner] Response message read successfully, draining remaining data",
+        );
+
         // Then spawn a task to drain any remaining data from the stream
-        let drain_task = tokio::spawn(async move {
-            while recv.read(&mut [0u8; 0]).await.is_ok() {}
-        });
-        
+        let drain_task =
+            tokio::spawn(async move { while recv.read(&mut [0u8; 0]).await.is_ok() {} });
+
         // Abort the drain task since we've already read what we need
         drain_task.abort();
         let _ = drain_task.await;
-        
-        self.logger.debug("✅ [request_inner] Request completed successfully");
+
+        self.logger
+            .debug("✅ [request_inner] Request completed successfully");
         Ok(response_msg)
     }
- 
+
     fn shared_state() -> SharedState {
-        SharedState { peers: Arc::new(RwLock::new(HashMap::new())), connection_id_to_peer_id: Arc::new(RwLock::new(HashMap::new()))  }
+        SharedState {
+            peers: Arc::new(RwLock::new(HashMap::new())),
+            connection_id_to_peer_id: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 }
 
@@ -774,9 +914,8 @@ impl NetworkTransport for QuicTransport {
         // Create Quinn server & client configs
         let (server_cfg, client_cfg) = self.build_quinn_configs()?;
 
-        let mut endpoint = Endpoint::server(server_cfg, self.bind_addr).map_err(|e| {
-            NetworkError::TransportError(format!("failed to create endpoint: {e}"))
-        })?;
+        let mut endpoint = Endpoint::server(server_cfg, self.bind_addr)
+            .map_err(|e| NetworkError::TransportError(format!("failed to create endpoint: {e}")))?;
         endpoint.set_default_client_config(client_cfg);
 
         // store endpoint
@@ -829,9 +968,12 @@ impl NetworkTransport for QuicTransport {
         if let Some(peer_state) = peers.remove(&node_id) {
             // Close the connection gracefully
             peer_state.connection.close(0u32.into(), b"disconnect");
-            self.logger.info(format!("Disconnected from peer: {node_id}"));
+            self.logger
+                .info(format!("Disconnected from peer: {node_id}"));
         } else {
-            self.logger.warn(format!("Attempted to disconnect from unknown peer: {node_id}"));
+            self.logger.warn(format!(
+                "Attempted to disconnect from unknown peer: {node_id}"
+            ));
         }
         Ok(())
     }
@@ -848,35 +990,42 @@ impl NetworkTransport for QuicTransport {
         peer_node_id: &str,
         context: MessageContext,
     ) -> Result<ArcValue, NetworkError> {
-        self.logger.info(format!("🔍 [request] Starting request to peer: {peer_node_id}"));
-        
+        self.logger.info(format!(
+            "🔍 [request] Starting request to peer: {peer_node_id}"
+        ));
+
         let peers = self.state.peers.read().await;
         let peer = peers.get(peer_node_id).ok_or_else(|| {
-            self.logger.error(format!("❌ [request] Not connected to peer {peer_node_id}"));
+            self.logger
+                .error(format!("❌ [request] Not connected to peer {peer_node_id}"));
             NetworkError::ConnectionError(format!("not connected to peer {peer_node_id}"))
         })?;
 
-        self.logger.info("🔍 [request] Opening bidirectional stream");
+        self.logger
+            .info("🔍 [request] Opening bidirectional stream");
         let (mut send, mut recv) = peer.connection.open_bi().await.map_err(|e| {
-            self.logger.error(format!("❌ [request] Failed to open bidirectional stream: {e}"));
+            self.logger.error(format!(
+                "❌ [request] Failed to open bidirectional stream: {e}"
+            ));
             NetworkError::TransportError(format!("open_bi failed: {e}"))
         })?;
 
-        self.logger.info("🔍 [request] Bidirectional stream opened successfully");
+        self.logger
+            .info("🔍 [request] Bidirectional stream opened successfully");
 
         let network_id = topic_path.network_id();
 
         let correlation_id = uuid::Uuid::new_v4().to_string();
 
         let profile_public_key = context.profile_public_key.clone();
- 
-        let serialization_context = SerializationContext{ 
+
+        let serialization_context = SerializationContext {
             keystore: self.keystore.clone(),
             resolver: self.label_resolver.clone(),
             network_id,
             profile_public_key,
         };
-        
+
         // build message
         let msg = NetworkMessage {
             source_node_id: compact_id(&self.local_node_info.node_public_key),
@@ -885,38 +1034,51 @@ impl NetworkTransport for QuicTransport {
             payloads: vec![super::NetworkMessagePayloadItem {
                 path: topic_path.as_str().to_string(),
                 value_bytes: if let Some(v) = params {
-                    v.serialize(Some(&serialization_context)).map_err(|e| NetworkError::MessageError(e.to_string()))?
+                    v.serialize(Some(&serialization_context))
+                        .map_err(|e| NetworkError::MessageError(e.to_string()))?
                 } else {
-                    ArcValue::null().serialize(Some(&serialization_context)).map_err(|e| NetworkError::MessageError(e.to_string()))?
+                    ArcValue::null()
+                        .serialize(Some(&serialization_context))
+                        .map_err(|e| NetworkError::MessageError(e.to_string()))?
                 },
                 correlation_id,
                 context: Some(context),
             }],
         };
 
-        self.logger.info("🔍 [request] Writing request message to stream");
+        self.logger
+            .info("🔍 [request] Writing request message to stream");
         self.write_message(&mut send, &msg).await?;
-        
+
         self.logger.info("🔍 [request] Finishing send stream");
         send.finish().map_err(|e| {
-            self.logger.error(format!("❌ [request] Failed to finish send stream: {e}"));
+            self.logger
+                .error(format!("❌ [request] Failed to finish send stream: {e}"));
             NetworkError::TransportError(format!("finish send failed: {e}"))
         })?;
 
         self.logger.info("🔍 [request] Reading response message");
         let response_msg = self.read_message(&mut recv).await?;
-        self.logger.info(format!("🔍 [request] Received response message: type={}, payloads={}", 
-                                response_msg.message_type, response_msg.payloads.len()));
-        
+        self.logger.info(format!(
+            "🔍 [request] Received response message: type={}, payloads={}",
+            response_msg.message_type,
+            response_msg.payloads.len()
+        ));
+
         // assume first payload contains ArcValue bytes
         let bytes = &response_msg.payloads[0].value_bytes;
-        self.logger.info(format!("🔍 [request] Deserializing response payload of {} bytes", bytes.len()));
+        self.logger.info(format!(
+            "🔍 [request] Deserializing response payload of {} bytes",
+            bytes.len()
+        ));
         let av = ArcValue::deserialize(bytes, None).map_err(|e| {
-            self.logger.error(format!("❌ [request] Failed to deserialize response: {e}"));
+            self.logger
+                .error(format!("❌ [request] Failed to deserialize response: {e}"));
             NetworkError::MessageError(format!("deserialize response: {e}"))
         })?;
-        
-        self.logger.info("✅ [request] Request completed successfully");
+
+        self.logger
+            .info("✅ [request] Request completed successfully");
         Ok(av)
     }
 
@@ -927,18 +1089,18 @@ impl NetworkTransport for QuicTransport {
             NetworkError::ConnectionError(format!("not connected to peer {peer_id}"))
         })?;
 
-        let mut send = peer.connection.open_uni().await.map_err(|e| {
-            NetworkError::TransportError(format!("open_uni failed: {e}"))
-        })?;
+        let mut send = peer
+            .connection
+            .open_uni()
+            .await
+            .map_err(|e| NetworkError::TransportError(format!("open_uni failed: {e}")))?;
         self.write_message(&mut send, &message).await?;
-        send.finish().map_err(|e| {
-            NetworkError::TransportError(format!("finish uni failed: {e}"))
-        })?;
+        send.finish()
+            .map_err(|e| NetworkError::TransportError(format!("finish uni failed: {e}")))?;
         Ok(())
     }
 
     async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError> {
-
         //check if transport is running
         let running = self.running.read().await;
         if !*running {
@@ -947,12 +1109,16 @@ impl NetworkTransport for QuicTransport {
         }
 
         let peer_node_id = compact_id(&discovery_msg.public_key);
-        self.logger.debug(format!("🔍 [connect_peer] Starting connection to peer: {peer_node_id}"));
+        self.logger.debug(format!(
+            "🔍 [connect_peer] Starting connection to peer: {peer_node_id}"
+        ));
         // check we already know about this peer
         {
             let peers = self.state.peers.read().await;
             if peers.contains_key(&peer_node_id) {
-                self.logger.debug(format!("🔍 [connect_peer] Peer already connected: {peer_node_id}"));
+                self.logger.debug(format!(
+                    "🔍 [connect_peer] Peer already connected: {peer_node_id}"
+                ));
                 return Ok(());
             }
         }
@@ -966,36 +1132,41 @@ impl NetworkTransport for QuicTransport {
         };
 
         if discovery_msg.addresses.is_empty() {
-            self.logger.error("❌ [connect_peer] No addresses in PeerInfo");
-            return Err(NetworkError::ConfigurationError("no addresses in PeerInfo".into()));
+            self.logger
+                .error("❌ [connect_peer] No addresses in PeerInfo");
+            return Err(NetworkError::ConfigurationError(
+                "no addresses in PeerInfo".into(),
+            ));
         }
-        
+
         let addr = discovery_msg.addresses[0] // take first
             .parse::<std::net::SocketAddr>()
             .map_err(|e| {
-                self.logger.error(format!("❌ [connect_peer] Bad address: {e}"));
+                self.logger
+                    .error(format!("❌ [connect_peer] Bad address: {e}"));
                 NetworkError::ConfigurationError(format!("bad addr: {e}"))
             })?;
 
-        
         let dns_safe_peer_id = dns_safe_node_id(&peer_node_id);
         self.logger.debug(format!("🔍 [connect_peer] Connecting to {peer_node_id} (DNS-safe: {dns_safe_peer_id}) at {addr}"));
 
-        let connecting = endpoint
-            .connect(addr, &dns_safe_peer_id)
-            .map_err(|e| {
-                self.logger.error(format!("❌ [connect_peer] Connect failed: {e}"));
-                NetworkError::ConnectionError(format!("connect: {e}"))
-            })?;
-        
-        self.logger.debug("🔍 [connect_peer] Connection initiated, waiting for handshake...");
-        
+        let connecting = endpoint.connect(addr, &dns_safe_peer_id).map_err(|e| {
+            self.logger
+                .error(format!("❌ [connect_peer] Connect failed: {e}"));
+            NetworkError::ConnectionError(format!("connect: {e}"))
+        })?;
+
+        self.logger
+            .debug("🔍 [connect_peer] Connection initiated, waiting for handshake...");
+
         let conn = connecting.await.map_err(|e| {
-            self.logger.error(format!("❌ [connect_peer] Handshake failed: {e}"));
+            self.logger
+                .error(format!("❌ [connect_peer] Handshake failed: {e}"));
             NetworkError::ConnectionError(format!("handshake failed: {e}"))
         })?;
 
-        self.logger.debug("[connect_peer] QUIC connection established successfully");
+        self.logger
+            .debug("[connect_peer] QUIC connection established successfully");
 
         // wrap connection in Arc for sharing
         let conn_arc = Arc::new(conn);
@@ -1004,25 +1175,33 @@ impl NetworkTransport for QuicTransport {
         {
             let mut peers = self.state.peers.write().await;
             peers.insert(peer_node_id.clone(), PeerState::new(conn_arc.clone(), 0));
-            self.logger.debug("🔍 [connect_peer] Peer stored in peer map");
+            self.logger
+                .debug("🔍 [connect_peer] Peer stored in peer map");
         }
 
         // spawn stream accept loops for that connection
-        let task = self.clone().spawn_connection_tasks(peer_node_id.clone(), conn_arc.clone());
+        let task = self
+            .clone()
+            .spawn_connection_tasks(peer_node_id.clone(), conn_arc.clone());
         self.tasks.lock().await.push(task);
-        self.logger.debug("🔍 [connect_peer] Connection tasks spawned");
+        self.logger
+            .debug("🔍 [connect_peer] Connection tasks spawned");
 
         // do handshake on a fresh bi stream
-        self.logger.debug("🔍 [connect_peer] Starting application-level handshake...");
+        self.logger
+            .debug("🔍 [connect_peer] Starting application-level handshake...");
         if let Err(e) = self.handshake_outbound(&peer_node_id, &conn_arc).await {
-            self.logger.error(format!("❌ [connect_peer] Application handshake failed: {e}"));
+            self.logger.error(format!(
+                "❌ [connect_peer] Application handshake failed: {e}"
+            ));
             self.logger.error(format!("handshake failed: {e}"));
             // cleanup
             self.state.peers.write().await.remove(&peer_node_id);
             return Err(e);
         }
 
-        self.logger.debug("[connect_peer] Application handshake completed successfully");
+        self.logger
+            .debug("[connect_peer] Application handshake completed successfully");
         Ok(())
     }
 
@@ -1033,15 +1212,17 @@ impl NetworkTransport for QuicTransport {
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError> {
         // Get all connected peers
         let peers = self.state.peers.read().await;
-        
+
         if peers.is_empty() {
-            self.logger.debug("No peers connected, skipping peer update");
+            self.logger
+                .debug("No peers connected, skipping peer update");
             return Ok(());
         }
 
         // Create handshake message with updated node info
-        let payload_bytes = serde_cbor::to_vec(&node_info)
-            .map_err(|e| NetworkError::MessageError(format!("Failed to serialize node info: {e}")))?;
+        let payload_bytes = serde_cbor::to_vec(&node_info).map_err(|e| {
+            NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
+        })?;
 
         let message = NetworkMessage {
             source_node_id: compact_id(&self.local_node_info.node_public_key),
@@ -1057,21 +1238,24 @@ impl NetworkTransport for QuicTransport {
 
         // Send to each connected peer
         for (peer_id, peer_state) in peers.iter() {
-            let mut send = peer_state.connection.open_uni()
-                .await
-                .map_err(|e| NetworkError::TransportError(format!("Failed to open uni stream to {peer_id}: {e}")))?;
-            
+            let mut send = peer_state.connection.open_uni().await.map_err(|e| {
+                NetworkError::TransportError(format!("Failed to open uni stream to {peer_id}: {e}"))
+            })?;
+
             self.write_message(&mut send, &message).await?;
-            send.finish()
-                .map_err(|e| NetworkError::TransportError(format!("Failed to finish send to {peer_id}: {e}")))?;
-            
-            self.logger.debug(format!("Updated peer {peer_id} with new node info"));
+            send.finish().map_err(|e| {
+                NetworkError::TransportError(format!("Failed to finish send to {peer_id}: {e}"))
+            })?;
+
+            self.logger
+                .debug(format!("Updated peer {peer_id} with new node info"));
         }
 
-        self.logger.info(format!("Updated {} peers with new node info", peers.len()));
+        self.logger
+            .info(format!("Updated {} peers with new node info", peers.len()));
         Ok(())
     }
- 
+
     fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto> {
         self.keystore.clone()
     }
@@ -1079,4 +1263,4 @@ impl NetworkTransport for QuicTransport {
     fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver> {
         self.label_resolver.clone()
     }
-} 
+}

@@ -311,15 +311,17 @@ impl TopicPath {
 
             // Reject empty network IDs
             if parts[0].is_empty() {
-                return Err(format!("Invalid path format - network ID cannot be empty: {path}"));
+                return Err(format!(
+                    "Invalid path format - network ID cannot be empty: {path}"
+                ));
             }
 
             let network_id = parts[0];
             let path_without_network = parts[1];
             Self::new(path_without_network, network_id)
-        }else {
+        } else {
             Err(format!("Invalid path format - missing network_id: {path}"))
-        } 
+        }
     }
 
     /// Create a new TopicPath from a string

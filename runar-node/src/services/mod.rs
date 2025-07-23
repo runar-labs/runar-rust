@@ -40,7 +40,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-
 // Import types from submodules
 use crate::services::abstract_service::ServiceState;
 use crate::services::remote_service::RemoteService;

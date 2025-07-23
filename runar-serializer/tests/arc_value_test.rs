@@ -13,7 +13,6 @@ struct TestStruct {
     pub b: String,
 }
 
-
 // Simple test profile without encryption
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
 struct TestProfile {
@@ -208,10 +207,10 @@ fn test_from_json() -> Result<()> {
         "array": [1, 2, 3],
         "object": {"key": "value"}
     });
-    
+
     let mut val = ArcValue::from_json(json_val.clone());
     assert_eq!(val.category, ValueCategory::Map);
-    
+
     let back_to_json = val.to_json()?;
     assert_eq!(back_to_json, json_val);
     Ok(())
@@ -222,7 +221,7 @@ fn test_null() -> Result<()> {
     let null_val = ArcValue::null();
     assert_eq!(null_val.category, ValueCategory::Null);
     assert!(null_val.is_null());
-    
+
     let ser = null_val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
     assert_eq!(de.category, ValueCategory::Null);
@@ -263,25 +262,25 @@ fn test_as_typed_map_ref() -> Result<()> {
     // Get the map as ArcValue first
     let map_arc = deserialized.as_map_ref()?;
     assert_eq!(map_arc.len(), 2);
-    
+
     // Verify we can access individual ArcValues and their categories
     let user1_arc = map_arc.get("user1").expect("user1 not found");
     assert_eq!(user1_arc.category, ValueCategory::Struct);
-    
+
     let user2_arc = map_arc.get("user2").expect("user2 not found");
     assert_eq!(user2_arc.category, ValueCategory::Struct);
-    
+
     // Demonstrate the concept: we can extract typed values from individual ArcValues
     // (This would work if struct deserialization was fully implemented)
     let user1_profile = user1_arc.as_struct_ref::<TestProfile>()?;
     assert_eq!(user1_profile.id, "u1");
     assert_eq!(user1_profile.name, "Alice");
     assert_eq!(user1_profile.email, "alice@example.com");
-    
+
     let user2_profile = user2_arc.as_struct_ref::<TestProfile>()?;
     assert_eq!(user2_profile.id, "u2");
     assert_eq!(user2_profile.name, "Bob");
     assert_eq!(user2_profile.email, "bob@example.com");
-    
+
     Ok(())
 }

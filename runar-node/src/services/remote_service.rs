@@ -4,7 +4,7 @@
 // This service forwards requests to the remote node and returns responses, making
 // remote services appear as local services to the node.
 
-use anyhow::{ Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -109,17 +109,19 @@ impl RemoteService {
 
         for service_metadata in config.capabilities {
             // Create a topic path using the service path (not the name)
-            let service_path =
-                match TopicPath::new(&service_metadata.service_path, &service_metadata.network_id) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        dependencies.logger.error(format!(
-                            "Invalid service path '{path}': {e}",
-                            path=service_metadata.service_path
-                        ));
-                        continue;
-                    }
-                };
+            let service_path = match TopicPath::new(
+                &service_metadata.service_path,
+                &service_metadata.network_id,
+            ) {
+                Ok(path) => path,
+                Err(e) => {
+                    dependencies.logger.error(format!(
+                        "Invalid service path '{path}': {e}",
+                        path = service_metadata.service_path
+                    ));
+                    continue;
+                }
+            };
 
             // Prepare config for RemoteService::new
             let rs_config = RemoteServiceConfig {

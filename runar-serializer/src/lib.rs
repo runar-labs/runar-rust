@@ -10,9 +10,9 @@ pub mod arc_value;
 pub mod encryption;
 pub mod erased_arc;
 pub mod primitive_types;
+pub mod registry;
 pub mod traits;
 pub mod utils;
-pub mod registry;
 
 pub use encryption::*;
 pub use traits::*;

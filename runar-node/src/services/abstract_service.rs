@@ -54,8 +54,6 @@ impl fmt::Display for ServiceState {
     }
 }
 
-
-
 /// Abstract service interface
 ///
 /// INTENTION: Define a common interface for all services, enabling

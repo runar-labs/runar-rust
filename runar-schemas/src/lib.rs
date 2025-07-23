@@ -195,7 +195,7 @@ impl FieldSchema {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use runar_serializer::{ArcValue, arc_value::AsArcValue};
+    use runar_serializer::{arc_value::AsArcValue, ArcValue};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -241,18 +241,30 @@ mod tests {
                     input_schema: Some(FieldSchema::object(
                         "CalculateInput",
                         HashMap::from([
-                            ("expression".to_string(), Box::new(FieldSchema::string("expression"))),
-                            ("variables".to_string(), Box::new(FieldSchema::array(
-                                "variables",
-                                Box::new(FieldSchema::object(
-                                    "Variable",
-                                    HashMap::from([
-                                        ("name".to_string(), Box::new(FieldSchema::string("name"))),
-                                        ("value".to_string(), Box::new(FieldSchema::double("value"))),
-                                    ]),
-                                    Some(vec!["name".to_string(), "value".to_string()]),
+                            (
+                                "expression".to_string(),
+                                Box::new(FieldSchema::string("expression")),
+                            ),
+                            (
+                                "variables".to_string(),
+                                Box::new(FieldSchema::array(
+                                    "variables",
+                                    Box::new(FieldSchema::object(
+                                        "Variable",
+                                        HashMap::from([
+                                            (
+                                                "name".to_string(),
+                                                Box::new(FieldSchema::string("name")),
+                                            ),
+                                            (
+                                                "value".to_string(),
+                                                Box::new(FieldSchema::double("value")),
+                                            ),
+                                        ]),
+                                        Some(vec!["name".to_string(), "value".to_string()]),
+                                    )),
                                 )),
-                            ))),
+                            ),
                         ]),
                         Some(vec!["expression".to_string()]),
                     )),
@@ -266,12 +278,28 @@ mod tests {
                     data_schema: Some(FieldSchema::object(
                         "CalculationCompleted",
                         HashMap::from([
-                            ("operation".to_string(), Box::new(FieldSchema::string("operation"))),
-                            ("result".to_string(), Box::new(FieldSchema::double("result"))),
-                            ("timestamp".to_string(), Box::new(FieldSchema::timestamp("timestamp"))),
-                            ("user_id".to_string(), Box::new(FieldSchema::string("user_id"))),
+                            (
+                                "operation".to_string(),
+                                Box::new(FieldSchema::string("operation")),
+                            ),
+                            (
+                                "result".to_string(),
+                                Box::new(FieldSchema::double("result")),
+                            ),
+                            (
+                                "timestamp".to_string(),
+                                Box::new(FieldSchema::timestamp("timestamp")),
+                            ),
+                            (
+                                "user_id".to_string(),
+                                Box::new(FieldSchema::string("user_id")),
+                            ),
                         ]),
-                        Some(vec!["operation".to_string(), "result".to_string(), "timestamp".to_string()]),
+                        Some(vec![
+                            "operation".to_string(),
+                            "result".to_string(),
+                            "timestamp".to_string(),
+                        ]),
                     )),
                 },
                 EventMetadata {
@@ -280,9 +308,18 @@ mod tests {
                     data_schema: Some(FieldSchema::object(
                         "ErrorOccurred",
                         HashMap::from([
-                            ("error_code".to_string(), Box::new(FieldSchema::integer("error_code"))),
-                            ("error_message".to_string(), Box::new(FieldSchema::string("error_message"))),
-                            ("stack_trace".to_string(), Box::new(FieldSchema::string("stack_trace"))),
+                            (
+                                "error_code".to_string(),
+                                Box::new(FieldSchema::integer("error_code")),
+                            ),
+                            (
+                                "error_message".to_string(),
+                                Box::new(FieldSchema::string("error_message")),
+                            ),
+                            (
+                                "stack_trace".to_string(),
+                                Box::new(FieldSchema::string("stack_trace")),
+                            ),
                         ]),
                         Some(vec!["error_code".to_string(), "error_message".to_string()]),
                     )),
@@ -294,59 +331,62 @@ mod tests {
 
         // Wrap in ArcValue
         let arc_value = ArcValue::new_struct(service_metadata.clone());
-        
+
         // Serialize
         let serialized = arc_value.serialize(None)?;
-        
+
         // Deserialize
         let deserialized = ArcValue::deserialize(&serialized, None)?;
-        
+
         // Extract the ServiceMetadata from the deserialized ArcValue
         let extracted_metadata: Arc<ServiceMetadata> = deserialized.as_struct_ref()?;
-        
+
         // Verify that the output matches the input
         assert_eq!(*extracted_metadata, service_metadata);
-        
+
         // Additional verification of specific fields
         assert_eq!(extracted_metadata.network_id, "test-network-123");
         assert_eq!(extracted_metadata.service_path, "math-service");
         assert_eq!(extracted_metadata.name, "Math Service");
         assert_eq!(extracted_metadata.version, "1.2.3");
-        assert_eq!(extracted_metadata.description, "A comprehensive mathematical operations service");
+        assert_eq!(
+            extracted_metadata.description,
+            "A comprehensive mathematical operations service"
+        );
         assert_eq!(extracted_metadata.registration_time, 1640995200);
         assert_eq!(extracted_metadata.last_start_time, Some(1640995260));
-        
+
         // Verify actions
         assert_eq!(extracted_metadata.actions.len(), 3);
         assert_eq!(extracted_metadata.actions[0].name, "add");
         assert_eq!(extracted_metadata.actions[1].name, "multiply");
         assert_eq!(extracted_metadata.actions[2].name, "calculate");
-        
+
         // Verify events
         assert_eq!(extracted_metadata.events.len(), 2);
         assert_eq!(extracted_metadata.events[0].path, "calculation.completed");
         assert_eq!(extracted_metadata.events[1].path, "error.occurred");
-        
+
         // Verify that input schemas are preserved
         assert!(extracted_metadata.actions[0].input_schema.is_some());
         assert!(extracted_metadata.actions[1].input_schema.is_some());
         assert!(extracted_metadata.actions[2].input_schema.is_some());
-        
+
         // Verify that output schemas are preserved
         assert!(extracted_metadata.actions[0].output_schema.is_some());
         assert!(extracted_metadata.actions[1].output_schema.is_some());
         assert!(extracted_metadata.actions[2].output_schema.is_some());
-        
+
         // Verify that event data schemas are preserved
         assert!(extracted_metadata.events[0].data_schema.is_some());
         assert!(extracted_metadata.events[1].data_schema.is_some());
-        
+
         println!("✅ ServiceMetadata serialization roundtrip test passed!");
         println!("   - Network ID: {}", extracted_metadata.network_id);
         println!("   - Service Path: {}", extracted_metadata.service_path);
         println!("   - Actions: {}", extracted_metadata.actions.len());
         println!("   - Events: {}", extracted_metadata.events.len());
-        
+
         Ok(())
     }
 
@@ -358,26 +398,33 @@ mod tests {
         let double_schema = FieldSchema::double("score");
         let boolean_schema = FieldSchema::boolean("active");
         let timestamp_schema = FieldSchema::timestamp("created_at");
-        
+
         // Test object schema with properties
         let mut properties = HashMap::new();
         properties.insert("id".to_string(), Box::new(FieldSchema::integer("id")));
         properties.insert("name".to_string(), Box::new(FieldSchema::string("name")));
-        let object_schema = FieldSchema::object("User", properties, Some(vec!["id".to_string(), "name".to_string()]));
-        
+        let object_schema = FieldSchema::object(
+            "User",
+            properties,
+            Some(vec!["id".to_string(), "name".to_string()]),
+        );
+
         // Test array schema
         let array_schema = FieldSchema::array("tags", Box::new(FieldSchema::string("tag")));
-        
+
         // Test reference schema
         let reference_schema = FieldSchema::reference("user", "User");
-        
+
         // Test union schema
-        let union_schema = FieldSchema::union("value", vec![
-            SchemaDataType::String,
-            SchemaDataType::Int32,
-            SchemaDataType::Double,
-        ]);
-        
+        let union_schema = FieldSchema::union(
+            "value",
+            vec![
+                SchemaDataType::String,
+                SchemaDataType::Int32,
+                SchemaDataType::Double,
+            ],
+        );
+
         // Create a comprehensive schema with all types
         let schemas = vec![
             string_schema,
@@ -390,16 +437,16 @@ mod tests {
             reference_schema,
             union_schema,
         ];
-        
+
         for schema in schemas {
             let arc_value = ArcValue::new_struct(schema.clone());
             let serialized = arc_value.serialize(None)?;
             let deserialized = ArcValue::deserialize(&serialized, None)?;
             let extracted: Arc<FieldSchema> = deserialized.as_struct_ref()?;
-            
+
             assert_eq!(*extracted, schema);
         }
-        
+
         println!("✅ FieldSchema serialization test passed!");
         Ok(())
     }
@@ -579,55 +626,65 @@ mod tests {
             "last_start_time": 1640995260
         });
 
-                // Convert JSON to ArcValue using from_json
+        // Convert JSON to ArcValue using from_json
         let mut arc_value = ArcValue::from_json(json_service_metadata.clone());
         assert_eq!(arc_value.category, runar_serializer::ValueCategory::Map);
-        
+
         // Convert ArcValue back to JSON to verify the conversion
         let back_to_json = arc_value.to_json()?;
         assert_eq!(back_to_json, json_service_metadata);
-        
+
         // Now deserialize the JSON directly to ServiceMetadata and wrap in ArcValue
-        let service_metadata: ServiceMetadata = serde_json::from_value(json_service_metadata.clone())?;
+        let service_metadata: ServiceMetadata =
+            serde_json::from_value(json_service_metadata.clone())?;
         let typed_arc_value = ArcValue::new_struct(service_metadata.clone());
-        
+
         // Extract the typed ServiceMetadata from ArcValue using as_type_ref
         let obj_instance: Arc<ServiceMetadata> = typed_arc_value.as_type_ref()?;
-        
+
         // Verify that all fields match the input JSON
         assert_eq!(obj_instance.network_id, "json-test-network");
         assert_eq!(obj_instance.service_path, "user-service");
         assert_eq!(obj_instance.name, "User Management Service");
         assert_eq!(obj_instance.version, "2.1.0");
-        assert_eq!(obj_instance.description, "Comprehensive user management with authentication and profiles");
+        assert_eq!(
+            obj_instance.description,
+            "Comprehensive user management with authentication and profiles"
+        );
         assert_eq!(obj_instance.registration_time, 1640995200);
         assert_eq!(obj_instance.last_start_time, Some(1640995260));
-        
+
         // Verify actions
         assert_eq!(obj_instance.actions.len(), 1);
         assert_eq!(obj_instance.actions[0].name, "create_user");
-        assert_eq!(obj_instance.actions[0].description, "Creates a new user account");
+        assert_eq!(
+            obj_instance.actions[0].description,
+            "Creates a new user account"
+        );
         assert!(obj_instance.actions[0].input_schema.is_some());
         assert!(obj_instance.actions[0].output_schema.is_some());
-        
+
         // Verify events
         assert_eq!(obj_instance.events.len(), 1);
         assert_eq!(obj_instance.events[0].path, "user.created");
-        assert_eq!(obj_instance.events[0].description, "Emitted when a new user is created");
+        assert_eq!(
+            obj_instance.events[0].description,
+            "Emitted when a new user is created"
+        );
         assert!(obj_instance.events[0].data_schema.is_some());
-        
+
         println!("   - Successfully converted JSON to typed ServiceMetadata");
         println!("   - All fields match the input JSON structure");
-        
+
         // Now try to extract as ServiceMetadata (this would work if the JSON structure matches exactly)
         // Note: This is a demonstration of the concept - in practice, you'd need to ensure
         // the JSON structure exactly matches the ServiceMetadata struct
-        
+
         println!("✅ JSON to ArcValue conversion test passed!");
         println!("   - JSON structure preserved in ArcValue");
         println!("   - Roundtrip JSON conversion successful");
         println!("   - ArcValue category: {:?}", arc_value.category);
-        
+
         // Let's also test a simpler case with a basic FieldSchema from JSON
         let json_field_schema = serde_json::json!({
             "name": "test_field",
@@ -637,26 +694,27 @@ mod tests {
             "min_length": 1,
             "max_length": 100
         });
-        
+
         let mut field_arc_value = ArcValue::from_json(json_field_schema.clone());
         let field_back_to_json = field_arc_value.to_json()?;
         assert_eq!(field_back_to_json, json_field_schema);
-        
+
         println!("   - FieldSchema JSON conversion also successful");
-        
+
         // Test the AsArcValue trait usage - this is the proper way to convert JSON to typed struct
-        let service_metadata_from_json: ServiceMetadata = serde_json::from_value(json_service_metadata)?;
+        let service_metadata_from_json: ServiceMetadata =
+            serde_json::from_value(json_service_metadata)?;
         let arc_value_from_struct = service_metadata_from_json.clone().into_arc_value();
-        
+
         // Now extract it back using AsArcValue trait
         let extracted_service_metadata = ServiceMetadata::from_arc_value(arc_value_from_struct)?;
-        
+
         // Verify the roundtrip worked
         assert_eq!(extracted_service_metadata, service_metadata_from_json);
-        
+
         println!("   - AsArcValue trait roundtrip successful");
         println!("   - JSON -> ServiceMetadata -> ArcValue -> ServiceMetadata works perfectly!");
-        
+
         Ok(())
     }
 }

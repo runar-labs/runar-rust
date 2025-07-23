@@ -25,8 +25,6 @@ pub trait ArcRead: fmt::Debug + Send + Sync {
 // Only registered types can be (de)serialized.
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-
-
 impl Serialize for ErasedArc {
     fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
     where

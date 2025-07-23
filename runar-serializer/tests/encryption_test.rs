@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use runar_common::{
-    logging::{Component, Logger},
-};
+use runar_common::logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_serializer::{
-    traits::{ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, SerializationContext},
+    traits::{
+        ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo,
+        SerializationContext,
+    },
     ArcValue, Plain, ValueCategory,
 };
 use runar_serializer_macros::Encrypt;
@@ -115,10 +116,11 @@ fn test_encryption_basic() -> Result<()> {
         email: "test@example.com".to_string(),
         system_metadata: "system_data".to_string(),
     };
- 
+
     // Test encryption
-    let encrypted: EncryptedTestProfile = original.encrypt_with_keystore(&mobile_ks, resolver.as_ref())?;
-    
+    let encrypted: EncryptedTestProfile =
+        original.encrypt_with_keystore(&mobile_ks, resolver.as_ref())?;
+
     // Verify encrypted struct has the expected fields
     assert_eq!(encrypted.id, "123");
     assert!(encrypted.user_encrypted.is_some());
@@ -162,7 +164,7 @@ fn test_encryption_in_arcvalue() -> Result<()> {
     assert_eq!(val.category, ValueCategory::Struct);
 
     // Create serialization context
-    let context = SerializationContext{ 
+    let context = SerializationContext {
         keystore: mobile_ks.clone(),
         resolver: resolver.clone(),
         network_id: network_id.clone(),
@@ -202,6 +204,6 @@ fn test_encryption_in_arcvalue() -> Result<()> {
     assert_eq!(node_profile.name, profile.name);
     assert!(node_profile.private.is_empty());
     assert_eq!(node_profile.email, profile.email);
-    assert_eq!(node_profile.system_metadata, profile.system_metadata); 
+    assert_eq!(node_profile.system_metadata, profile.system_metadata);
     Ok(())
-} 
+}

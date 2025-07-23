@@ -180,7 +180,10 @@ impl MathService {
 
         let extract = |key: &str| -> Result<f64> {
             match map.get(key) {
-                Some(v) => v.as_type_ref::<f64>().map(|arc| *arc).map_err(|e| anyhow!(e)),
+                Some(v) => v
+                    .as_type_ref::<f64>()
+                    .map(|arc| *arc)
+                    .map_err(|e| anyhow!(e)),
                 None => {
                     context.error(format!("Missing parameter '{key}'"));
                     Ok(0.0)

@@ -124,7 +124,8 @@ impl MobileKeyManager {
         // Create Certificate Authority with user identity
         let ca_subject = "CN=Runar User CA,O=Runar,C=US";
         let certificate_authority = CertificateAuthority::new(ca_subject)?;
-        let certificate_validator = CertificateValidator::new(vec![certificate_authority.ca_certificate().clone()]);
+        let certificate_validator =
+            CertificateValidator::new(vec![certificate_authority.ca_certificate().clone()]);
 
         Ok(Self {
             certificate_authority,
@@ -145,10 +146,10 @@ impl MobileKeyManager {
         node_id
             .chars()
             .map(|c| match c {
-                '-' => 'x',  // Replace hyphen with 'x'
-                '_' => 'y',  // Replace underscore with 'y'
-                c if c.is_alphanumeric() => c,  // Keep alphanumeric
-                _ => 'z',    // Replace any other invalid chars with 'z'
+                '-' => 'x',                    // Replace hyphen with 'x'
+                '_' => 'y',                    // Replace underscore with 'y'
+                c if c.is_alphanumeric() => c, // Keep alphanumeric
+                _ => 'z',                      // Replace any other invalid chars with 'z'
             })
             .collect()
     }
@@ -347,8 +348,7 @@ impl MobileKeyManager {
         // Encrypt envelope key for each profile
         let mut profile_encrypted_keys = HashMap::new();
         for profile_public_key in profile_public_keys {
-            let encrypted_key =
-                self.encrypt_key_with_ecdsa(&envelope_key, &profile_public_key)?;
+            let encrypted_key = self.encrypt_key_with_ecdsa(&envelope_key, &profile_public_key)?;
             let profile_id = compact_id(&profile_public_key);
             profile_encrypted_keys.insert(profile_id, encrypted_key);
         }
@@ -715,7 +715,9 @@ impl MobileKeyManager {
     /// Encrypt data for a specific profile (legacy method for compatibility)
     pub fn encrypt_for_profile(&self, data: &[u8], profile_id: &str) -> Result<Vec<u8>> {
         let profile_key_pair = self.user_profile_keys.get(profile_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!("Profile public key not found for profile: {profile_id}"))
+            KeyError::KeyNotFound(format!(
+                "Profile public key not found for profile: {profile_id}"
+            ))
         })?;
         // Use envelope encryption with just this profile
         let envelope_data = MobileKeyManager::encrypt_with_envelope(
@@ -814,7 +816,7 @@ impl MobileKeyManager {
 
 impl crate::EnvelopeCrypto for MobileKeyManager {
     fn encrypt_with_envelope(
-        &self,  
+        &self,
         data: &[u8],
         network_id: Option<&String>,
         profile_public_keys: Vec<Vec<u8>>,

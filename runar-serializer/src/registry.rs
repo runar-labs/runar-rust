@@ -3,8 +3,8 @@ use std::any::{Any, TypeId};
 use std::sync::Arc;
 
 use anyhow::Result;
-use once_cell::sync::Lazy;
 use dashmap::DashMap;
+use once_cell::sync::Lazy;
 
 use crate::traits::{KeyStore, RunarDecrypt};
 use serde::de::DeserializeOwned;
@@ -26,7 +26,10 @@ where
     Enc: 'static + RunarDecrypt<Decrypted = Plain> + DeserializeOwned,
 {
     // Mono-morphise a concrete decryptor function and insert it.
-    fn decrypt_impl<Plain, Enc>(bytes: &[u8], ks: &Arc<KeyStore>) -> Result<Box<dyn Any + Send + Sync>>
+    fn decrypt_impl<Plain, Enc>(
+        bytes: &[u8],
+        ks: &Arc<KeyStore>,
+    ) -> Result<Box<dyn Any + Send + Sync>>
     where
         Plain: 'static + Send + Sync,
         Enc: 'static + RunarDecrypt<Decrypted = Plain> + DeserializeOwned,
@@ -36,7 +39,10 @@ where
         Ok(Box::new(plain))
     }
 
-    REGISTRY.insert(TypeId::of::<Plain>(), decrypt_impl::<Plain, Enc> as DecryptFn);
+    REGISTRY.insert(
+        TypeId::of::<Plain>(),
+        decrypt_impl::<Plain, Enc> as DecryptFn,
+    );
 }
 
 /// Attempt to decrypt the payload into `T` using the registered decryptor.
@@ -45,14 +51,19 @@ pub fn try_decrypt_into<T>(bytes: &[u8], ks: &Arc<KeyStore>) -> Result<T>
 where
     T: 'static + Send + Sync,
 {
-    let func = REGISTRY
-        .get(&TypeId::of::<T>())
-        .ok_or_else(|| anyhow::anyhow!("No decryptor registered for type {}", std::any::type_name::<T>()))?;
+    let func = REGISTRY.get(&TypeId::of::<T>()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "No decryptor registered for type {}",
+            std::any::type_name::<T>()
+        )
+    })?;
 
     let any_plain = (func.value())(bytes, ks)?;
     // Downcast into the concrete type we need.
-    any_plain
-        .downcast::<T>()
-        .map(|boxed| *boxed)
-        .map_err(|_| anyhow::anyhow!("Decryptor returned wrong type for {}", std::any::type_name::<T>()))
-} 
+    any_plain.downcast::<T>().map(|boxed| *boxed).map_err(|_| {
+        anyhow::anyhow!(
+            "Decryptor returned wrong type for {}",
+            std::any::type_name::<T>()
+        )
+    })
+}

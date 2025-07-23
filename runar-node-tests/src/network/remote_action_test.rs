@@ -34,7 +34,10 @@ async fn test_remote_action_call() -> Result<()> {
     logging_config.apply();
 
     // Set up logger
-    let logger = Arc::new(Logger::new_root(Component::Transporter, "remote_action_test"));
+    let logger = Arc::new(Logger::new_root(
+        Component::Transporter,
+        "remote_action_test",
+    ));
 
     let configs =
         create_networked_node_test_config(2).expect("Failed to create multiple node test configs");
@@ -64,7 +67,9 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("✅ Node 2 started");
 
     logger.debug("⏳ Waiting for nodes to discover each other via multicast and establish QUIC connections...");
-    node2.wait_for_peer(node1_id, Duration::from_secs(3)).await?;
+    node2
+        .wait_for_peer(node1_id, Duration::from_secs(3))
+        .await?;
 
     // Test 1: Call math1/add service (on node1) from node2
     logger.debug("📤 Testing remote action call from node2 to node1 (math1/add)...");

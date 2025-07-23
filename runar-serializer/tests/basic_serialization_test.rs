@@ -58,7 +58,7 @@ fn test_list_serialization() -> Result<()> {
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
     let resolved: Arc<Vec<ArcValue>> = reconstructed.as_list_ref()?;
     assert_eq!(resolved.len(), 2);
-    
+
     let item0 = resolved[0].clone();
     assert_eq!(*item0.as_type_ref::<i64>()?, 1);
     let item1 = resolved[1].clone();
@@ -81,7 +81,7 @@ fn test_map_serialization() -> Result<()> {
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
     let resolved: Arc<HashMap<String, ArcValue>> = reconstructed.as_map_ref()?;
     assert_eq!(resolved.len(), 2);
-    
+
     let val1 = resolved.get("key1").unwrap().clone();
     assert_eq!(*val1.as_type_ref::<i64>()?, 42);
     let val2 = resolved.get("key2").unwrap().clone();

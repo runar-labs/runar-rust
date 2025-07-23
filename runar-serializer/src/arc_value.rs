@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use prost::Message;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
 use crate::RunarEncrypt;
 
@@ -15,11 +15,7 @@ use super::erased_arc::ErasedArc;
 use super::traits::{KeyStore, LabelResolver, SerializationContext};
 
 // Type alias to simplify very complex function pointer type used for serialization functions.
-type SerializeFn = dyn Fn(
-        &ErasedArc,
-        Option<&Arc<KeyStore>>,
-        Option<&dyn LabelResolver>,
-    ) -> Result<Vec<u8>>
+type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&dyn LabelResolver>) -> Result<Vec<u8>>
     + Send
     + Sync;
 
@@ -124,9 +120,7 @@ impl ArcValue {
         self.category == ValueCategory::Null && self.value.is_none()
     }
 
-    pub fn new_primitive<T>(
-        value: T,
-    ) -> Self
+    pub fn new_primitive<T>(value: T) -> Self
     where
         T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
@@ -158,7 +152,7 @@ impl ArcValue {
     pub fn new_map(map: HashMap<String, ArcValue>) -> Self {
         let arc = Arc::new(map);
         let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
-            let map = erased.as_arc::<HashMap<String, ArcValue>>()?;           
+            let map = erased.as_arc::<HashMap<String, ArcValue>>()?;
             serde_cbor::to_vec(map.as_ref()).map_err(anyhow::Error::from)
         });
         Self {
@@ -180,7 +174,7 @@ impl ArcValue {
                 serde_cbor::to_vec(&result).map_err(anyhow::Error::from)
             } else {
                 serde_cbor::to_vec(&*val).map_err(anyhow::Error::from)
-            }   
+            }
         });
         Self {
             category: ValueCategory::Struct,
@@ -191,7 +185,7 @@ impl ArcValue {
 
     pub fn new_bytes(bytes: Vec<u8>) -> Self {
         let arc = Arc::new(bytes);
-        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased ,_,_| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
             let bytes = erased.as_arc::<Vec<u8>>()?;
             Ok((*bytes).clone())
         });
@@ -204,7 +198,7 @@ impl ArcValue {
 
     pub fn new_json(json: JsonValue) -> Self {
         let arc = Arc::new(json);
-        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased,_,_| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
             let json = erased.as_arc::<JsonValue>()?;
             Ok(serde_cbor::to_vec(&*json)?)
         });
@@ -306,7 +300,7 @@ impl ArcValue {
                     start_offset: data_start,
                     end_offset: bytes.len(),
                     keystore,
-                    encrypted: is_encrypted
+                    encrypted: is_encrypted,
                 };
 
                 Ok(Self {
@@ -344,7 +338,7 @@ impl ArcValue {
         if type_name_bytes.len() > 255 {
             return Err(anyhow!("Type name too long: {}", type_name));
         }
-        
+
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
             let network_id = &ctx.network_id;
@@ -352,12 +346,16 @@ impl ArcValue {
             let resolver = &ctx.resolver;
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
-                ser_fn(inner,Some( ks ), Some(resolver.as_ref()))
+                ser_fn(inner, Some(ks), Some(resolver.as_ref()))
             } else {
                 return Err(anyhow!("No serialize function available"));
             }?;
 
-            let data = ks.encrypt_with_envelope(&bytes, Some(network_id), vec![profile_public_key.clone()])?;
+            let data = ks.encrypt_with_envelope(
+                &bytes,
+                Some(network_id),
+                vec![profile_public_key.clone()],
+            )?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);
@@ -365,7 +363,7 @@ impl ArcValue {
             buf.extend(data.encode_to_vec());
         } else {
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
-                ser_fn(inner,None, None)
+                ser_fn(inner, None, None)
             } else {
                 return Err(anyhow!("No serialize function available"));
             }?;
@@ -386,10 +384,7 @@ impl ArcValue {
     where
         T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
-        let inner = self
-            .value
-            .as_ref()
-            .ok_or_else(|| anyhow!("No value"))?;
+        let inner = self.value.as_ref().ok_or_else(|| anyhow!("No value"))?;
 
         // Fast path – already materialised object stored inside ErasedArc.
         if !inner.is_lazy {
@@ -398,7 +393,8 @@ impl ArcValue {
 
         // Lazy path – must reconstruct from serialized bytes.
         let lazy = inner.get_lazy_data()?;
-        let mut payload: Vec<u8> = lazy.original_buffer[lazy.start_offset..lazy.end_offset].to_vec();
+        let mut payload: Vec<u8> =
+            lazy.original_buffer[lazy.start_offset..lazy.end_offset].to_vec();
 
         // If the outer envelope is present, unwrap it first.
         if lazy.encrypted {
@@ -596,9 +592,9 @@ impl ArcValue {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-    
+
         let mut state = serializer.serialize_struct("ArcValue", 3)?;
-        
+
         // Serialize category as integer using the enum directly
         let category_int = self.category as u8;
         state.serialize_field("category", &category_int)?;
@@ -609,12 +605,12 @@ impl ArcValue {
             .ok_or(serde::ser::Error::custom("No value to serialize"))?;
         let type_name = inner.type_name();
         state.serialize_field("typename", type_name)?;
-        
+
         // Serialize the actual value using the existing serialize_fn
         if let Some(inner) = &self.value {
             if let Some(ser_fn) = &self.serialize_fn {
-                let serialized_data = ser_fn(inner,None, None)
-                    .map_err(serde::ser::Error::custom)?;
+                let serialized_data =
+                    ser_fn(inner, None, None).map_err(serde::ser::Error::custom)?;
                 state.serialize_field("value", &serialized_data)?;
             } else {
                 return Err(serde::ser::Error::custom("No serialize function available"));
@@ -623,7 +619,7 @@ impl ArcValue {
             // For null values
             state.serialize_field("value", &serde_json::Value::Null)?;
         }
-        
+
         state.end()
     }
 
@@ -631,29 +627,33 @@ impl ArcValue {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{self, Visitor, MapAccess};
+        use serde::de::{self, MapAccess, Visitor};
         use std::fmt;
-        
+
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field { Category, Value, TypeName }
-        
+        enum Field {
+            Category,
+            Value,
+            TypeName,
+        }
+
         struct ArcValueVisitor;
-        
+
         impl<'de> Visitor<'de> for ArcValueVisitor {
             type Value = ArcValue;
-            
+
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("struct ArcValue")
             }
-            
+
             fn visit_map<V>(self, mut map: V) -> Result<ArcValue, V::Error>
             where
                 V: MapAccess<'de>,
             {
                 let mut category = None;
                 let mut value = None;
-                let mut type_name: Option<String> = None;                
+                let mut type_name: Option<String> = None;
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Category => {
@@ -661,8 +661,13 @@ impl ArcValue {
                                 return Err(de::Error::duplicate_field("category"));
                             }
                             let category_int: u8 = map.next_value()?;
-                            category = Some(ValueCategory::from_u8(category_int)
-                                .ok_or_else(|| de::Error::unknown_variant(&category_int.to_string(), &["0", "1", "2", "3", "4", "5", "6"]))?);
+                            category =
+                                Some(ValueCategory::from_u8(category_int).ok_or_else(|| {
+                                    de::Error::unknown_variant(
+                                        &category_int.to_string(),
+                                        &["0", "1", "2", "3", "4", "5", "6"],
+                                    )
+                                })?);
                         }
                         Field::Value => {
                             if value.is_some() {
@@ -678,17 +683,16 @@ impl ArcValue {
                         }
                     }
                 }
-                
+
                 let category = category.ok_or_else(|| de::Error::missing_field("category"))?;
                 let type_name = type_name.ok_or_else(|| de::Error::missing_field("typename"))?;
 
                 match category {
-                    ValueCategory::Null => {
-                        Ok(ArcValue::null())
-                    }
+                    ValueCategory::Null => Ok(ArcValue::null()),
                     ValueCategory::Primitive => {
                         // Eagerly deserialize primitives
-                        let value: Vec<u8> = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        let value: Vec<u8> =
+                            value.ok_or_else(|| de::Error::missing_field("value"))?;
                         // Try to deserialize as different primitive types
                         if let Ok(s) = serde_cbor::from_slice::<String>(&value) {
                             Ok(ArcValue::new_primitive(s))
@@ -704,12 +708,14 @@ impl ArcValue {
                     }
                     ValueCategory::Bytes => {
                         // Bytes can also be eagerly deserialized
-                        let value: Vec<u8> = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        let value: Vec<u8> =
+                            value.ok_or_else(|| de::Error::missing_field("value"))?;
                         Ok(ArcValue::new_bytes(value))
                     }
                     _ => {
                         // For complex types (List, Map, Struct, Json), create lazy structure
-                        let value: Vec<u8> = value.ok_or_else(|| de::Error::missing_field("value"))?;
+                        let value: Vec<u8> =
+                            value.ok_or_else(|| de::Error::missing_field("value"))?;
                         let value_len = value.len();
                         // Create LazyDataWithOffset structure for complex types
                         let lazy_data = LazyDataWithOffset {
@@ -720,7 +726,7 @@ impl ArcValue {
                             keystore: None,
                             encrypted: false,
                         };
-                        
+
                         Ok(ArcValue {
                             category,
                             value: Some(ErasedArc::from_value(lazy_data)),
@@ -730,8 +736,12 @@ impl ArcValue {
                 }
             }
         }
-        
-        deserializer.deserialize_struct("ArcValue", &["category", "value", "typename"], ArcValueVisitor)
+
+        deserializer.deserialize_struct(
+            "ArcValue",
+            &["category", "value", "typename"],
+            ArcValueVisitor,
+        )
     }
 }
 
@@ -740,7 +750,7 @@ impl serde::Serialize for ArcValue {
     where
         S: serde::Serializer,
     {
-        self.serialize_serde(serializer)    
+        self.serialize_serde(serializer)
     }
 }
 
@@ -808,5 +818,3 @@ impl AsArcValue for ArcValue {
         Ok(value)
     }
 }
-
-
