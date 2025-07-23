@@ -78,7 +78,7 @@ pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                 // If the result is Ok, publish it
                 if let Ok(ref action_result) = &result {
                     // Publish the result to the specified topic
-                    match ctx.publish(#path, Some(runar_serializer::ArcValue::from_struct(action_result.clone()))).await {
+                    match ctx.publish(#path, Some(runar_serializer::ArcValue::new_primitive(action_result.clone()))).await {
                         Ok(_) => {},
                         Err(e) => {
                             ctx.error(format!("Failed to publish result to {}: {}", #path, e));
@@ -100,7 +100,7 @@ pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                 // If the result is Ok, publish it
                 if let Ok(ref action_result) = &result {
                     // Publish the result to the specified topic
-                    match ctx.publish(#path, Some(runar_serializer::ArcValue::from_struct(action_result.clone()))).await {
+                    match ctx.publish(#path, Some(runar_serializer::ArcValue::new_primitive(action_result.clone()))).await {
                         Ok(_) => {},
                         Err(e) => {
                             ctx.error(format!("Failed to publish result to {}: {}", #path, e));

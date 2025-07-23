@@ -223,41 +223,6 @@ fn generate_abstract_service_impl(
     let mut sorted_types: Vec<_> = all_types.into_iter().collect();
     sorted_types.sort();
 
-    // Create a string representation of all types (one per line) for logging
-    let _types_str = sorted_types.join("\n");
-
-    // Create type identifiers for each type (used later for serializer registration)
-    let type_idents = sorted_types
-        .iter()
-        .map(|t| {
-            // Use syn::Type to support all valid Rust types, including nested generics.
-            syn::parse_str::<syn::Type>(t).unwrap_or_else(|_| panic!("Failed to parse type: {t}"))
-        })
-        .collect::<Vec<_>>();
-
-    // // Generate logging code for collected types
-    // let type_collection_code = if sorted_types.is_empty() {
-    //     // No complex types collected – generate a simple debug log
-    //     quote! {
-    //         context.debug("No complex types to register for this service");
-    //     }
-    // } else {
-    //     quote! {
-    //         context.info(format!("Types used by service {}:\n    {}", stringify!(#struct_type), #types_str));
-    //     }
-    // };
-
-    // // Generate debug line for the full list when registering types
-    // let join_debug_code = if sorted_types.is_empty() {
-    //     quote! {
-    //         context.debug("All types registered: []");
-    //     }
-    // } else {
-    //     quote! {
-    //         context.debug(format!("All types registered: [{}]", [#(stringify!(#type_idents)),*].join(", ")));
-    //     }
-    // };
-
     quote! {
         #[async_trait::async_trait]
         impl runar_node::services::abstract_service::AbstractService  for #struct_type {

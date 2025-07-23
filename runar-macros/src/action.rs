@@ -133,7 +133,7 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             None,
         );
         input_properties_map_tokens.push(quote! {
-            properties_map.insert(#param_name_str.to_string(), #field_schema_tokens);
+            properties_map.insert(#param_name_str.to_string(), Box::new(#field_schema_tokens));
         });
 
         if !is_option_for_schema_generation {
@@ -148,10 +148,10 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
             let required_fields = vec![#(#required_input_fields_tokens),*];
             let mut schema = ::runar_schemas::FieldSchema::new(
                 "input_payload",
-                ::runar_schemas::SchemaDataType::OBJECT
+                ::runar_schemas::SchemaDataType::Object
             );
-            schema.properties = properties_map;
-            schema.required = required_fields;
+            schema.properties = Some(properties_map);
+            schema.required = Some(required_fields);
             Some(schema)
         }}
     } else {
@@ -379,7 +379,7 @@ fn generate_field_schema_for_type(
         let items_schema_tokens =
             generate_field_schema_for_type("item", inner_ty_for_vec, false, None);
         base_schema_constructor_call = quote! {
-            ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::ARRAY)
+            ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Array)
         };
         additional_fields_setup.extend(quote! {
             schema.items = Some(Box::new(#items_schema_tokens));
@@ -392,22 +392,22 @@ fn generate_field_schema_for_type(
 
         match type_name_str.as_str() {
             "String" => {
-                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::STRING) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::String) }
             }
             "i32" | "isize" => {
-                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::INT32) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Int32) }
             }
             "i64" => {
-                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::INT64) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Int64) }
             }
             "f32" => {
-                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::FLOAT) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Float) }
             }
             "f64" => {
-                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::DOUBLE) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Double) }
             }
             "bool" => {
-                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::BOOLEAN) }
+                base_schema_constructor_call = quote! { ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Boolean) }
             }
             // TODO: Add other specific types like Timestamp if they have constructors
             _ => {
@@ -415,7 +415,7 @@ fn generate_field_schema_for_type(
                 // For struct types, ideally, we would introspect fields here.
                 // For now, creating an empty properties map for generic objects.
                 base_schema_constructor_call = quote! {
-                    ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::OBJECT)
+                    ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Object)
                 };
             }
         };
@@ -423,7 +423,7 @@ fn generate_field_schema_for_type(
     // Fallback for other unknown types
     else {
         base_schema_constructor_call = quote! {
-            ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::ANY)
+            ::runar_schemas::FieldSchema::new(#name_literal, ::runar_schemas::SchemaDataType::Any)
         };
     }
 
@@ -507,9 +507,11 @@ fn generate_register_action_method(
             Ok(value_type)
         }
     } else {
+        // For complex types, use new_primitive since new_struct requires RunarEncrypt trait
         quote! {
-            // Convert the complex result to ArcValue using from_struct
-            let value_type = runar_serializer::ArcValue::from_struct(result);
+            // Convert the complex result to ArcValue using new_primitive
+            // Note: new_struct requires RunarEncrypt trait, so we use new_primitive for compatibility
+            let value_type = runar_serializer::ArcValue::new_primitive(result);
             Ok(value_type)
         }
     };
@@ -610,16 +612,27 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
         let (param_ident, param_type) = &params[0];
         let param_name_str = param_ident.to_string();
 
+        // Check if the parameter type is Arc<T> or T
+        let param_type_str = quote!(#param_type).to_string().replace(" ", "");
+        let is_arc_type =
+            param_type_str.starts_with("Arc<") || param_type_str.starts_with("std::sync::Arc<");
+
+        let extraction_method = if is_arc_type {
+            quote!(as_type_ref)
+        } else {
+            quote!(as_type)
+        };
+
         extractions.extend(quote! {
             let #param_ident: #param_type = {
                 // First try to extract from a map if the payload is a map
                 let mut params_value_clone = params_value.clone();
-                let map_result = params_value_clone.as_map_ref::<String, runar_serializer::ArcValue>();
+                let map_result = params_value_clone.as_map_ref();
                 match map_result {
                     Ok(map_ref) => {
                         // If it's a map, try to get the parameter by name
                         if let Some(value) = map_ref.get(#param_name_str) {
-                            match value.clone().as_type::<#param_type>() {
+                            match value.clone().#extraction_method::<#param_type>() {
                                 Ok(val) => val,
                                 Err(map_err) => {
                                     ctx.error(format!(
@@ -634,7 +647,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
                             }
                         } else {
                             // Parameter not found in map, try direct deserialization
-                            match params_value.as_type::<#param_type>() {
+                            match params_value.#extraction_method::<#param_type>() {
                                 Ok(val) => val,
                                 Err(err) => {
                                     ctx.error(format!(
@@ -651,7 +664,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
                     },
                     Err(_) => {
                         // If it's not a map, try direct deserialization
-                        match params_value.as_type::<#param_type>() {
+                        match params_value.#extraction_method::<#param_type>() {
                             Ok(val) => val,
                             Err(err) => {
                                 ctx.error(format!("Failed to parse parameter for single-parameter action: {}", err));
@@ -671,7 +684,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
     // Always treat the payload as Map<String, ArcValue>. This supports both homogeneous
     // and heterogeneous value types in a single, predictable path.
     extractions.extend(quote! {
-        let params_map_ref = match params_value.as_map_ref::<String, runar_serializer::ArcValue>() {
+        let params_map_ref = match params_value.as_map_ref() {
             Ok(map_ref) => map_ref,
             Err(err) => {
                 ctx.error(format!(
@@ -693,12 +706,22 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
             || param_type_str_for_check.starts_with("std::option::Option<")
             || param_type_str_for_check.starts_with("core::option::Option<");
 
+        // Check if the parameter type is Arc<T> or T
+        let is_arc_type = param_type_str_for_check.starts_with("Arc<")
+            || param_type_str_for_check.starts_with("std::sync::Arc<");
+
+        let extraction_method = if is_arc_type {
+            quote!(as_type_ref)
+        } else {
+            quote!(as_type)
+        };
+
         let per_param_extraction_code = if is_option_param_type {
             quote! {
                 let #param_ident: #param_type;
                 match params_map_ref.get(#param_name_str) {
                     Some(arc_value_for_param) => {
-                        match arc_value_for_param.clone().as_type::<#param_type>() {
+                        match arc_value_for_param.clone().#extraction_method::<#param_type>() {
                             Ok(val_option_t) => {
                                 #param_ident = val_option_t;
                             }
@@ -717,7 +740,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
             quote! {
                 let #param_ident: #param_type = match params_map_ref.get(#param_name_str) {
                     Some(arc_value_for_param) => {
-                        arc_value_for_param.clone().as_type::<#param_type>().map_err(|err| {
+                        arc_value_for_param.clone().#extraction_method::<#param_type>().map_err(|err| {
                             ctx.error(format!("Failed to convert value for parameter '{}' to type '{}'. Error: {}", #param_name_str, stringify!(#param_type), err));
                             anyhow!(format!("Type conversion error for parameter '{}': {}", #param_name_str, err))
                         })?

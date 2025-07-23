@@ -31,6 +31,10 @@ fn test_primitive_string() -> Result<()> {
     let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<String> = de.as_type_ref()?;
     assert_eq!(*resolved, original);
+
+    let resolved_2 = de.as_type::<String>()?;
+    assert_eq!(resolved_2, original);
+
     Ok(())
 }
 
@@ -44,6 +48,10 @@ fn test_primitive_i64() -> Result<()> {
     let de = ArcValue::deserialize(&ser, None)?;
     let resolved: Arc<i64> = de.as_type_ref()?;
     assert_eq!(*resolved, original);
+
+    let resolved_2 = de.as_type::<i64>()?;
+    assert_eq!(resolved_2, original);
+
     Ok(())
 }
 

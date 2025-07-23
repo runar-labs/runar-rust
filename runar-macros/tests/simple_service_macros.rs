@@ -116,10 +116,10 @@ impl TestService {
             value: val_int,
         };
         // Manually wrap in ArcValue, like in micro_services_demo
-        Ok(ArcValue::from_struct(data))
+        Ok(ArcValue::new_primitive(data))
     }
 
-    //the publish macro will do a ctx.publish("my_data_auto", ArcValue::from_struct(action_result.clone())).await?;
+    //the publish macro will do a ctx.publish("my_data_auto", ArcValue::new_struct(action_result.clone())).await?;
     //it will publish the result of the action o the path (full or relative) same ruleas as action, subscribe macros in termos fo topic rules.,
     #[publish(path = "my_data_auto")]
     #[action(path = "my_data")]
@@ -127,10 +127,10 @@ impl TestService {
         // Log using the context
         ctx.debug(format!("get_my_data id: {id}"));
 
-        let total_res: f64 = ctx
+        let total_res: ArcValue = ctx
             .request("math/add", Some(params! { "a" => 1000.0, "b" => 500.0 }))
             .await?;
-        let total = total_res;
+        let total: f64 = total_res.as_type()?;
 
         // Return the result
         let data = MyData {
@@ -143,8 +143,11 @@ impl TestService {
             map_field: HashMap::new(),
             network_id: self.network_id(),
         };
-        ctx.publish("my_data_changed", Some(ArcValue::from_struct(data.clone())))
-            .await?;
+        ctx.publish(
+            "my_data_changed",
+            Some(ArcValue::new_primitive(data.clone())),
+        )
+        .await?;
         ctx.publish("age_changed", Some(ArcValue::new_primitive(25)))
             .await?;
         Ok(data)
@@ -169,14 +172,14 @@ impl TestService {
         let mut lock = self.store.lock().await;
         let existing = lock.get("my_data_auto");
         if let Some(existing) = existing {
-            let mut existing = existing.clone();
-            let mut existing = existing.as_type::<Vec<MyData>>().unwrap();
-            existing.push(data.clone());
-            lock.insert("my_data_auto".to_string(), ArcValue::new_list(existing));
+            let existing_vec = existing.as_type_ref::<Vec<MyData>>().unwrap();
+            let mut new_vec = (*existing_vec).clone();
+            new_vec.push(data.clone());
+            lock.insert("my_data_auto".to_string(), ArcValue::new_primitive(new_vec));
         } else {
             lock.insert(
                 "my_data_auto".to_string(),
-                ArcValue::new_list(vec![data.clone()]),
+                ArcValue::new_primitive(vec![data.clone()]),
             );
         }
 
@@ -190,12 +193,12 @@ impl TestService {
         let mut lock = self.store.lock().await;
         let existing = lock.get("added");
         if let Some(existing) = existing {
-            let mut existing = existing.clone();
-            let mut existing = existing.as_type::<Vec<f64>>().unwrap();
-            existing.push(total);
-            lock.insert("added".to_string(), ArcValue::new_list(existing));
+            let existing_vec = existing.as_type_ref::<Vec<f64>>().unwrap();
+            let mut new_vec = (*existing_vec).clone();
+            new_vec.push(total);
+            lock.insert("added".to_string(), ArcValue::new_primitive(new_vec));
         } else {
-            lock.insert("added".to_string(), ArcValue::new_list(vec![total]));
+            lock.insert("added".to_string(), ArcValue::new_primitive(vec![total]));
         }
 
         Ok(())
@@ -208,14 +211,17 @@ impl TestService {
         let mut lock = self.store.lock().await;
         let existing = lock.get("my_data_changed");
         if let Some(existing) = existing {
-            let mut existing = existing.clone();
-            let mut existing = existing.as_type::<Vec<MyData>>().unwrap();
-            existing.push(data.clone());
-            lock.insert("my_data_changed".to_string(), ArcValue::new_list(existing));
+            let existing_vec = existing.as_type_ref::<Vec<MyData>>().unwrap();
+            let mut new_vec = (*existing_vec).clone();
+            new_vec.push(data.clone());
+            lock.insert(
+                "my_data_changed".to_string(),
+                ArcValue::new_primitive(new_vec),
+            );
         } else {
             lock.insert(
                 "my_data_changed".to_string(),
-                ArcValue::new_list(vec![data.clone()]),
+                ArcValue::new_primitive(vec![data.clone()]),
             );
         }
 
@@ -229,12 +235,15 @@ impl TestService {
         let mut lock = self.store.lock().await;
         let existing = lock.get("age_changed");
         if let Some(existing) = existing {
-            let mut existing = existing.clone();
-            let mut existing = existing.as_type::<Vec<i32>>().unwrap();
-            existing.push(new_age);
-            lock.insert("age_changed".to_string(), ArcValue::new_list(existing));
+            let existing_vec = existing.as_type_ref::<Vec<i32>>().unwrap();
+            let mut new_vec = (*existing_vec).clone();
+            new_vec.push(new_age);
+            lock.insert("age_changed".to_string(), ArcValue::new_primitive(new_vec));
         } else {
-            lock.insert("age_changed".to_string(), ArcValue::new_list(vec![new_age]));
+            lock.insert(
+                "age_changed".to_string(),
+                ArcValue::new_primitive(vec![new_age]),
+            );
         }
 
         Ok(())
@@ -344,10 +353,13 @@ mod tests {
         node.start().await.expect("Failed to start node");
 
         // Fetch ServiceMetadata for the "math" service
-        let service_metadata_response: ServiceMetadata = node
+        let service_metadata_response_arc: ArcValue = node
             .request("$registry/services/math", None::<ArcValue>) // Corrected path and payload with type annotation
             .await
             .expect("Failed to get 'math' service metadata");
+        let service_metadata_response: ServiceMetadata = service_metadata_response_arc
+            .as_type()
+            .expect("Failed to convert to ServiceMetadata");
 
         // Assert ServiceMetadata properties
         assert_eq!(service_metadata_response.name, "Test Service Name");
@@ -390,10 +402,11 @@ mod tests {
         // Description for 'my_data_auto' event is also likely empty.
 
         // Call the add action directly with `params!`.
-        let response: f64 = node
+        let response_arc: ArcValue = node
             .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
             .await
             .expect("Failed to call add action");
+        let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
 
         // Verify the response
         assert_eq!(response, 15.0);
@@ -402,10 +415,11 @@ mod tests {
         // Create parameters for the add action
         let params = params! { "a" => 10.0, "b" => 5.0 };
 
-        let response: f64 = node
+        let response_arc: ArcValue = node
             .request("math/subtract", Some(params))
             .await
             .expect("Failed to call subtract action");
+        let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
 
         // Verify the response
         assert_eq!(response, 5.0);
@@ -414,10 +428,11 @@ mod tests {
         // Create parameters for the add action
         let params = params! { "a" => 5.0, "b" => 3.0 };
 
-        let response: f64 = node
+        let response_arc: ArcValue = node
             .request("math/multiply_numbers", Some(params))
             .await
             .expect("Failed to call multiply_numbers action");
+        let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
 
         // Verify the response
         assert_eq!(response, 15.0);
@@ -425,10 +440,11 @@ mod tests {
         // Make a request to the divide action with valid parameters
         let params = params! { "a" => 6.0, "b" => 3.0 };
 
-        let response: f64 = node
+        let response_arc: ArcValue = node
             .request("math/divide", Some(params))
             .await
             .expect("Failed to call divide action");
+        let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
 
         // Verify the response
         assert_eq!(response, 2.0);
@@ -437,7 +453,8 @@ mod tests {
         // Create parameters for the add action
         let params = params! { "a" => 6.0, "b" => 0.0 };
 
-        let response: Result<f64, anyhow::Error> = node.request("math/divide", Some(params)).await;
+        let response: Result<ArcValue, anyhow::Error> =
+            node.request("math/divide", Some(params)).await;
 
         // Verify the error response
         assert!(response
@@ -447,19 +464,21 @@ mod tests {
 
         // Make a request to the get_user action
         let params = ArcValue::new_primitive(42);
-        let response: User = node
+        let response_arc: ArcValue = node
             .request("math/get_user", Some(params))
             .await
             .expect("Failed to call get_user action");
+        let response: User = response_arc.as_type().expect("Failed to convert to User");
 
         // Verify the response
         assert_eq!(response.name, "John Doe");
 
         // Make a request to the get_my_data action
-        let response: MyData = node
+        let response_arc: ArcValue = node
             .request("math/my_data", Some(ArcValue::new_primitive(100)))
             .await
             .expect("Failed to call my_data action");
+        let response: MyData = response_arc.as_type().expect("Failed to convert to MyData");
 
         // Verify the response
         let my_data = response;
@@ -482,8 +501,8 @@ mod tests {
 
         // Check if my_data_auto events were stored correctly as a vector
         if let Some(my_data_arc) = store.get("my_data_auto") {
-            let mut my_data_arc = my_data_arc.clone(); // Clone to get ownership
-            let my_data_vec = my_data_arc.as_list_ref::<MyData>().unwrap();
+            let my_data_arc = my_data_arc.clone(); // Clone to get ownership
+            let my_data_vec = my_data_arc.as_type_ref::<Vec<MyData>>().unwrap();
             assert!(
                 !my_data_vec.is_empty(),
                 "Expected at least one my_data_auto event"
@@ -500,7 +519,7 @@ mod tests {
         // Check for added events
         if let Some(added_arc) = store.get("added") {
             let mut added_arc = added_arc.clone();
-            let added_vec = added_arc.as_list_ref::<f64>().unwrap();
+            let added_vec = added_arc.as_type_ref::<Vec<f64>>().unwrap();
             assert!(!added_vec.is_empty(), "Expected at least one added event");
             assert_eq!(added_vec[0], 15.0, "Expected first added value to be 15.0"); // 10.0 + 5.0
             assert_eq!(
@@ -515,8 +534,8 @@ mod tests {
 
         // Check for my_data_changed events
         if let Some(changed_arc) = store.get("my_data_changed") {
-            let mut changed_arc = changed_arc.clone();
-            let changed_vec = changed_arc.as_list_ref::<MyData>().unwrap();
+            let changed_arc = changed_arc.clone();
+            let changed_vec = changed_arc.as_type_ref::<Vec<MyData>>().unwrap();
             assert!(
                 !changed_vec.is_empty(),
                 "Expected at least one my_data_changed event"
@@ -533,7 +552,7 @@ mod tests {
         // Check for age_changed events
         if let Some(age_arc) = store.get("age_changed") {
             let mut age_arc = age_arc.clone();
-            let age_vec = age_arc.as_list_ref::<i32>().unwrap();
+            let age_vec = age_arc.as_type_ref::<Vec<i32>>().unwrap();
             assert!(
                 !age_vec.is_empty(),
                 "Expected at least one age_changed event"
@@ -544,48 +563,19 @@ mod tests {
         } else {
             panic!("Expected 'age_changed' key in store, but it wasn't found");
         }
-        //make sure type were added properly to the serializer
-        let serializer = node.serializer.read().await;
-        let arc_value = ArcValue::from_struct(my_data.clone());
-        let bytes = serializer.serialize_value(&arc_value).unwrap();
-
-        // Create an Arc<[u8]> directly from the Vec<u8>
-        #[allow(clippy::useless_conversion)]
-        let arc_bytes = Arc::from(bytes);
-
-        let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();
-        let deserialized_my_data = deserialized.as_type::<MyData>().unwrap();
-
-        assert_eq!(deserialized_my_data, my_data);
-
-        //make sure type were added properly to the serializer
-        let user = User {
-            id: 42,
-            name: "John Doe".to_string(),
-            email: "john.doe@example.com".to_string(),
-            age: 30,
-        };
-        let arc_value = ArcValue::from_struct(user.clone());
-        let bytes = serializer.serialize_value(&arc_value).unwrap();
-
-        // Create an Arc<[u8]> directly from the Vec<u8>
-        #[allow(clippy::useless_conversion)]
-        let arc_bytes = Arc::from(bytes);
-
-        let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();
-        let deserialized_user = deserialized.as_type::<User>().unwrap();
-
-        assert_eq!(deserialized_user, user);
 
         let mut temp_map = HashMap::new();
         temp_map.insert("key1".to_string(), "value1".to_string());
         let param: Vec<HashMap<String, String>> = vec![temp_map];
-        let arc_value = ArcValue::new_list(param);
+        let arc_value = ArcValue::new_primitive(param);
         // complex_data
-        let list_result: Vec<HashMap<String, String>> = node
+        let list_result_arc: ArcValue = node
             .request("math/complex_data", Some(arc_value))
             .await
             .expect("Failed to call complex_data action");
+        let list_result: Vec<HashMap<String, String>> = list_result_arc
+            .as_type()
+            .expect("Failed to convert to Vec<HashMap<String, String>>");
 
         assert_eq!(list_result.len(), 1);
         assert_eq!(list_result[0].get("key1").unwrap(), "value1");
@@ -598,23 +588,29 @@ mod tests {
             ),
             ("val_int".to_string(), ArcValue::new_primitive(999i32)),
         ]);
-        let pre_wrapped_res: PreWrappedStruct = node
+        let pre_wrapped_res_arc: ArcValue = node
             .request(
                 "math/echo_pre_wrapped_struct",
                 Some(ArcValue::new_map(pre_wrapped_params.clone())),
             )
             .await
             .expect("Failed to call echo_pre_wrapped_struct");
+        let pre_wrapped_res: PreWrappedStruct = pre_wrapped_res_arc
+            .as_type()
+            .expect("Failed to convert to PreWrappedStruct");
         assert_eq!(pre_wrapped_res.id, "test_pre_wrap");
         assert_eq!(pre_wrapped_res.value, 999);
 
-        let pre_wrapped_option_res: Option<PreWrappedStruct> = node
+        let pre_wrapped_option_res_arc: ArcValue = node
             .request(
                 "math/echo_pre_wrapped_struct",
                 Some(ArcValue::new_map(pre_wrapped_params)),
             )
             .await
             .expect("Failed to call echo_pre_wrapped_struct for Option result");
+        let pre_wrapped_option_res: Option<PreWrappedStruct> = pre_wrapped_option_res_arc
+            .as_type()
+            .expect("Failed to convert to Option<PreWrappedStruct>");
         assert!(
             pre_wrapped_option_res.is_some(),
             "Expected Some(PreWrappedStruct) but got None"
@@ -626,7 +622,7 @@ mod tests {
         // Check for added events
         if let Some(added_arc) = store.get("added") {
             let mut added_arc = added_arc.clone();
-            let added_vec = added_arc.as_list_ref::<f64>().unwrap();
+            let added_vec = added_arc.as_type_ref::<Vec<f64>>().unwrap();
             assert!(!added_vec.is_empty(), "Expected at least one added event");
             assert_eq!(added_vec[0], 15.0, "Expected first added value to be 15.0"); // 10.0 + 5.0
             assert_eq!(
@@ -642,7 +638,7 @@ mod tests {
         // Check for my_data_changed events
         if let Some(changed_arc) = store.get("my_data_changed") {
             let mut changed_arc = changed_arc.clone();
-            let changed_vec = changed_arc.as_list_ref::<MyData>().unwrap();
+            let changed_vec = changed_arc.as_type_ref::<Vec<MyData>>().unwrap();
             assert!(
                 !changed_vec.is_empty(),
                 "Expected at least one my_data_changed event"
@@ -659,7 +655,7 @@ mod tests {
         // Check for age_changed events
         if let Some(age_arc) = store.get("age_changed") {
             let mut age_arc = age_arc.clone();
-            let age_vec = age_arc.as_list_ref::<i32>().unwrap();
+            let age_vec = age_arc.as_type_ref::<Vec<i32>>().unwrap();
             assert!(
                 !age_vec.is_empty(),
                 "Expected at least one age_changed event"
@@ -670,48 +666,19 @@ mod tests {
         } else {
             panic!("Expected 'age_changed' key in store, but it wasn't found");
         }
-        //make sure type were added properly to the serializer
-        let serializer = node.serializer.read().await;
-        let arc_value = ArcValue::from_struct(my_data.clone());
-        let bytes = serializer.serialize_value(&arc_value).unwrap();
-
-        // Create an Arc<[u8]> directly from the Vec<u8>
-        #[allow(clippy::useless_conversion)]
-        let arc_bytes = Arc::from(bytes);
-
-        let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();
-        let deserialized_my_data = deserialized.as_type::<MyData>().unwrap();
-
-        assert_eq!(deserialized_my_data, my_data);
-
-        //make sure type were added properly to the serializer
-        let user = User {
-            id: 42,
-            name: "John Doe".to_string(),
-            email: "john.doe@example.com".to_string(),
-            age: 30,
-        };
-        let arc_value = ArcValue::from_struct(user.clone());
-        let bytes = serializer.serialize_value(&arc_value).unwrap();
-
-        // Create an Arc<[u8]> directly from the Vec<u8>
-        #[allow(clippy::useless_conversion)]
-        let arc_bytes = Arc::from(bytes);
-
-        let mut deserialized = serializer.deserialize_value(arc_bytes).unwrap();
-        let deserialized_user = deserialized.as_type::<User>().unwrap();
-
-        assert_eq!(deserialized_user, user);
 
         let mut temp_map = HashMap::new();
         temp_map.insert("key1".to_string(), "value1".to_string());
         let param: Vec<HashMap<String, String>> = vec![temp_map];
-        let arc_value = ArcValue::new_list(param);
+        let arc_value = ArcValue::new_primitive(param);
         // complex_data
-        let list_result: Vec<HashMap<String, String>> = node
+        let list_result_arc: ArcValue = node
             .request("math/complex_data", Some(arc_value))
             .await
             .expect("Failed to call complex_data action");
+        let list_result: Vec<HashMap<String, String>> = list_result_arc
+            .as_type()
+            .expect("Failed to convert to Vec<HashMap<String, String>>");
 
         assert_eq!(list_result.len(), 1);
         assert_eq!(list_result[0].get("key1").unwrap(), "value1");
@@ -721,18 +688,20 @@ mod tests {
             "message": "Hello, world!"
         })));
 
-        let result: String = node
+        let result_arc: ArcValue = node
             .request("math/echo", payload)
             .await
             .expect("Failed to call echo action");
+        let result: String = result_arc.as_type().expect("Failed to convert to String");
 
         assert_eq!(result, "Hello, world!");
 
         let payload = Some(ArcValue::new_primitive("Hello, world!".to_string()));
-        let result: String = node
+        let result_arc: ArcValue = node
             .request("math/echo", payload)
             .await
             .expect("Failed to call echo action");
+        let result: String = result_arc.as_type().expect("Failed to convert to String");
 
         assert_eq!(result, "Hello, world!");
 
@@ -748,12 +717,15 @@ mod tests {
         let mut prof_map = HashMap::new();
         prof_map.insert("p1".to_string(), profile.clone());
         let profiles_param: Vec<HashMap<String, TestProfile>> = vec![prof_map];
-        let arc_value = ArcValue::new_list(profiles_param.clone());
+        let arc_value = ArcValue::new_primitive(profiles_param.clone());
 
-        let profile_result: Vec<HashMap<String, TestProfile>> = node
+        let profile_result_arc: ArcValue = node
             .request("math/complex_profile", Some(arc_value))
             .await
             .expect("Failed to call complex_profile action");
+        let profile_result: Vec<HashMap<String, TestProfile>> = profile_result_arc
+            .as_type()
+            .expect("Failed to convert to Vec<HashMap<String, TestProfile>>");
 
         assert_eq!(profile_result, profiles_param);
     }

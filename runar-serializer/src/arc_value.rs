@@ -376,6 +376,14 @@ impl ArcValue {
         Ok(buf)
     }
 
+    pub fn as_type<T>(&self) -> Result<T>
+    where
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
+    {
+        let ref_value = self.as_type_ref::<T>()?;
+        Ok((*ref_value).clone())
+    }
+
     // ============================================================
     // Generic getter with automatic decrypt fallback via registry
     // ============================================================
