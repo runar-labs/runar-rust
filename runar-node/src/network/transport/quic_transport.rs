@@ -1,7 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use prost::Message as ProstMessage;
 use quinn::{ClientConfig, Endpoint, ServerConfig};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
@@ -253,11 +252,10 @@ type ConnectionIdToPeerIdMap = Arc<RwLock<HashMap<usize, String>>>;
 
 /// Encode a `NetworkMessage` with a 4-byte BE length prefix.
 fn encode_message(msg: &NetworkMessage) -> Result<Vec<u8>, NetworkError> {
-    let mut buf = Vec::with_capacity(4096);
-    msg.encode(&mut buf)
-        .map_err(|e| NetworkError::MessageError(format!("failed to encode protobuf: {e}")))?;
+    let mut buf = serde_cbor::to_vec(msg)
+        .map_err(|e| NetworkError::MessageError(format!("failed to encode cbor: {e}")))?;
     let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
-    framed.extend_from_slice(&buf);
+    framed.append(&mut buf);
     Ok(framed)
 }
 
@@ -540,7 +538,13 @@ impl QuicTransport {
             }
             let resolved_peer_id = if needs_to_correlate_peer_id {
                 let connection_id = conn.stable_id();
-                match self_clone.state.connection_id_to_peer_id.read().await.get(&connection_id) {
+                match self_clone
+                    .state
+                    .connection_id_to_peer_id
+                    .read()
+                    .await
+                    .get(&connection_id)
+                {
                     Some(peer_id) => peer_id.clone(),
                     None => {
                         self_clone.logger.error(format!("Connection id {connection_id} not found in connection id to peer id map"));
@@ -651,14 +655,14 @@ impl QuicTransport {
             }
         }
 
-        match NetworkMessage::decode(msg_buf.as_slice()) {
+        match serde_cbor::from_slice::<NetworkMessage>(&msg_buf) {
             Ok(msg) => {
                 self.logger.debug(format!("🔍 [read_message] Decoded message: type={type}, source={source}, dest={dest}", 
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id));
                 Ok(msg)
             }
             Err(e) => Err(NetworkError::MessageError(format!(
-                "failed to decode protobuf: {e}"
+                "failed to decode cbor: {e}"
             ))),
         }
     }
@@ -910,6 +914,11 @@ impl QuicTransport {
 #[async_trait]
 impl NetworkTransport for QuicTransport {
     async fn start(self: Arc<Self>) -> Result<(), NetworkError> {
+        self.logger.info(format!(
+            "Starting QUIC transport node id: {node_id}",
+            node_id = compact_id(&self.local_node_info.node_public_key)
+        ));
+
         let mut running_guard = self.running.write().await;
         if *running_guard {
             return Ok(());
@@ -937,27 +946,33 @@ impl NetworkTransport for QuicTransport {
     }
 
     async fn stop(&self) -> Result<(), NetworkError> {
-        // mark not running
+        self.logger.info(format!(
+            "Stopping QUIC transport node id: {node_id}",
+            node_id = compact_id(&self.local_node_info.node_public_key)
+        ));
+
         {
             let mut run = self.running.write().await;
             if !*run {
+                self.logger
+                    .debug("QUIC transport is not running - skipping stop");
                 return Ok(());
             }
             *run = false;
         }
 
-        // close endpoint
+        self.logger.debug("Closing endpoint");
         if let Some(ep) = self.endpoint.write().await.take() {
             ep.close(0u32.into(), b"shutdown");
         }
 
-        //close all connections
+        self.logger.debug("Closing all connections");
         let peers = self.state.peers.read().await;
         for peer in peers.values() {
             peer.connection.close(0u32.into(), b"shutdown");
         }
 
-        // join tasks
+        self.logger.debug("canceling all remaining tasks");
         let mut tasks = self.tasks.lock().await;
         while let Some(t) = tasks.pop() {
             t.abort();
@@ -1075,11 +1090,12 @@ impl NetworkTransport for QuicTransport {
             "🔍 [request] Deserializing response payload of {} bytes",
             bytes.len()
         ));
-        let av = ArcValue::deserialize(bytes, Some(serialization_context.keystore.clone())).map_err(|e| {
-            self.logger
-                .error(format!("❌ [request] Failed to deserialize response: {e}"));
-            NetworkError::MessageError(format!("deserialize response: {e}"))
-        })?;
+        let av = ArcValue::deserialize(bytes, Some(serialization_context.keystore.clone()))
+            .map_err(|e| {
+                self.logger
+                    .error(format!("❌ [request] Failed to deserialize response: {e}"));
+                NetworkError::MessageError(format!("deserialize response: {e}"))
+            })?;
 
         self.logger
             .info("✅ [request] Request completed successfully");
@@ -1106,10 +1122,12 @@ impl NetworkTransport for QuicTransport {
 
     async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError> {
         //check if transport is running
-        let running = self.running.read().await;
-        if !*running {
-            self.logger.error("❌ [connect_peer] Transport not running");
-            return Err(NetworkError::TransportError("transport not running".into()));
+        {
+            let running = self.running.read().await;
+            if !*running {
+                self.logger.error("❌ [connect_peer] Transport not running");
+                return Err(NetworkError::TransportError("transport not running".into()));
+            }
         }
 
         let peer_node_id = compact_id(&discovery_msg.public_key);

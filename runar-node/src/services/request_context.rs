@@ -223,11 +223,7 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P, T>(
-        &self,
-        path: impl Into<String>,
-        payload: Option<P>,
-    ) -> Result<ArcValue>
+    pub async fn request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {

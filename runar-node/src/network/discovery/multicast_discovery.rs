@@ -9,7 +9,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use core::fmt;
-use prost::Message;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use serde::{Deserialize, Serialize};
@@ -34,11 +33,9 @@ use super::{DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 const DEFAULT_MULTICAST_PORT: u16 = 45678;
 
 /// Unique identifier for a node in the network
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PeerInfo {
-    #[prost(bytes, tag = "1")]
     pub public_key: Vec<u8>,
-    #[prost(string, repeated, tag = "2")]
     pub addresses: Vec<String>,
 }
 
@@ -61,11 +58,9 @@ impl fmt::Display for PeerInfo {
 }
 
 // Message formats for multicast communication
-#[derive(Clone, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MulticastMessage {
-    #[prost(message, optional, tag = "1")]
     pub announce: Option<PeerInfo>,
-    #[prost(string, optional, tag = "2")]
     pub goodbye: Option<String>,
 }
 
@@ -255,7 +250,7 @@ impl MulticastDiscovery {
                         logger.debug(format!(
                             "Received multicast message from {src}, size: {len}",
                         ));
-                        match MulticastMessage::decode(&buf[..len]) {
+                        match serde_cbor::from_slice::<MulticastMessage>(&buf[..len]) {
                             Ok(message) => {
                                 // Use helper method to check sender ID
                                 let mut skip = false;
@@ -395,9 +390,8 @@ impl MulticastDiscovery {
                     *id = compact_id(&local_node_info.node_public_key);
                 }
 
-                let mut data = Vec::new();
-                match message.encode(&mut data) {
-                    Ok(_) => {
+                match serde_cbor::to_vec(&message) {
+                    Ok(data) => {
                         logger.debug(format!(
                             "Sending multicast message to {}, size: {}",
                             target_addr,
@@ -487,14 +481,16 @@ impl MulticastDiscovery {
                     announce: Some(local_info_msg),
                     goodbye: None,
                 };
-                let mut data = Vec::new();
-                if response_msg.encode(&mut data).is_ok() {
-                    // Small delay to avoid collision
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    // Respond directly to the sender
-                    if let Err(e) = socket.send_to(&data, src).await {
-                        logger.error(format!("Failed to send auto-response to {src}: {e}"));
+                match serde_cbor::to_vec(&response_msg) {
+                    Ok(data) => {
+                        // Small delay to avoid collision
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        // Respond directly to the sender
+                        if let Err(e) = socket.send_to(&data, src).await {
+                            logger.error(format!("Failed to send auto-response to {src}: {e}"));
+                        }
                     }
+                    Err(e) => logger.error(format!("Failed to serialize response message: {e}")),
                 }
             } else {
                 logger.debug(format!(

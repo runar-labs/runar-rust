@@ -5,7 +5,6 @@
 
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
-use prost::Message;
 use runar_macros::{action, publish, service, service_impl, subscribe};
 use runar_macros_common::{hmap, params};
 use runar_node::services::{EventContext, RequestContext};
@@ -15,43 +14,29 @@ use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc}; // Added for metadata testing
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MyData {
-    #[prost(int32, tag = "1")]
     id: i32,
-    #[prost(string, tag = "2")]
     text_field: String,
-    #[prost(int32, tag = "3")]
     number_field: i32,
-    #[prost(bool, tag = "4")]
     boolean_field: bool,
-    #[prost(double, tag = "5")]
     float_field: f64,
-    #[prost(int32, repeated, tag = "6")]
     vector_field: Vec<i32>,
-    #[prost(map = "string, int32", tag = "7")]
     map_field: HashMap<String, i32>,
-    #[prost(string, optional, tag = "8")]
     network_id: Option<String>,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreWrappedStruct {
-    #[prost(string, tag = "1")]
     id: String,
-    #[prost(int32, tag = "2")]
     value: i32,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize, Message)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
-    #[prost(int32, tag = "1")]
     id: i32,
-    #[prost(string, tag = "2")]
     name: String,
-    #[prost(string, tag = "3")]
     email: String,
-    #[prost(int32, tag = "4")]
     age: i32,
 }
 

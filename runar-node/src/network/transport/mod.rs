@@ -1,7 +1,6 @@
 // Network Transport Module
 use anyhow::Result;
 use async_trait::async_trait;
-use prost::Message;
 use rand;
 use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
@@ -205,27 +204,22 @@ pub enum NetworkMessageType {
     Heartbeat,
 }
 
-#[derive(Serialize, Deserialize, Clone, Message)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageContext {
-    #[prost(bytes, tag = "1")]
     pub profile_public_key: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Message)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMessagePayloadItem {
     /// The path/topic associated with this payload
-    #[prost(string, tag = "1")]
     pub path: String,
 
     /// The serialized value/payload data as bytes
-    #[prost(bytes, tag = "2")]
     pub value_bytes: Vec<u8>,
 
-    #[prost(message, tag = "3")]
     pub context: Option<MessageContext>,
 
     /// Correlation ID for request/response tracking
-    #[prost(string, tag = "4")]
     pub correlation_id: String,
 }
 
@@ -258,22 +252,18 @@ pub const MESSAGE_TYPE_NODE_INFO_UPDATE: u32 = 9;
 pub const MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE: u32 = 10;
 
 /// Represents a message exchanged between nodes
-#[derive(Serialize, Deserialize, Clone, Message)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMessage {
     /// Source node identifier
-    #[prost(string, tag = "1")]
     pub source_node_id: String,
 
     /// Destination node identifier (MUST be specified)
-    #[prost(string, tag = "2")]
     pub destination_node_id: String,
 
     /// Message type (Request, Response, Event, etc.)
-    #[prost(uint32, tag = "3")]
     pub message_type: u32,
 
     /// List of payloads  
-    #[prost(message, repeated, tag = "4")]
     pub payloads: Vec<NetworkMessagePayloadItem>,
 }
 

@@ -2,7 +2,8 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
-use runar_serializer::{ArcValue, ValueCategory};
+use runar_serializer::{ArcValue, Plain, ValueCategory};
+use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,25 +12,21 @@ use uuid::Uuid;
 use crate::sqlite::{
     DataType, Params as SqlParams, Schema as SqliteSchemaDef, SqlQuery, Value as SqliteValue,
 };
-use prost::Message;
-use runar_serializer_macros::Serializable;
 
 /// Represents a request to insert a single document into a collection.
 ///
 /// Intention: To provide a structured way to specify the collection and document for an insert operation.
 /// The document is represented as a map of field names to ArcValue values.
-#[derive(Clone, prost::Message, Serializable)]
+#[derive(Debug, Serialize, Deserialize, Clone, Plain)] // Clone for potential re-use if request fails and retries
 pub struct InsertOneRequest {
-    #[prost(string, tag = "1")]
     pub collection: String,
-    #[prost(map = "string, bytes", tag = "2")]
-    pub document: HashMap<String, Vec<u8>>, // Serialized ArcValue
+    pub document: HashMap<String, ArcValue>,
 }
 
 /// Represents the response from an insert_one operation.
 ///
 /// Intention: To confirm the ID of the inserted document.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Plain)]
 pub struct InsertOneResponse {
     pub inserted_id: String, // The ID is a string (e.g., UUID)
 }
@@ -38,7 +35,7 @@ pub struct InsertOneResponse {
 ///
 /// Intention: To specify the collection and filter criteria for a find operation.
 /// The filter is a map, typically `{"_id": ArcValue::Text("some-uuid")}`.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Plain)]
 pub struct FindOneRequest {
     pub collection: String,
     pub filter: HashMap<String, ArcValue>,
@@ -47,7 +44,7 @@ pub struct FindOneRequest {
 /// Represents the response from a find_one operation.
 ///
 /// Intention: To return the found document (as a map), if any.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Plain)]
 pub struct FindOneResponse {
     pub document: Option<HashMap<String, ArcValue>>,
 }
@@ -97,9 +94,9 @@ impl CrudSqliteService {
     fn schema_aware_convert_row_values(
         &self,
         collection_name: &str,
-        mut row_map: HashMap<String, ArcValue>,
+        row_map: Arc<HashMap<String, ArcValue>>,
         context: &RequestContext, // For logging
-    ) -> Result<HashMap<String, ArcValue>> {
+    ) -> Result<Arc<HashMap<String, ArcValue>>> {
         let table_schema = self
             .schema
             .tables
@@ -112,7 +109,8 @@ impl CrudSqliteService {
                 )
             })?;
 
-        for (field_name, arc_value) in row_map.iter_mut() {
+        let mut updates = row_map.as_ref().clone();
+        for (field_name, arc_value) in updates.iter_mut() {
             if let Some(col_def) = table_schema.columns.iter().find(|c| c.name == *field_name) {
                 if col_def.data_type == DataType::Boolean {
                     match arc_value.category {
@@ -144,7 +142,7 @@ impl CrudSqliteService {
                 }
             }
         }
-        Ok(row_map)
+        Ok(Arc::new(updates))
     }
 
     fn sqlite_action_path(&self, action: &str) -> String {
@@ -196,10 +194,10 @@ impl CrudSqliteService {
             self.name
         ));
 
-        let mut payload =
+        let payload =
             request_payload.ok_or_else(|| anyhow!("Request payload is missing for insertOne"))?;
-        let req: InsertOneRequest = payload
-            .as_type::<InsertOneRequest>()
+        let req: Arc<InsertOneRequest> = payload
+            .as_type_ref::<InsertOneRequest>()
             .with_context(|| "Failed to deserialize InsertOneRequest from payload")?;
 
         context.info(format!(
@@ -218,7 +216,7 @@ impl CrudSqliteService {
                 anyhow!(err_msg)
             })?;
 
-        let mut doc_to_insert = req.document;
+        let mut doc_to_insert = req.document.clone();
         let id_field_name = "_id".to_string();
         let inserted_id_av = match doc_to_insert.get(&id_field_name) {
             Some(id_val) => id_val.clone(), // Use provided _id
@@ -230,9 +228,9 @@ impl CrudSqliteService {
             }
         };
         // Ensure inserted_id is a string for the response
-        let mut inserted_id_av_mut = inserted_id_av.clone(); // Clone to make mutable for as_type
-        let inserted_id = inserted_id_av_mut
-            .as_type::<String>()
+        let inserted_id_av = inserted_id_av.clone(); // Clone to make mutable for as_type
+        let inserted_id = inserted_id_av
+            .as_type_ref::<String>()
             .with_context(|| "Inserted _id must be a string")?;
 
         let mut column_names: Vec<String> = Vec::new();
@@ -327,21 +325,24 @@ impl CrudSqliteService {
 
         let action_path = self.sqlite_action_path("execute_query");
 
-        let rows_affected: i64 = context
-            .request(action_path, Some(ArcValue::from_struct(sql_query)))
+        let rows_affected: Arc<i64> = context
+            .request(action_path, Some(ArcValue::new_struct(sql_query)))
             .await
-            .expect("Failed to execute INSERT statement");
+            .expect("Failed to execute INSERT statement")
+            .as_type_ref()?;
 
         // Check response from execute_query (expecting number of rows affected)
         // rows_affected is now directly i64
-        match rows_affected {
+        match rows_affected.as_ref() {
             1 => {
                 context.info(format!(
                     "Successfully inserted document with id '{}' into collection '{}'.",
                     inserted_id, req.collection
                 ));
-                let response_struct = InsertOneResponse { inserted_id };
-                let final_response_av = ArcValue::from_struct(response_struct);
+                let response_struct = InsertOneResponse {
+                    inserted_id: inserted_id.as_ref().clone(),
+                };
+                let final_response_av = ArcValue::new_struct(response_struct);
                 Ok(final_response_av)
             }
             other_rows_affected => {
@@ -364,12 +365,11 @@ impl CrudSqliteService {
             "Handling findOne request for CrudSqliteService '{}'",
             self.name
         ));
-
-        let mut payload =
+        let payload =
             request_payload.ok_or_else(|| anyhow!("Request payload is missing for findOne"))?;
-        let mut req: FindOneRequest = payload
-            .as_type::<FindOneRequest>()
-            .with_context(|| "Failed to deserialize FindOneRequest from payload")?;
+        let req: Arc<FindOneRequest> = payload
+            .as_type_ref::<FindOneRequest>()
+            .context("Failed to deserialize FindOneRequest from payload")?;
 
         context.info(format!(
             "Attempting to find_one in collection: '{}' with filter: {:?}",
@@ -398,7 +398,7 @@ impl CrudSqliteService {
         let mut where_clauses: Vec<String> = Vec::new();
         let mut value_params: Vec<SqliteValue> = Vec::new();
 
-        for (field_name, arc_value) in &mut req.filter {
+        for (field_name, arc_value) in req.filter.clone().iter_mut() {
             if !table_def.columns.iter().any(|c| &c.name == field_name) {
                 let err_msg = format!(
                     "Filter field '{}' not defined in schema for collection '{}'.",
@@ -425,7 +425,7 @@ impl CrudSqliteService {
             req.collection, sql, &value_params
         ));
 
-        let _sql_query_struct = SqlQuery {
+        let sql_query_struct = SqlQuery {
             statement: sql,
             params: SqlParams {
                 values: value_params,
@@ -436,15 +436,15 @@ impl CrudSqliteService {
 
         // Construct the payload for SqliteService's 'execute_query' action
         // The SqliteService expects an ArcValue wrapping an SqlQuery struct.
-        let sql_for_logging = _sql_query_struct.statement.clone(); // Clone for logging before move
-        let request_payload_for_sqlite = ArcValue::from_struct(_sql_query_struct);
+        let sql_for_logging = sql_query_struct.statement.clone(); // Clone for logging before move
+        let request_payload_for_sqlite = ArcValue::new_struct(sql_query_struct);
 
         context.debug(format!(
             "Sending request to SqliteService at '{action_path}' with payload for SQL: {sql_for_logging}",
         ));
 
         // Make the actual request to SqliteService
-        let mut rows: Vec<ArcValue> = context
+        let rows: Arc<Vec<ArcValue>> = context
             .request(action_path.clone(), Some(request_payload_for_sqlite))
             .await
             .with_context(|| {
@@ -452,24 +452,25 @@ impl CrudSqliteService {
                     "Failed to execute SELECT statement for collection '{}' (SQL: '{}') via SqliteService at '{}'",
                     req.collection, sql_for_logging, action_path
                 )
-            })?;
+            })?
+            .as_type_ref::<Vec<ArcValue>>()?;
 
         if !rows.is_empty() {
             // Found a document, take the first one
-            let mut document_arc_value_map = rows.remove(0); // Take ownership, this is ArcValue(Map)
+            let document_arc_value_map = rows.first().unwrap(); // Get the first element
             context.info(format!(
                 "Found document in collection '{}' with filter {:?}: {:?}",
                 req.collection, req.filter, document_arc_value_map
             ));
-            match document_arc_value_map.as_type::<HashMap<String, ArcValue>>() {
+            match document_arc_value_map.as_type_ref::<HashMap<String, ArcValue>>() {
                 Ok(map_data) => {
                     match self.schema_aware_convert_row_values(&req.collection, map_data, &context)
                     {
                         Ok(converted_map_data) => {
                             let response_struct = FindOneResponse {
-                                document: Some(converted_map_data),
+                                document: Some(converted_map_data.as_ref().clone()),
                             };
-                            Ok(ArcValue::from_struct(response_struct))
+                            Ok(ArcValue::new_struct(response_struct))
                         }
                         Err(e) => {
                             context.error(format!(
@@ -497,7 +498,7 @@ impl CrudSqliteService {
                 req.collection, req.filter, sql_for_logging
             ));
             let response_struct = FindOneResponse { document: None };
-            Ok(ArcValue::from_struct(response_struct))
+            Ok(ArcValue::new_struct(response_struct))
         }
     }
 }
@@ -624,99 +625,5 @@ impl Clone for CrudSqliteService {
             store_path: self.store_path.clone(),
             schema: Arc::clone(&self.schema),
         }
-    }
-}
-
-// -----------------------------------------------------------------------------
-// CustomFromBytes implementations for CRUD request/response structs
-// -----------------------------------------------------------------------------
-
-impl RunarSerializer for InsertOneRequest {
-    fn from_plain_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Ok(bincode::deserialize(bytes)?)
-    }
-
-    fn from_encrypted_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Self::from_plain_bytes(bytes, None)
-    }
-
-    fn to_binary(
-        &self,
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
-    ) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(self)?)
-    }
-}
-
-impl RunarSerializer for InsertOneResponse {
-    fn from_plain_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Ok(bincode::deserialize(bytes)?)
-    }
-    fn from_encrypted_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Self::from_plain_bytes(bytes, None)
-    }
-    fn to_binary(
-        &self,
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
-    ) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(self)?)
-    }
-}
-
-impl RunarSerializer for FindOneRequest {
-    fn from_plain_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Ok(bincode::deserialize(bytes)?)
-    }
-    fn from_encrypted_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Self::from_plain_bytes(bytes, None)
-    }
-    fn to_binary(
-        &self,
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
-    ) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(self)?)
-    }
-}
-
-impl RunarSerializer for FindOneResponse {
-    fn from_plain_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Ok(bincode::deserialize(bytes)?)
-    }
-    fn from_encrypted_bytes(
-        bytes: &[u8],
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-    ) -> Result<Self> {
-        Self::from_plain_bytes(bytes, None)
-    }
-    fn to_binary(
-        &self,
-        _keystore: Option<&Arc<runar_serializer::traits::KeyStore>>,
-        _resolver: Option<&dyn runar_serializer::traits::LabelResolver>,
-    ) -> Result<Vec<u8>> {
-        Ok(bincode::serialize(self)?)
     }
 }

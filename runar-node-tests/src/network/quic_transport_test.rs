@@ -56,8 +56,7 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
 /// 4. Connection lifecycle management
 /// 5. Certificate-based security
 #[tokio::test]
-async fn test_quic_transport_complete_api_validation_inner(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 

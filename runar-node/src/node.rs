@@ -1681,18 +1681,8 @@ impl Node {
             return Ok(());
         }
 
-        self.logger.info("Shutting down network components");
-
-        // For simplicity during the refactoring, just log the intention
-        // We would actually shut down the discovery and transport here
         self.logger
-            .info("Stopping discovery and transport services");
-
-        // transport need to be shut down properly
-        let transport_guard = self.network_transport.read().await;
-        if let Some(transport) = transport_guard.as_ref() {
-            transport.stop().await?;
-        }
+            .info("Shutting down network discovery providers");
 
         //discovery stop all =discovery providers
         let discovery_guard = self.network_discovery_providers.read().await;
@@ -1700,6 +1690,14 @@ impl Node {
             for provider in discovery {
                 provider.shutdown().await?;
             }
+        }
+
+        self.logger.info("Shutting down transport");
+
+        // transport need to be shut down properly
+        let transport_guard = self.network_transport.read().await;
+        if let Some(transport) = transport_guard.as_ref() {
+            transport.stop().await?;
         }
 
         Ok(())

@@ -12,13 +12,10 @@ use std::net::SocketAddr;
 use tokio::time::{sleep, Duration};
 
 // --- Test Data Struct ---
-#[derive(Clone, Serialize, Deserialize, PartialEq, prost::Message)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct MyTestData {
-    #[prost(int32, tag = "1")]
     id: i32,
-    #[prost(string, tag = "2")]
     name: String,
-    #[prost(bool, tag = "3")]
     active: bool,
 }
 

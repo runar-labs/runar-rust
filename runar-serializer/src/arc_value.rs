@@ -3,7 +3,6 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use prost::Message;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -360,7 +359,7 @@ impl ArcValue {
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);
             buf.extend_from_slice(type_name_bytes);
-            buf.extend(data.encode_to_vec());
+            buf.extend(serde_cbor::to_vec(&data).map_err(|e| anyhow!(e))?);
         } else {
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
                 ser_fn(inner, None, None)

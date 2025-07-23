@@ -224,7 +224,7 @@ fn generate_abstract_service_impl(
     sorted_types.sort();
 
     // Create a string representation of all types (one per line) for logging
-    let types_str = sorted_types.join("\n");
+    let _types_str = sorted_types.join("\n");
 
     // Create type identifiers for each type (used later for serializer registration)
     let type_idents = sorted_types

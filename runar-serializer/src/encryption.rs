@@ -1,6 +1,5 @@
 use crate::traits::{EnvelopeEncryptedData, KeyStore, LabelResolver};
 use anyhow::{anyhow, Result};
-use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -83,6 +82,6 @@ pub fn decrypt_label_group<T: for<'de> Deserialize<'de> + Default>(
 // }
 
 pub fn decrypt_bytes(bytes: &[u8], keystore: &Arc<KeyStore>) -> anyhow::Result<Vec<u8>> {
-    let env = EnvelopeEncryptedData::decode(bytes).map_err(|e| anyhow!(e))?;
+    let env: EnvelopeEncryptedData = serde_cbor::from_slice(bytes).map_err(|e| anyhow!(e))?;
     keystore.decrypt_envelope_data(&env).map_err(|e| anyhow!(e))
 }

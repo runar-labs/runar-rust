@@ -35,8 +35,8 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Set up logger
     let logger = Arc::new(Logger::new_root(
-        Component::Transporter,
-        "remote_action_test",
+        Component::Custom("remote_action_test"),
+        "",
     ));
 
     let configs =
@@ -143,8 +143,9 @@ async fn test_remote_action_call() -> Result<()> {
     // STEP 17: Cleanup
     // ==========================================
     logger.info("🧹 Shutting down nodes...");
-    node1.stop().await?;
     node2.stop().await?;
+    node1.stop().await?;
+
     logger.info("✅ Both nodes stopped successfully");
 
     logger.info("🎉 remote action test completed successfully!");
