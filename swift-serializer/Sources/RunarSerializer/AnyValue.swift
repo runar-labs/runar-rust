@@ -1,6 +1,6 @@
 import Foundation
 import SwiftCBOR
-// Note: MobileKeyManager import will be added when swift-keys package is added as dependency
+import RunarKeys
 
 // Note: Macro declarations are now in the swift-serializer-macros package
 // and imported via the package dependency
@@ -379,12 +379,22 @@ public class AnyValue {
         if let ctx = context {
             // Encrypted serialization
             let bytes = try box.serialize(context: context)
-            // TODO: Implement encryption with keystore
+            
+            // Use real envelope encryption from swift-keys
+            let envelopeData = try ctx.keystore.encryptWithEnvelope(
+                data: bytes,
+                networkId: ctx.networkId,
+                profileIds: ctx.resolver.resolveLabel(typeName)?.profileIds ?? []
+            )
+            
+            // Serialize the envelope data to CBOR
+            let envelopeBytes = try EnvelopeEncryption.serializeToCBOR(envelopeData)
+            
             let isEncryptedByte: UInt8 = 0x01
             buf.append(isEncryptedByte)
             buf.append(UInt8(typeNameBytes.count))
             buf.append(typeNameBytes)
-            buf.append(bytes)
+            buf.append(envelopeBytes)
         } else {
             // Plain serialization
             let bytes = try box.serialize(context: nil)
@@ -429,9 +439,35 @@ public class AnyValue {
     
     /// Deserialize lazy data into a concrete value
     private func deserializeLazyData(_ lazyData: LazyData) async throws -> Any {
-        // TODO: Implement decryption if needed
+        // Handle encrypted data using real decryption
         if lazyData.encrypted {
-            throw SerializerError.deserializationFailed("Encrypted deserialization not yet implemented")
+            // Deserialize the envelope data from CBOR
+            let envelopeData = try EnvelopeEncryption.deserializeFromCBOR(lazyData.data)
+            
+            // Decrypt using the keystore
+            guard let keystore = lazyData.keystore else {
+                throw SerializerError.deserializationFailed("No keystore provided for encrypted data")
+            }
+            
+            // Try to decrypt with profile keys first, then network key
+            var decryptedData: Data
+            do {
+                // Try network-based decryption first (more reliable)
+                decryptedData = try keystore.decryptWithNetwork(envelopeData: envelopeData)
+            } catch {
+                // If network decryption fails, try profile-based decryption
+                // We need to know which profile to use - for now, use a default
+                let defaultProfileId = "default"
+                decryptedData = try keystore.decryptWithProfile(envelopeData: envelopeData, profileId: defaultProfileId)
+            }
+            
+            // Continue with normal deserialization using the decrypted data
+            return try await deserializeLazyData(LazyData(
+                typeName: lazyData.typeName,
+                data: decryptedData,
+                keystore: nil, // No longer encrypted
+                encrypted: false
+            ))
         }
         
         // Handle JSON-encoded structs and basic primitive types
@@ -840,20 +876,26 @@ public actor TypeRegistry {
 // MARK: - Encryption Types
 
 /// Protocol for envelope encryption operations
-/// Matches the Rust EnvelopeCrypto trait
+/// Matches the MobileKeyManager interface from swift-keys
 public protocol EnvelopeCrypto: AnyObject {
-    /// Encrypt data with a specific label
-    func encrypt(_ data: Data, label: String, context: SerializationContext) throws -> Data
+    /// Encrypt data with envelope encryption
+    func encryptWithEnvelope(data: Data, networkId: String?, profileIds: [String]) throws -> EnvelopeEncryptedData
     
-    /// Decrypt data with a specific label
-    func decrypt(_ data: Data, label: String, context: SerializationContext) throws -> Data
+    /// Decrypt envelope-encrypted data using profile key
+    func decryptWithProfile(envelopeData: EnvelopeEncryptedData, profileId: String) throws -> Data
+    
+    /// Decrypt envelope-encrypted data using network key
+    func decryptWithNetwork(envelopeData: EnvelopeEncryptedData) throws -> Data
 }
 
 
 
-/// Placeholder for KeyStore until swift-keys package is added
-public protocol KeyStore {
-    // TODO: Implement key store interface
+/// KeyStore type alias for MobileKeyManager
+public typealias KeyStore = MobileKeyManager
+
+// Make MobileKeyManager conform to EnvelopeCrypto
+extension MobileKeyManager: EnvelopeCrypto {
+    // The methods are already implemented in MobileKeyManager
 }
 
 public struct SerializationContext {

@@ -2,6 +2,7 @@ import SwiftCompilerPlugin
 import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
+import SwiftCBOR
 
 /// Implementation of the `Encrypted` macro, which generates encryption code for structs.
 ///
@@ -59,20 +60,12 @@ public struct EncryptedMacro: MemberMacro {
                 let anyValue = AnyValue.struct(self)
                 let serialized = try anyValue.serialize(context: nil)
                 
-                // Encrypt the serialized data
-                let encryptedData = try keystore.encrypt(serialized, label: "\(raw: structName.lowercased())", context: SerializationContext(
-                    keystore: keystore,
-                    resolver: resolver,
-                    networkId: "default",
-                    profileId: "default"
-                ))
-                
-                // Create envelope encrypted data
-                let envelopeData = EnvelopeEncryptedData(
-                    encryptedData: encryptedData,
-                    networkId: "default",
-                    networkEncryptedKey: Data(),
-                    profileEncryptedKeys: [:]
+                // Use real envelope encryption from swift-keys
+                let labelInfo = resolver.resolveLabel("\(raw: structName.lowercased())")
+                let envelopeData = try keystore.encryptWithEnvelope(
+                    data: serialized,
+                    networkId: labelInfo?.networkId,
+                    profileIds: labelInfo?.profileIds ?? []
                 )
                 
                 return \(raw: encryptedStructName)(encryptedData: envelopeData)
@@ -89,13 +82,18 @@ public struct EncryptedMacro: MemberMacro {
                 
                 /// Decrypt this struct using the provided keystore
                 public func decryptWithKeystore(_ keystore: EnvelopeCrypto) async throws -> \(raw: structName) {
-                    // Decrypt the data
-                    let decryptedData = try keystore.decrypt(encryptedData.encryptedData, label: "\(raw: structName.lowercased())", context: SerializationContext(
-                        keystore: keystore,
-                        resolver: DefaultLabelResolver(labelToProfileId: [:]),
-                        networkId: "default",
-                        profileId: "default"
-                    ))
+                    // Use real envelope decryption from swift-keys
+                    let decryptedData: Data
+                    
+                    // Try network-based decryption first (most reliable)
+                    if encryptedData.networkId != nil && !encryptedData.networkEncryptedKey.isEmpty {
+                        decryptedData = try keystore.decryptWithNetwork(envelopeData: encryptedData)
+                    } else if let firstProfileId = encryptedData.profileEncryptedKeys.keys.first {
+                        // Fall back to profile-based decryption
+                        decryptedData = try keystore.decryptWithProfile(envelopeData: encryptedData, profileId: firstProfileId)
+                    } else {
+                        throw SerializerError.deserializationFailed("No valid decryption method available")
+                    }
                     
                     // Deserialize CBOR data back to AnyValue and convert to struct
                     let anyValue = try AnyValue.deserialize(decryptedData, keystore: nil)

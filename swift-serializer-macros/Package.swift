@@ -18,19 +18,21 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "509.0.0"),
+        .package(url: "https://github.com/valpackett/SwiftCBOR.git", from: "0.4.0"),
     ],
     targets: [
         .target(
             name: "RunarSerializerMacros",
             dependencies: ["RunarSerializerMacrosMacros"]
         ),
-        .macro(
-            name: "RunarSerializerMacrosMacros",
-            dependencies: [
-                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
-                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
-            ]
-        ),
+                       .macro(
+                   name: "RunarSerializerMacrosMacros",
+                   dependencies: [
+                       .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                       .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                       .product(name: "SwiftCBOR", package: "SwiftCBOR"),
+                   ]
+               ),
         .testTarget(
             name: "RunarSerializerMacrosTests",
             dependencies: ["RunarSerializerMacros"]

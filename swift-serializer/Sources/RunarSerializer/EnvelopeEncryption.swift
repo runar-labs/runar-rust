@@ -1,27 +1,10 @@
 import Foundation
 import SwiftCBOR
+import RunarKeys
 
 
 
-/// Envelope encrypted data structure from swift-keys package
-/// This mirrors the structure from MobileKeyManager for serialization
-public struct EnvelopeEncryptedData: Codable {
-    /// The encrypted data payload
-    public let encryptedData: Data
-    /// Network ID this data belongs to
-    public let networkId: String?
-    /// Envelope key encrypted with network key (always required)
-    public let networkEncryptedKey: Data
-    /// Envelope key encrypted with each profile key
-    public let profileEncryptedKeys: [String: Data]
-    
-    public init(encryptedData: Data, networkId: String?, networkEncryptedKey: Data, profileEncryptedKeys: [String: Data]) {
-        self.encryptedData = encryptedData
-        self.networkId = networkId
-        self.networkEncryptedKey = networkEncryptedKey
-        self.profileEncryptedKeys = profileEncryptedKeys
-    }
-}
+// EnvelopeEncryptedData is now imported from RunarKeys package
 
 /// Default label resolver that maps labels directly to profile IDs
 public struct DefaultLabelResolver: LabelResolver {

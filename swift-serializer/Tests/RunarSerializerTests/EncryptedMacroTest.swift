@@ -1,6 +1,8 @@
 import XCTest
 @testable import RunarSerializer
 import RunarSerializerMacros
+import RunarKeys
+import SwiftCBOR
 
 final class EncryptedMacroTest: XCTestCase {
     
@@ -17,21 +19,26 @@ final class EncryptedMacroTest: XCTestCase {
         let encoder = JSONEncoder()
         let jsonData = try encoder.encode(user)
         
-        // Mock encrypt/decrypt
-        let keystore = MockEnvelopeCrypto()
-        let encryptedData = try keystore.encrypt(jsonData, label: "test", context: SerializationContext(
-            keystore: keystore,
-            resolver: MockLabelResolver(),
-            networkId: "default",
-            profileId: "default"
-        ))
+        // Use real encryption/decryption
+        let logger = ConsoleLogger(prefix: "Test")
+        let keystore = try MobileKeyManager(logger: logger)
+        let resolver = MockLabelResolver()
         
-        let decryptedData = try keystore.decrypt(encryptedData, label: "test", context: SerializationContext(
-            keystore: keystore,
-            resolver: MockLabelResolver(),
-            networkId: "default",
-            profileId: "default"
-        ))
+        // Initialize user root key first
+        let _ = try keystore.initializeUserRootKey()
+        
+        // Generate network key only (simpler test)
+        let networkId = try keystore.generateNetworkDataKey()
+        
+        // Encrypt with envelope encryption (network only)
+        let envelopeData = try keystore.encryptWithEnvelope(
+            data: jsonData,
+            networkId: networkId,
+            profileIds: []
+        )
+        
+        // Decrypt using network key
+        let decryptedData = try keystore.decryptWithNetwork(envelopeData: envelopeData)
         
         // Decode JSON
         let decoder = JSONDecoder()
@@ -59,9 +66,19 @@ final class EncryptedMacroTest: XCTestCase {
             isActive: true
         )
         
-        // Create a mock keystore and resolver
-        let keystore = MockEnvelopeCrypto()
-        let resolver = MockLabelResolver()
+        // Create a real keystore and resolver
+        let logger = ConsoleLogger(prefix: "Test")
+        let keystore = try MobileKeyManager(logger: logger)
+        
+        // Initialize user root key first
+        let _ = try keystore.initializeUserRootKey()
+        
+        // Generate keys
+        let networkId = try keystore.generateNetworkDataKey()
+        let _ = try keystore.generateUserProfileKey(profileId: "user-profile")
+        
+        // Create resolver with the actual network ID
+        let resolver = MockLabelResolver(networkId: networkId)
         
         // Test encryption
         let encrypted = try await user.encryptWithKeystore(keystore, resolver: resolver)
@@ -102,8 +119,18 @@ final class EncryptedMacroTest: XCTestCase {
             settings: UserSettings(theme: "dark", notifications: true, language: "en")
         )
         
-        let keystore = MockEnvelopeCrypto()
-        let resolver = MockLabelResolver()
+        let logger = ConsoleLogger(prefix: "Test")
+        let keystore = try MobileKeyManager(logger: logger)
+        
+        // Initialize user root key first
+        let _ = try keystore.initializeUserRootKey()
+        
+        // Generate keys
+        let networkId = try keystore.generateNetworkDataKey()
+        let _ = try keystore.generateUserProfileKey(profileId: "profile-profile")
+        
+        // Create resolver with the actual network ID
+        let resolver = MockLabelResolver(networkId: networkId)
         
         // Test encryption
         let encrypted = try await profile.encryptWithKeystore(keystore, resolver: resolver)
@@ -146,8 +173,18 @@ final class EncryptedMacroTest: XCTestCase {
             numbers: numbers
         )
         
-        let keystore = MockEnvelopeCrypto()
-        let resolver = MockLabelResolver()
+        let logger = ConsoleLogger(prefix: "Test")
+        let keystore = try MobileKeyManager(logger: logger)
+        
+        // Initialize user root key first
+        let _ = try keystore.initializeUserRootKey()
+        
+        // Generate keys
+        let networkId = try keystore.generateNetworkDataKey()
+        let _ = try keystore.generateUserProfileKey(profileId: "data-profile")
+        
+        // Create resolver with the actual network ID
+        let resolver = MockLabelResolver(networkId: networkId)
         
         // Test encryption performance
         let encryptionStart = Date()
@@ -169,32 +206,21 @@ final class EncryptedMacroTest: XCTestCase {
     }
 }
 
-// Mock implementations for testing
-class MockEnvelopeCrypto: EnvelopeCrypto {
-    func encrypt(_ data: Data, label: String, context: SerializationContext) throws -> Data {
-        // Simple XOR encryption for testing (not secure, just for demonstration)
-        let key = label.data(using: .utf8) ?? Data()
-        var encrypted = Data()
-        for (index, byte) in data.enumerated() {
-            let keyByte = key[index % key.count]
-            encrypted.append(byte ^ keyByte)
-        }
-        return encrypted
-    }
-    
-    func decrypt(_ data: Data, label: String, context: SerializationContext) throws -> Data {
-        // XOR decryption is the same as encryption
-        return try encrypt(data, label: label, context: context)
-    }
-}
+// Real MobileKeyManager is used directly for testing
 
 struct MockLabelResolver: LabelResolver {
+    private var networkId: String?
+    
+    init(networkId: String? = nil) {
+        self.networkId = networkId
+    }
+    
     func resolveLabel(_ label: String) -> LabelKeyInfo? {
         // Simple mapping for testing
         let mappings = [
-            "secureuser": LabelKeyInfo(profileIds: ["user-profile"], networkId: nil),
-            "secureprofile": LabelKeyInfo(profileIds: ["profile-profile"], networkId: "secure-network"),
-            "securedata": LabelKeyInfo(profileIds: ["data-profile"], networkId: "data-network")
+            "secureuser": LabelKeyInfo(profileIds: ["user-profile"], networkId: networkId),
+            "secureprofile": LabelKeyInfo(profileIds: ["profile-profile"], networkId: networkId),
+            "securedata": LabelKeyInfo(profileIds: ["data-profile"], networkId: networkId)
         ]
         return mappings[label.lowercased()]
     }

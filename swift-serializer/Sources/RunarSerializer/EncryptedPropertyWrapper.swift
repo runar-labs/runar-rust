@@ -1,4 +1,5 @@
 import Foundation
+import RunarKeys
 
 /// Protocol for encrypted field types that can be detected during serialization
 public protocol EncryptedFieldProtocol {
