@@ -5,6 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::Account;
 
+// Helper function to safely get current timestamp
+fn get_current_timestamp() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|e| anyhow!("System clock error: {}", e))
+}
+
 // Define the Account service
 #[service(
     name = "Account Service",
@@ -27,10 +35,7 @@ impl AccountService {
         // Placeholder implementation
         ctx.info(format!("Called create_account with name: {name}"));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(Account {
             id: format!("account_{now}"),
@@ -59,10 +64,7 @@ impl AccountService {
         // Placeholder implementation
         ctx.info(format!("Called get_account for account_id: {account_id}"));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(Account {
             id: account_id,

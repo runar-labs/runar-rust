@@ -5,6 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::User;
 
+// Helper function to safely get current timestamp
+fn get_current_timestamp() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|e| anyhow!("System clock error: {}", e))
+}
+
 // Define the User service
 #[service(
     name = "User Service",
@@ -29,10 +37,7 @@ impl UserService {
             "Called create_user with username: {username}, email: {email}"
         ));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(User {
             id: format!("user_{now}"), // Generate ID based on timestamp

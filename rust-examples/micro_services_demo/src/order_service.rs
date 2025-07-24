@@ -5,6 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::Order;
 
+// Helper function to safely get current timestamp
+fn get_current_timestamp() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|e| anyhow!("System clock error: {}", e))
+}
+
 // Define the Order service
 #[service(
     name = "Order Service",
@@ -29,10 +37,7 @@ impl OrderService {
         // Placeholder implementation
         ctx.info(format!("Called create_order for user_id: {user_id}"));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(Order {
             id: format!("order_{now}"),
@@ -50,10 +55,7 @@ impl OrderService {
         // Placeholder implementation
         ctx.info(format!("Called get_order for order_id: {order_id}"));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(Order {
             id: order_id,

@@ -5,6 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::Profile;
 
+// Helper function to safely get current timestamp
+fn get_current_timestamp() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|e| anyhow!("System clock error: {}", e))
+}
+
 // Define the Profile service
 #[service(
     name = "Profile Service",
@@ -28,10 +36,7 @@ impl ProfileService {
         // Placeholder implementation
         ctx.info(format!("Called create_profile for user_id: {user_id}"));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(Profile {
             id: format!("profile_{user_id}"),
@@ -48,10 +53,7 @@ impl ProfileService {
         // Placeholder implementation
         ctx.info(format!("Called get_profile for user_id: {user_id}"));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(Profile {
             id: format!("profile_{user_id}"),
@@ -74,10 +76,7 @@ impl ProfileService {
         // Placeholder implementation
         ctx.info(format!("Called update_profile for user_id: {user_id}"));
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = get_current_timestamp()?;
 
         Ok(Profile {
             id: format!("profile_{user_id}"),

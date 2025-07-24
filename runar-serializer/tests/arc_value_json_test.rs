@@ -26,7 +26,7 @@ fn test_primitive_types() {
 
     // Test string
     let string_val = ArcValue::new_primitive("hello".to_string());
-    assert_eq!(int_val.to_json().unwrap(), json!(42));
+    assert_eq!(string_val.to_json().unwrap(), json!("hello"));
     assert_eq!(string_val.as_type::<String>().unwrap(), "hello");
 
     // Test float - use a non-approximate constant

@@ -258,12 +258,13 @@ impl AbstractService for GatwayService {
             Ok(services_arc_value) => {
                 let services_vec: Vec<ArcValue> = services_arc_value
                     .as_type()
-                    .expect("Failed to convert ArcValue to Vec<ArcValue>");
+                    .map_err(|e| anyhow!("Failed to convert ArcValue to Vec<ArcValue>: {}", e))?;
 
                 for service_arc_value in services_vec {
-                    let service_meta: ServiceMetadata = service_arc_value
-                        .as_type()
-                        .expect("Failed to convert ArcValue to ServiceMetadata");
+                    let service_meta: ServiceMetadata =
+                        service_arc_value.as_type().map_err(|e| {
+                            anyhow!("Failed to convert ArcValue to ServiceMetadata: {}", e)
+                        })?;
                     if service_meta.service_path == self.path
                         || service_meta.service_path == "$registry"
                     {
