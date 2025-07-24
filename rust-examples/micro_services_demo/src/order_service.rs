@@ -35,7 +35,7 @@ impl OrderService {
             .as_secs();
 
         Ok(Order {
-            id: format!("order_{}", now),
+            id: format!("order_{now}"),
             user_id,
             product_id,
             quantity,

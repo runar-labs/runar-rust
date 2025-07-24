@@ -3,7 +3,7 @@
 // INTENTION: Verify that the Registry Service correctly provides
 // information about registered services through standard requests.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use runar_common::logging::{Component, Logger};
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::{Node, ServiceMetadata, ServiceState};
@@ -41,7 +41,7 @@ async fn test_registry_service_list_services() {
         node.start().await.unwrap();
 
         // Use the request method to query the registry service
-        let mut services_av: ArcValue = node
+        let services_av: ArcValue = node
             .request("$registry/services/list", Option::<ArcValue>::None)
             .await
             .unwrap();
@@ -101,7 +101,7 @@ async fn test_registry_service_get_service_info() {
     match timeout(Duration::from_secs(10), async {
         let test_logger = Logger::new_root(Component::Node, "test_name");
 
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
 
         // Create a node with a test network ID
         let config = create_node_test_config()
@@ -131,7 +131,7 @@ async fn test_registry_service_get_service_info() {
             .request("$registry/services/list", None::<ArcValue>)
             .await
             .unwrap();
-        let mut list_av_clone = list_av.clone();
+        let list_av_clone = list_av.clone();
         let list_arc2 = list_av_clone.as_list_ref().unwrap();
         let list_response: Vec<ServiceMetadata> = list_arc2
             .iter()

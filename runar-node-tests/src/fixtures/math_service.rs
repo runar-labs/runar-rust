@@ -13,7 +13,7 @@ use runar_node::services::{
 };
 use runar_node::LifecycleContext;
 use runar_schemas::{FieldSchema, SchemaDataType};
-use runar_serializer::{arc_value::AsArcValue, ArcValue};
+use runar_serializer::ArcValue;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -444,10 +444,7 @@ impl AbstractService for MathService {
                 Box::new(move |ctx, value| {
                     // Create a boxed future that returns Result<(), anyhow::Error>
                     Box::pin(async move {
-                        ctx.info(format!(
-                            "MathService received math/added event: {:?}",
-                            value
-                        ));
+                        ctx.info(format!("MathService received math/added event: {value:?}"));
                         Ok(()) // Return Result::Ok
                     })
                 }),

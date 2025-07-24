@@ -695,7 +695,7 @@ mod tests {
             "max_length": 100
         });
 
-        let mut field_arc_value = ArcValue::new_json(json_field_schema.clone());
+        let field_arc_value = ArcValue::new_json(json_field_schema.clone());
         let field_back_to_json = field_arc_value.to_json()?;
         assert_eq!(field_back_to_json, json_field_schema);
 

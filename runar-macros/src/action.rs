@@ -618,21 +618,12 @@ fn generate_register_action_method(
         if return_type_info.type_name == "Vec" {
             // Check if the inner type is ArcValue
             let inner_type = get_vec_inner_type(&return_type_info.actual_type);
-            if let Some(inner_ty) = inner_type {
-                if let syn::Type::Path(type_path) = inner_ty {
-                    if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue")
-                    {
-                        quote! {
-                            // Convert the Vec<ArcValue> result to ArcValue using new_list
-                            let value_type = runar_serializer::ArcValue::new_list(result);
-                            Ok(value_type)
-                        }
-                    } else {
-                        quote! {
-                            // Convert the Vec<T> result to ArcValue using new_primitive
-                            let value_type = runar_serializer::ArcValue::new_primitive(result);
-                            Ok(value_type)
-                        }
+            if let Some(syn::Type::Path(type_path)) = inner_type {
+                if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
+                    quote! {
+                        // Convert the Vec<ArcValue> result to ArcValue using new_list
+                        let value_type = runar_serializer::ArcValue::new_list(result);
+                        Ok(value_type)
                     }
                 } else {
                     quote! {

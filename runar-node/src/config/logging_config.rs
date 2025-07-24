@@ -79,7 +79,7 @@ impl LoggingConfig {
     /// Create a new logging configuration with default settings
     pub fn new() -> Self {
         Self {
-            default_level: LogLevel::Info,
+            default_level: LogLevel::Error,
             component_levels: HashMap::new(),
         }
     }

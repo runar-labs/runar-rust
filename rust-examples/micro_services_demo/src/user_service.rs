@@ -33,7 +33,7 @@ impl UserService {
             .as_secs();
 
         Ok(User {
-            id: format!("user_{}", now), // Generate ID based on timestamp
+            id: format!("user_{now}"), // Generate ID based on timestamp
             username,
             email,
             password_hash,

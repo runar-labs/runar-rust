@@ -33,7 +33,7 @@ impl AccountService {
             .as_secs();
 
         Ok(Account {
-            id: format!("account_{}", now),
+            id: format!("account_{now}"),
             name,
             balance_cents,
             account_type,

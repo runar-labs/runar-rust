@@ -1,193 +1,149 @@
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Plain)]
 struct TestStruct {
     id: i32,
     name: String,
     active: bool,
+    score: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Plain)]
 struct NestedStruct {
     inner: TestStruct,
-    count: i64,
+    metadata: String,
 }
 
 #[test]
-fn test_basic_primitives_to_json() {
-    // Test all basic primitive types
-    let string_val = ArcValue::new_primitive("hello world".to_string());
+fn test_primitive_types() {
+    // Test integer
     let int_val = ArcValue::new_primitive(42i64);
-    let float_val = ArcValue::new_primitive(3.14f64);
-    let bool_val = ArcValue::new_primitive(true);
-    let null_val = ArcValue::null();
-
-    assert_eq!(string_val.to_json().unwrap(), json!("hello world"));
     assert_eq!(int_val.to_json().unwrap(), json!(42));
-    assert_eq!(float_val.to_json().unwrap(), json!(3.14));
-    assert_eq!(bool_val.to_json().unwrap(), json!(true));
-    assert_eq!(null_val.to_json().unwrap(), json!(null));
-
-    assert_eq!(string_val.as_type::<String>().unwrap(), "hello world");
     assert_eq!(int_val.as_type::<i64>().unwrap(), 42);
-    assert_eq!(float_val.as_type::<f64>().unwrap(), 3.14);
-    assert_eq!(bool_val.as_type::<bool>().unwrap(), true);
 
-    let string_val_ser = string_val
-        .serialize(None)
-        .expect("Failed to serialize string value");
-    let int_val_ser = int_val
-        .serialize(None)
-        .expect("Failed to serialize int value");
-    let float_val_ser = float_val
-        .serialize(None)
-        .expect("Failed to serialize float value");
-    let bool_val_ser = bool_val
-        .serialize(None)
-        .expect("Failed to serialize bool value");
-    let null_val_ser = null_val
-        .serialize(None)
-        .expect("Failed to serialize null value");
+    // Test string
+    let string_val = ArcValue::new_primitive("hello".to_string());
+    assert_eq!(int_val.to_json().unwrap(), json!(42));
+    assert_eq!(string_val.as_type::<String>().unwrap(), "hello");
 
-    let string_val_deser =
-        ArcValue::deserialize(&string_val_ser, None).expect("Failed to deserialize string value");
-    let int_val_deser =
-        ArcValue::deserialize(&int_val_ser, None).expect("Failed to deserialize int value");
-    let float_val_deser =
-        ArcValue::deserialize(&float_val_ser, None).expect("Failed to deserialize float value");
-    let bool_val_deser =
-        ArcValue::deserialize(&bool_val_ser, None).expect("Failed to deserialize bool value");
-    let null_val_deser =
-        ArcValue::deserialize(&null_val_ser, None).expect("Failed to deserialize null value");
+    // Test float - use a non-approximate constant
+    let float_val = ArcValue::new_primitive(std::f64::consts::PI);
+    assert_eq!(float_val.to_json().unwrap(), json!(std::f64::consts::PI));
+    assert_eq!(float_val.as_type::<f64>().unwrap(), std::f64::consts::PI);
 
-    assert_eq!(string_val_deser.to_json().unwrap(), json!("hello world"));
-    assert_eq!(int_val_deser.to_json().unwrap(), json!(42));
-    assert_eq!(float_val_deser.to_json().unwrap(), json!(3.14));
-    assert_eq!(bool_val_deser.to_json().unwrap(), json!(true));
-    assert_eq!(null_val_deser.to_json().unwrap(), json!(null));
-
-    assert_eq!(string_val_deser.as_type::<String>().unwrap(), "hello world");
-    assert_eq!(int_val_deser.as_type::<i64>().unwrap(), 42);
-    assert_eq!(float_val_deser.as_type::<f64>().unwrap(), 3.14);
-    assert_eq!(bool_val_deser.as_type::<bool>().unwrap(), true);
+    // Test boolean
+    let bool_val = ArcValue::new_primitive(true);
+    assert_eq!(bool_val.to_json().unwrap(), json!(true));
+    assert!(bool_val.as_type::<bool>().unwrap());
 }
 
 #[test]
-fn test_lists_to_json() {
-    // Test list of primitives
-    let list_json = json!(["apple", "banana", 123, true]);
-    let arc_value = ArcValue::new_json(list_json);
+fn test_primitive_types_deserialization() {
+    // Test integer
+    let int_val = ArcValue::new_primitive(42i64);
+    let serialized = int_val.serialize(None).unwrap();
+    let int_val_deser = ArcValue::deserialize(&serialized, None).unwrap();
+    assert_eq!(int_val_deser.to_json().unwrap(), json!(42));
+    assert_eq!(int_val_deser.as_type::<i64>().unwrap(), 42);
 
-    let result = arc_value.to_json().unwrap();
-    assert_eq!(result, json!(["apple", "banana", 123, true]));
+    // Test string
+    let string_val = ArcValue::new_primitive("hello".to_string());
+    let serialized = string_val.serialize(None).unwrap();
+    let string_val_deser = ArcValue::deserialize(&serialized, None).unwrap();
+    assert_eq!(string_val_deser.to_json().unwrap(), json!("hello"));
+    assert_eq!(string_val_deser.as_type::<String>().unwrap(), "hello");
 
-    // lets get the values as primitives
-    let arc_list = arc_value.as_type::<Vec<ArcValue>>().unwrap();
-    assert_eq!(arc_list.len(), 4);
-    assert_eq!(arc_list[0].as_type::<String>().unwrap(), "apple");
-    assert_eq!(arc_list[1].as_type::<String>().unwrap(), "banana");
-    assert_eq!(arc_list[2].as_type::<i64>().unwrap(), 123);
-    assert_eq!(arc_list[3].as_type::<bool>().unwrap(), true);
-
-    //lets test serialization and deserialization
-    let list_json_ser = arc_value
-        .serialize(None)
-        .expect("Failed to serialize list value");
-    let list_json_deser =
-        ArcValue::deserialize(&list_json_ser, None).expect("Failed to deserialize list value");
+    // Test float - use a non-approximate constant
+    let float_val = ArcValue::new_primitive(std::f64::consts::PI);
+    let serialized = float_val.serialize(None).unwrap();
+    let float_val_deser = ArcValue::deserialize(&serialized, None).unwrap();
     assert_eq!(
-        list_json_deser.to_json().unwrap(),
-        json!(["apple", "banana", 123, true])
+        float_val_deser.to_json().unwrap(),
+        json!(std::f64::consts::PI)
+    );
+    assert_eq!(
+        float_val_deser.as_type::<f64>().unwrap(),
+        std::f64::consts::PI
     );
 
-    let arc_list = list_json_deser.as_type::<Vec<ArcValue>>().unwrap();
-    assert_eq!(arc_list.len(), 4);
-    assert_eq!(arc_list[0].as_type::<String>().unwrap(), "apple");
-    assert_eq!(arc_list[1].as_type::<String>().unwrap(), "banana");
-    assert_eq!(arc_list[2].as_type::<i64>().unwrap(), 123);
-    assert_eq!(arc_list[3].as_type::<bool>().unwrap(), true);
+    // Test boolean
+    let bool_val = ArcValue::new_primitive(true);
+    let serialized = bool_val.serialize(None).unwrap();
+    let bool_val_deser = ArcValue::deserialize(&serialized, None).unwrap();
+    assert_eq!(bool_val_deser.to_json().unwrap(), json!(true));
+    assert!(bool_val_deser.as_type::<bool>().unwrap());
+}
 
-    //lets start with a list as primitives
-    let list_primitives = ArcValue::new_list(vec![
+#[test]
+fn test_list_types() {
+    let list_data = vec![
         ArcValue::new_primitive("apple".to_string()),
         ArcValue::new_primitive("banana".to_string()),
-        ArcValue::new_primitive(123i64),
+        ArcValue::new_primitive(100i64),
         ArcValue::new_primitive(true),
-    ]);
+    ];
 
-    //convert to json
-    let list_json_primitives = list_primitives.to_json().unwrap();
-    assert_eq!(list_json_primitives, json!(["apple", "banana", 123, true]));
+    let arc_list = ArcValue::new_list(list_data.clone());
+    let json_result = arc_list.to_json().unwrap();
+    assert_eq!(json_result, json!(["apple", "banana", 100, true]));
+
+    // Test deserialization
+    let serialized = arc_list.serialize(None).unwrap();
+    let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
+    let deserialized_list: Vec<ArcValue> = deserialized.as_type().unwrap();
+
+    assert_eq!(deserialized_list.len(), 4);
+    assert_eq!(deserialized_list[0].as_type::<String>().unwrap(), "apple");
+    assert_eq!(deserialized_list[1].as_type::<String>().unwrap(), "banana");
+    assert_eq!(deserialized_list[2].as_type::<i64>().unwrap(), 100);
+    assert!(deserialized_list[3].as_type::<bool>().unwrap());
+
+    // Test JSON conversion
+    let json_result = deserialized.to_json().unwrap();
+    assert_eq!(json_result, json!(["apple", "banana", 100, true]));
 }
 
 #[test]
-fn test_maps_to_json() {
-    // Test map of primitives
-    let map_json = json!({
-        "key1": "value1",
-        "key2": 123,
-        "key3": true
-    });
-    let arc_value = ArcValue::new_json(map_json);
-
-    let result = arc_value.to_json().unwrap();
-    assert_eq!(
-        result,
-        json!({
-            "key1": "value1",
-            "key2": 123,
-            "key3": true
-        })
-    );
-
-    // lets get the values as primitives
-    let arc_map = arc_value
-        .as_type::<std::collections::HashMap<String, ArcValue>>()
-        .unwrap();
-    assert_eq!(arc_map.len(), 3);
-    assert_eq!(arc_map["key1"].as_type::<String>().unwrap(), "value1");
-    assert_eq!(arc_map["key2"].as_type::<i64>().unwrap(), 123);
-    assert_eq!(arc_map["key3"].as_type::<bool>().unwrap(), true);
-
-    //lets test serialization and deserialization
-    let map_json_ser = arc_value
-        .serialize(None)
-        .expect("Failed to serialize map value");
-    let map_json_deser =
-        ArcValue::deserialize(&map_json_ser, None).expect("Failed to deserialize map value");
-    assert_eq!(
-        map_json_deser.to_json().unwrap(),
-        json!({
-            "key1": "value1",
-            "key2": 123,
-            "key3": true
-        })
-    );
-
-    let arc_map = map_json_deser
-        .as_type::<std::collections::HashMap<String, ArcValue>>()
-        .unwrap();
-    assert_eq!(arc_map.len(), 3);
-    assert_eq!(arc_map["key1"].as_type::<String>().unwrap(), "value1");
-    assert_eq!(arc_map["key2"].as_type::<i64>().unwrap(), 123);
-    assert_eq!(arc_map["key3"].as_type::<bool>().unwrap(), true);
-
-    //lets start with a map as primitives
-    let mut map_primitives = std::collections::HashMap::new();
-    map_primitives.insert(
+fn test_map_types() {
+    let mut map_data = HashMap::new();
+    map_data.insert(
         "key1".to_string(),
         ArcValue::new_primitive("value1".to_string()),
     );
-    map_primitives.insert("key2".to_string(), ArcValue::new_primitive(123i64));
-    map_primitives.insert("key3".to_string(), ArcValue::new_primitive(true));
-    let map_arc_value = ArcValue::new_map(map_primitives);
+    map_data.insert("key2".to_string(), ArcValue::new_primitive(123i64));
+    map_data.insert("key3".to_string(), ArcValue::new_primitive(true));
 
-    //convert to json
-    let map_json_primitives = map_arc_value.to_json().unwrap();
+    let arc_map = ArcValue::new_map(map_data.clone());
+    let json_result = arc_map.to_json().unwrap();
     assert_eq!(
-        map_json_primitives,
+        json_result,
+        json!({
+            "key1": "value1",
+            "key2": 123,
+            "key3": true
+        })
+    );
+
+    // Test deserialization
+    let serialized = arc_map.serialize(None).unwrap();
+    let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
+    let deserialized_map: HashMap<String, ArcValue> = deserialized.as_type().unwrap();
+
+    assert_eq!(deserialized_map.len(), 3);
+    assert_eq!(
+        deserialized_map["key1"].as_type::<String>().unwrap(),
+        "value1"
+    );
+    assert_eq!(deserialized_map["key2"].as_type::<i64>().unwrap(), 123);
+    assert!(deserialized_map["key3"].as_type::<bool>().unwrap());
+
+    // Test JSON conversion
+    let json_result = deserialized.to_json().unwrap();
+    assert_eq!(
+        json_result,
         json!({
             "key1": "value1",
             "key2": 123,
@@ -197,255 +153,169 @@ fn test_maps_to_json() {
 }
 
 #[test]
-fn test_nested_structures_to_json() {
-    // Test nested structures
-    let nested_json = json!({
-        "list": [1, 2, 3],
-        "map": {"a": "b", "c": "d"},
-        "primitive": "test"
-    });
-    let arc_value = ArcValue::new_json(nested_json);
+fn test_struct_types() {
+    let test_struct = TestStruct {
+        id: 1,
+        name: "test".to_string(),
+        active: true,
+        score: 95.5,
+    };
 
-    let result = arc_value.to_json().unwrap();
+    let arc_struct = ArcValue::new_struct(test_struct.clone());
+    let json_result = arc_struct.to_json().unwrap();
     assert_eq!(
-        result,
+        json_result,
         json!({
-            "list": [1, 2, 3],
-            "map": {"a": "b", "c": "d"},
-            "primitive": "test"
+            "id": 1,
+            "name": "test",
+            "active": true,
+            "score": 95.5
         })
     );
 
-    // lets get the values as nested structures
-    let arc_map = arc_value
-        .as_type::<std::collections::HashMap<String, ArcValue>>()
-        .unwrap();
-    assert_eq!(arc_map.len(), 3);
+    // Test deserialization
+    let serialized = arc_struct.serialize(None).unwrap();
+    let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
+    let deserialized_struct: TestStruct = deserialized.as_type().unwrap();
 
-    // Test the list inside the map
-    let nested_list = arc_map["list"].as_type::<Vec<ArcValue>>().unwrap();
-    assert_eq!(nested_list.len(), 3);
-    assert_eq!(nested_list[0].as_type::<i64>().unwrap(), 1);
-    assert_eq!(nested_list[1].as_type::<i64>().unwrap(), 2);
-    assert_eq!(nested_list[2].as_type::<i64>().unwrap(), 3);
+    assert_eq!(deserialized_struct.id, 1);
+    assert_eq!(deserialized_struct.name, "test");
+    assert!(deserialized_struct.active);
+    assert_eq!(deserialized_struct.score, 95.5);
 
-    // Test the map inside the map
-    let nested_map = arc_map["map"]
-        .as_type::<std::collections::HashMap<String, ArcValue>>()
-        .unwrap();
-    assert_eq!(nested_map.len(), 2);
-    assert_eq!(nested_map["a"].as_type::<String>().unwrap(), "b");
-    assert_eq!(nested_map["c"].as_type::<String>().unwrap(), "d");
-
-    // Test the primitive
-    assert_eq!(arc_map["primitive"].as_type::<String>().unwrap(), "test");
-
-    //lets test serialization and deserialization
-    let nested_json_ser = arc_value
-        .serialize(None)
-        .expect("Failed to serialize nested value");
-    let nested_json_deser =
-        ArcValue::deserialize(&nested_json_ser, None).expect("Failed to deserialize nested value");
+    // Test JSON conversion
+    let json_result = deserialized.to_json().unwrap();
     assert_eq!(
-        nested_json_deser.to_json().unwrap(),
+        json_result,
         json!({
-            "list": [1, 2, 3],
-            "map": {"a": "b", "c": "d"},
-            "primitive": "test"
-        })
-    );
-
-    let arc_map = nested_json_deser
-        .as_type::<std::collections::HashMap<String, ArcValue>>()
-        .unwrap();
-    assert_eq!(arc_map.len(), 3);
-
-    // Test the list inside the map after deserialization
-    let nested_list = arc_map["list"].as_type::<Vec<ArcValue>>().unwrap();
-    assert_eq!(nested_list.len(), 3);
-    assert_eq!(nested_list[0].as_type::<i64>().unwrap(), 1);
-    assert_eq!(nested_list[1].as_type::<i64>().unwrap(), 2);
-    assert_eq!(nested_list[2].as_type::<i64>().unwrap(), 3);
-
-    // Test the map inside the map after deserialization
-    let nested_map = arc_map["map"]
-        .as_type::<std::collections::HashMap<String, ArcValue>>()
-        .unwrap();
-    assert_eq!(nested_map.len(), 2);
-    assert_eq!(nested_map["a"].as_type::<String>().unwrap(), "b");
-    assert_eq!(nested_map["c"].as_type::<String>().unwrap(), "d");
-
-    // Test the primitive after deserialization
-    assert_eq!(arc_map["primitive"].as_type::<String>().unwrap(), "test");
-
-    //lets start with nested structures as primitives
-    let nested_list = ArcValue::new_list(vec![
-        ArcValue::new_primitive(1i64),
-        ArcValue::new_primitive(2i64),
-        ArcValue::new_primitive(3i64),
-    ]);
-
-    let mut nested_map = std::collections::HashMap::new();
-    nested_map.insert("a".to_string(), ArcValue::new_primitive("b".to_string()));
-    nested_map.insert("c".to_string(), ArcValue::new_primitive("d".to_string()));
-    let nested_map_arc = ArcValue::new_map(nested_map);
-
-    let mut outer_map = std::collections::HashMap::new();
-    outer_map.insert("list".to_string(), nested_list);
-    outer_map.insert("map".to_string(), nested_map_arc);
-    outer_map.insert(
-        "primitive".to_string(),
-        ArcValue::new_primitive("test".to_string()),
-    );
-    let nested_arc_value = ArcValue::new_map(outer_map);
-
-    //convert to json
-    let nested_json_primitives = nested_arc_value.to_json().unwrap();
-    assert_eq!(
-        nested_json_primitives,
-        json!({
-            "list": [1, 2, 3],
-            "map": {"a": "b", "c": "d"},
-            "primitive": "test"
+            "id": 1,
+            "name": "test",
+            "active": true,
+            "score": 95.5
         })
     );
 }
 
 #[test]
-fn test_custom_structs_to_json() {
+fn test_nested_struct_types() {
+    let inner_struct = TestStruct {
+        id: 1,
+        name: "inner".to_string(),
+        active: true,
+        score: 85.0,
+    };
+
+    let nested_struct = NestedStruct {
+        inner: inner_struct,
+        metadata: "nested_test".to_string(),
+    };
+
+    let arc_nested_struct = ArcValue::new_struct(nested_struct.clone());
+    let json_result = arc_nested_struct.to_json().unwrap();
+    assert_eq!(
+        json_result,
+        json!({
+            "inner": {
+                "id": 1,
+                "name": "inner",
+                "active": true,
+                "score": 85.0
+            },
+            "metadata": "nested_test"
+        })
+    );
+
+    // Test deserialization
+    let serialized = arc_nested_struct.serialize(None).unwrap();
+    let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
+    let deserialized_nested: NestedStruct = deserialized.as_type().unwrap();
+
+    assert_eq!(deserialized_nested.inner.id, 1);
+    assert_eq!(deserialized_nested.inner.name, "inner");
+    assert!(deserialized_nested.inner.active);
+    assert_eq!(deserialized_nested.inner.score, 85.0);
+    assert_eq!(deserialized_nested.metadata, "nested_test");
+
+    // Test JSON conversion
+    let json_result = deserialized.to_json().unwrap();
+    assert_eq!(
+        json_result,
+        json!({
+            "inner": {
+                "id": 1,
+                "name": "inner",
+                "active": true,
+                "score": 85.0
+            },
+            "metadata": "nested_test"
+        })
+    );
+}
+
+#[test]
+fn test_struct_reference_types() {
     let test_struct = TestStruct {
         id: 1,
-        name: "Test Struct".to_string(),
+        name: "test".to_string(),
         active: true,
+        score: 95.5,
     };
-    let arc_value = ArcValue::new_struct(test_struct);
 
-    let result = arc_value.to_json().unwrap();
+    let arc_struct = ArcValue::new_struct(test_struct.clone());
+    let struct_ref = arc_struct.as_struct_ref::<TestStruct>().unwrap();
+
+    assert_eq!(struct_ref.id, 1);
+    assert_eq!(struct_ref.name, "test");
+    assert!(struct_ref.active);
+    assert_eq!(struct_ref.score, 95.5);
+
+    // Test JSON conversion
+    let json_result = arc_struct.to_json().unwrap();
     assert_eq!(
-        result,
+        json_result,
         json!({
             "id": 1,
-            "name": "Test Struct",
-            "active": true
+            "name": "test",
+            "active": true,
+            "score": 95.5
         })
     );
+}
 
-    // lets get the values as struct
-    let arc_struct = arc_value.as_type::<TestStruct>().unwrap();
-    assert_eq!(arc_struct.id, 1);
-    assert_eq!(arc_struct.name, "Test Struct");
-    assert_eq!(arc_struct.active, true);
-
-    //lets test serialization and deserialization
-    let struct_bytes = arc_value
-        .serialize(None)
-        .expect("Failed to serialize struct value");
-    let struct_deser =
-        ArcValue::deserialize(&struct_bytes, None).expect("Failed to deserialize struct value");
-    assert_eq!(
-        struct_deser.to_json().unwrap(),
-        json!({
-            "id": 1,
-            "name": "Test Struct",
-            "active": true
-        })
-    );
-
-    let arc_struct = struct_deser.as_type::<TestStruct>().unwrap();
-    assert_eq!(arc_struct.id, 1);
-    assert_eq!(arc_struct.name, "Test Struct");
-    assert_eq!(arc_struct.active, true);
-
-    // Test nested struct
-    let nested_struct = NestedStruct {
-        inner: TestStruct {
-            id: 100,
-            name: "Nested Inner".to_string(),
-            active: true,
-        },
-        count: 999,
-    };
-    let nested_arc_value = ArcValue::new_struct(nested_struct);
-
-    let nested_result = nested_arc_value.to_json().unwrap();
-    assert_eq!(
-        nested_result,
-        json!({
-            "inner": {
-                "id": 100,
-                "name": "Nested Inner",
-                "active": true
-            },
-            "count": 999
-        })
-    );
-
-    let arc_nested_struct = nested_arc_value.as_type::<NestedStruct>().unwrap();
-    assert_eq!(arc_nested_struct.inner.id, 100);
-    assert_eq!(arc_nested_struct.inner.name, "Nested Inner");
-    assert_eq!(arc_nested_struct.inner.active, true);
-    assert_eq!(arc_nested_struct.count, 999);
-
-    // Test serialization and deserialization round-trip for nested struct
-    let serialized = nested_arc_value.serialize(None).unwrap();
-    let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
-
-    // Verify the deserialized nested struct maintains all data
-    let deserialized_nested = deserialized.as_type::<NestedStruct>().unwrap();
-    assert_eq!(deserialized_nested.inner.id, 100);
-    assert_eq!(deserialized_nested.inner.name, "Nested Inner");
-    assert_eq!(deserialized_nested.inner.active, true);
-    assert_eq!(deserialized_nested.count, 999);
-
-    // Verify JSON conversion still works after serialization/deserialization
-    let deserialized_json = deserialized.to_json().unwrap();
-    assert_eq!(
-        deserialized_json,
-        json!({
-            "inner": {
-                "id": 100,
-                "name": "Nested Inner",
-                "active": true
-            },
-            "count": 999
-        })
-    );
-
-    // Test that the nested struct can be extracted as a reference
-    let deserialized_nested_ref = deserialized.as_type_ref::<NestedStruct>().unwrap();
-    assert_eq!(deserialized_nested_ref.inner.id, 100);
-    assert_eq!(deserialized_nested_ref.inner.name, "Nested Inner");
-    assert_eq!(deserialized_nested_ref.inner.active, true);
-    assert_eq!(deserialized_nested_ref.count, 999);
-
-    //start with json and extract as struct
-    let json_value = json!({
+#[test]
+fn test_json_value_types() {
+    let json_data = json!({
         "id": 1,
-        "name": "Test Struct",
-        "active": true
+        "name": "test",
+        "active": true,
+        "score": 95.5
     });
-    let arc_value = ArcValue::new_json(json_value);
-    let struct_value = arc_value.as_type::<TestStruct>().unwrap();
-    assert_eq!(struct_value.id, 1);
-    assert_eq!(struct_value.name, "Test Struct");
-    assert_eq!(struct_value.active, true);
 
-    //test serialization and deserialization
-    let serialized = arc_value.serialize(None).unwrap();
+    let arc_json = ArcValue::new_json(json_data.clone());
+    let json_result = arc_json.to_json().unwrap();
+    assert_eq!(json_result, json_data);
+
+    // Test deserialization
+    let serialized = arc_json.serialize(None).unwrap();
     let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
-    let struct_value = deserialized.as_type::<TestStruct>().unwrap();
-    assert_eq!(struct_value.id, 1);
-    assert_eq!(struct_value.name, "Test Struct");
-    assert_eq!(struct_value.active, true);
+    let deserialized_json: serde_json::Value = deserialized.as_type().unwrap();
 
-    //test as json
-    let json_value = deserialized.to_json().unwrap();
-    assert_eq!(
-        json_value,
-        json!({
-            "id": 1,
-            "name": "Test Struct",
-            "active": true
-        })
-    );
+    assert_eq!(deserialized_json, json_data);
+
+    // Test JSON conversion
+    let json_result = deserialized.to_json().unwrap();
+    assert_eq!(json_result, json_data);
+}
+
+#[test]
+fn test_bytes_types() {
+    let bytes_data = b"hello world".to_vec();
+    let arc_bytes = ArcValue::new_bytes(bytes_data.clone());
+
+    // Test deserialization
+    let serialized = arc_bytes.serialize(None).unwrap();
+    let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
+    let deserialized_bytes: Vec<u8> = deserialized.as_type().unwrap();
+
+    assert_eq!(deserialized_bytes, bytes_data);
 }

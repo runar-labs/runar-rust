@@ -1,9 +1,7 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_macros_common::hmap;
 use runar_macros_common::params;
 use runar_node::config::{LogLevel, LoggingConfig};
-use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue; // needed by params! macro
 
 use runar_node::node::Node;
@@ -30,7 +28,7 @@ use crate::fixtures::math_service::MathService;
 #[tokio::test]
 async fn test_remote_action_call() -> Result<()> {
     // Configure logging to ensure test logs are displayed
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
 
     // Set up logger

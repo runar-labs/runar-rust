@@ -12,7 +12,7 @@ use runar_node::AbstractService;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::ArcValue;
 use serde_json::{json, Value as JsonValue};
-use std::collections::HashMap;
+
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex}; // Renamed to avoid conflict if any
 use tokio::sync::oneshot;
@@ -141,7 +141,7 @@ impl GatwayService {
                                     Err(e) => {
                                         ctx.error(format!("Failed to convert ArcValue to JSON: {e}"));
                                         // Fallback to debug string if JSON conversion fails
-                                        let debug_str = format!("{:?}", arc_value);
+                                        let debug_str = format!("{arc_value:?}");
                                         (StatusCode::OK, AxumJson(json!(debug_str))).into_response()
                                     }
                                 }

@@ -34,7 +34,7 @@ impl ProfileService {
             .as_secs();
 
         Ok(Profile {
-            id: format!("profile_{}", user_id),
+            id: format!("profile_{user_id}"),
             user_id,
             full_name,
             bio,
@@ -54,7 +54,7 @@ impl ProfileService {
             .as_secs();
 
         Ok(Profile {
-            id: format!("profile_{}", user_id),
+            id: format!("profile_{user_id}"),
             user_id,
             full_name: "John Doe".to_string(),
             bio: "Software developer".to_string(),
@@ -80,7 +80,7 @@ impl ProfileService {
             .as_secs();
 
         Ok(Profile {
-            id: format!("profile_{}", user_id),
+            id: format!("profile_{user_id}"),
             user_id,
             full_name,
             bio,

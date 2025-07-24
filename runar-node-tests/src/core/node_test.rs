@@ -104,7 +104,7 @@ async fn test_node_request() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a NodeConfig with logging configuration
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
 
         // Create a node with a test network ID
         let mut config = create_node_test_config()

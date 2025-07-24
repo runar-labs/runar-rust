@@ -274,7 +274,7 @@ async fn demonstrate_encryption_flow(
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
 
     println!("🚀 Starting Runar Encryption Demo");
@@ -285,7 +285,7 @@ async fn main() -> Result<()> {
         setup_encryption().await?;
 
     println!("✅ Encryption infrastructure ready");
-    println!("📡 Network ID: {}", network_id);
+    println!("📡 Network ID: {network_id}");
 
     // Create mock database
     let mut db = MockDatabase::default();

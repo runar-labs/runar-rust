@@ -14,7 +14,7 @@
 /// use runar_serializer::ArcValue;
 ///
 /// let map = vmap! {
-///     "name" => "John Doe",
+///     "name" => "John Doe".to_string(),
 ///     "age" => 30,
 ///     "is_admin" => true
 /// };
@@ -75,7 +75,7 @@ macro_rules! vmap {
 /// use runar_serializer::ArcValue;
 /// // Create a HashMap<String, ArcValue> with heterogeneous primitive values:
 /// let params = hmap!(
-///     "name"   => ArcValue::new_primitive("John"),
+///     "name"   => ArcValue::new_primitive("John".to_string()),
 ///     "age"    => ArcValue::new_primitive(30),
 ///     "active" => ArcValue::new_primitive(true)
 /// );

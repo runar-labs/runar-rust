@@ -57,7 +57,7 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
 /// 5. Certificate-based security
 #[tokio::test]
 async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("quic_test"), ""));
@@ -168,7 +168,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     let node1_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
         let logger = logger_1.clone();
         let messages = node1_messages_clone.clone();
-        let msg_type = message.message_type.clone();
+        let msg_type = message.message_type;
         let source = message.source_node_id.clone();
         let node1_id = node1_id_clone.clone();
 
@@ -219,7 +219,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     let node2_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
         let logger = logger_2.clone();
         let messages = node2_messages_clone.clone();
-        let msg_type = message.message_type.clone();
+        let msg_type = message.message_type;
         let source = message.source_node_id.clone();
         let node2_id = node2_id_clone.clone();
 
@@ -471,7 +471,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
             .iter()
             .any(|msg| msg.message_type == MESSAGE_TYPE_HANDSHAKE);
 
-    logger.info(format!("📊 Handshake received: {}", handshake_received));
+    logger.info(format!("📊 Handshake received: {handshake_received}"));
 
     assert!(handshake_received, "Handshake messages should be exchanged");
     drop(node1_msgs);
