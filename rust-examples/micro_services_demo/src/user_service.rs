@@ -22,10 +22,12 @@ impl UserService {
         username: String,
         email: String,
         password_hash: String,
-        _ctx: &RequestContext,
+        ctx: &RequestContext,
     ) -> Result<User> {
         // Placeholder implementation
-        println!("UserService: Called create_user with username: {username}, email: {email}");
+        ctx.info(format!(
+            "Called create_user with username: {username}, email: {email}"
+        ));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -21,33 +21,51 @@ mod user_service;
 use models::{Account, Order, Profile, User};
 
 // Mock in-memory database for storing encrypted data
-#[derive(Default)]
 struct MockDatabase {
     users: HashMap<String, Vec<u8>>,    // user_id -> encrypted_user_data
     profiles: HashMap<String, Vec<u8>>, // user_id -> encrypted_profile_data
     accounts: HashMap<String, Vec<u8>>, // account_id -> encrypted_account_data
     orders: HashMap<String, Vec<u8>>,   // order_id -> encrypted_order_data
+    logger: Arc<Logger>,
 }
 
 impl MockDatabase {
+    fn new(logger: Arc<Logger>) -> Self {
+        Self {
+            users: HashMap::new(),
+            profiles: HashMap::new(),
+            accounts: HashMap::new(),
+            orders: HashMap::new(),
+            logger,
+        }
+    }
+
     fn store_user(&mut self, user_id: &str, encrypted_data: Vec<u8>) {
         self.users.insert(user_id.to_string(), encrypted_data);
-        println!("📦 Stored encrypted user data for user_id: {user_id}");
+        self.logger.info(format!(
+            "📦 Stored encrypted user data for user_id: {user_id}"
+        ));
     }
 
     fn store_profile(&mut self, user_id: &str, encrypted_data: Vec<u8>) {
         self.profiles.insert(user_id.to_string(), encrypted_data);
-        println!("📦 Stored encrypted profile data for user_id: {user_id}");
+        self.logger.info(format!(
+            "📦 Stored encrypted profile data for user_id: {user_id}"
+        ));
     }
 
     fn store_account(&mut self, account_id: &str, encrypted_data: Vec<u8>) {
         self.accounts.insert(account_id.to_string(), encrypted_data);
-        println!("📦 Stored encrypted account data for account_id: {account_id}");
+        self.logger.info(format!(
+            "📦 Stored encrypted account data for account_id: {account_id}"
+        ));
     }
 
     fn store_order(&mut self, order_id: &str, encrypted_data: Vec<u8>) {
         self.orders.insert(order_id.to_string(), encrypted_data);
-        println!("📦 Stored encrypted order data for order_id: {order_id}");
+        self.logger.info(format!(
+            "📦 Stored encrypted order data for order_id: {order_id}"
+        ));
     }
 
     fn get_user(&self, user_id: &str) -> Option<&Vec<u8>> {
@@ -78,7 +96,7 @@ async fn setup_encryption() -> Result<(
     let logger = Arc::new(Logger::new_root(Component::System, "encryption-demo"));
 
     // -------- Mobile key manager (user keys) --------
-    println!("🔑 Initializing Mobile Key Manager...");
+    logger.info("🔑 Initializing Mobile Key Manager...");
     let mut mobile_mgr = MobileKeyManager::new(logger.clone())?;
     mobile_mgr.initialize_user_root_key()?;
     let profile_pk = mobile_mgr.derive_user_profile_key("user")?;
@@ -87,7 +105,7 @@ async fn setup_encryption() -> Result<(
     let mobile_mgr = Arc::new(mobile_mgr);
 
     // -------- Node key manager (system keys) --------
-    println!("🔑 Initializing Node Key Manager...");
+    logger.info("🔑 Initializing Node Key Manager...");
     let mut node_mgr = NodeKeyManager::new(logger.clone())?;
     let nk_msg =
         mobile_mgr.create_network_key_message(&network_id, &node_mgr.get_node_public_key())?;
@@ -95,7 +113,7 @@ async fn setup_encryption() -> Result<(
     let node_mgr = Arc::new(node_mgr);
 
     // -------- Label resolvers --------
-    println!("🔑 Setting up label resolvers...");
+    logger.info("🔑 Setting up label resolvers...");
 
     // Mobile label resolver (user context)
     let mobile_mappings = KeyMappingConfig {
@@ -167,8 +185,9 @@ async fn demonstrate_encryption_flow(
     _mobile_resolver: &ConfigurableLabelResolver,
     _node_resolver: &ConfigurableLabelResolver,
     db: &mut MockDatabase,
+    logger: &Logger,
 ) -> Result<()> {
-    println!("\n🔄 Demonstrating encryption flow...");
+    logger.info("🔄 Demonstrating encryption flow...");
 
     // Create test data
     let user = User {
@@ -207,7 +226,7 @@ async fn demonstrate_encryption_flow(
     };
 
     // Serialize and encrypt data using ArcValue
-    println!("📝 Serializing and encrypting data...");
+    logger.info("📝 Serializing and encrypting data...");
 
     // Create ArcValue instances for each struct
     let user_arc = ArcValue::new_struct(user.clone());
@@ -227,72 +246,77 @@ async fn demonstrate_encryption_flow(
     db.store_account(&account.id, account_serialized);
     db.store_order(&order.id, order_serialized);
 
-    println!("✅ Data encrypted and stored successfully!");
+    logger.info("✅ Data encrypted and stored successfully!");
 
     // Demonstrate decryption
-    println!("\n🔓 Demonstrating decryption...");
+    logger.info("🔓 Demonstrating decryption...");
 
     // Retrieve and decrypt data
     if let Some(user_data) = db.get_user(&user.id) {
         let user_arc = ArcValue::deserialize(user_data, None)?;
         let decrypted_user: User = user_arc.as_type()?;
-        println!("👤 Decrypted user: {}", decrypted_user.username);
+        logger.info(format!("👤 Decrypted user: {}", decrypted_user.username));
     }
 
     if let Some(profile_data) = db.get_profile(&user.id) {
         let profile_arc = ArcValue::deserialize(profile_data, None)?;
         let decrypted_profile: Profile = profile_arc.as_type()?;
-        println!("📋 Decrypted profile: {}", decrypted_profile.full_name);
+        logger.info(format!(
+            "📋 Decrypted profile: {}",
+            decrypted_profile.full_name
+        ));
     }
 
     if let Some(account_data) = db.get_account(&account.id) {
         let account_arc = ArcValue::deserialize(account_data, None)?;
         let decrypted_account: Account = account_arc.as_type()?;
-        println!(
+        logger.info(format!(
             "💰 Decrypted account: {} (${:.2})",
             decrypted_account.name,
             decrypted_account.balance_cents as f64 / 100.0
-        );
+        ));
     }
 
     if let Some(order_data) = db.get_order(&order.id) {
         let order_arc = ArcValue::deserialize(order_data, None)?;
         let decrypted_order: Order = order_arc.as_type()?;
-        println!(
+        logger.info(format!(
             "🛒 Decrypted order: {} items for ${:.2}",
             decrypted_order.quantity,
             decrypted_order.total_price_cents as f64 / 100.0
-        );
+        ));
     }
 
-    println!("✅ Decryption completed successfully!");
+    logger.info("✅ Decryption completed successfully!");
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
 
-    println!("🚀 Starting Runar Encryption Demo");
-    println!("==================================");
+    let logger = Arc::new(Logger::new_root(Component::System, "microservices-demo"));
+
+    logger.info("🚀 Starting Runar Encryption Demo");
+    logger.info("==================================");
 
     // Setup encryption infrastructure
     let (_mobile_mgr, _node_mgr, mobile_resolver, node_resolver, network_id) =
         setup_encryption().await?;
 
-    println!("✅ Encryption infrastructure ready");
-    println!("📡 Network ID: {network_id}");
+    logger.info("✅ Encryption infrastructure ready");
+    logger.info(format!("📡 Network ID: {network_id}"));
 
     // Create mock database
-    let mut db = MockDatabase::default();
+    let mut db = MockDatabase::new(logger.clone());
 
     // Demonstrate encryption flow
-    demonstrate_encryption_flow(&mobile_resolver, &node_resolver, &mut db).await?;
+    demonstrate_encryption_flow(&mobile_resolver, &node_resolver, &mut db, &logger).await?;
 
     // Create and run the microservices demo
-    println!("\n🏗️  Setting up microservices...");
+    logger.info("🏗️  Setting up microservices...");
 
     // Create node configuration
     let config = create_node_test_config()?.with_logging_config(logging_config);
@@ -311,10 +335,10 @@ async fn main() -> Result<()> {
 
     // Start the node
     node.start().await?;
-    println!("✅ Node started successfully");
+    logger.info("✅ Node started successfully");
 
     // Run some test operations
-    println!("\n🧪 Running test operations...");
+    logger.info("🧪 Running test operations...");
 
     // Test user creation
     let user_arc: ArcValue = node
@@ -328,7 +352,7 @@ async fn main() -> Result<()> {
         )
         .await?;
     let created_user: User = user_arc.as_type()?;
-    println!("✅ Created user: {}", created_user.username);
+    logger.info(format!("✅ Created user: {}", created_user.username));
 
     // Test profile creation
     let profile_arc: ArcValue = node
@@ -343,7 +367,7 @@ async fn main() -> Result<()> {
         )
         .await?;
     let created_profile: Profile = profile_arc.as_type()?;
-    println!("✅ Created profile: {}", created_profile.full_name);
+    logger.info(format!("✅ Created profile: {}", created_profile.full_name));
 
     // Test account creation
     let account_arc: ArcValue = node
@@ -357,11 +381,11 @@ async fn main() -> Result<()> {
         )
         .await?;
     let created_account: Account = account_arc.as_type()?;
-    println!(
+    logger.info(format!(
         "✅ Created account: {} (${:.2})",
         created_account.name,
         created_account.balance_cents as f64 / 100.0
-    );
+    ));
 
     // Test order creation
     let order_arc: ArcValue = node
@@ -377,16 +401,16 @@ async fn main() -> Result<()> {
         )
         .await?;
     let created_order: Order = order_arc.as_type()?;
-    println!(
+    logger.info(format!(
         "✅ Created order: {} items for ${:.2}",
         created_order.quantity,
         created_order.total_price_cents as f64 / 100.0
-    );
+    ));
 
     node.stop().await?;
 
-    println!("\n🎉 Microservices demo completed successfully!");
-    println!("All operations completed with encryption support.");
+    logger.info("🎉 Microservices demo completed successfully!");
+    logger.info("All operations completed with encryption support.");
 
     Ok(())
 }

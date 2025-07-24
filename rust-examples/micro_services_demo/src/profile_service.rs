@@ -23,10 +23,10 @@ impl ProfileService {
         full_name: String,
         bio: String,
         private_notes: String,
-        _ctx: &RequestContext,
+        ctx: &RequestContext,
     ) -> Result<Profile> {
         // Placeholder implementation
-        println!("ProfileService: Called create_profile for user_id: {user_id}");
+        ctx.info(format!("Called create_profile for user_id: {user_id}"));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -44,9 +44,9 @@ impl ProfileService {
     }
 
     #[action]
-    pub async fn get_profile(&self, user_id: String, _ctx: &RequestContext) -> Result<Profile> {
+    pub async fn get_profile(&self, user_id: String, ctx: &RequestContext) -> Result<Profile> {
         // Placeholder implementation
-        println!("ProfileService: Called get_profile for user_id: {user_id}");
+        ctx.info(format!("Called get_profile for user_id: {user_id}"));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -69,10 +69,10 @@ impl ProfileService {
         user_id: String,
         full_name: String,
         bio: String,
-        _ctx: &RequestContext,
+        ctx: &RequestContext,
     ) -> Result<Profile> {
         // Placeholder implementation
-        println!("ProfileService: Called update_profile for user_id: {user_id}");
+        ctx.info(format!("Called update_profile for user_id: {user_id}"));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

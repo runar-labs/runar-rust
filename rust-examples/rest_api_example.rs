@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use runar_common::logging::{Component, Logger};
+use runar_node::services::RequestContext;
 
 // Define a simple invoice service
 #[service(name = "invoice_service", path="invoice_service")]
@@ -272,7 +274,10 @@ impl ApiGateway {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🚀 Starting REST API Example");
+    // Setup logging
+    let logger = Arc::new(Logger::new_root(Component::System, "rest-api-example"));
+    
+    logger.info("🚀 Starting REST API Example");
     
     // Create a node
     let mut node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
@@ -293,26 +298,26 @@ async fn main() -> Result<()> {
     // Start the node
     node.start().await?;
     
-    println!("✅ REST API example started successfully!");
-    println!("🌐 HTTP gateway should be available at http://localhost:3000");
-    println!("📡 Services registered:");
-    println!("   - invoice_service");
-    println!("   - customer_service");
-    println!("   - api_gateway");
-    println!("   - REST API gateway");
-    println!("📋 Available endpoints:");
-    println!("   - GET /invoice_service/get_invoices");
-    println!("   - GET /invoice_service/get_invoice/{id}");
-    println!("   - POST /invoice_service/create_invoice");
-    println!("   - PUT /invoice_service/update_invoice/{id}");
-    println!("   - DELETE /invoice_service/delete_invoice/{id}");
-    println!("   - GET /customer_service/get_customers");
-    println!("   - GET /customer_service/get_customer/{id}");
-    println!("   - POST /customer_service/create_customer");
+    logger.info("✅ REST API example started successfully!");
+    logger.info("🌐 HTTP gateway should be available at http://localhost:3000");
+    logger.info("📡 Services registered:");
+    logger.info("   - invoice_service");
+    logger.info("   - customer_service");
+    logger.info("   - api_gateway");
+    logger.info("   - REST API gateway");
+    logger.info("📋 Available endpoints:");
+    logger.info("   - GET /invoice_service/get_invoices");
+    logger.info("   - GET /invoice_service/get_invoice/{id}");
+    logger.info("   - POST /invoice_service/create_invoice");
+    logger.info("   - PUT /invoice_service/update_invoice/{id}");
+    logger.info("   - DELETE /invoice_service/delete_invoice/{id}");
+    logger.info("   - GET /customer_service/get_customers");
+    logger.info("   - GET /customer_service/get_customer/{id}");
+    logger.info("   - POST /customer_service/create_customer");
     
     // Keep the node running
     tokio::signal::ctrl_c().await?;
-    println!("🛑 Shutting down...");
+    logger.info("🛑 Shutting down...");
     
     Ok(())
 } 

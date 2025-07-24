@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use runar_common::logging::{Component, Logger};
 use runar_macros::{action, publish, service, service_impl, subscribe};
 use runar_macros_common::params;
 use runar_node::{
@@ -60,6 +61,9 @@ impl StatsService {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Setup logging
+    let logger = Arc::new(Logger::new_root(Component::System, "simple-example"));
+
     // Create a minimal Node configuration
     let config = create_node_test_config().expect("Error creating test config");
     let mut node = Node::new(config).await?;
@@ -79,6 +83,6 @@ async fn main() -> Result<()> {
     let count_arc: ArcValue = node.request("stats/count", None::<ArcValue>).await?;
     let count: usize = count_arc.as_type()?;
     assert_eq!(count, 1);
-    println!("All good – stats recorded {count} value(s)");
+    logger.info(format!("All good – stats recorded {count} value(s)"));
     Ok(())
 }

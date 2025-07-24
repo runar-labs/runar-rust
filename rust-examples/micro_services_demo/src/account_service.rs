@@ -22,10 +22,10 @@ impl AccountService {
         name: String,
         balance_cents: u64,
         account_type: String,
-        _ctx: &RequestContext,
+        ctx: &RequestContext,
     ) -> Result<Account> {
         // Placeholder implementation
-        println!("AccountService: Called create_account with name: {name}");
+        ctx.info(format!("Called create_account with name: {name}"));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -45,17 +45,19 @@ impl AccountService {
     pub async fn get_account_balance(
         &self,
         account_id: String,
-        _ctx: &RequestContext,
+        ctx: &RequestContext,
     ) -> Result<u64> {
         // Placeholder implementation
-        println!("AccountService: Called get_account_balance for account_id: {account_id}");
+        ctx.info(format!(
+            "Called get_account_balance for account_id: {account_id}"
+        ));
         Ok(1234500) // Return balance in cents (12345.00)
     }
 
     #[action]
-    pub async fn get_account(&self, account_id: String, _ctx: &RequestContext) -> Result<Account> {
+    pub async fn get_account(&self, account_id: String, ctx: &RequestContext) -> Result<Account> {
         // Placeholder implementation
-        println!("AccountService: Called get_account for account_id: {account_id}");
+        ctx.info(format!("Called get_account for account_id: {account_id}"));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

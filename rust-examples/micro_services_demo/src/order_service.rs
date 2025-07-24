@@ -24,10 +24,10 @@ impl OrderService {
         quantity: u32,
         total_price_cents: u64,
         status: String,
-        _ctx: &RequestContext,
+        ctx: &RequestContext,
     ) -> Result<Order> {
         // Placeholder implementation
-        println!("OrderService: Called create_order for user_id: {user_id}");
+        ctx.info(format!("Called create_order for user_id: {user_id}"));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -46,9 +46,9 @@ impl OrderService {
     }
 
     #[action]
-    pub async fn get_order(&self, order_id: String, _ctx: &RequestContext) -> Result<Order> {
+    pub async fn get_order(&self, order_id: String, ctx: &RequestContext) -> Result<Order> {
         // Placeholder implementation
-        println!("OrderService: Called get_order for order_id: {order_id}");
+        ctx.info(format!("Called get_order for order_id: {order_id}"));
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

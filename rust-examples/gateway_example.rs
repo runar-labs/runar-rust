@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use runar_common::logging::{Component, Logger};
+use runar_node::services::RequestContext;
 
 // Define a simple user service
 #[derive(Clone)]
@@ -117,7 +119,10 @@ impl ApiGateway {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🚀 Starting Gateway Example");
+    // Setup logging
+    let logger = Arc::new(Logger::new_root(Component::System, "gateway-example"));
+    
+    logger.info("🚀 Starting Gateway Example");
     
     // Create a node
     let mut node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
@@ -136,16 +141,16 @@ async fn main() -> Result<()> {
     // Start the node
     node.start().await?;
     
-    println!("✅ Gateway example started successfully!");
-    println!("🌐 HTTP gateway should be available at http://localhost:3000");
-    println!("📡 Services registered:");
-    println!("   - user_service");
-    println!("   - api_gateway");
-    println!("   - HTTP gateway");
+    logger.info("✅ Gateway example started successfully!");
+    logger.info("🌐 HTTP gateway should be available at http://localhost:3000");
+    logger.info("📡 Services registered:");
+    logger.info("   - user_service");
+    logger.info("   - api_gateway");
+    logger.info("   - HTTP gateway");
     
     // Keep the node running
     tokio::signal::ctrl_c().await?;
-    println!("🛑 Shutting down...");
+    logger.info("🛑 Shutting down...");
     
     Ok(())
 } 
