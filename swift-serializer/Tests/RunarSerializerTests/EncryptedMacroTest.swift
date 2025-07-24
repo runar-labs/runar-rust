@@ -4,6 +4,43 @@ import RunarSerializerMacros
 
 final class EncryptedMacroTest: XCTestCase {
     
+    func testBasicEncryptionDecryption() async throws {
+        // Test basic encryption/decryption without macro
+        struct TestUser: Codable {
+            let id: Int
+            let name: String
+        }
+        
+        let user = TestUser(id: 123, name: "John")
+        
+        // Serialize to JSON
+        let encoder = JSONEncoder()
+        let jsonData = try encoder.encode(user)
+        
+        // Mock encrypt/decrypt
+        let keystore = MockEnvelopeCrypto()
+        let encryptedData = try keystore.encrypt(jsonData, label: "test", context: SerializationContext(
+            keystore: keystore,
+            resolver: MockLabelResolver(),
+            networkId: "default",
+            profileId: "default"
+        ))
+        
+        let decryptedData = try keystore.decrypt(encryptedData, label: "test", context: SerializationContext(
+            keystore: keystore,
+            resolver: MockLabelResolver(),
+            networkId: "default",
+            profileId: "default"
+        ))
+        
+        // Decode JSON
+        let decoder = JSONDecoder()
+        let decodedUser = try decoder.decode(TestUser.self, from: decryptedData)
+        
+        XCTAssertEqual(decodedUser.id, user.id)
+        XCTAssertEqual(decodedUser.name, user.name)
+    }
+    
     func testEncryptedMacroBasic() async throws {
         // Test the @Encrypted macro with basic types
         @Encrypted
@@ -27,7 +64,7 @@ final class EncryptedMacroTest: XCTestCase {
         let resolver = MockLabelResolver()
         
         // Test encryption
-        let encrypted = try user.encryptWithKeystore(keystore, resolver: resolver)
+        let encrypted = try await user.encryptWithKeystore(keystore, resolver: resolver)
         XCTAssertNotNil(encrypted.encryptedData)
         XCTAssertFalse(encrypted.encryptedData.encryptedData.isEmpty)
         
@@ -69,7 +106,7 @@ final class EncryptedMacroTest: XCTestCase {
         let resolver = MockLabelResolver()
         
         // Test encryption
-        let encrypted = try profile.encryptWithKeystore(keystore, resolver: resolver)
+        let encrypted = try await profile.encryptWithKeystore(keystore, resolver: resolver)
         XCTAssertNotNil(encrypted.encryptedData)
         
         // Test decryption
@@ -114,7 +151,7 @@ final class EncryptedMacroTest: XCTestCase {
         
         // Test encryption performance
         let encryptionStart = Date()
-        let encrypted = try secureData.encryptWithKeystore(keystore, resolver: resolver)
+        let encrypted = try await secureData.encryptWithKeystore(keystore, resolver: resolver)
         let encryptionTime = Date().timeIntervalSince(encryptionStart)
         
         XCTAssertLessThan(encryptionTime, 1.0, "Encryption should complete within 1 second")

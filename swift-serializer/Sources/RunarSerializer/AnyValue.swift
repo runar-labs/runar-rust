@@ -180,20 +180,9 @@ public class AnyValue {
     public static func `struct`<T: Codable>(_ value: T) -> AnyValue {
         let typeName = String(describing: T.self)
         let serializeFn: (SerializationContext?) throws -> Data = { context in
-            // Use CBOR encoding for structs by converting to dictionary first
-            // This handles nested Codable types properly
-            let encoder = JSONEncoder()
-            let jsonData = try encoder.encode(value)
-            let json = try JSONSerialization.jsonObject(with: jsonData)
-            
-            // Convert JSON to CBOR
-            if let dict = json as? [String: Any] {
-                return Data(try encodeToCBOR(dict))
-            } else if let array = json as? [Any] {
-                return Data(try encodeToCBOR(array))
-            } else {
-                return Data(try encodeToCBOR(json))
-            }
+            // Use CBOR encoding directly for structs
+            let encoder = CodableCBOREncoder()
+            return try encoder.encode(value)
         }
         
         let asTypeFn: (Any.Type) -> Any? = { targetType in

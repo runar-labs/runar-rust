@@ -9,6 +9,7 @@ import SwiftSyntaxMacros
 /// - Type alias for the encrypted version
 /// - Encrypted struct definition with encryption/decryption methods
 /// - Real encryption/decryption implementation
+/// - Type registration in the global TypeRegistry
 ///
 /// Note: The struct must explicitly conform to `Codable` for this macro to work.
 ///
@@ -50,8 +51,11 @@ public struct EncryptedMacro: MemberMacro {
             public typealias Encrypted = \(raw: encryptedStructName)
             
             /// Encrypt this struct using the provided keystore
-            public func encryptWithKeystore(_ keystore: EnvelopeCrypto, resolver: LabelResolver) throws -> \(raw: encryptedStructName) {
-                // Serialize the struct to CBOR
+            public func encryptWithKeystore(_ keystore: EnvelopeCrypto, resolver: LabelResolver) async throws -> \(raw: encryptedStructName) {
+                // Ensure the type is registered for deserialization
+                await Self.ensureRegistered()
+                
+                // Serialize the struct to CBOR for encrypted types
                 let anyValue = AnyValue.struct(self)
                 let serialized = try anyValue.serialize(context: nil)
                 
@@ -93,11 +97,18 @@ public struct EncryptedMacro: MemberMacro {
                         profileId: "default"
                     ))
                     
-                    // Deserialize back to AnyValue
+                    // Deserialize CBOR data back to AnyValue and convert to struct
                     let anyValue = try AnyValue.deserialize(decryptedData, keystore: nil)
-                    
-                    // Convert back to the original type
-                    return try await anyValue.asType()
+                    return try await anyValue.asType() as \(raw: structName)
+                }
+            }
+            
+            /// Register this type in the global TypeRegistry for deserialization
+            private static func ensureRegistered() async {
+                await TypeRegistry.shared.register(\(raw: structName).self) { data in
+                    // Use CodableCBORDecoder to decode CBOR data back to the struct
+                    let decoder = CodableCBORDecoder()
+                    return try decoder.decode(\(raw: structName).self, from: data)
                 }
             }
             """
