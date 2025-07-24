@@ -2,14 +2,8 @@ import Foundation
 import SwiftCBOR
 // Note: MobileKeyManager import will be added when swift-keys package is added as dependency
 
-/// Plain macro for automatic struct serialization
-/// Usage: @Plain struct MyStruct { ... }
-@attached(member)
-public macro Plain() = #externalMacro(module: "RunarSerializerMacros", type: "PlainMacro")
-
-/// Usage: @Encrypted struct MyStruct { @EncryptedField(label: "user") var sensitive: String }
-@attached(member)
-public macro Encrypted() = #externalMacro(module: "RunarSerializerMacros", type: "EncryptedMacro")
+// Note: Macro declarations are now in the swift-serializer-macros package
+// and imported via the package dependency
 
 // MARK: - Encryption Protocols
 
@@ -186,32 +180,20 @@ public class AnyValue {
     public static func `struct`<T: Codable>(_ value: T) -> AnyValue {
         let typeName = String(describing: T.self)
         let serializeFn: (SerializationContext?) throws -> Data = { context in
-            // Use pure CBOR encoding for structs
-            // Convert struct to dictionary and encode as CBOR map
-            let mirror = Mirror(reflecting: value)
-            var dict: [String: Any] = [:]
+            // Use CBOR encoding for structs by converting to dictionary first
+            // This handles nested Codable types properly
+            let encoder = JSONEncoder()
+            let jsonData = try encoder.encode(value)
+            let json = try JSONSerialization.jsonObject(with: jsonData)
             
-            for child in mirror.children {
-                if let label = child.label {
-                    // Check if this field is an encrypted property wrapper
-                    if child.value is EncryptedFieldProtocol {
-                        // Handle encrypted field - for now, skip encrypted fields without context
-                        // TODO: Implement proper encrypted field handling when swift-keys is integrated
-                        if context != nil {
-                            // Skip encrypted fields for now - they will be handled by the macro
-                            continue
-                        } else {
-                            // No context provided, skip encrypted field
-                            continue
-                        }
-                    } else {
-                        // Regular field
-                        dict[label] = child.value
-                    }
-                }
+            // Convert JSON to CBOR
+            if let dict = json as? [String: Any] {
+                return Data(try encodeToCBOR(dict))
+            } else if let array = json as? [Any] {
+                return Data(try encodeToCBOR(array))
+            } else {
+                return Data(try encodeToCBOR(json))
             }
-            
-            return Data(try encodeToCBOR(dict))
         }
         
         let asTypeFn: (Any.Type) -> Any? = { targetType in
@@ -463,8 +445,27 @@ public class AnyValue {
             throw SerializerError.deserializationFailed("Encrypted deserialization not yet implemented")
         }
         
-        // For now, handle basic primitive types
+        // Handle JSON-encoded structs and basic primitive types
         switch lazyData.typeName {
+        case let typeName where typeName.contains("Struct") || typeName.contains("struct"):
+            // Try CBOR deserialization for structs
+            let cborData = Array(lazyData.data)
+            if let cbor = try? CBOR.decode(cborData) {
+                switch cbor {
+                case .map(let map):
+                    // Convert CBOR map back to dictionary
+                    var dict: [String: Any] = [:]
+                    for (key, value) in map {
+                        if case .utf8String(let keyStr) = key {
+                            dict[keyStr] = value
+                        }
+                    }
+                    return dict
+                default:
+                    throw SerializerError.deserializationFailed("Invalid CBOR format for struct")
+                }
+            }
+            throw SerializerError.deserializationFailed("Failed to decode struct from CBOR")
         case "String":
             // Try to decode as CBOR string
             let cborData = Array(lazyData.data)
@@ -691,24 +692,104 @@ private func encodeToCBOR(_ value: Any) throws -> [UInt8] {
     }
 }
 
-/// Helper to convert Any to CBOR value
+/// Helper to convert Any to CBOR value using full SwiftCBOR capabilities
 private func encodeToCBORValue(_ value: Any) throws -> CBOR {
     switch value {
     case let string as String:
         return CBOR.utf8String(string)
         
     case let int as Int:
-        if int >= 0 {
-            return CBOR.unsignedInt(UInt64(int))
-        } else {
-            return CBOR.negativeInt(UInt64(-int - 1))
-        }
+        return int.toCBOR()
+        
+    case let int8 as Int8:
+        return int8.toCBOR()
+        
+    case let int16 as Int16:
+        return int16.toCBOR()
+        
+    case let int32 as Int32:
+        return int32.toCBOR()
+        
+    case let int64 as Int64:
+        return int64.toCBOR()
+        
+    case let uint as UInt:
+        return uint.toCBOR()
+        
+    case let uint8 as UInt8:
+        return uint8.toCBOR()
+        
+    case let uint16 as UInt16:
+        return uint16.toCBOR()
+        
+    case let uint32 as UInt32:
+        return uint32.toCBOR()
+        
+    case let uint64 as UInt64:
+        return uint64.toCBOR()
         
     case let bool as Bool:
         return CBOR.boolean(bool)
         
+    case let float as Float:
+        return float.toCBOR()
+        
     case let double as Double:
-        return CBOR.double(double)
+        return double.toCBOR()
+        
+    case let date as Date:
+        return date.toCBOR()
+        
+    case let data as Data:
+        return data.toCBOR()
+        
+    case let array as [String]:
+        return array.toCBOR()
+        
+    case let array as [Int]:
+        return array.toCBOR()
+        
+    case let array as [Double]:
+        return array.toCBOR()
+        
+    case let array as [Bool]:
+        return array.toCBOR()
+        
+    case let array as [Date]:
+        return array.toCBOR()
+        
+    case let array as [Data]:
+        return array.toCBOR()
+        
+    case let dict as [String: String]:
+        return dict.toCBOR()
+        
+    case let dict as [String: Int]:
+        return dict.toCBOR()
+        
+    case let dict as [String: Double]:
+        return dict.toCBOR()
+        
+    case let dict as [String: Bool]:
+        return dict.toCBOR()
+        
+    case let dict as [String: Date]:
+        return dict.toCBOR()
+        
+    case let dict as [String: Data]:
+        return dict.toCBOR()
+        
+    case let nsDict as NSDictionary:
+        // Convert NSDictionary to CBOR map directly
+        var map: [CBOR: CBOR] = [:]
+        for (key, value) in nsDict {
+            if let keyStr = key as? String {
+                let keyCBOR = CBOR.utf8String(keyStr)
+                let valueCBOR = try encodeToCBORValue(value)
+                map[keyCBOR] = valueCBOR
+            }
+        }
+        return CBOR.map(map)
         
     case is NSNull:
         return CBOR.null

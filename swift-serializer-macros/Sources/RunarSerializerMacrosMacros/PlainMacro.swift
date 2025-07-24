@@ -9,10 +9,12 @@ import SwiftSyntaxMacros
 /// - `toAnyValue()` method for zero-copy serialization
 /// - `fromAnyValue()` static method for deserialization
 ///
+/// Note: The struct must explicitly conform to `Codable` for this macro to work.
+///
 /// ## Usage
 /// ```swift
 /// @Plain
-/// struct TestUser {
+/// struct TestUser: Codable {
 ///     let id: Int
 ///     let name: String
 ///     let isActive: Bool
@@ -32,6 +34,16 @@ public struct PlainMacro: MemberMacro {
         
         let structName = structDecl.name.text
         
+        // Check if the struct has Codable conformance
+        let hasCodable = structDecl.inheritanceClause?.inheritedTypes.contains { type in
+            type.type.as(SimpleTypeIdentifierSyntax.self)?.name.text == "Codable"
+        } ?? false
+        
+        guard hasCodable else {
+            throw MacroError("Plain macro requires the struct to explicitly conform to Codable")
+        }
+        
+        // Add the serialization methods
         return [
             """
             /// Convert this struct to an AnyValue for zero-copy serialization
@@ -40,8 +52,8 @@ public struct PlainMacro: MemberMacro {
             }
             
             /// Create this struct from an AnyValue
-            public static func fromAnyValue(_ value: AnyValue) throws -> \(raw: structName) {
-                return try value.asType()
+            public static func fromAnyValue(_ value: AnyValue) async throws -> \(raw: structName) {
+                return try await value.asType()
             }
             """
         ]
