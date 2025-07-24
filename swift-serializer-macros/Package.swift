@@ -17,21 +17,23 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-syntax.git", from: "509.0.0"),
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "509.0.0"),
     ],
     targets: [
-        .macro(
+        .target(
             name: "RunarSerializerMacros",
+            dependencies: ["RunarSerializerMacrosMacros"]
+        ),
+        .macro(
+            name: "RunarSerializerMacrosMacros",
             dependencies: [
                 .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
-            ],
-            path: "Sources/RunarSerializerMacros"
+            ]
         ),
         .testTarget(
             name: "RunarSerializerMacrosTests",
-            dependencies: ["RunarSerializerMacros"],
-            path: "Tests/RunarSerializerMacrosTests"
+            dependencies: ["RunarSerializerMacros"]
         ),
     ]
 ) 
