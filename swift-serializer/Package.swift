@@ -30,7 +30,10 @@ let package = Package(
         ),
         .testTarget(
             name: "RunarSerializerTests",
-            dependencies: ["RunarSerializer"],
+            dependencies: [
+                "RunarSerializer",
+                .product(name: "RunarSerializerMacros", package: "swift-serializer-macros")
+            ],
             path: "Tests/RunarSerializerTests"
         ),
     ]

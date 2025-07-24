@@ -1,15 +1,36 @@
 import Foundation
 import SwiftCBOR
+// Note: MobileKeyManager import will be added when swift-keys package is added as dependency
 
 /// Plain macro for automatic struct serialization
 /// Usage: @Plain struct MyStruct { ... }
 @attached(member)
 public macro Plain() = #externalMacro(module: "RunarSerializerMacros", type: "PlainMacro")
 
+/// Usage: @Encrypted struct MyStruct { @EncryptedField(label: "user") var sensitive: String }
+@attached(member)
+public macro Encrypted() = #externalMacro(module: "RunarSerializerMacros", type: "EncryptedMacro")
+
+// MARK: - Encryption Protocols
+
+/// Protocol for types that can be encrypted
+public protocol RunarEncryptable {
+    associatedtype Encrypted: RunarDecryptable where Encrypted.Decrypted == Self
+    func encryptWithKeystore(_ keystore: EnvelopeCrypto, resolver: LabelResolver) throws -> Encrypted
+}
+
+/// Protocol for types that can be decrypted
+public protocol RunarDecryptable {
+    associatedtype Decrypted: RunarEncryptable where Decrypted.Encrypted == Self
+    func decryptWithKeystore(_ keystore: EnvelopeCrypto) throws -> Decrypted
+}
+
+
+
 
 
 /// Error types for serialization operations
-public enum SerializerError: Error {
+public enum SerializerError: Error, LocalizedError {
     case deserializationFailed(String)
     case encryptionFailed(String)
     case typeMismatch(String)
@@ -17,6 +38,25 @@ public enum SerializerError: Error {
     case emptyData
     case typeNameTooLong(String)
     case serializationFailed(String)
+    
+    public var errorDescription: String? {
+        switch self {
+        case .deserializationFailed(let message):
+            return "Deserialization failed: \(message)"
+        case .encryptionFailed(let message):
+            return "Encryption failed: \(message)"
+        case .typeMismatch(let message):
+            return "Type mismatch: \(message)"
+        case .invalidCategory(let category):
+            return "Invalid category: \(category)"
+        case .emptyData:
+            return "Empty data"
+        case .typeNameTooLong(let typeName):
+            return "Type name too long: \(typeName)"
+        case .serializationFailed(let message):
+            return "Serialization failed: \(message)"
+        }
+    }
 }
 
 /// Categories for different value types, matching Rust implementation
@@ -153,7 +193,21 @@ public class AnyValue {
             
             for child in mirror.children {
                 if let label = child.label {
-                    dict[label] = child.value
+                    // Check if this field is an encrypted property wrapper
+                    if child.value is EncryptedFieldProtocol {
+                        // Handle encrypted field - for now, skip encrypted fields without context
+                        // TODO: Implement proper encrypted field handling when swift-keys is integrated
+                        if context != nil {
+                            // Skip encrypted fields for now - they will be handled by the macro
+                            continue
+                        } else {
+                            // No context provided, skip encrypted field
+                            continue
+                        }
+                    } else {
+                        // Regular field
+                        dict[label] = child.value
+                    }
                 }
             }
             
@@ -176,6 +230,112 @@ public class AnyValue {
         )
         
         return AnyValue(box: box, category: .struct)
+    }
+    
+    /// Create a list value (array of AnyValue)
+    public static func list(_ values: [AnyValue]) -> AnyValue {
+        let typeName = "Array<AnyValue>"
+        let serializeFn: (SerializationContext?) throws -> Data = { context in
+            // Serialize each AnyValue in the list
+            var serializedData = Data()
+            for value in values {
+                let valueData = try value.serialize(context: context)
+                // Add length prefix for each value
+                let length = UInt32(valueData.count)
+                let lengthBytes = withUnsafeBytes(of: length.bigEndian) { Data($0) }
+                serializedData.append(lengthBytes)
+                serializedData.append(valueData)
+            }
+            return serializedData
+        }
+        
+        let asTypeFn: (Any.Type) -> Any? = { targetType in
+            if targetType == [AnyValue].self {
+                return values
+            }
+            return nil
+        }
+        
+        let box = AnyValueBox(
+            value: values,
+            typeName: typeName,
+            category: .list,
+            serializeFn: serializeFn,
+            asTypeFn: asTypeFn
+        )
+        
+        return AnyValue(box: box, category: .list)
+    }
+    
+    /// Create a map value (dictionary of String to AnyValue)
+    public static func map(_ values: [String: AnyValue]) -> AnyValue {
+        let typeName = "Dictionary<String, AnyValue>"
+        let serializeFn: (SerializationContext?) throws -> Data = { context in
+            // Serialize each key-value pair in the map
+            var serializedData = Data()
+            for (key, value) in values {
+                // Serialize key
+                let keyData = key.data(using: .utf8)!
+                let keyLength = UInt32(keyData.count)
+                let keyLengthBytes = withUnsafeBytes(of: keyLength.bigEndian) { Data($0) }
+                serializedData.append(keyLengthBytes)
+                serializedData.append(keyData)
+                
+                // Serialize value
+                let valueData = try value.serialize(context: context)
+                let valueLength = UInt32(valueData.count)
+                let valueLengthBytes = withUnsafeBytes(of: valueLength.bigEndian) { Data($0) }
+                serializedData.append(valueLengthBytes)
+                serializedData.append(valueData)
+            }
+            return serializedData
+        }
+        
+        let asTypeFn: (Any.Type) -> Any? = { targetType in
+            if targetType == [String: AnyValue].self {
+                return values
+            }
+            return nil
+        }
+        
+        let box = AnyValueBox(
+            value: values,
+            typeName: typeName,
+            category: .map,
+            serializeFn: serializeFn,
+            asTypeFn: asTypeFn
+        )
+        
+        return AnyValue(box: box, category: .map)
+    }
+    
+    /// Create a JSON value (JSON string as Data)
+    public static func json(_ jsonData: Data) -> AnyValue {
+        let typeName = "JSON"
+        let serializeFn: (SerializationContext?) throws -> Data = { _ in
+            // Return the JSON data as-is
+            return jsonData
+        }
+        
+        let asTypeFn: (Any.Type) -> Any? = { targetType in
+            if targetType == Data.self {
+                return jsonData
+            }
+            if targetType == String.self {
+                return String(data: jsonData, encoding: .utf8)
+            }
+            return nil
+        }
+        
+        let box = AnyValueBox(
+            value: jsonData,
+            typeName: typeName,
+            category: .json,
+            serializeFn: serializeFn,
+            asTypeFn: asTypeFn
+        )
+        
+        return AnyValue(box: box, category: .json)
     }
     
     /// Create a lazy value for deferred deserialization
@@ -346,6 +506,99 @@ public class AnyValue {
             }
             throw SerializerError.deserializationFailed("Failed to decode Bool from CBOR")
             
+        case "Array<AnyValue>":
+            // Deserialize list of AnyValue
+            var values: [AnyValue] = []
+            var offset = 0
+            let data = lazyData.data
+            
+            while offset < data.count {
+                guard offset + 4 <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete list data")
+                }
+                
+                // Read length of next value
+                guard offset + 4 <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete list data")
+                }
+                let length = UInt32(data[offset]) << 24 |
+                           UInt32(data[offset + 1]) << 16 |
+                           UInt32(data[offset + 2]) << 8 |
+                           UInt32(data[offset + 3])
+                offset += 4
+                
+                guard offset + Int(length) <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete list value data")
+                }
+                
+                // Deserialize the value
+                let valueData = data[offset..<(offset + Int(length))]
+                let value = try AnyValue.deserialize(Data(valueData), keystore: lazyData.keystore)
+                values.append(value)
+                offset += Int(length)
+            }
+            
+            return values
+            
+        case "Dictionary<String, AnyValue>":
+            // Deserialize map of String to AnyValue
+            var values: [String: AnyValue] = [:]
+            var offset = 0
+            let data = lazyData.data
+            
+            while offset < data.count {
+                guard offset + 4 <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete map data")
+                }
+                
+                // Read length of key
+                guard offset + 4 <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete map data")
+                }
+                let keyLength = UInt32(data[offset]) << 24 |
+                              UInt32(data[offset + 1]) << 16 |
+                              UInt32(data[offset + 2]) << 8 |
+                              UInt32(data[offset + 3])
+                offset += 4
+                
+                guard offset + Int(keyLength) <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete map key data")
+                }
+                
+                // Read key
+                let keyData = data[offset..<(offset + Int(keyLength))]
+                guard let key = String(data: Data(keyData), encoding: .utf8) else {
+                    throw SerializerError.deserializationFailed("Invalid map key encoding")
+                }
+                offset += Int(keyLength)
+                
+                guard offset + 4 <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete map value length")
+                }
+                
+                // Read length of value
+                guard offset + 4 <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete map value length")
+                }
+                let valueLength = UInt32(data[offset]) << 24 |
+                                UInt32(data[offset + 1]) << 16 |
+                                UInt32(data[offset + 2]) << 8 |
+                                UInt32(data[offset + 3])
+                offset += 4
+                
+                guard offset + Int(valueLength) <= data.count else {
+                    throw SerializerError.deserializationFailed("Incomplete map value data")
+                }
+                
+                // Deserialize the value
+                let valueData = data[offset..<(offset + Int(valueLength))]
+                let value = try AnyValue.deserialize(Data(valueData), keystore: lazyData.keystore)
+                values[key] = value
+                offset += Int(valueLength)
+            }
+            
+            return values
+            
         default:
             // Try to find a registered decoder for this type
             if let decoder = await TypeRegistry.shared.getDecoder(for: lazyData.typeName) {
@@ -400,11 +653,14 @@ public class AnyValue {
             encrypted: isEncrypted
         )
         
-        // For now, handle basic cases that can be immediately deserialized
+        // Handle cases that can be immediately deserialized
         switch category {
         case .bytes:
             // For bytes, the data is already in the correct format
             return AnyValue.bytes(Data(valueData))
+        case .json:
+            // For JSON, the data is already in the correct format
+            return AnyValue.json(Data(valueData))
         default:
             // For other categories, create lazy deserialization
             return AnyValue.lazy(category: category, lazyData: lazyData)
@@ -511,22 +767,32 @@ public actor TypeRegistry {
     public static let shared = TypeRegistry()
 }
 
-/// Placeholder types - these will be implemented later
+// MARK: - Encryption Types
+
+/// Protocol for envelope encryption operations
+/// Matches the Rust EnvelopeCrypto trait
+public protocol EnvelopeCrypto: AnyObject {
+    /// Encrypt data with a specific label
+    func encrypt(_ data: Data, label: String, context: SerializationContext) throws -> Data
+    
+    /// Decrypt data with a specific label
+    func decrypt(_ data: Data, label: String, context: SerializationContext) throws -> Data
+}
+
+
+
+/// Placeholder for KeyStore until swift-keys package is added
 public protocol KeyStore {
     // TODO: Implement key store interface
 }
 
-public protocol LabelResolver {
-    // TODO: Implement label resolver interface
-}
-
 public struct SerializationContext {
-    let keystore: KeyStore
-    let resolver: LabelResolver
-    let networkId: String
-    let profileId: String
+    public let keystore: EnvelopeCrypto
+    public let resolver: LabelResolver
+    public let networkId: String
+    public let profileId: String
     
-    public init(keystore: KeyStore, resolver: LabelResolver, networkId: String, profileId: String) {
+    public init(keystore: EnvelopeCrypto, resolver: LabelResolver, networkId: String, profileId: String) {
         self.keystore = keystore
         self.resolver = resolver
         self.networkId = networkId
