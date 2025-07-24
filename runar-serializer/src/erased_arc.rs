@@ -258,33 +258,234 @@ impl ErasedArc {
     }
 }
 
-/// Helper to compare type names accounting for namespaces
-fn compare_type_names(a: &str, b: &str) -> bool {
+/// Helper to compare type names for casting safety
+/// This function is used to determine if it's safe to cast between types.
+/// It must be very restrictive to prevent memory corruption.
+///
+/// This function only allows:
+/// - Exact matches
+/// - Box<T> matches T (this is safe because Box<T> is just a pointer to T)
+/// - Option<T> matches T (this is safe because you can wrap/unwrap Option)
+/// - Standard library type aliases (e.g., "std::string::String" matches "alloc::string::String")
+///
+/// It does NOT allow:
+/// - Generic types with different parameters (e.g., Vec<i32> != Vec<String>)
+/// - Namespace stripping for user-defined types
+/// - Substring matches
+pub fn compare_type_names(a: &str, b: &str) -> bool {
     // Types are identical
     if a == b {
         return true;
     }
 
-    // Compare last segment (type name without namespace)
-    let a_simple = a.split("::").last().unwrap_or(a);
-    let b_simple = b.split("::").last().unwrap_or(b);
+    // Handle Box<T> matching T - this is safe because Box<T> is just a pointer to T
+    if a.contains("Box<") {
+        if let Some(start) = a.find("Box<") {
+            if let Some(end) = a.rfind('>') {
+                let boxed_type = &a[start + 4..end];
+                // Extract the simple name of the boxed type
+                let boxed_simple = boxed_type.split("::").last().unwrap_or(boxed_type);
+                // Compare with the simple name of b
+                let b_simple = b.split("::").last().unwrap_or(b);
+                if boxed_simple == b_simple {
+                    return true;
+                }
+            }
+        }
+    }
 
-    if a_simple == b_simple {
+    if b.contains("Box<") {
+        if let Some(start) = b.find("Box<") {
+            if let Some(end) = b.rfind('>') {
+                let boxed_type = &b[start + 4..end];
+                // Extract the simple name of the boxed type
+                let boxed_simple = boxed_type.split("::").last().unwrap_or(boxed_type);
+                // Compare with the simple name of a
+                let a_simple = a.split("::").last().unwrap_or(a);
+                if boxed_simple == a_simple {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Handle Option<T> matching T - this is safe because you can wrap/unwrap Option
+    if a.contains("Option<") {
+        if let Some(start) = a.find("Option<") {
+            if let Some(end) = a.rfind('>') {
+                let option_type = &a[start + 7..end];
+                // Extract the simple name of the option type
+                let option_simple = option_type.split("::").last().unwrap_or(option_type);
+                // Compare with the simple name of b
+                let b_simple = b.split("::").last().unwrap_or(b);
+                if option_simple == b_simple {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if b.contains("Option<") {
+        if let Some(start) = b.find("Option<") {
+            if let Some(end) = b.rfind('>') {
+                let option_type = &b[start + 7..end];
+                // Extract the simple name of the option type
+                let option_simple = option_type.split("::").last().unwrap_or(option_type);
+                // Compare with the simple name of a
+                let a_simple = a.split("::").last().unwrap_or(a);
+                if option_simple == a_simple {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Handle standard library type aliases
+    // These are known to be safe because they're the same underlying type
+    if (a == "std::string::String" && b == "alloc::string::String")
+        || (a == "alloc::string::String" && b == "std::string::String")
+    {
         return true;
     }
 
-    // If one contains the other's simple name (handles nested namespaces)
-    if a.contains(b_simple) || b.contains(a_simple) {
-        return true;
-    }
-
-    // Special case: One might be a boxed version
-    if a.contains("Box<") && a.contains(b_simple) {
-        return true;
-    }
-    if b.contains("Box<") && b.contains(a_simple) {
-        return true;
-    }
-
+    // For all other cases, require exact match
+    // This prevents dangerous generic type mismatches like Vec<i32> vs Vec<String>
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compare_type_names_identical() {
+        // Should match identical types
+        assert!(compare_type_names("String", "String"));
+        assert!(compare_type_names("i32", "i32"));
+        assert!(compare_type_names(
+            "alloc::string::String",
+            "alloc::string::String"
+        ));
+    }
+
+    #[test]
+    fn test_compare_type_names_simple_names() {
+        // Should NOT match when namespaces are different (except for known safe cases)
+        assert!(!compare_type_names("alloc::string::String", "String"));
+        assert!(!compare_type_names("String", "alloc::string::String"));
+        assert!(!compare_type_names("core::option::Option<i32>", "Option"));
+
+        // Should match only known safe standard library aliases
+        assert!(compare_type_names(
+            "std::string::String",
+            "alloc::string::String"
+        ));
+        assert!(compare_type_names(
+            "alloc::string::String",
+            "std::string::String"
+        ));
+    }
+
+    #[test]
+    fn test_compare_type_names_different_types() {
+        // Should NOT match different types
+        assert!(!compare_type_names("String", "i32"));
+        assert!(!compare_type_names("User", "UserData"));
+        assert!(!compare_type_names("UserData", "User"));
+        assert!(!compare_type_names("UserProfile", "User"));
+        assert!(!compare_type_names("User", "UserProfile"));
+    }
+
+    #[test]
+    fn test_compare_type_names_namespace_variations() {
+        // Test namespace handling - should NOT match different namespaces for user types
+        assert!(!compare_type_names("crate::User", "User"));
+        assert!(!compare_type_names("User", "crate::User"));
+        assert!(!compare_type_names(
+            "outer::inner::NamespaceTest",
+            "NamespaceTest"
+        ));
+        assert!(!compare_type_names(
+            "NamespaceTest",
+            "outer::inner::NamespaceTest"
+        ));
+
+        // Only known safe standard library aliases should match
+        assert!(compare_type_names(
+            "std::string::String",
+            "alloc::string::String"
+        ));
+    }
+
+    #[test]
+    fn test_compare_type_names_generic_types() {
+        // Test generic type handling - should NOT match different generic types
+        assert!(!compare_type_names("Vec<i32>", "Vec"));
+        assert!(!compare_type_names("Option<String>", "Option"));
+        assert!(!compare_type_names("HashMap<String, i32>", "HashMap"));
+
+        // Should NOT match different generic parameters
+        assert!(!compare_type_names("Vec<i32>", "Vec<String>"));
+        assert!(!compare_type_names("Option<i32>", "Option<String>"));
+    }
+
+    #[test]
+    fn test_compare_type_names_boxed_types() {
+        // Test boxed type handling
+        assert!(compare_type_names("Box<User>", "User"));
+        assert!(compare_type_names("User", "Box<User>"));
+        assert!(compare_type_names("Box<alloc::string::String>", "String"));
+    }
+
+    #[test]
+    fn test_compare_type_names_option_types() {
+        // Test option type handling
+        assert!(compare_type_names("Option<User>", "User"));
+        assert!(compare_type_names("User", "Option<User>"));
+        assert!(compare_type_names("Option<String>", "String"));
+        assert!(compare_type_names("String", "Option<String>"));
+        assert!(compare_type_names("core::option::Option<User>", "User"));
+        assert!(compare_type_names("User", "core::option::Option<User>"));
+    }
+
+    #[test]
+    fn test_compare_type_names_dangerous_prefixes() {
+        // These should NOT match - they have similar prefixes but are different types
+        assert!(!compare_type_names("User", "UserData"));
+        assert!(!compare_type_names("UserData", "User"));
+        assert!(!compare_type_names("String", "StringBuilder"));
+        assert!(!compare_type_names("StringBuilder", "String"));
+        assert!(!compare_type_names("Vec", "Vector"));
+        assert!(!compare_type_names("Vector", "Vec"));
+    }
+
+    #[test]
+    fn test_compare_type_names_suffix_variations() {
+        // These should NOT match - they have similar suffixes but are different types
+        assert!(!compare_type_names("User", "AdminUser"));
+        assert!(!compare_type_names("AdminUser", "User"));
+        assert!(!compare_type_names("String", "ByteString"));
+        assert!(!compare_type_names("ByteString", "String"));
+    }
+
+    #[test]
+    fn test_compare_type_names_substring_issues() {
+        // These should NOT match - they contain each other as substrings but are different types
+        assert!(!compare_type_names("User", "UserManager"));
+        assert!(!compare_type_names("UserManager", "User"));
+        assert!(!compare_type_names("Data", "UserData"));
+        assert!(!compare_type_names("UserData", "Data"));
+    }
+
+    #[test]
+    fn test_compare_type_names_edge_cases() {
+        // Test edge cases that should be handled safely
+        assert!(!compare_type_names("", "User"));
+        assert!(!compare_type_names("User", ""));
+        assert!(!compare_type_names("User", "Users"));
+        assert!(!compare_type_names("Users", "User"));
+        // Generic types with different parameters should NOT match
+        assert!(!compare_type_names("Vec<i32>", "Vec<String>"));
+        assert!(!compare_type_names("Option<User>", "Option<Admin>"));
+    }
 }
