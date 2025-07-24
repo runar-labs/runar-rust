@@ -101,8 +101,6 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // original_fn_ctx_ident_opt is now populated by the loop above,
     // the next line `original_fn_has_request_context_param` will use it.
     let original_fn_has_request_context_param = original_fn_ctx_ident_opt.is_some();
-    // This ctx_ident is for the LifecycleContext in the generated register_action_... method
-    let lifecycle_ctx_ident = Ident::new("context", proc_macro2::Span::call_site());
 
     // Generate schema for inputs
     let mut input_properties_map_tokens = Vec::new();
@@ -174,18 +172,18 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     // Generate the register action method based on return type information
-    let generated_code = generate_register_action_method(
-        &input.sig.ident,
-        &action_name,
-        &action_path,
-        &params,
-        &return_type_info,
+    let method_params = RegisterActionMethodParams {
+        fn_ident: &input.sig.ident,
+        action_name: &action_name,
+        action_path: &action_path,
+        function_params: &params,
+        return_type_info: &return_type_info,
         is_async,
-        &lifecycle_ctx_ident, // Pass the ident for LifecycleContext
         original_fn_has_request_context_param,
-        input_schema_tokens,
-        output_schema_tokens,
-    );
+        input_schema_opt_tokens: input_schema_tokens,
+        output_schema_opt_tokens: output_schema_tokens,
+    };
+    let generated_code = generate_register_action_method(method_params);
 
     // Combine the original function with the generated register method
     let expanded = quote! {
@@ -545,32 +543,36 @@ fn generate_field_schema_for_type(
     }}
 }
 
-/// Generate the register action method
-#[allow(clippy::too_many_arguments)]
-fn generate_register_action_method(
-    fn_ident: &Ident,
-    action_name: &str,
-    action_path: &str,
-    params: &[(Ident, Type)],
-    return_type_info: &ReturnTypeInfo,
+/// Parameters for generating register action method
+#[allow(dead_code)] // Fields are used in quote! macro but clippy doesn't detect them
+struct RegisterActionMethodParams<'a> {
+    fn_ident: &'a Ident,
+    action_name: &'a str,
+    action_path: &'a str,
+    function_params: &'a [(Ident, Type)],
+    return_type_info: &'a ReturnTypeInfo,
     is_async: bool,
-    _lifecycle_ctx_ident: &Ident, // Renamed as it's for the LifecycleContext, not the RequestContext for the handler
     original_fn_has_request_context_param: bool,
     input_schema_opt_tokens: TokenStream2,
     output_schema_opt_tokens: TokenStream2,
-) -> TokenStream2 {
+}
+
+/// Generate the register action method
+fn generate_register_action_method(params: RegisterActionMethodParams) -> TokenStream2 {
     // Create a boolean expression for checking if there are parameters
-    let has_params = if params.is_empty() {
+    let has_params = if params.function_params.is_empty() {
         quote! { false }
     } else {
         quote! { true }
     };
 
     // Generate parameter extraction code
-    let param_extractions = generate_parameter_extractions(params, action_name);
+    let param_extractions =
+        generate_parameter_extractions(params.function_params, params.action_name);
 
     // Generate method call with extracted parameters
     let method_call_params_only = params
+        .function_params
         .iter()
         .filter(|(_, param_type)| match param_type {
             Type::Path(tp) => {
@@ -582,42 +584,42 @@ fn generate_register_action_method(
         .collect::<Vec<(Ident, Type)>>();
 
     let method_call = generate_method_call(
-        fn_ident,
+        params.fn_ident,
         &method_call_params_only,
-        is_async,
-        original_fn_has_request_context_param,
+        params.is_async,
+        params.original_fn_has_request_context_param,
     );
 
     // Generate the appropriate result handling based on the return type
-    let result_handling = if return_type_info.type_name == "()" {
+    let result_handling = if params.return_type_info.type_name == "()" {
         quote! {
             // For () return type, convert to ArcValue::null()
             Ok(runar_serializer::ArcValue::null())
         }
-    } else if return_type_info.type_name == "ArcValue" {
+    } else if params.return_type_info.type_name == "ArcValue" {
         // Check if the result is already an ArcValue
         quote! {
             // Result is already ArcValue, pass it through directly
             Ok(result)
         }
-    } else if return_type_info.is_primitive {
+    } else if params.return_type_info.is_primitive {
         quote! {
             // Convert the primitive result to ArcValue
             let value_type = runar_serializer::ArcValue::new_primitive(result);
             Ok(value_type)
         }
-    } else if return_type_info.is_hashmap {
+    } else if params.return_type_info.is_hashmap {
         // For HashMap<String, ArcValue>, use new_map
         quote! {
             // Convert the HashMap result to ArcValue using new_map
             let value_type = runar_serializer::ArcValue::new_map(result);
             Ok(value_type)
         }
-    } else if return_type_info.is_list {
+    } else if params.return_type_info.is_list {
         // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
-        if return_type_info.type_name == "Vec" {
+        if params.return_type_info.type_name == "Vec" {
             // Check if the inner type is ArcValue
-            let inner_type = get_vec_inner_type(&return_type_info.actual_type);
+            let inner_type = get_vec_inner_type(&params.return_type_info.actual_type);
             if let Some(syn::Type::Path(type_path)) = inner_type {
                 if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
                     quote! {
@@ -646,7 +648,7 @@ fn generate_register_action_method(
                 Ok(value_type)
             }
         }
-    } else if return_type_info.is_struct {
+    } else if params.return_type_info.is_struct {
         // For struct types, use new_struct (let compiler handle trait bounds)
         quote! {
             // Convert the struct result to ArcValue using new_struct
@@ -664,10 +666,16 @@ fn generate_register_action_method(
     };
 
     // Generate a unique method name for the action registration
-    let register_method_name = format_ident!("register_action_{}", fn_ident);
+    let register_method_name = format_ident!("register_action_{}", params.fn_ident);
 
     // The handler's RequestContext parameter is hardcoded to `ctx`
     let handler_request_ctx_ident = format_ident!("ctx");
+
+    // Extract values for use in quote! macro
+    let action_name = params.action_name;
+    let action_path = params.action_path;
+    let input_schema_opt_tokens = &params.input_schema_opt_tokens;
+    let output_schema_opt_tokens = &params.output_schema_opt_tokens;
 
     quote! {
         async fn #register_method_name(&self, context: &runar_node::services::LifecycleContext) -> anyhow::Result<()> {

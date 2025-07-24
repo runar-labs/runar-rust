@@ -7,8 +7,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse::Parse, parse::ParseStream, parse_macro_input, Expr, ItemFn, Lit, LitStr, Meta, Result,
-    ReturnType, Type,
+    parse::Parse, parse::ParseStream, parse_macro_input, Expr, FnArg, GenericArgument, Ident,
+    ItemFn, Lit, LitStr, Meta, Pat, PathArguments, Result, ReturnType, Type,
 };
 
 // Define a struct to parse the macro attributes
@@ -53,20 +53,9 @@ impl Parse for PublishImpl {
 
 /// Extract information about the return type for proper handling.
 fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
-    let (
-        actual_type,
-        is_unit,
-        actual_type_is_option,
-        is_primitive,
-        type_name,
-        is_hashmap,
-        is_list,
-        is_struct,
-    ) = match return_type {
+    let (actual_type, is_primitive, type_name, is_hashmap, is_list, is_struct) = match return_type {
         ReturnType::Default => (
             syn::parse_quote! { () },
-            true,
-            false,
             true,
             "unit".to_string(),
             false,
@@ -75,7 +64,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
         ),
         ReturnType::Type(_, original_ty) => {
             let mut current_type = *original_ty.clone();
-            let mut outer_is_option = false;
 
             // Check for outer Result<T, E>
             if let Some(inner_ty_of_result) = get_result_inner_type(&current_type) {
@@ -84,7 +72,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 
             // Check for outer Option<T> (could be Option<Result<...>> or Option<T>)
             if let Some(inner_ty_of_option) = get_option_inner_type(&current_type) {
-                outer_is_option = true;
                 current_type = inner_ty_of_option.clone();
             }
 
@@ -116,8 +103,6 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 
             (
                 current_type,
-                false,
-                outer_is_option,
                 is_primitive_val,
                 type_name_str,
                 is_hashmap_val,
@@ -129,9 +114,7 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 
     ReturnTypeInfo {
         is_primitive,
-        is_unit,
         actual_type,
-        actual_type_is_option,
         type_name,
         is_hashmap,
         is_list,
@@ -143,12 +126,7 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
 #[derive(Debug, Clone)]
 struct ReturnTypeInfo {
     is_primitive: bool,
-    #[allow(dead_code)]
-    is_unit: bool,
-    #[allow(dead_code)]
     actual_type: Type,
-    #[allow(dead_code)]
-    actual_type_is_option: bool,
     type_name: String,
     is_hashmap: bool,
     is_list: bool,
@@ -267,6 +245,24 @@ fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     None
 }
 
+/// Get the inner type of Vec<T>
+fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(type_path) = ty {
+        if type_path.path.segments.len() == 1
+            && type_path.path.segments.first().unwrap().ident == "Vec"
+        {
+            if let PathArguments::AngleBracketed(params) =
+                &type_path.path.segments.first().unwrap().arguments
+            {
+                if let Some(GenericArgument::Type(inner_ty)) = params.args.first() {
+                    return Some(inner_ty);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Generate the appropriate ArcValue creation based on return type
 fn generate_arc_value_creation(return_type_info: &ReturnTypeInfo) -> TokenStream2 {
     if return_type_info.type_name == "()" {
@@ -286,8 +282,29 @@ fn generate_arc_value_creation(return_type_info: &ReturnTypeInfo) -> TokenStream
             runar_serializer::ArcValue::new_map(action_result.clone())
         }
     } else if return_type_info.is_list {
-        quote! {
-            runar_serializer::ArcValue::new_primitive(action_result.clone())
+        // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
+        if return_type_info.type_name == "Vec" {
+            // Check if the inner type is ArcValue
+            let inner_type = get_vec_inner_type(&return_type_info.actual_type);
+            if let Some(syn::Type::Path(type_path)) = inner_type {
+                if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
+                    quote! {
+                        runar_serializer::ArcValue::new_list(action_result.clone())
+                    }
+                } else {
+                    quote! {
+                        runar_serializer::ArcValue::new_primitive(action_result.clone())
+                    }
+                }
+            } else {
+                quote! {
+                    runar_serializer::ArcValue::new_primitive(action_result.clone())
+                }
+            }
+        } else {
+            quote! {
+                runar_serializer::ArcValue::new_primitive(action_result.clone())
+            }
         }
     } else if return_type_info.is_struct {
         // For struct types, use new_struct (let compiler handle trait bounds)
@@ -320,6 +337,39 @@ pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Check if the function is already async
     let is_async = input.sig.asyncness.is_some();
 
+    // Determine the identifier for the RequestContext parameter
+    let mut original_fn_ctx_ident_opt: Option<Ident> = None;
+    for fn_arg in &input.sig.inputs {
+        if let FnArg::Typed(pat_type) = fn_arg {
+            let type_to_check = match &*pat_type.ty {
+                Type::Reference(type_ref) => {
+                    // Check if it's an immutable reference before accessing elem
+                    if type_ref.mutability.is_none() {
+                        &*type_ref.elem
+                    } else {
+                        continue; // Skip mutable references for RequestContext
+                    }
+                }
+                direct_type => direct_type,
+            };
+
+            if let Type::Path(type_path) = type_to_check {
+                if get_path_last_segment_ident_string(type_path).as_deref()
+                    == Some("RequestContext")
+                {
+                    if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                        original_fn_ctx_ident_opt = Some(pat_ident.ident.clone());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let original_fn_has_request_context_param = original_fn_ctx_ident_opt.is_some();
+    let ctx_ident = original_fn_ctx_ident_opt
+        .unwrap_or_else(|| Ident::new("ctx", proc_macro2::Span::call_site()));
+
     // Extract the return type information for proper handling
     let return_type_info = extract_return_type_info(&input.sig.output);
 
@@ -327,48 +377,69 @@ pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     let arc_value_creation = generate_arc_value_creation(&return_type_info);
 
     // Generate the modified function with publishing
-    let expanded = if is_async {
-        quote! {
-            #(#attrs)*
-            #vis #sig {
-                // Execute the original function body
-                let result = #block;
+    let expanded = if original_fn_has_request_context_param {
+        // Function has RequestContext parameter, so we can add publishing logic
+        if is_async {
+            quote! {
+                #(#attrs)*
+                #vis #sig {
+                    // Execute the original function body
+                    let result = #block;
 
-                // If the result is Ok, publish it
-                if let Ok(ref action_result) = &result {
-                    // Publish the result to the specified topic
-                    match ctx.publish(#path, Some(#arc_value_creation)).await {
-                        Ok(_) => {},
-                        Err(e) => {
-                            ctx.error(format!("Failed to publish result to {}: {}", #path, e));
+                    // If the result is Ok, publish it
+                    if let Ok(ref action_result) = &result {
+                        // Publish the result to the specified topic
+                        match #ctx_ident.publish(#path, Some(#arc_value_creation)).await {
+                            Ok(_) => {},
+                            Err(e) => {
+                                #ctx_ident.error(format!("Failed to publish result to {}: {}", #path, e));
+                            }
                         }
                     }
-                }
 
-                // Return the original result
-                result
+                    // Return the original result
+                    result
+                }
+            }
+        } else {
+            quote! {
+                #(#attrs)*
+                #vis async #sig {
+                    // Execute the original function body
+                    let result = (|| #block)();
+
+                    // If the result is Ok, publish it
+                    if let Ok(ref action_result) = &result {
+                        // Publish the result to the specified topic
+                        match #ctx_ident.publish(#path, Some(#arc_value_creation)).await {
+                            Ok(_) => {},
+                            Err(e) => {
+                                #ctx_ident.error(format!("Failed to publish result to {}: {}", #path, e));
+                            }
+                        }
+                    }
+
+                    // Return the original result
+                    result
+                }
             }
         }
     } else {
-        quote! {
-            #(#attrs)*
-            #vis async #sig {
-                // Execute the original function body
-                let result = (|| #block)();
-
-                // If the result is Ok, publish it
-                if let Ok(ref action_result) = &result {
-                    // Publish the result to the specified topic
-                    match ctx.publish(#path, Some(#arc_value_creation)).await {
-                        Ok(_) => {},
-                        Err(e) => {
-                            ctx.error(format!("Failed to publish result to {}: {}", #path, e));
-                        }
-                    }
+        // Function doesn't have RequestContext parameter, so we can't add publishing logic
+        // Just pass through the function as-is
+        if is_async {
+            quote! {
+                #(#attrs)*
+                #vis #sig {
+                    #block
                 }
-
-                // Return the original result
-                result
+            }
+        } else {
+            quote! {
+                #(#attrs)*
+                #vis async #sig {
+                    #block
+                }
             }
         }
     };

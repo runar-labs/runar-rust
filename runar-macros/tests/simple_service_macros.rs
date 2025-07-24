@@ -127,6 +127,16 @@ impl TestService {
         Ok(params)
     }
 
+    #[publish(path = "echo_list_published")]
+    #[action]
+    async fn echo_list_with_publish(
+        &self,
+        params: Vec<ArcValue>,
+        ctx: &RequestContext,
+    ) -> Result<Vec<ArcValue>> {
+        Ok(params)
+    }
+
     #[action]
     async fn echo_pre_wrapped_struct(&self, id_str: String, val_int: i32) -> Result<ArcValue> {
         let data = PreWrappedStruct {
@@ -261,6 +271,33 @@ impl TestService {
             lock.insert(
                 "age_changed".to_string(),
                 ArcValue::new_primitive(vec![new_age]),
+            );
+        }
+
+        Ok(())
+    }
+
+    #[subscribe(path = "math/echo_list_published")]
+    async fn on_echo_list_published(&self, data: Vec<ArcValue>, ctx: &EventContext) -> Result<()> {
+        ctx.debug(format!(
+            "echo_list_published was an event published using the publish macro ->: {} items",
+            data.len()
+        ));
+
+        let mut lock = self.store.lock().await;
+        let existing = lock.get("echo_list_published");
+        if let Some(existing) = existing {
+            let existing_vec = existing.as_type_ref::<Vec<Vec<ArcValue>>>().unwrap();
+            let mut new_vec = (*existing_vec).clone();
+            new_vec.push(data.clone());
+            lock.insert(
+                "echo_list_published".to_string(),
+                ArcValue::new_primitive(new_vec),
+            );
+        } else {
+            lock.insert(
+                "echo_list_published".to_string(),
+                ArcValue::new_primitive(vec![data.clone()]),
             );
         }
 
@@ -1066,5 +1103,66 @@ mod tests {
         ctx.logger.info("✅ Publish macro bug fix verified: struct types use new_struct, primitive types use new_primitive");
         ctx.logger
             .info("✅ The bug fix ensures proper trait bounds are enforced at compile time");
+    }
+
+    #[tokio::test]
+    async fn test_publish_macro_vec_arcvalue_fix() {
+        let ctx = create_test_context().await;
+        ctx.logger.debug("Testing publish macro Vec<ArcValue> fix");
+
+        // Test that Vec<ArcValue> is correctly serialized using new_list instead of new_primitive
+        let test_list = vec![
+            ArcValue::new_primitive("test1".to_string()),
+            ArcValue::new_primitive(42i32),
+            ArcValue::new_primitive(true),
+        ];
+
+        let echo_list_result_arc: ArcValue = ctx
+            .node
+            .request(
+                "math/echo_list_with_publish",
+                Some(params! {
+                    "params" => test_list.clone()
+                }),
+            )
+            .await
+            .expect("Failed to call echo_list_with_publish action");
+
+        // Verify the action result works correctly
+        let list_result: Vec<ArcValue> = echo_list_result_arc
+            .as_type()
+            .expect("Failed to convert to Vec<ArcValue>");
+
+        assert_eq!(list_result.len(), 3);
+        assert_eq!(list_result[0].as_type::<String>().unwrap(), "test1");
+        assert_eq!(list_result[1].as_type::<i32>().unwrap(), 42);
+        assert!(list_result[2].as_type::<bool>().unwrap());
+
+        // Check that the published event was correctly serialized as a list
+        let events = ctx.store.lock().await;
+        let echo_list_published_key = "echo_list_published";
+
+        if let Some(published_event) = events.get(echo_list_published_key) {
+            // The event should be stored as a Vec<Vec<ArcValue>> (as per the subscriber pattern)
+            // This verifies that the publish macro used new_list instead of new_primitive
+            let published_event_vec: Vec<Vec<ArcValue>> = published_event
+                .as_type()
+                .expect("Failed to convert published event to Vec<Vec<ArcValue>>");
+
+            assert!(
+                !published_event_vec.is_empty(),
+                "Expected at least one echo_list_published event"
+            );
+
+            let published_list = &published_event_vec[0];
+            assert_eq!(published_list.len(), 3);
+            assert_eq!(published_list[0].as_type::<String>().unwrap(), "test1");
+            assert_eq!(published_list[1].as_type::<i32>().unwrap(), 42);
+            assert!(published_list[2].as_type::<bool>().unwrap());
+
+            ctx.logger.info("✅ Publish macro Vec<ArcValue> fix verified: correctly uses new_list instead of new_primitive");
+        } else {
+            panic!("echo_list_published event was not published");
+        }
     }
 }

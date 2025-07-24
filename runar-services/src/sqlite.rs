@@ -602,7 +602,7 @@ impl Clone for SqliteService {
 }
 
 impl SqliteService {
-    #[allow(clippy::too_many_arguments)] // Common for service constructors
+    // Common for service constructors
     pub fn new(name: String, path: String, config: SqliteConfig) -> Self {
         Self {
             name,

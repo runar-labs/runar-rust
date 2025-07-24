@@ -192,7 +192,6 @@ impl Clone for ServiceRegistry {
     }
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for ServiceRegistry {
     fn default() -> Self {
         Self::new_with_default_logger()
