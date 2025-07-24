@@ -411,6 +411,12 @@ pub fn register_js_dispatch(cb: JsFunction) -> napi::Result<()> {
             let js_obj = ctx.env.to_js_value(&ctx.value)?;
             Ok(vec![js_obj])
         })?;
+
+    // Ensure the TSFN is properly initialized and not already set
+    if JS_DISPATCHER.get().is_some() {
+        return Err(napi::Error::from_reason("Dispatcher already registered"));
+    }
+
     JS_DISPATCHER
         .set(tsfn)
         .map_err(|_| napi::Error::from_reason("Dispatcher already registered"))?;

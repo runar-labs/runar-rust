@@ -23,7 +23,8 @@
     "prepublishOnly": "napi prepublish -t npm",
     "test": "vitest --run",
     "test:watch": "vitest",
-    "version": "napi version"
+    "version": "napi version",
+    "clean": "rm -rf node_modules package-lock.json target"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.4",
