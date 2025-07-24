@@ -8,7 +8,7 @@ use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, Labe
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
 use std::collections::HashMap;
-use std::sync::Arc; 
+use std::sync::Arc;
 
 // Declare modules
 mod account_service;
@@ -387,6 +387,6 @@ async fn main() -> Result<()> {
 
     println!("\n🎉 Microservices demo completed successfully!");
     println!("All operations completed with encryption support.");
- 
+
     Ok(())
 }
