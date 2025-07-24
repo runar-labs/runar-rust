@@ -1162,7 +1162,6 @@ impl Node {
         Ok(None)
     }
 
-    #[allow(clippy::needless_borrow)]
     pub async fn local_request(
         &self,
         topic_path: &TopicPath,
@@ -1174,7 +1173,7 @@ impl Node {
         // First check for local handlers
         if let Some((handler, registration_path)) = self
             .service_registry
-            .get_local_action_handler(&topic_path)
+            .get_local_action_handler(topic_path)
             .await
         {
             self.logger
@@ -1182,7 +1181,7 @@ impl Node {
 
             // Create request context
             let mut context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
+                RequestContext::new(topic_path, Arc::new(self.clone()), self.logger.clone());
 
             // Extract parameters using the original registration path
             if let Ok(params) = topic_path.extract_params(&registration_path.action_path()) {

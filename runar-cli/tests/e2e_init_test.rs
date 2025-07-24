@@ -194,34 +194,6 @@ impl MobileSimulator {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    async fn send_certificate_to_node(
-        &self,
-        server_address: &str,
-        certificate_message: NodeCertificateMessage,
-    ) -> Result<()> {
-        self.logger.info(format!(
-            "📱 Mobile: Connecting to node setup server at {server_address}"
-        ));
-
-        let stream = TcpStream::connect(server_address)
-            .await
-            .with_context(|| format!("Failed to connect to setup server at {server_address}"))?;
-
-        self.logger.info("📱 Mobile: Connected to setup server");
-
-        let message_bytes = bincode::serialize(&certificate_message)
-            .context("Failed to serialize certificate message")?;
-
-        // Use the improved send_message method
-        self.send_message(&stream, &message_bytes).await?;
-
-        self.logger
-            .info("📱 Mobile: Certificate message sent successfully");
-
-        Ok(())
-    }
-
     async fn send_setup_data_to_node(
         &self,
         server_address: &str,

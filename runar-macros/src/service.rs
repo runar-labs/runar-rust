@@ -182,7 +182,6 @@ fn format_type_string(type_str: &str) -> Option<String> {
 
 /// Generate the AbstractService trait implementation
 /// Ensure the struct implements Clone for proper action handler support
-#[allow(clippy::cmp_owned)]
 fn generate_abstract_service_impl(
     struct_type: &Ident,
     all_methods: &[(Ident, &str, ImplItemFn)],
@@ -212,7 +211,7 @@ fn generate_abstract_service_impl(
         for type_str in types {
             if let Some(formatted) = format_type_string(&type_str) {
                 // Skip the service type itself
-                if formatted != struct_type.to_string() {
+                if *struct_type != formatted {
                     all_types.insert(formatted);
                 }
             }

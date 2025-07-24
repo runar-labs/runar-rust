@@ -544,7 +544,7 @@ fn generate_field_schema_for_type(
 }
 
 /// Parameters for generating register action method
-#[allow(dead_code)] // Fields are used in quote! macro but clippy doesn't detect them
+// Fields are used in quote! macro but clippy doesn't detect them
 struct RegisterActionMethodParams<'a> {
     fn_ident: &'a Ident,
     action_name: &'a str,

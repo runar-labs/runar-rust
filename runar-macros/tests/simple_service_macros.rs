@@ -749,14 +749,11 @@ mod tests {
             )
             .await
             .expect("Failed to call echo_pre_wrapped_struct for Option result");
-        let pre_wrapped_option_res: Option<PreWrappedStruct> = pre_wrapped_option_res_arc
+        let pre_wrapped_option_res: PreWrappedStruct = pre_wrapped_option_res_arc
             .as_type()
             .expect("Failed to convert to Option<PreWrappedStruct>");
-        assert!(
-            pre_wrapped_option_res.is_some(),
-            "Expected Some(PreWrappedStruct) but got None"
-        );
-        let unwrapped_option_res = pre_wrapped_option_res.unwrap();
+
+        let unwrapped_option_res = pre_wrapped_option_res;
         assert_eq!(unwrapped_option_res.id, "test_pre_wrap");
         assert_eq!(unwrapped_option_res.value, 999);
     }

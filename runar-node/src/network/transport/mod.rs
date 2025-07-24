@@ -131,7 +131,6 @@ pub struct TransportOptions {
     pub bind_address: SocketAddr,
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for TransportOptions {
     fn default() -> Self {
         let port = pick_free_port(50000..51000).unwrap_or(0);
