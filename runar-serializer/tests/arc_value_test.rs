@@ -191,7 +191,7 @@ fn test_nested() -> Result<()> {
 
 #[test]
 fn test_to_json_primitive() -> Result<()> {
-    let mut val = ArcValue::new_primitive("hello".to_string());
+    let val = ArcValue::new_primitive("hello".to_string());
     let json_val = val.to_json()?;
     assert_eq!(json_val, json!("hello"));
     Ok(())
@@ -200,7 +200,7 @@ fn test_to_json_primitive() -> Result<()> {
 #[test]
 fn test_to_json_list() -> Result<()> {
     let list = vec![ArcValue::new_primitive(1i64), ArcValue::new_primitive(2i64)];
-    let mut val = ArcValue::new_list(list);
+    let val = ArcValue::new_list(list);
     let json_val = val.to_json()?;
     assert_eq!(json_val, json!([1, 2]));
     Ok(())
@@ -216,7 +216,7 @@ fn test_from_json() -> Result<()> {
         "object": {"key": "value"}
     });
 
-    let mut val = ArcValue::from_json(json_val.clone());
+    let val = ArcValue::from_json(json_val.clone());
     assert_eq!(val.category, ValueCategory::Map);
 
     let back_to_json = val.to_json()?;

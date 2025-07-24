@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
 use runar_macros::{action, publish, service, service_impl, subscribe};
-use runar_macros_common::{hmap, params};
+use runar_macros_common::params;
 use runar_node::services::{EventContext, RequestContext};
 use runar_node::AbstractService;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
@@ -518,7 +518,6 @@ mod tests {
 
         // Check for added events
         if let Some(added_arc) = store.get("added") {
-            let mut added_arc = added_arc.clone();
             let added_vec = added_arc.as_type_ref::<Vec<f64>>().unwrap();
             assert!(!added_vec.is_empty(), "Expected at least one added event");
             assert_eq!(added_vec[0], 15.0, "Expected first added value to be 15.0"); // 10.0 + 5.0
@@ -534,7 +533,6 @@ mod tests {
 
         // Check for my_data_changed events
         if let Some(changed_arc) = store.get("my_data_changed") {
-            let changed_arc = changed_arc.clone();
             let changed_vec = changed_arc.as_type_ref::<Vec<MyData>>().unwrap();
             assert!(
                 !changed_vec.is_empty(),
@@ -551,7 +549,6 @@ mod tests {
 
         // Check for age_changed events
         if let Some(age_arc) = store.get("age_changed") {
-            let mut age_arc = age_arc.clone();
             let age_vec = age_arc.as_type_ref::<Vec<i32>>().unwrap();
             assert!(
                 !age_vec.is_empty(),
@@ -621,7 +618,6 @@ mod tests {
 
         // Check for added events
         if let Some(added_arc) = store.get("added") {
-            let mut added_arc = added_arc.clone();
             let added_vec = added_arc.as_type_ref::<Vec<f64>>().unwrap();
             assert!(!added_vec.is_empty(), "Expected at least one added event");
             assert_eq!(added_vec[0], 15.0, "Expected first added value to be 15.0"); // 10.0 + 5.0
@@ -637,7 +633,6 @@ mod tests {
 
         // Check for my_data_changed events
         if let Some(changed_arc) = store.get("my_data_changed") {
-            let mut changed_arc = changed_arc.clone();
             let changed_vec = changed_arc.as_type_ref::<Vec<MyData>>().unwrap();
             assert!(
                 !changed_vec.is_empty(),
@@ -654,7 +649,6 @@ mod tests {
 
         // Check for age_changed events
         if let Some(age_arc) = store.get("age_changed") {
-            let mut age_arc = age_arc.clone();
             let age_vec = age_arc.as_type_ref::<Vec<i32>>().unwrap();
             assert!(
                 !age_vec.is_empty(),

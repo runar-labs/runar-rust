@@ -56,6 +56,14 @@ pub fn derive_plain(input: TokenStream) -> TokenStream {
                 Ok(self.clone())
             }
         }
+
+        // Automatically register JSON converter for this struct at program start.
+        const _: () = {
+            #[ctor::ctor]
+            fn register_json_converter() {
+                runar_serializer::registry::register_to_json::<#struct_name>();
+            }
+        };
     };
 
     TokenStream::from(expanded)
@@ -263,6 +271,14 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             #[ctor::ctor]
             fn register_decryptor() {
                 runar_serializer::registry::register_decrypt::<#struct_name, #encrypted_name>();
+            }
+        };
+
+        // Automatically register JSON converter for this struct at program start.
+        const _: () = {
+            #[ctor::ctor]
+            fn register_json_converter() {
+                runar_serializer::registry::register_to_json::<#struct_name>();
             }
         };
 

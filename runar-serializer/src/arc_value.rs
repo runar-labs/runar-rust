@@ -18,6 +18,8 @@ type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&dyn LabelR
     + Send
     + Sync;
 
+type ToJsonFn = dyn Fn(&ErasedArc) -> Result<JsonValue> + Send + Sync;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ValueCategory {
@@ -49,7 +51,8 @@ impl ValueCategory {
 pub struct ArcValue {
     pub category: ValueCategory,
     pub value: Option<ErasedArc>,
-    serialize_fn: Option<Arc<SerializeFn>>, // Reduced type complexity with alias
+    serialize_fn: Option<Arc<SerializeFn>>,
+    to_json_fn: Option<Arc<ToJsonFn>>,
 }
 
 impl fmt::Debug for ArcValue {
@@ -112,6 +115,7 @@ impl ArcValue {
             category: ValueCategory::Null,
             value: None,
             serialize_fn: None,
+            to_json_fn: None,
         }
     }
 
@@ -132,6 +136,7 @@ impl ArcValue {
             category: ValueCategory::Primitive,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
+            to_json_fn: None,
         }
     }
 
@@ -145,6 +150,7 @@ impl ArcValue {
             category: ValueCategory::List,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
+            to_json_fn: None,
         }
     }
 
@@ -158,6 +164,7 @@ impl ArcValue {
             category: ValueCategory::Map,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
+            to_json_fn: None,
         }
     }
 
@@ -175,10 +182,15 @@ impl ArcValue {
                 serde_cbor::to_vec(&*val).map_err(anyhow::Error::from)
             }
         });
+        let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
+            let val = erased.as_arc::<T>()?;
+            serde_json::to_value(val.as_ref().clone()).map_err(anyhow::Error::from)
+        });
         Self {
             category: ValueCategory::Struct,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
+            to_json_fn: Some(to_json_fn),
         }
     }
 
@@ -192,6 +204,7 @@ impl ArcValue {
             category: ValueCategory::Bytes,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
+            to_json_fn: None,
         }
     }
 
@@ -205,6 +218,7 @@ impl ArcValue {
             category: ValueCategory::Json,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
+            to_json_fn: None,
         }
     }
 
@@ -305,7 +319,8 @@ impl ArcValue {
                 Ok(Self {
                     category,
                     value: Some(ErasedArc::from_value(lazy)),
-                    serialize_fn: None, // Serialize fn will be set when resolved
+                    serialize_fn: None,  
+                    to_json_fn: None,
                 })
             }
         }
@@ -398,33 +413,24 @@ impl ArcValue {
             return inner.as_arc::<T>();
         }
 
-        // Lazy path – must reconstruct from serialized bytes.
-        let lazy = inner.get_lazy_data()?;
-        let mut payload: Vec<u8> =
-            lazy.original_buffer[lazy.start_offset..lazy.end_offset].to_vec();
+        // Use unified lazy data handling
+        self.handle_lazy_data(|payload, _type_name| {
+            // Attempt direct deserialisation (primitives, Plain structs, or when
+            // the caller asked for the *encrypted* representation itself).
+            if let Ok(val) = serde_cbor::from_slice::<T>(payload) {
+                return Ok(Arc::new(val));
+            }
 
-        // If the outer envelope is present, unwrap it first.
-        if lazy.encrypted {
+            // Registry fallback – decrypt into the requested plain type.
+            // We need to get the keystore from the lazy data for this
+            let lazy = inner.get_lazy_data()?;
             let ks = lazy
                 .keystore
                 .as_ref()
-                .ok_or_else(|| anyhow!("Keystore required for outer decryption"))?;
-            payload = decrypt_bytes(&payload, ks)?;
-        }
-
-        // Attempt direct deserialisation (primitives, Plain structs, or when
-        // the caller asked for the *encrypted* representation itself).
-        if let Ok(val) = serde_cbor::from_slice::<T>(&payload) {
-            return Ok(Arc::new(val));
-        }
-
-        // Registry fallback – decrypt into the requested plain type.
-        let ks = lazy
-            .keystore
-            .as_ref()
-            .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
-        let plain: T = crate::registry::try_decrypt_into::<T>(&payload, ks)?;
-        Ok(Arc::new(plain))
+                .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
+            let plain: T = crate::registry::try_decrypt_into::<T>(payload, ks)?;
+            Ok(Arc::new(plain))
+        })
     }
 
     pub fn as_typed_list_ref<T>(&self) -> Result<Vec<Arc<T>>>
@@ -502,21 +508,9 @@ impl ArcValue {
         }
         let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
         if inner.is_lazy {
-            let lazy = inner.get_lazy_data()?;
-            let bytes = &lazy.original_buffer[lazy.start_offset..lazy.end_offset];
-            let is_encrypted = lazy.type_name.starts_with("Encrypted<")
-                || (self.category == ValueCategory::Struct && lazy.keystore.is_some());
-            let bytes = if is_encrypted {
-                decrypt_bytes(
-                    bytes,
-                    lazy.keystore
-                        .as_ref()
-                        .ok_or(anyhow!("Keystore required for decryption"))?,
-                )?
-            } else {
-                bytes.to_vec()
-            };
-            Ok(Arc::new(bytes))
+            self.handle_lazy_data(|payload, _type_name| {
+                Ok(Arc::new(payload.to_vec()))
+            })
         } else {
             inner.as_arc::<Vec<u8>>()
         }
@@ -527,6 +521,39 @@ impl ArcValue {
             return Err(anyhow!("Not JSON"));
         }
         self.as_type_ref::<JsonValue>()
+    }
+
+
+
+    /// Unified lazy data handling helper that extracts and processes lazy data.
+    /// This centralizes all lazy data logic to avoid duplication.
+    fn handle_lazy_data<F, R>(&self, process_fn: F) -> Result<R>
+    where
+        F: FnOnce(&[u8], &str) -> Result<R>,
+    {
+        let inner = self.value.as_ref().ok_or_else(|| anyhow!("No value"))?;
+
+        // Fast path – already materialised object stored inside ErasedArc.
+        if !inner.is_lazy {
+            return Err(anyhow!("Not lazy data"));
+        }
+
+        // Lazy path – must reconstruct from serialized bytes.
+        let lazy = inner.get_lazy_data()?;
+        let mut payload: Vec<u8> =
+            lazy.original_buffer[lazy.start_offset..lazy.end_offset].to_vec();
+
+        // If the outer envelope is present, unwrap it first.
+        if lazy.encrypted {
+            let ks = lazy
+                .keystore
+                .as_ref()
+                .ok_or_else(|| anyhow!("Keystore required for outer decryption"))?;
+            payload = crate::encryption::decrypt_bytes(&payload, ks)?;
+        }
+
+        // Process the payload using the provided function
+        process_fn(&payload, &lazy.type_name)
     }
 
     pub fn from_json(json: JsonValue) -> Self {
@@ -552,7 +579,7 @@ impl ArcValue {
         }
     }
 
-    pub fn to_json(&mut self) -> Result<JsonValue> {
+    pub fn to_json(&self) -> Result<JsonValue> {
         match self.category {
             ValueCategory::Null => Ok(JsonValue::Null),
             ValueCategory::Primitive => {
@@ -568,15 +595,31 @@ impl ArcValue {
                 } else if let Ok(arc) = self.as_type_ref::<bool>() {
                     Ok(JsonValue::Bool(*arc))
                 } else {
-                    Err(anyhow!("Unsupported primitive for JSON"))
+                    // Try to handle Vec<ArcValue> and HashMap<String, ArcValue> even if they're marked as Primitive
+                    if let Ok(vec) = self.as_type_ref::<Vec<ArcValue>>() {
+                        let mut json_array = Vec::new();
+                        for arc_value in vec.as_ref() {
+                            let json_value = arc_value.to_json()?;
+                            json_array.push(json_value);
+                        }
+                        Ok(JsonValue::Array(json_array))
+                    } else if let Ok(map) = self.as_type_ref::<HashMap<String, ArcValue>>() {
+                        let mut json_object = serde_json::Map::new();
+                        for (key, arc_value) in map.as_ref() {
+                            let json_value = arc_value.to_json()?;
+                            json_object.insert(key.clone(), json_value);
+                        }
+                        Ok(JsonValue::Object(json_object))
+                    } else {
+                        Err(anyhow!("Unsupported primitive for JSON"))
+                    }
                 }
             }
             ValueCategory::List => {
                 let list = self.as_list_ref()?;
                 let mut vec = Vec::new();
                 for item in list.iter() {
-                    let mut item_clone = item.clone();
-                    vec.push(item_clone.to_json()?);
+                     vec.push(item.to_json()?);
                 }
                 Ok(JsonValue::Array(vec))
             }
@@ -584,12 +627,35 @@ impl ArcValue {
                 let map = self.as_map_ref()?;
                 let mut json_map = serde_json::Map::new();
                 for (k, v) in map.iter() {
-                    let mut v_clone = v.clone();
-                    json_map.insert(k.clone(), v_clone.to_json()?);
+                    json_map.insert(k.clone(), v.to_json()?);
                 }
                 Ok(JsonValue::Object(json_map))
             }
             ValueCategory::Json => Ok(self.as_json_ref()?.as_ref().clone()),
+            ValueCategory::Struct => {
+                // First try the stored to_json_fn if available
+                if let Some(json_fn) = &self.to_json_fn {
+                    let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
+                    let json_value = json_fn(inner)?;
+                    return Ok(json_value);
+                }
+                
+                // Fallback to registry lookup for deserialized structs
+                let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
+                if inner.is_lazy {
+                    self.handle_lazy_data(|payload, type_name| {
+                        // Try to find JSON converter by type name
+                        if let Some(json_fn) = crate::registry::get_json_converter(type_name) {
+                            return json_fn(payload);
+                        }
+                        
+                        // If registry lookup fails, return a more specific error
+                        Err(anyhow!("No JSON converter available for struct type: {}", type_name))
+                    })
+                } else {
+                    Err(anyhow!("No to_json function available and no registry fallback"))
+                }
+            }
             _ => Err(anyhow!("Unsupported category for JSON")),
         }
     }
@@ -738,6 +804,7 @@ impl ArcValue {
                             category,
                             value: Some(ErasedArc::from_value(lazy_data)),
                             serialize_fn: None,
+                            to_json_fn: None,
                         })
                     }
                 }

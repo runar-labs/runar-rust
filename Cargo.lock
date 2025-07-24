@@ -3416,6 +3416,7 @@ name = "runar-schemas"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ctor 0.2.9",
  "prost",
  "runar-serializer",
  "runar-serializer-macros",
@@ -3545,6 +3546,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
+ "ctor 0.2.9",
  "dashmap",
  "env_logger",
  "futures",
@@ -3591,6 +3593,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "ctor 0.2.9",
  "futures",
  "hex",
  "prost",

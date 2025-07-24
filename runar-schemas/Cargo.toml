@@ -13,3 +13,4 @@ prost = { version = "0.12", default-features = false, features = ["std", "derive
 runar-serializer = { path = "../runar-serializer" }
 runar-serializer-macros = { path = "../runar-serializer-macros" }
 anyhow = { workspace = true } 
+ctor = "0.2"
