@@ -8,8 +8,8 @@ use runar_serializer::{ArcValue, Plain};
 use runar_test_utils::create_node_test_config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
-use std::{collections::HashMap, sync::Arc};
 use std::net::SocketAddr;
+use std::{collections::HashMap, sync::Arc};
 use tokio::time::{sleep, Duration};
 
 // --- Test Data Struct ---
@@ -70,7 +70,7 @@ async fn test_gateway_routes() -> Result<()> {
     let node_config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
- 
+
     let logger = Arc::new(Logger::new_root(Component::Custom("gateway_test"), ""));
 
     let mut node = Node::new(node_config).await?;
@@ -90,7 +90,7 @@ async fn test_gateway_routes() -> Result<()> {
     // 5. Start Node
     node.start().await?;
     logger.debug(
-        "Node started, allowing time for GatwayService to initialize and Axum server to start..."
+        "Node started, allowing time for GatwayService to initialize and Axum server to start...",
     );
     sleep(Duration::from_millis(1000)).await; // Increased delay to ensure server is up
 
@@ -132,7 +132,9 @@ async fn test_gateway_routes() -> Result<()> {
     // --- Test POST echo_list ---
     let list_payload = json!(["apple", "banana", json!({"fruit_type": "cherry"}), 100]);
     let echo_list_url = format!("{base_url}/{echo_service_path}/echo_list");
-    logger.debug(format!("Testing POST: {echo_list_url} with payload: {list_payload}"));
+    logger.debug(format!(
+        "Testing POST: {echo_list_url} with payload: {list_payload}"
+    ));
     let response_list = client
         .post(&echo_list_url)
         .json(&list_payload)
@@ -158,7 +160,9 @@ async fn test_gateway_routes() -> Result<()> {
         }
     });
     let echo_map_url = format!("{base_url}/{echo_service_path}/echo_map");
-    logger.debug(format!("Testing POST: {echo_map_url} with payload: {map_payload}"));
+    logger.debug(format!(
+        "Testing POST: {echo_map_url} with payload: {map_payload}"
+    ));
     let response_map = client.post(&echo_map_url).json(&map_payload).send().await?;
     assert_eq!(
         response_map.status(),
@@ -180,7 +184,9 @@ async fn test_gateway_routes() -> Result<()> {
     };
     let struct_payload_json = serde_json::to_value(&struct_payload_data)?;
     let echo_struct_url = format!("{base_url}/{echo_service_path}/echo_struct");
-    logger.debug(format!("Testing POST: {echo_struct_url} with payload: {struct_payload_json}"));
+    logger.debug(format!(
+        "Testing POST: {echo_struct_url} with payload: {struct_payload_json}"
+    ));
     let response_struct = client
         .post(&echo_struct_url)
         .json(&struct_payload_json)

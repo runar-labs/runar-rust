@@ -259,7 +259,7 @@ impl AbstractService for GatwayService {
                 let services_vec: Vec<ArcValue> = services_arc_value
                     .as_type()
                     .expect("Failed to convert ArcValue to Vec<ArcValue>");
-                
+
                 for service_arc_value in services_vec {
                     let service_meta: ServiceMetadata = service_arc_value
                         .as_type()

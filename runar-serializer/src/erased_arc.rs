@@ -204,7 +204,7 @@ impl ErasedArc {
     pub fn eq_value(&self, other: &ErasedArc) -> bool {
         let self_type = self.type_name();
         let other_type = other.type_name();
-        
+
         // First, ensure type compatibility (ignoring namespaces)
         if !compare_type_names(self_type, other_type) {
             return false;
@@ -285,8 +285,6 @@ fn compare_type_names(a: &str, b: &str) -> bool {
     if b.contains("Box<") && b.contains(a_simple) {
         return true;
     }
-
-
 
     false
 }

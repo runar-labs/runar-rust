@@ -170,10 +170,12 @@ impl JsNode {
     ) -> napi::Result<JsonValue> {
         let node = self.inner.lock().await;
         let payload_av: Option<ArcValue> = payload.map(ArcValue::new_json);
-        let resp: JsonValue = node
-            .request::<ArcValue, JsonValue>(path, payload_av)
+        let resp_arc = node
+            .request(path, payload_av)
             .await
             .map_err(anyhow_to_napi_error)?;
+
+        let resp = resp_arc.to_json().map_err(anyhow_to_napi_error)?;
         Ok(resp)
     }
 
@@ -318,8 +320,8 @@ impl AbstractService for JsWrapperService {
                     // Convert payload to JSON that can be sent across the FFI boundary
                     let payload_json = match &payload {
                         Some(av) => {
-                            let mut av_mut = av.clone();
-                            av_mut.to_json_value().map_err(|e| {
+                            let av_mut = av.clone();
+                            av_mut.to_json().map_err(|e| {
                                 anyhow::anyhow!("Failed to convert payload to JSON: {e}")
                             })?
                         }

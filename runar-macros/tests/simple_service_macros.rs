@@ -118,18 +118,12 @@ impl TestService {
     }
 
     #[action]
-    async fn echo_single_struct(
-        &self,
-        params: PreWrappedStruct,
-    ) -> Result<PreWrappedStruct> {
+    async fn echo_single_struct(&self, params: PreWrappedStruct) -> Result<PreWrappedStruct> {
         Ok(params)
     }
 
     #[action]
-    async fn echo_list(
-        &self,
-        params: Vec<ArcValue>,
-    ) -> Result<Vec<ArcValue>> {
+    async fn echo_list(&self, params: Vec<ArcValue>) -> Result<Vec<ArcValue>> {
         Ok(params)
     }
 
@@ -345,12 +339,12 @@ impl TestService {
 mod tests {
 
     use super::*;
+    use runar_common::logging::{Component, Logger};
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
     use runar_node::Node;
     use runar_test_utils::create_node_test_config;
     use serde_json::json;
-    use runar_common::logging::{Logger, Component};
 
     struct TestContext {
         node: Node,
@@ -401,7 +395,8 @@ mod tests {
         ctx.logger.debug("Testing service metadata");
 
         // Fetch ServiceMetadata for the "math" service
-        let service_metadata_response_arc: ArcValue = ctx.node
+        let service_metadata_response_arc: ArcValue = ctx
+            .node
             .request("$registry/services/math", None::<ArcValue>) // Corrected path and payload with type annotation
             .await
             .expect("Failed to get 'math' service metadata");
@@ -456,7 +451,8 @@ mod tests {
         ctx.logger.debug("Testing basic math actions");
 
         // Call the add action directly with `params!`.
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
             .await
             .expect("Failed to call add action");
@@ -466,7 +462,8 @@ mod tests {
         assert_eq!(response, 15.0);
 
         // Test subtract action
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/subtract", Some(params! { "a" => 10.0, "b" => 5.0 }))
             .await
             .expect("Failed to call subtract action");
@@ -479,7 +476,8 @@ mod tests {
         // Create parameters for the add action
         let params = params! { "a" => 5.0, "b" => 3.0 };
 
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/multiply_numbers", Some(params))
             .await
             .expect("Failed to call multiply_numbers action");
@@ -491,7 +489,8 @@ mod tests {
         // Make a request to the divide action with valid parameters
         let params = params! { "a" => 6.0, "b" => 3.0 };
 
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/divide", Some(params))
             .await
             .expect("Failed to call divide action");
@@ -521,7 +520,8 @@ mod tests {
 
         // Make a request to the get_user action
         let params = ArcValue::new_primitive(42);
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/get_user", Some(params))
             .await
             .expect("Failed to call get_user action");
@@ -537,7 +537,8 @@ mod tests {
         ctx.logger.debug("Testing my_data action");
 
         // Make a request to the get_my_data action
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/my_data", Some(ArcValue::new_primitive(100)))
             .await
             .expect("Failed to call my_data action");
@@ -566,7 +567,8 @@ mod tests {
         ctx.logger.debug("Testing events storage");
 
         // Trigger events by calling add action first (this will create the first added event with 15.0)
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
             .await
             .expect("Failed to call add action");
@@ -574,7 +576,8 @@ mod tests {
         assert_eq!(add_result, 15.0);
 
         // Then trigger events by calling my_data action (this will create the second added event with 1500.0)
-        let response_arc: ArcValue = ctx.node
+        let response_arc: ArcValue = ctx
+            .node
             .request("math/my_data", Some(ArcValue::new_primitive(100)))
             .await
             .expect("Failed to call my_data action");
@@ -594,7 +597,8 @@ mod tests {
                 my_data_vec[0], my_data,
                 "The first my_data_auto event doesn't match expected data"
             );
-            ctx.logger.debug(format!("my_data_auto events count: {}", my_data_vec.len()));
+            ctx.logger
+                .debug(format!("my_data_auto events count: {}", my_data_vec.len()));
         } else {
             panic!("Expected 'my_data_auto' key in store, but it wasn't found");
         }
@@ -609,7 +613,8 @@ mod tests {
                 "Expected second added value to be 1500.0"
             ); // 1000.0 + 500.0
             assert_eq!(added_vec.len(), 2, "Expected two added events");
-            ctx.logger.debug(format!("added events count: {}", added_vec.len()));
+            ctx.logger
+                .debug(format!("added events count: {}", added_vec.len()));
         } else {
             panic!("Expected 'added' key in store, but it wasn't found");
         }
@@ -625,7 +630,10 @@ mod tests {
                 changed_vec[0].id, my_data.id,
                 "Expected first my_data_changed.id to match"
             );
-            ctx.logger.debug(format!("my_data_changed events count: {}", changed_vec.len()));
+            ctx.logger.debug(format!(
+                "my_data_changed events count: {}",
+                changed_vec.len()
+            ));
         } else {
             panic!("Expected 'my_data_changed' key in store, but it wasn't found");
         }
@@ -639,7 +647,8 @@ mod tests {
             );
             assert_eq!(age_vec[0], 25, "Expected first age_changed value to be 25");
             assert_eq!(age_vec.len(), 1, "Expected one age_changed event");
-            ctx.logger.debug(format!("age_changed events count: {}", age_vec.len()));
+            ctx.logger
+                .debug(format!("age_changed events count: {}", age_vec.len()));
         } else {
             panic!("Expected 'age_changed' key in store, but it wasn't found");
         }
@@ -655,7 +664,8 @@ mod tests {
         let param: Vec<HashMap<String, String>> = vec![temp_map];
         let arc_value = ArcValue::new_primitive(param);
         // complex_data
-        let list_result_arc: ArcValue = ctx.node
+        let list_result_arc: ArcValue = ctx
+            .node
             .request("math/complex_data", Some(arc_value))
             .await
             .expect("Failed to call complex_data action");
@@ -680,7 +690,8 @@ mod tests {
             ),
             ("val_int".to_string(), ArcValue::new_primitive(999i32)),
         ]);
-        let pre_wrapped_res_arc: ArcValue = ctx.node
+        let pre_wrapped_res_arc: ArcValue = ctx
+            .node
             .request(
                 "math/echo_pre_wrapped_struct",
                 Some(ArcValue::new_map(pre_wrapped_params.clone())),
@@ -693,7 +704,8 @@ mod tests {
         assert_eq!(pre_wrapped_res.id, "test_pre_wrap");
         assert_eq!(pre_wrapped_res.value, 999);
 
-        let pre_wrapped_option_res_arc: ArcValue = ctx.node
+        let pre_wrapped_option_res_arc: ArcValue = ctx
+            .node
             .request(
                 "math/echo_pre_wrapped_struct",
                 Some(ArcValue::new_map(pre_wrapped_params)),
@@ -720,7 +732,8 @@ mod tests {
         //test echo action with direct string
         let payload = Some(ArcValue::new_primitive("Hello, world!".to_string()));
 
-        let result_arc: ArcValue = ctx.node
+        let result_arc: ArcValue = ctx
+            .node
             .request("math/echo", payload)
             .await
             .expect("Failed to call echo action");
@@ -729,7 +742,8 @@ mod tests {
         assert_eq!(result, "Hello, world!");
 
         let payload = Some(ArcValue::new_primitive("Hello, world!".to_string()));
-        let result_arc: ArcValue = ctx.node
+        let result_arc: ArcValue = ctx
+            .node
             .request("math/echo", payload)
             .await
             .expect("Failed to call echo action");
@@ -745,32 +759,65 @@ mod tests {
 
         // Test echo_map action to verify HashMap return type bug
         let test_map = HashMap::from([
-            ("key1".to_string(), ArcValue::new_primitive("value1".to_string())),
+            (
+                "key1".to_string(),
+                ArcValue::new_primitive("value1".to_string()),
+            ),
             ("key2".to_string(), ArcValue::new_primitive(123i32)),
-            ("nested".to_string(), ArcValue::new_map(HashMap::from([
-                ("n_key".to_string(), ArcValue::new_primitive(true)),
-            ]))),
+            (
+                "nested".to_string(),
+                ArcValue::new_map(HashMap::from([(
+                    "n_key".to_string(),
+                    ArcValue::new_primitive(true),
+                )])),
+            ),
         ]);
-        
+
         let map_payload = ArcValue::new_map(test_map.clone());
-        let map_result_arc: ArcValue = ctx.node
+        let map_result_arc: ArcValue = ctx
+            .node
             .request("math/echo_map", Some(map_payload))
             .await
             .expect("Failed to call echo_map action");
-        
+
         // Check if the returned ArcValue has the correct category
-        ctx.logger.debug(format!("echo_map result category: {:?}", map_result_arc.category));
+        ctx.logger.debug(format!(
+            "echo_map result category: {:?}",
+            map_result_arc.category
+        ));
         // This should be Map, not Primitive
-        
+
         let map_result: HashMap<String, ArcValue> = map_result_arc
             .as_type()
             .expect("Failed to convert to HashMap<String, ArcValue>");
 
         assert_eq!(map_result.len(), 3);
-        assert_eq!(map_result.get("key1").unwrap().as_type::<String>().unwrap(), "value1");
-        assert_eq!(map_result.get("key2").unwrap().as_type::<i32>().unwrap(), 123);
-        assert_eq!(map_result.get("nested").unwrap().as_type::<HashMap<String, ArcValue>>().unwrap().len(), 1);
-        assert!(map_result.get("nested").unwrap().as_type::<HashMap<String, ArcValue>>().unwrap().get("n_key").unwrap().as_type::<bool>().unwrap());
+        assert_eq!(
+            map_result.get("key1").unwrap().as_type::<String>().unwrap(),
+            "value1"
+        );
+        assert_eq!(
+            map_result.get("key2").unwrap().as_type::<i32>().unwrap(),
+            123
+        );
+        assert_eq!(
+            map_result
+                .get("nested")
+                .unwrap()
+                .as_type::<HashMap<String, ArcValue>>()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(map_result
+            .get("nested")
+            .unwrap()
+            .as_type::<HashMap<String, ArcValue>>()
+            .unwrap()
+            .get("n_key")
+            .unwrap()
+            .as_type::<bool>()
+            .unwrap());
 
         assert_eq!(map_result, test_map);
     }
@@ -788,30 +835,37 @@ mod tests {
             "value": 42
         })));
 
-        let single_struct_result_arc: ArcValue = ctx.node
+        let single_struct_result_arc: ArcValue = ctx
+            .node
             .request("math/echo_single_struct", single_struct_payload)
             .await
             .expect("Failed to call echo_single_struct action");
-        
+
         let single_struct_result: PreWrappedStruct = single_struct_result_arc
             .as_type()
             .expect("Failed to convert to PreWrappedStruct");
-        
+
         assert_eq!(single_struct_result.id, "test_single_struct");
         assert_eq!(single_struct_result.value, 42);
 
         //try to convert to json
-        let json_result = single_struct_result_arc.to_json().expect("Failed to convert to JSON");
-        assert_eq!(json_result, json!({
-            "id": "test_single_struct",
-            "value": 42
-        }));
+        let json_result = single_struct_result_arc
+            .to_json()
+            .expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!({
+                "id": "test_single_struct",
+                "value": 42
+            })
+        );
     }
 
     #[tokio::test]
     async fn test_echo_with_json_map_payload() {
         let ctx = create_test_context().await;
-        ctx.logger.debug("Testing echo action with JSON map payload (gateway test scenario)");
+        ctx.logger
+            .debug("Testing echo action with JSON map payload (gateway test scenario)");
 
         // This replicates the gateway test scenario where a JSON object is sent to an action
         // that expects a single String parameter. The JSON object should be converted to the String.
@@ -819,13 +873,14 @@ mod tests {
             "message": "hello from gateway test"
         })));
 
-        let result_arc: ArcValue = ctx.node
+        let result_arc: ArcValue = ctx
+            .node
             .request("math/echo", json_map_payload)
             .await
             .expect("Failed to call echo action with JSON map payload");
-        
+
         let result: String = result_arc.as_type().expect("Failed to convert to String");
-        
+
         // The echo action should extract the "message" field from the JSON object
         assert_eq!(result, "hello from gateway test");
     }
@@ -833,40 +888,54 @@ mod tests {
     #[tokio::test]
     async fn test_echo_list_action() {
         let ctx = create_test_context().await;
-        ctx.logger.debug("Testing echo_list action (gateway test scenario)");
+        ctx.logger
+            .debug("Testing echo_list action (gateway test scenario)");
 
         // Test echo_list action to reproduce the gateway test scenario
         // This tests the case where an action returns a list that should be properly converted to JSON
         let list_payload = Some(ArcValue::new_json(json!([
             "apple",
-            "banana", 
+            "banana",
             {"fruit_type": "cherry"},
             100
         ])));
 
-        let echo_list_result_arc: ArcValue = ctx.node
+        let echo_list_result_arc: ArcValue = ctx
+            .node
             .request("math/echo_list", list_payload)
             .await
             .expect("Failed to call echo_list action");
-        
+
         // Test that the result can be converted to JSON properly
-        let json_result = echo_list_result_arc.to_json().expect("Failed to convert to JSON");
-        assert_eq!(json_result, json!([
-            "apple",
-            "banana", 
-            {"fruit_type": "cherry"},
-            100
-        ]));
-        
+        let json_result = echo_list_result_arc
+            .to_json()
+            .expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!([
+                "apple",
+                "banana",
+                {"fruit_type": "cherry"},
+                100
+            ])
+        );
+
         // Also test that we can extract it as a Vec<ArcValue>
         let list_result: Vec<ArcValue> = echo_list_result_arc
             .as_type()
             .expect("Failed to convert to Vec<ArcValue>");
-        
+
         assert_eq!(list_result.len(), 4);
         assert_eq!(list_result[0].as_type::<String>().unwrap(), "apple");
         assert_eq!(list_result[1].as_type::<String>().unwrap(), "banana");
-        assert_eq!(list_result[2].as_type::<HashMap<String, ArcValue>>().unwrap()["fruit_type"].as_type::<String>().unwrap(), "cherry");
+        assert_eq!(
+            list_result[2]
+                .as_type::<HashMap<String, ArcValue>>()
+                .unwrap()["fruit_type"]
+                .as_type::<String>()
+                .unwrap(),
+            "cherry"
+        );
         assert_eq!(list_result[3].as_type::<i64>().unwrap(), 100);
     }
 
@@ -889,7 +958,8 @@ mod tests {
         let profiles_param: Vec<HashMap<String, TestProfile>> = vec![prof_map];
         let arc_value = ArcValue::new_primitive(profiles_param.clone());
 
-        let profile_result_arc: ArcValue = ctx.node
+        let profile_result_arc: ArcValue = ctx
+            .node
             .request("math/complex_profile", Some(arc_value))
             .await
             .expect("Failed to call complex_profile action");

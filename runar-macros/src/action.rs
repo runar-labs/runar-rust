@@ -200,7 +200,16 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Extract information about the return type for proper handling.
 // This function robustly supports all valid Rust types, including nested generics.
 fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
-                let (actual_type, is_unit, actual_type_is_option, is_primitive, type_name, is_hashmap, is_list, is_struct) = match return_type {
+    let (
+        actual_type,
+        is_unit,
+        actual_type_is_option,
+        is_primitive,
+        type_name,
+        is_hashmap,
+        is_list,
+        is_struct,
+    ) = match return_type {
         ReturnType::Default => (
             syn::parse_quote! { () },
             true,
@@ -252,7 +261,8 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
             let is_list_val = is_vec_type(&current_type);
 
             // Everything else is a struct (let compiler handle trait bounds)
-            let is_struct_val = !is_primitive_val && !is_hashmap_val && !is_list_val && type_name_str != "unit";
+            let is_struct_val =
+                !is_primitive_val && !is_hashmap_val && !is_list_val && type_name_str != "unit";
 
             (
                 current_type,
@@ -364,20 +374,34 @@ fn is_primitive_type(ty: &syn::Type) -> bool {
     if let syn::Type::Path(type_path) = ty {
         // Check if it's a standard library primitive or simple type
         let type_name = get_path_last_segment_ident_string(type_path).unwrap_or_default();
-        
+
         // Standard library primitives only
         matches!(
             type_name.as_str(),
-            "String" | "str" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
-            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" |
-            "f32" | "f64" | "bool" | "char" | "unit"
+            "String"
+                | "str"
+                | "i8"
+                | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize"
+                | "f32"
+                | "f64"
+                | "bool"
+                | "char"
+                | "unit"
         )
     } else {
         false
     }
 }
-
-
 
 // Helper to extract T from Result<T, E>
 fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
@@ -413,8 +437,6 @@ fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     }
     None
 }
-
-
 
 fn generate_field_schema_for_type(
     field_name_str: &str,
@@ -598,7 +620,8 @@ fn generate_register_action_method(
             let inner_type = get_vec_inner_type(&return_type_info.actual_type);
             if let Some(inner_ty) = inner_type {
                 if let syn::Type::Path(type_path) = inner_ty {
-                    if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
+                    if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue")
+                    {
                         quote! {
                             // Convert the Vec<ArcValue> result to ArcValue using new_list
                             let value_type = runar_serializer::ArcValue::new_list(result);
@@ -769,7 +792,6 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
                                     ctx.error(format!("Failed to get JSON value: {}", err));
                                     anyhow!("Failed to get JSON value: {}", err)
                                 })?;
-                            
                             // Try to extract the field with the parameter name
                             if let Some(field_value) = json_value.get(#param_name_str) {
                                 // Convert the JSON field value to the target type
