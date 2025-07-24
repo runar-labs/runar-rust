@@ -26,6 +26,25 @@ struct UserProfile {
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
+struct AdminUser {
+    user: User,
+    admin_level: i32,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct StringBuilder {
+    parts: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct Vector {
+    elements: Vec<i32>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BoxedUser {
     user: Box<User>,
 }
@@ -495,4 +514,73 @@ fn test_erased_arc_equality_safety_improvements() {
     assert!(erased_string1.eq_value(&erased_string1));
     assert!(erased_string2.eq_value(&erased_string2));
     assert!(erased_i32.eq_value(&erased_i32));
+}
+
+#[test]
+fn test_compare_type_names_should_fail_current_implementation() {
+    // This test demonstrates that the current implementation is broken
+    // and will cause these dangerous matches
+
+    println!("Testing current compare_type_names implementation through ErasedArc...");
+
+    let user_arc = ErasedArc::from_value(User {
+        id: 1,
+        name: "John".to_string(),
+    });
+    let user_data_arc = ErasedArc::from_value(UserData {
+        user: User {
+            id: 1,
+            name: "John".to_string(),
+        },
+        metadata: "test".to_string(),
+    });
+
+    // Test the type names directly
+    println!("User type name: {}", user_arc.type_name());
+    println!("UserData type name: {}", user_data_arc.type_name());
+
+    // Test equality comparison
+    let eq_result = user_arc.eq_value(&user_data_arc);
+    println!("user_arc.eq_value(&user_data_arc) = {eq_result}");
+
+    if eq_result {
+        println!("WARNING: Dangerous match detected! User equals UserData");
+    }
+
+    // Test unsafe casting
+    let cast_result = user_arc.as_arc::<UserData>();
+    println!("user_arc.as_arc::<UserData>() = {cast_result:?}");
+
+    if cast_result.is_ok() {
+        println!("WARNING: Dangerous cast detected! User can be cast to UserData");
+    }
+
+    println!("Current implementation may allow dangerous substring matches!");
+}
+
+#[test]
+fn test_dangerous_generic_type_matching() {
+    // This test demonstrates why Vec<i32> should NOT match Vec<String>
+    // The compare_type_names function is used to determine if casting is safe
+
+    let vec_i32 = vec![1, 2, 3];
+    let vec_string = vec!["a".to_string(), "b".to_string()];
+
+    let erased_vec_i32 = ErasedArc::from_value(vec_i32);
+    let erased_vec_string = ErasedArc::from_value(vec_string);
+
+    // These should have different type names
+    assert_ne!(erased_vec_i32.type_name(), erased_vec_string.type_name());
+
+    // Attempting to cast between different generic types should fail
+    assert!(erased_vec_i32.as_arc::<Vec<String>>().is_err());
+    assert!(erased_vec_string.as_arc::<Vec<i32>>().is_err());
+
+    // Casting to correct type should succeed
+    assert!(erased_vec_i32.as_arc::<Vec<i32>>().is_ok());
+    assert!(erased_vec_string.as_arc::<Vec<String>>().is_ok());
+
+    // If compare_type_names allowed Vec<i32> to match Vec<String>,
+    // the above as_arc calls would succeed, leading to memory corruption
+    // when trying to access i32 data as String data or vice versa.
 }
