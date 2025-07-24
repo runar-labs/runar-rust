@@ -16,12 +16,12 @@ pub struct UserService;
 
 #[service_impl]
 impl UserService {
-    #[action(name = "create_user")]
+    #[action]
     pub async fn create_user(
         &self,
         username: String,
         email: String,
-        password: String,
+        password_hash: String,
         _ctx: &RequestContext,
     ) -> Result<User> {
         // Placeholder implementation
@@ -36,7 +36,7 @@ impl UserService {
             id: format!("user_{}", now), // Generate ID based on timestamp
             username,
             email,
-            password_hash: format!("hash_{}", password), // In real app, this would be properly hashed
+            password_hash,
             created_at: now,
         })
     }

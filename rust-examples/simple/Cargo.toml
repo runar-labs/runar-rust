@@ -13,3 +13,5 @@ runar-test-utils = { path = "../../runar-test-utils" }
 async-trait = "0.1"
 runar-serializer = { path = "../../runar-serializer" }
 runar_macros_common = { path = "../../runar-macros-common" }
+runar-schemas = { path = "../../runar-schemas" }
+serde_json = "1.0"

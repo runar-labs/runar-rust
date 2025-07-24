@@ -16,17 +16,17 @@ pub struct OrderService;
 
 #[service_impl]
 impl OrderService {
-    #[action(name = "create_order")]
+    #[action]
     pub async fn create_order(
         &self,
         user_id: String,
         product_id: String,
         quantity: u32,
-        unit_price_cents: u64, // Changed from f64 to u64
+        total_price_cents: u64,
+        status: String,
         _ctx: &RequestContext,
     ) -> Result<Order> {
         // Placeholder implementation
-        let total_price_cents = quantity as u64 * unit_price_cents; // Changed from f64 calculation
         println!("OrderService: Called create_order for user_id: {user_id}");
 
         let now = SystemTime::now()
@@ -39,13 +39,13 @@ impl OrderService {
             user_id,
             product_id,
             quantity,
-            total_price_cents, // Changed from total_price
-            status: "pending".to_string(),
+            total_price_cents,
+            status,
             created_at: now,
         })
     }
 
-    #[action(name = "get_order")]
+    #[action]
     pub async fn get_order(&self, order_id: String, _ctx: &RequestContext) -> Result<Order> {
         // Placeholder implementation
         println!("OrderService: Called get_order for order_id: {order_id}");
@@ -60,7 +60,7 @@ impl OrderService {
             user_id: "user123".to_string(),
             product_id: "prod456".to_string(),
             quantity: 2,
-            total_price_cents: 2998, // Changed from 29.98 (2998 cents)
+            total_price_cents: 2998, // 29.98 in cents
             status: "completed".to_string(),
             created_at: now,
         })

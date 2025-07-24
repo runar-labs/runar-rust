@@ -16,7 +16,34 @@ pub struct ProfileService;
 
 #[service_impl]
 impl ProfileService {
-    #[action(name = "get_profile")]
+    #[action]
+    pub async fn create_profile(
+        &self,
+        user_id: String,
+        full_name: String,
+        bio: String,
+        private_notes: String,
+        _ctx: &RequestContext,
+    ) -> Result<Profile> {
+        // Placeholder implementation
+        println!("ProfileService: Called create_profile for user_id: {user_id}");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Ok(Profile {
+            id: format!("profile_{}", user_id),
+            user_id,
+            full_name,
+            bio,
+            private_notes,
+            last_updated: now,
+        })
+    }
+
+    #[action]
     pub async fn get_profile(&self, user_id: String, _ctx: &RequestContext) -> Result<Profile> {
         // Placeholder implementation
         println!("ProfileService: Called get_profile for user_id: {user_id}");
@@ -30,18 +57,18 @@ impl ProfileService {
             id: format!("profile_{}", user_id),
             user_id,
             full_name: "John Doe".to_string(),
-            bio: "Software developer".to_string(), // Changed from Some("Software developer".to_string())
+            bio: "Software developer".to_string(),
             private_notes: "Secret notes".to_string(),
             last_updated: now,
         })
     }
 
-    #[action(name = "update_profile")]
+    #[action]
     pub async fn update_profile(
         &self,
         user_id: String,
         full_name: String,
-        bio: String, // Changed from Option<String>
+        bio: String,
         _ctx: &RequestContext,
     ) -> Result<Profile> {
         // Placeholder implementation
@@ -56,7 +83,7 @@ impl ProfileService {
             id: format!("profile_{}", user_id),
             user_id,
             full_name,
-            bio, // Changed from bio.unwrap_or_default()
+            bio,
             private_notes: "Secret notes".to_string(),
             last_updated: now,
         })

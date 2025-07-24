@@ -1,13 +1,10 @@
-use runar_macros::{action, gateway, init, main, middleware, route, service, service_impl};
+use runar_macros::{action, service, service_impl};
 use runar_node::{
     anyhow::{self, Result},
     async_trait::async_trait,
-    node::NodeConfig,
     Node,
 };
-use runar_gateway::{
-    Gateway, GatewayConfig, Next, hyper::{Request, Response, Body}
-};
+use runar_gateway::GatwayService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,18 +14,16 @@ use uuid::Uuid;
 // Define a simple user service
 #[derive(Clone)]
 #[service(name = "user_service", path="user_service")]
-#[service_impl]
 pub struct UserService {
     users: Arc<RwLock<HashMap<Uuid, User>>>,
 }
 
-#[init]
+#[service_impl]
 impl UserService {
-    pub async fn new() -> Result<Self> {
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             users: Arc::new(RwLock::new(HashMap::new())),
-            ..Default::default()
-        })
+        }
     }
 }
 
@@ -77,101 +72,80 @@ impl UserService {
     }
 }
 
-// Define an auth middleware
-#[middleware]
-pub struct AuthMiddleware;
+// Define an API gateway service
+#[service(name = "api_gateway", path="api")]
+pub struct ApiGateway;
 
-impl AuthMiddleware {
+#[service_impl]
+impl ApiGateway {
     pub fn new() -> Self {
         Self {}
     }
+}
+
+#[async_trait]
+impl ApiGateway {
+    #[action]
+    async fn get_users(&self) -> Result<Vec<User>> {
+        // This would typically make a request to the user service
+        // For now, return empty list
+        Ok(vec![])
+    }
     
     #[action]
-    async fn handle_request(&self, req: &Request<hyper::Body>, next: Next<'_>) -> Result<Response<hyper::Body>> {
-        // In a real app, we would validate a token here
-        let token = req.headers()
-            .get("Authorization")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "));
-            
-        if token.is_none() {
-            // For this example, we'll only check if the header exists
-            // In a real app, we would validate the token
-            return Err(anyhow::anyhow!("Unauthorized"));
-        }
-        
-        // Continue processing
-        next.run(req).await
-    }
-}
-
-// Define the API gateway
-#[derive(Clone)]
-#[service(name="api_gateway", path="gateway")]
-#[service_impl]
-#[gateway(
-    host = "0.0.0.0",
-    port = 8080,
-    services = [UserService],
-    middleware = [AuthMiddleware::new()]
-)]
-pub struct ApiGateway;
-
-#[init]
-impl ApiGateway {
-    pub async fn new() -> Result<Self> {
-        Ok(Self { ..Default::default() })
-    }
-}
-
-impl ApiGateway {
-    // Public endpoints
-    #[route(GET, "/api/users")]
-    async fn get_users(&self) -> Result<Vec<User>> {
-        self.context.request("user_service", "get_users", {}).await
-    }
-    
-    #[route(POST, "/api/users")]
     async fn create_user(&self, req: CreateUserRequest) -> Result<User> {
-        self.context.request("user_service", "create_user", { req }).await
+        // This would typically make a request to the user service
+        // For now, create a mock user
+        Ok(User {
+            id: Uuid::new_v4(),
+            username: req.username,
+            email: req.email,
+        })
     }
     
-    #[route(GET, "/api/users/:id")]
+    #[action]
     async fn get_user(&self, id: Uuid) -> Result<User> {
-        self.context.request("user_service", "get_user", { id }).await
-    }
-    
-    // Protected endpoints
-    #[route(GET, "/api/profile", middleware = [AuthMiddleware])]
-    async fn get_profile(&self, #[from_context] user_id: Uuid) -> Result<User> {
-        self.context.request("user_service", "get_user", { id: user_id }).await
+        // This would typically make a request to the user service
+        // For now, return a mock user
+        Ok(User {
+            id,
+            username: "mock_user".to_string(),
+            email: "mock@example.com".to_string(),
+        })
     }
 }
 
-// Main application entry point
-#[main]
+#[tokio::main]
 async fn main() -> Result<()> {
-    // Create and initialize node
-    let mut node = Node::new(NodeConfig {
-        node_id: "api_node".to_string(),
-        data_dir: "./data".to_string(),
-        db_path: "./data/db".to_string(),
-        p2p_config: None, // Configure if P2P is needed
-    }).await?;
+    println!("🚀 Starting Gateway Example");
     
-    // Initialize services
-    let user_service = UserService::new().await?;
-    let api_gateway = ApiGateway::new().await?;
+    // Create a node
+    let mut node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
     
-    // Register services with the node using the proper add_service method
+    // Create and register services
+    let user_service = UserService::new();
+    let api_gateway = ApiGateway::new();
+    
     node.add_service(user_service).await?;
     node.add_service(api_gateway).await?;
     
-    // Start the node which will manage all services
+    // Create and register the HTTP gateway
+    let http_gateway = GatwayService::new("HTTP Gateway", "gateway");
+    node.add_service(http_gateway).await?;
+    
+    // Start the node
     node.start().await?;
     
-    // Wait for the node to complete (typically runs until interrupted)
-    node.wait_for_shutdown().await?;
+    println!("✅ Gateway example started successfully!");
+    println!("🌐 HTTP gateway should be available at http://localhost:3000");
+    println!("📡 Services registered:");
+    println!("   - user_service");
+    println!("   - api_gateway");
+    println!("   - HTTP gateway");
+    
+    // Keep the node running
+    tokio::signal::ctrl_c().await?;
+    println!("🛑 Shutting down...");
     
     Ok(())
 } 

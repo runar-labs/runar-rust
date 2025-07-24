@@ -2345,9 +2345,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "ctor",
  "futures",
  "prost",
  "runar-keys",
+ "runar-schemas",
  "runar-serializer",
  "runar-test-utils",
  "runar_common",
@@ -4079,12 +4081,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "runar-schemas",
  "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
  "runar_macros_common",
  "runar_node",
+ "serde_json",
  "tokio",
 ]
 

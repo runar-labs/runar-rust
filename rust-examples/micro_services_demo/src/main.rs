@@ -4,10 +4,11 @@ use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::traits::{
-    ConfigurableLabelResolver, KeyMappingConfig, KeyScope, LabelKeyInfo,
+    ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo,
 };
-use runar_serializer::{ArcValue, SerializerRegistry, ValueCategory};
+use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
+use runar_macros_common::params;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -74,8 +75,8 @@ impl MockDatabase {
 async fn setup_encryption() -> Result<(
     Arc<MobileKeyManager>,
     Arc<NodeKeyManager>,
-    SerializerRegistry,
-    SerializerRegistry,
+    ConfigurableLabelResolver,
+    ConfigurableLabelResolver,
     String,
 )> {
     let logger = Arc::new(Logger::new_root(Component::System, "encryption-demo"));
@@ -98,301 +99,272 @@ async fn setup_encryption() -> Result<(
     let node_mgr = Arc::new(node_mgr);
 
     // -------- Label resolvers --------
-    let mobile_resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+    println!("🔑 Setting up label resolvers...");
+
+    // Mobile label resolver (user context)
+    let mobile_mappings = KeyMappingConfig {
         label_mappings: HashMap::from([
             (
-                "user".into(),
+                "user".to_string(),
                 LabelKeyInfo {
-                    public_key: profile_pk.clone(),
-                    scope: KeyScope::Profile,
+                    profile_public_keys: vec![profile_pk.clone()],
+                    network_id: Some(network_id.clone()),
                 },
             ),
             (
-                "system".into(),
+                "system".to_string(),
                 LabelKeyInfo {
-                    public_key: network_pub.clone(),
-                    scope: KeyScope::Network,
+                    profile_public_keys: vec![network_pub.clone()],
+                    network_id: Some(network_id.clone()),
                 },
             ),
             (
-                "search".into(),
+                "search".to_string(),
                 LabelKeyInfo {
-                    public_key: network_pub.clone(),
-                    scope: KeyScope::Network,
+                    profile_public_keys: vec![network_pub.clone()],
+                    network_id: Some(network_id.clone()),
                 },
             ),
         ]),
-    }));
+    };
+    let mobile_resolver = ConfigurableLabelResolver::new(mobile_mappings);
 
-    let node_resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+    // Node label resolver (system context)
+    let node_mappings = KeyMappingConfig {
         label_mappings: HashMap::from([
             (
-                "system".into(),
+                "user".to_string(),
                 LabelKeyInfo {
-                    public_key: network_pub.clone(),
-                    scope: KeyScope::Network,
+                    profile_public_keys: vec![profile_pk.clone()],
+                    network_id: Some(network_id.clone()),
                 },
             ),
             (
-                "search".into(),
+                "system".to_string(),
                 LabelKeyInfo {
-                    public_key: network_pub.clone(),
-                    scope: KeyScope::Network,
+                    profile_public_keys: vec![network_pub.clone()],
+                    network_id: Some(network_id.clone()),
+                },
+            ),
+            (
+                "search".to_string(),
+                LabelKeyInfo {
+                    profile_public_keys: vec![network_pub.clone()],
+                    network_id: Some(network_id.clone()),
                 },
             ),
         ]),
-    }));
+    };
+    let node_resolver = ConfigurableLabelResolver::new(node_mappings);
 
-    // -------- Serializer registries --------
-    println!("📝 Setting up Serializer Registries...");
-    let mut mobile_registry = SerializerRegistry::with_keystore(
-        logger.clone(),
-        mobile_mgr.clone(),
-        mobile_resolver.clone(),
-    );
-    mobile_registry.register_encryptable::<User>()?;
-    mobile_registry.register_encryptable::<Profile>()?;
-    mobile_registry.register_encryptable::<Account>()?;
-    mobile_registry.register_encryptable::<Order>()?;
-
-    let mut node_registry =
-        SerializerRegistry::with_keystore(logger, node_mgr.clone(), node_resolver.clone());
-    node_registry.register_encryptable::<User>()?;
-    node_registry.register_encryptable::<Profile>()?;
-    node_registry.register_encryptable::<Account>()?;
-    node_registry.register_encryptable::<Order>()?;
-
-    Ok((
-        mobile_mgr,
-        node_mgr,
-        mobile_registry,
-        node_registry,
-        network_id,
-    ))
+    Ok((mobile_mgr, node_mgr, mobile_resolver, node_resolver, network_id))
 }
 
-/// Demonstrate data flow from mobile to server and back
+/// Demonstrate the encryption flow with the updated API
 async fn demonstrate_encryption_flow(
-    mobile_registry: &SerializerRegistry,
-    node_registry: &SerializerRegistry,
+    _mobile_resolver: &ConfigurableLabelResolver,
+    _node_resolver: &ConfigurableLabelResolver,
     db: &mut MockDatabase,
 ) -> Result<()> {
-    println!("\n🚀 Starting Encryption Flow Demonstration");
-    println!("{}", "=".repeat(60));
+    println!("\n🔄 Demonstrating encryption flow...");
 
-    // -------- 1. Create data on mobile (user side) --------
-    println!("\n📱 MOBILE SIDE: Creating user data...");
-
+    // Create test data
     let user = User {
-        id: "user_123".to_string(),
-        username: "alice_smith".to_string(),
+        id: "user123".to_string(),
+        username: "alice".to_string(),
         email: "alice@example.com".to_string(),
-        password_hash: "hashed_password_123".to_string(),
+        password_hash: "hashed_password".to_string(),
         created_at: 1234567890,
     };
 
     let profile = Profile {
-        id: "profile_456".to_string(),
-        user_id: "user_123".to_string(),
-        full_name: "Alice Smith".to_string(),
-        bio: "Software engineer and coffee enthusiast".to_string(), // Fixed: removed Some()
-        private_notes: "VIP customer - special discount eligible".to_string(),
+        id: "profile123".to_string(),
+        user_id: "user123".to_string(),
+        full_name: "Alice Johnson".to_string(),
+        bio: "Software engineer".to_string(),
+        private_notes: "Secret notes".to_string(),
         last_updated: 1234567890,
     };
 
     let account = Account {
-        id: "acc_789".to_string(),
-        name: "Main Checking".to_string(),
-        balance_cents: 543210, // Fixed: changed from 5432.10 to cents
+        id: "account123".to_string(),
+        name: "Main Account".to_string(),
+        balance_cents: 50000, // $500.00
         account_type: "checking".to_string(),
         created_at: 1234567890,
     };
 
     let order = Order {
-        id: "order_101".to_string(),
-        user_id: "user_123".to_string(),
-        product_id: "prod_xyz".to_string(),
+        id: "order123".to_string(),
+        user_id: "user123".to_string(),
+        product_id: "product456".to_string(),
         quantity: 2,
-        total_price_cents: 9998, // Fixed: changed from 99.98 to cents
+        total_price_cents: 2500, // $25.00
         status: "pending".to_string(),
         created_at: 1234567890,
     };
 
-    // -------- 2. Encrypt and serialize on mobile --------
-    println!("\n🔐 MOBILE SIDE: Encrypting and serializing data...");
+    // Serialize and encrypt data using ArcValue
+    println!("📝 Serializing and encrypting data...");
+    
+    // Create ArcValue instances for each struct
+    let user_arc = ArcValue::new_struct(user.clone());
+    let profile_arc = ArcValue::new_struct(profile.clone());
+    let account_arc = ArcValue::new_struct(account.clone());
+    let order_arc = ArcValue::new_struct(order.clone());
 
-    let user_serialized = mobile_registry.serialize_value(&ArcValue::from_struct(user.clone()))?;
-    let profile_serialized =
-        mobile_registry.serialize_value(&ArcValue::from_struct(profile.clone()))?;
-    let account_serialized =
-        mobile_registry.serialize_value(&ArcValue::from_struct(account.clone()))?;
-    let order_serialized =
-        mobile_registry.serialize_value(&ArcValue::from_struct(order.clone()))?;
+    // Serialize the ArcValue instances
+    let user_serialized = user_arc.serialize(None)?;
+    let profile_serialized = profile_arc.serialize(None)?;
+    let account_serialized = account_arc.serialize(None)?;
+    let order_serialized = order_arc.serialize(None)?;
 
-    println!("✅ Data encrypted and serialized on mobile");
+    // Store encrypted data
+    db.store_user(&user.id, user_serialized);
+    db.store_profile(&user.id, profile_serialized);
+    db.store_account(&account.id, account_serialized);
+    db.store_order(&order.id, order_serialized);
 
-    // -------- 3. Send to server (simulate network transfer) --------
-    println!("\n🌐 NETWORK: Sending encrypted data to server...");
+    println!("✅ Data encrypted and stored successfully!");
 
-    // Store encrypted data in mock database (convert Arc<[u8]> to Vec<u8>)
-    db.store_user(&user.id, user_serialized.to_vec());
-    db.store_profile(&user.id, profile_serialized.to_vec());
-    db.store_account(&account.id, account_serialized.to_vec());
-    db.store_order(&order.id, order_serialized.to_vec());
+    // Demonstrate decryption
+    println!("\n🔓 Demonstrating decryption...");
 
-    // -------- 4. Server side processing --------
-    println!("\n🖥️  SERVER SIDE: Processing encrypted data...");
-
-    // Server can only access system-shared fields
-    let mut server_user = node_registry.deserialize_value(user_serialized.clone())?;
-    let server_user_data = server_user.as_struct_ref::<User>()?;
-
-    println!("📊 SERVER can see User data:");
-    println!("   - ID: {}", server_user_data.id);
-    println!("   - Username: {}", server_user_data.username);
-    println!("   - Email: {}", server_user_data.email);
-    println!("   - Created at: {}", server_user_data.created_at);
-    println!(
-        "   - Password hash: '{}' (user-only field)",
-        server_user_data.password_hash
-    );
-
-    let mut server_profile = node_registry.deserialize_value(profile_serialized.clone())?;
-    let server_profile_data = server_profile.as_struct_ref::<Profile>()?;
-
-    println!("📊 SERVER can see Profile data:");
-    println!("   - ID: {}", server_profile_data.id);
-    println!("   - User ID: {}", server_profile_data.user_id);
-    println!("   - Full name: {}", server_profile_data.full_name);
-    println!("   - Bio: {}", server_profile_data.bio);
-    println!("   - Last updated: {}", server_profile_data.last_updated);
-    println!(
-        "   - Private notes: '{}' (user-only field)",
-        server_profile_data.private_notes
-    );
-
-    let mut server_account = node_registry.deserialize_value(account_serialized.clone())?;
-    let server_account_data = server_account.as_struct_ref::<Account>()?;
-
-    println!("📊 SERVER can see Account data:");
-    println!("   - ID: {}", server_account_data.id);
-    println!("   - Name: {}", server_account_data.name);
-    println!("   - Account type: {}", server_account_data.account_type);
-    println!("   - Created at: {}", server_account_data.created_at);
-    println!(
-        "   - Balance: ${:.2} (user-only field)",
-        server_account_data.balance_cents as f64 / 100.0
-    );
-
-    let mut server_order = node_registry.deserialize_value(order_serialized.clone())?;
-    let server_order_data = server_order.as_struct_ref::<Order>()?;
-
-    println!("📊 SERVER can see Order data:");
-    println!("   - ID: {}", server_order_data.id);
-    println!("   - User ID: {}", server_order_data.user_id);
-    println!("   - Product ID: {}", server_order_data.product_id);
-    println!("   - Quantity: {}", server_order_data.quantity);
-    println!("   - Status: {}", server_order_data.status);
-    println!("   - Created at: {}", server_order_data.created_at);
-    println!(
-        "   - Total price: ${:.2} (user-only field)",
-        server_order_data.total_price_cents as f64 / 100.0
-    );
-
-    // -------- 5. Retrieve data back to mobile --------
-    println!("\n📱 MOBILE SIDE: Retrieving data from server...");
-
-    // Simulate retrieving from database (convert Vec<u8> to Arc<[u8]>)
-    if let Some(encrypted_user) = db.get_user(&user.id) {
-        let mut mobile_user =
-            mobile_registry.deserialize_value(Arc::from(encrypted_user.as_slice()))?;
-        let mobile_user_data = mobile_user.as_struct_ref::<User>()?;
-
-        println!("📊 MOBILE can see full User data:");
-        println!("   - ID: {}", mobile_user_data.id);
-        println!("   - Username: {}", mobile_user_data.username);
-        println!("   - Email: {}", mobile_user_data.email);
-        println!("   - Password hash: {}", mobile_user_data.password_hash);
-        println!("   - Created at: {}", mobile_user_data.created_at);
+    // Retrieve and decrypt data
+    if let Some(user_data) = db.get_user(&user.id) {
+        let user_arc = ArcValue::deserialize(user_data, None)?;
+        let decrypted_user: User = user_arc.as_type()?;
+        println!("👤 Decrypted user: {}", decrypted_user.username);
     }
 
-    if let Some(encrypted_profile) = db.get_profile(&user.id) {
-        let mut mobile_profile =
-            mobile_registry.deserialize_value(Arc::from(encrypted_profile.as_slice()))?;
-        let mobile_profile_data = mobile_profile.as_struct_ref::<Profile>()?;
-
-        println!("📊 MOBILE can see full Profile data:");
-        println!("   - ID: {}", mobile_profile_data.id);
-        println!("   - User ID: {}", mobile_profile_data.user_id);
-        println!("   - Full name: {}", mobile_profile_data.full_name);
-        println!("   - Bio: {}", mobile_profile_data.bio);
-        println!("   - Private notes: {}", mobile_profile_data.private_notes);
-        println!("   - Last updated: {}", mobile_profile_data.last_updated);
+    if let Some(profile_data) = db.get_profile(&user.id) {
+        let profile_arc = ArcValue::deserialize(profile_data, None)?;
+        let decrypted_profile: Profile = profile_arc.as_type()?;
+        println!("📋 Decrypted profile: {}", decrypted_profile.full_name);
     }
 
-    if let Some(encrypted_account) = db.get_account(&account.id) {
-        let mut mobile_account =
-            mobile_registry.deserialize_value(Arc::from(encrypted_account.as_slice()))?;
-        let mobile_account_data = mobile_account.as_struct_ref::<Account>()?;
-
-        println!("📊 MOBILE can see full Account data:");
-        println!("   - ID: {}", mobile_account_data.id);
-        println!("   - Name: {}", mobile_account_data.name);
-        println!(
-            "   - Balance: ${:.2}",
-            mobile_account_data.balance_cents as f64 / 100.0
-        );
-        println!("   - Account type: {}", mobile_account_data.account_type);
-        println!("   - Created at: {}", mobile_account_data.created_at);
+    if let Some(account_data) = db.get_account(&account.id) {
+        let account_arc = ArcValue::deserialize(account_data, None)?;
+        let decrypted_account: Account = account_arc.as_type()?;
+        println!("💰 Decrypted account: {} (${:.2})", 
+                decrypted_account.name, 
+                decrypted_account.balance_cents as f64 / 100.0);
     }
 
-    if let Some(encrypted_order) = db.get_order(&order.id) {
-        let mut mobile_order =
-            mobile_registry.deserialize_value(Arc::from(encrypted_order.as_slice()))?;
-        let mobile_order_data = mobile_order.as_struct_ref::<Order>()?;
-
-        println!("📊 MOBILE can see full Order data:");
-        println!("   - ID: {}", mobile_order_data.id);
-        println!("   - User ID: {}", mobile_order_data.user_id);
-        println!("   - Product ID: {}", mobile_order_data.product_id);
-        println!("   - Quantity: {}", mobile_order_data.quantity);
-        println!(
-            "   - Total price: ${:.2}",
-            mobile_order_data.total_price_cents as f64 / 100.0
-        );
-        println!("   - Status: {}", mobile_order_data.status);
-        println!("   - Created at: {}", mobile_order_data.created_at);
+    if let Some(order_data) = db.get_order(&order.id) {
+        let order_arc = ArcValue::deserialize(order_data, None)?;
+        let decrypted_order: Order = order_arc.as_type()?;
+        println!("🛒 Decrypted order: {} items for ${:.2}", 
+                decrypted_order.quantity,
+                decrypted_order.total_price_cents as f64 / 100.0);
     }
 
-    println!("\n✅ Encryption flow demonstration completed!");
-    println!("{}", "=".repeat(60));
-
+    println!("✅ Decryption completed successfully!");
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🚀 Starting Encrypted Micro-Services Demo");
-    println!("{}", "=".repeat(60));
+    // Setup logging
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
+
+    println!("🚀 Starting Runar Encryption Demo");
+    println!("==================================");
 
     // Setup encryption infrastructure
-    let (_mobile_mgr, _node_mgr, mobile_registry, node_registry, _network_id) =
-        setup_encryption().await?;
-    println!("✅ Encryption infrastructure ready");
+    let (_mobile_mgr, _node_mgr, mobile_resolver, node_resolver, network_id) = setup_encryption().await?;
 
-    // Initialize mock database
+    println!("✅ Encryption infrastructure ready");
+    println!("📡 Network ID: {}", network_id);
+
+    // Create mock database
     let mut db = MockDatabase::default();
-    println!("✅ Mock database initialized");
 
     // Demonstrate encryption flow
-    demonstrate_encryption_flow(&mobile_registry, &node_registry, &mut db).await?;
+    demonstrate_encryption_flow(&mobile_resolver, &node_resolver, &mut db).await?;
 
-    println!("\n🎉 Demo completed successfully!");
-    println!("Key takeaways:");
-    println!("  • User-only fields (password_hash, private_notes, balance, total_price) are encrypted and not accessible to the server");
-    println!("  • System-shared fields (username, email, full_name, bio, etc.) are accessible to both mobile and server");
-    println!("  • Data flows securely from mobile → server → mobile with proper access control");
-    println!("  • Server can store and process encrypted data without compromising user privacy");
+    // Create and run the microservices demo
+    println!("\n🏗️  Setting up microservices...");
+
+    // Create node configuration
+    let config = create_node_test_config()?.with_logging_config(logging_config);
+    let mut node = Node::new(config).await?;
+
+    // Create and register services
+    let user_service = user_service::UserService::default();
+    let profile_service = profile_service::ProfileService::default();
+    let account_service = account_service::AccountService::default();
+    let order_service = order_service::OrderService::default();
+
+    node.add_service(user_service).await?;
+    node.add_service(profile_service).await?;
+    node.add_service(account_service).await?;
+    node.add_service(order_service).await?;
+
+    // Start the node
+    node.start().await?;
+    println!("✅ Node started successfully");
+
+    // Run some test operations
+    println!("\n🧪 Running test operations...");
+
+    // Test user creation
+    let user_arc: ArcValue = node
+        .request("users/create_user", Some(params! {
+            "username" => "testuser".to_string(),
+            "email" => "test@example.com".to_string(),
+            "password_hash" => "hashed_password".to_string()
+        }))
+        .await?;
+    let created_user: User = user_arc.as_type()?;
+    println!("✅ Created user: {}", created_user.username);
+
+    // Test profile creation
+    let profile_arc: ArcValue = node
+        .request("profiles/create_profile", Some(params! {
+            "user_id" => created_user.id.clone(),
+            "full_name" => "Test User".to_string(),
+            "bio" => "Test bio".to_string(),
+            "private_notes" => "Private notes".to_string()
+        }))
+        .await?;
+    let created_profile: Profile = profile_arc.as_type()?;
+    println!("✅ Created profile: {}", created_profile.full_name);
+
+    // Test account creation
+    let account_arc: ArcValue = node
+        .request("accounts/create_account", Some(params! {
+            "name" => "Test Account".to_string(),
+            "balance_cents" => 10000u64, // $100.00 in cents
+            "account_type" => "checking".to_string()
+        }))
+        .await?;
+    let created_account: Account = account_arc.as_type()?;
+    println!("✅ Created account: {} (${:.2})", 
+            created_account.name, 
+            created_account.balance_cents as f64 / 100.0);
+
+    // Test order creation
+    let order_arc: ArcValue = node
+        .request("orders/create_order", Some(params! {
+            "user_id" => created_user.id.clone(),
+            "product_id" => "product123".to_string(),
+            "quantity" => 1u32,
+            "total_price_cents" => 1500u64, // $15.00 in cents
+            "status" => "pending".to_string()
+        }))
+        .await?;
+    let created_order: Order = order_arc.as_type()?;
+    println!("✅ Created order: {} items for ${:.2}", 
+            created_order.quantity,
+            created_order.total_price_cents as f64 / 100.0);
+
+    println!("\n🎉 Microservices demo completed successfully!");
+    println!("All operations completed with encryption support.");
+
+    // Keep the node running for a bit to see any async operations
+    time::sleep(Duration::from_secs(2)).await;
 
     Ok(())
 }

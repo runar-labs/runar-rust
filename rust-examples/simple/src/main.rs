@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use runar_macros::{action, publish, service, service_impl, subscribe};
-use runar_macros_common::{hmap, params};
+use runar_macros_common::params;
 use runar_node::{
     services::{EventContext, RequestContext},
     Node,
@@ -51,8 +51,7 @@ impl StatsService {
     /// React to math/added events
     #[subscribe(path = "math/added")]
     async fn on_math_added(&self, total: f64, ctx: &EventContext) -> Result<()> {
-        let _: () = ctx
-            .request("stats/record", Some(ArcValue::new_primitive(total)))
+        ctx.request("stats/record", Some(ArcValue::new_primitive(total)))
             .await
             .expect("Call to stats/record failed");
         Ok(())
@@ -70,13 +69,15 @@ async fn main() -> Result<()> {
     node.add_service(StatsService::default()).await?;
 
     // call math/add
-    let sum: f64 = node
+    let sum_arc: ArcValue = node
         .request("math/add", Some(params! { "a" => 1.0, "b" => 2.0 }))
         .await?;
+    let sum: f64 = sum_arc.as_type()?;
     assert_eq!(sum, 3.0);
 
     // Query stats count
-    let count: usize = node.request("stats/count", None::<ArcValue>).await?;
+    let count_arc: ArcValue = node.request("stats/count", None::<ArcValue>).await?;
+    let count: usize = count_arc.as_type()?;
     assert_eq!(count, 1);
     println!("All good – stats recorded {count} value(s)");
     Ok(())
