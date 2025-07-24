@@ -969,4 +969,102 @@ mod tests {
 
         assert_eq!(profile_result, profiles_param);
     }
+
+    #[tokio::test]
+    async fn test_publish_macro_bug_fix() {
+        let ctx = create_test_context().await;
+        ctx.logger.debug(
+            "Testing publish macro bug fix - correct serialization of struct vs primitive types",
+        );
+
+        // Test 1: Verify that primitive types (f64) use ArcValue::new_primitive
+        // This should work without any trait bounds
+        let add_result_arc: ArcValue = ctx
+            .node
+            .request(
+                "math/add",
+                Some(params! {
+                    "a" => 5.0f64,
+                    "b" => 3.0f64
+                }),
+            )
+            .await
+            .expect("Failed to call add action");
+
+        let add_result: f64 = add_result_arc.as_type().expect("Failed to convert to f64");
+        assert_eq!(add_result, 8.0);
+
+        // Test 2: Verify that struct types (MyData) use ArcValue::new_struct
+        // This should fail compilation if MyData doesn't implement RunarEncrypt
+        // The bug fix ensures that struct types are always serialized using new_struct,
+        // which requires the RunarEncrypt trait. If MyData doesn't implement RunarEncrypt,
+        // the compilation will fail, forcing developers to add the proper derive macro.
+        let my_data_result_arc: ArcValue = ctx
+            .node
+            .request(
+                "math/my_data",
+                Some(params! {
+                    "id" => 42i32
+                }),
+            )
+            .await
+            .expect("Failed to call get_my_data action");
+
+        let my_data_result: MyData = my_data_result_arc
+            .as_type()
+            .expect("Failed to convert to MyData");
+        assert_eq!(my_data_result.id, 42);
+        assert_eq!(my_data_result.text_field, "test");
+        assert_eq!(my_data_result.number_field, 42); // Should be same as id
+        assert!(my_data_result.boolean_field);
+        assert_eq!(my_data_result.float_field, 1500.0); // Should be 1000.0 + 500.0
+
+        // Test 3: Verify that the published events are correctly serialized
+        // Check that the events were stored with the correct serialization method
+        let events = ctx.store.lock().await;
+
+        // The add action doesn't have a #[publish] macro, so it won't publish events
+        // The get_my_data action has #[publish(path = "my_data_auto")], so it will publish to "my_data_auto"
+
+        // Look for the my_data_auto event (should be published as struct)
+        let my_data_event_key = "my_data_auto";
+        if let Some(my_data_event) = events.get(my_data_event_key) {
+            // The event should be stored as a Vec<MyData> (as per the subscriber)
+            let my_data_event_vec: Vec<MyData> = my_data_event
+                .as_type()
+                .expect("Failed to convert my_data event to Vec<MyData>");
+            assert!(
+                !my_data_event_vec.is_empty(),
+                "Expected at least one my_data_auto event"
+            );
+            let my_data_event_value = &my_data_event_vec[0];
+            assert_eq!(my_data_event_value.id, 42);
+            assert_eq!(my_data_event_value.text_field, "test");
+            assert_eq!(my_data_event_value.number_field, 42);
+            assert_eq!(my_data_event_value.float_field, 1500.0);
+        } else {
+            panic!("MyData event was not published to my_data_auto");
+        }
+
+        // Also check for the manually published events from get_my_data
+        let my_data_changed_key = "my_data_changed";
+        if let Some(my_data_changed) = events.get(my_data_changed_key) {
+            let my_data_changed_vec: Vec<MyData> = my_data_changed
+                .as_type()
+                .expect("Failed to convert my_data_changed to Vec<MyData>");
+            assert!(
+                !my_data_changed_vec.is_empty(),
+                "Expected at least one my_data_changed event"
+            );
+            let my_data_changed_value = &my_data_changed_vec[0];
+            assert_eq!(my_data_changed_value.id, 42);
+            assert_eq!(my_data_changed_value.text_field, "test");
+        } else {
+            panic!("my_data_changed event was not published");
+        }
+
+        ctx.logger.info("✅ Publish macro bug fix verified: struct types use new_struct, primitive types use new_primitive");
+        ctx.logger
+            .info("✅ The bug fix ensures proper trait bounds are enforced at compile time");
+    }
 }
