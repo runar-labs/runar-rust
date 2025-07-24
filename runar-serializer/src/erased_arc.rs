@@ -185,11 +185,13 @@ impl ErasedArc {
             return Err(anyhow::anyhow!("Value is not lazy (is_lazy flag is false)"));
         }
 
-        // Since we know it's lazy based on the flag, directly extract it
+        // The is_lazy flag is set by from_value() which uses TypeId::of::<T>() == TypeId::of::<LazyDataWithOffset>()
+        // This provides sufficient validation that the underlying value is LazyDataWithOffset
         let ptr = self.reader.ptr() as *const super::arc_value::LazyDataWithOffset;
 
         let arc = unsafe {
-            // Safety: We trust that when is_lazy is true, the pointed value is LazyDataWithOffset
+            // Safety: The is_lazy flag is set only when the underlying value is LazyDataWithOffset
+            // This is validated in from_value() using TypeId comparison
             let arc = Arc::from_raw(ptr);
             let clone = arc.clone();
             // Prevent dropping the original Arc
