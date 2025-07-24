@@ -1,14 +1,12 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
+use runar_macros_common::params;
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
-use runar_serializer::traits::{
-    ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo,
-};
+use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo};
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
-use runar_macros_common::params;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -157,7 +155,13 @@ async fn setup_encryption() -> Result<(
     };
     let node_resolver = ConfigurableLabelResolver::new(node_mappings);
 
-    Ok((mobile_mgr, node_mgr, mobile_resolver, node_resolver, network_id))
+    Ok((
+        mobile_mgr,
+        node_mgr,
+        mobile_resolver,
+        node_resolver,
+        network_id,
+    ))
 }
 
 /// Demonstrate the encryption flow with the updated API
@@ -206,7 +210,7 @@ async fn demonstrate_encryption_flow(
 
     // Serialize and encrypt data using ArcValue
     println!("📝 Serializing and encrypting data...");
-    
+
     // Create ArcValue instances for each struct
     let user_arc = ArcValue::new_struct(user.clone());
     let profile_arc = ArcValue::new_struct(profile.clone());
@@ -246,17 +250,21 @@ async fn demonstrate_encryption_flow(
     if let Some(account_data) = db.get_account(&account.id) {
         let account_arc = ArcValue::deserialize(account_data, None)?;
         let decrypted_account: Account = account_arc.as_type()?;
-        println!("💰 Decrypted account: {} (${:.2})", 
-                decrypted_account.name, 
-                decrypted_account.balance_cents as f64 / 100.0);
+        println!(
+            "💰 Decrypted account: {} (${:.2})",
+            decrypted_account.name,
+            decrypted_account.balance_cents as f64 / 100.0
+        );
     }
 
     if let Some(order_data) = db.get_order(&order.id) {
         let order_arc = ArcValue::deserialize(order_data, None)?;
         let decrypted_order: Order = order_arc.as_type()?;
-        println!("🛒 Decrypted order: {} items for ${:.2}", 
-                decrypted_order.quantity,
-                decrypted_order.total_price_cents as f64 / 100.0);
+        println!(
+            "🛒 Decrypted order: {} items for ${:.2}",
+            decrypted_order.quantity,
+            decrypted_order.total_price_cents as f64 / 100.0
+        );
     }
 
     println!("✅ Decryption completed successfully!");
@@ -273,7 +281,8 @@ async fn main() -> Result<()> {
     println!("==================================");
 
     // Setup encryption infrastructure
-    let (_mobile_mgr, _node_mgr, mobile_resolver, node_resolver, network_id) = setup_encryption().await?;
+    let (_mobile_mgr, _node_mgr, mobile_resolver, node_resolver, network_id) =
+        setup_encryption().await?;
 
     println!("✅ Encryption infrastructure ready");
     println!("📡 Network ID: {}", network_id);
@@ -311,54 +320,70 @@ async fn main() -> Result<()> {
 
     // Test user creation
     let user_arc: ArcValue = node
-        .request("users/create_user", Some(params! {
-            "username" => "testuser".to_string(),
-            "email" => "test@example.com".to_string(),
-            "password_hash" => "hashed_password".to_string()
-        }))
+        .request(
+            "users/create_user",
+            Some(params! {
+                "username" => "testuser".to_string(),
+                "email" => "test@example.com".to_string(),
+                "password_hash" => "hashed_password".to_string()
+            }),
+        )
         .await?;
     let created_user: User = user_arc.as_type()?;
     println!("✅ Created user: {}", created_user.username);
 
     // Test profile creation
     let profile_arc: ArcValue = node
-        .request("profiles/create_profile", Some(params! {
-            "user_id" => created_user.id.clone(),
-            "full_name" => "Test User".to_string(),
-            "bio" => "Test bio".to_string(),
-            "private_notes" => "Private notes".to_string()
-        }))
+        .request(
+            "profiles/create_profile",
+            Some(params! {
+                "user_id" => created_user.id.clone(),
+                "full_name" => "Test User".to_string(),
+                "bio" => "Test bio".to_string(),
+                "private_notes" => "Private notes".to_string()
+            }),
+        )
         .await?;
     let created_profile: Profile = profile_arc.as_type()?;
     println!("✅ Created profile: {}", created_profile.full_name);
 
     // Test account creation
     let account_arc: ArcValue = node
-        .request("accounts/create_account", Some(params! {
-            "name" => "Test Account".to_string(),
-            "balance_cents" => 10000u64, // $100.00 in cents
-            "account_type" => "checking".to_string()
-        }))
+        .request(
+            "accounts/create_account",
+            Some(params! {
+                "name" => "Test Account".to_string(),
+                "balance_cents" => 10000u64, // $100.00 in cents
+                "account_type" => "checking".to_string()
+            }),
+        )
         .await?;
     let created_account: Account = account_arc.as_type()?;
-    println!("✅ Created account: {} (${:.2})", 
-            created_account.name, 
-            created_account.balance_cents as f64 / 100.0);
+    println!(
+        "✅ Created account: {} (${:.2})",
+        created_account.name,
+        created_account.balance_cents as f64 / 100.0
+    );
 
     // Test order creation
     let order_arc: ArcValue = node
-        .request("orders/create_order", Some(params! {
-            "user_id" => created_user.id.clone(),
-            "product_id" => "product123".to_string(),
-            "quantity" => 1u32,
-            "total_price_cents" => 1500u64, // $15.00 in cents
-            "status" => "pending".to_string()
-        }))
+        .request(
+            "orders/create_order",
+            Some(params! {
+                "user_id" => created_user.id.clone(),
+                "product_id" => "product123".to_string(),
+                "quantity" => 1u32,
+                "total_price_cents" => 1500u64, // $15.00 in cents
+                "status" => "pending".to_string()
+            }),
+        )
         .await?;
     let created_order: Order = order_arc.as_type()?;
-    println!("✅ Created order: {} items for ${:.2}", 
-            created_order.quantity,
-            created_order.total_price_cents as f64 / 100.0);
+    println!(
+        "✅ Created order: {} items for ${:.2}",
+        created_order.quantity,
+        created_order.total_price_cents as f64 / 100.0
+    );
 
     println!("\n🎉 Microservices demo completed successfully!");
     println!("All operations completed with encryption support.");
