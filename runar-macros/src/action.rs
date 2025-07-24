@@ -179,8 +179,7 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
         &action_name,
         &action_path,
         &params,
-        &return_type_info.is_primitive,
-        &return_type_info.type_name,
+        &return_type_info,
         is_async,
         &lifecycle_ctx_ident, // Pass the ident for LifecycleContext
         original_fn_has_request_context_param,
@@ -201,13 +200,16 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Extract information about the return type for proper handling.
 // This function robustly supports all valid Rust types, including nested generics.
 fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
-    let (actual_type, is_unit, actual_type_is_option, is_primitive, type_name) = match return_type {
+                let (actual_type, is_unit, actual_type_is_option, is_primitive, type_name, is_hashmap, is_list, is_struct) = match return_type {
         ReturnType::Default => (
             syn::parse_quote! { () },
             true,
             false,
             true,
             "unit".to_string(),
+            false,
+            false,
+            false,
         ),
         ReturnType::Type(_, original_ty) => {
             let mut current_type = *original_ty.clone();
@@ -241,10 +243,16 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
                 quote!(#current_type).to_string().replace(" ", "")
             };
 
-            let is_primitive_val = matches!(
-                type_name_str.as_str(),
-                "String" | "str" | "i32" | "i64" | "f32" | "f64" | "bool" | "unit"
-            );
+            let is_primitive_val = is_primitive_type(&current_type);
+
+            // Check if this is a HashMap<String, ArcValue> type
+            let is_hashmap_val = is_hashmap_type(&current_type);
+
+            // Check if this is a Vec<ArcValue> type
+            let is_list_val = is_vec_type(&current_type);
+
+            // Everything else is a struct (let compiler handle trait bounds)
+            let is_struct_val = !is_primitive_val && !is_hashmap_val && !is_list_val && type_name_str != "unit";
 
             (
                 current_type,
@@ -252,6 +260,9 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
                 outer_is_option,
                 is_primitive_val,
                 type_name_str,
+                is_hashmap_val,
+                is_list_val,
+                is_struct_val,
             )
         }
     };
@@ -262,6 +273,9 @@ fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
         actual_type,
         actual_type_is_option,
         type_name,
+        is_hashmap,
+        is_list,
+        is_struct,
     }
 }
 
@@ -273,6 +287,9 @@ struct ReturnTypeInfo {
     actual_type: Type,
     actual_type_is_option: bool,
     type_name: String,
+    is_hashmap: bool,
+    is_list: bool,
+    is_struct: bool,
 }
 
 // Helper to get the last segment of a TypePath as a String
@@ -301,6 +318,66 @@ fn get_option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     }
     None
 }
+
+// Helper to check if a type is HashMap<String, ArcValue>
+fn is_hashmap_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(type_path) = ty {
+        // Check if it's HashMap
+        if type_path.path.segments.len() == 1
+            && type_path.path.segments.first().unwrap().ident == "HashMap"
+        {
+            // Check if it has generic arguments
+            if let PathArguments::AngleBracketed(params) =
+                &type_path.path.segments.first().unwrap().arguments
+            {
+                // Check if it has exactly 2 type arguments (any K, V)
+                if params.args.len() == 2 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// Helper to check if a type is Vec<T> (which should use new_list)
+fn is_vec_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(type_path) = ty {
+        if type_path.path.segments.len() == 1
+            && type_path.path.segments.first().unwrap().ident == "Vec"
+        {
+            if let PathArguments::AngleBracketed(params) =
+                &type_path.path.segments.first().unwrap().arguments
+            {
+                // Any Vec<T> should be treated as a list type for new_list()
+                if params.args.len() == 1 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// Helper to check if a type is a primitive or simple type
+fn is_primitive_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(type_path) = ty {
+        // Check if it's a standard library primitive or simple type
+        let type_name = get_path_last_segment_ident_string(type_path).unwrap_or_default();
+        
+        // Standard library primitives only
+        matches!(
+            type_name.as_str(),
+            "String" | "str" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" |
+            "f32" | "f64" | "bool" | "char" | "unit"
+        )
+    } else {
+        false
+    }
+}
+
+
 
 // Helper to extract T from Result<T, E>
 fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
@@ -336,6 +413,8 @@ fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     }
     None
 }
+
+
 
 fn generate_field_schema_for_type(
     field_name_str: &str,
@@ -451,8 +530,7 @@ fn generate_register_action_method(
     action_name: &str,
     action_path: &str,
     params: &[(Ident, Type)],
-    is_primitive: &bool,
-    type_name: &String,
+    return_type_info: &ReturnTypeInfo,
     is_async: bool,
     _lifecycle_ctx_ident: &Ident, // Renamed as it's for the LifecycleContext, not the RequestContext for the handler
     original_fn_has_request_context_param: bool,
@@ -489,21 +567,76 @@ fn generate_register_action_method(
     );
 
     // Generate the appropriate result handling based on the return type
-    let result_handling = if type_name == "()" {
+    let result_handling = if return_type_info.type_name == "()" {
         quote! {
             // For () return type, convert to ArcValue::null()
             Ok(runar_serializer::ArcValue::null())
         }
-    } else if type_name == "ArcValue" {
+    } else if return_type_info.type_name == "ArcValue" {
         // Check if the result is already an ArcValue
         quote! {
             // Result is already ArcValue, pass it through directly
             Ok(result)
         }
-    } else if *is_primitive {
+    } else if return_type_info.is_primitive {
         quote! {
             // Convert the primitive result to ArcValue
             let value_type = runar_serializer::ArcValue::new_primitive(result);
+            Ok(value_type)
+        }
+    } else if return_type_info.is_hashmap {
+        // For HashMap<String, ArcValue>, use new_map
+        quote! {
+            // Convert the HashMap result to ArcValue using new_map
+            let value_type = runar_serializer::ArcValue::new_map(result);
+            Ok(value_type)
+        }
+    } else if return_type_info.is_list {
+        // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
+        if return_type_info.type_name == "Vec" {
+            // Check if the inner type is ArcValue
+            let inner_type = get_vec_inner_type(&return_type_info.actual_type);
+            if let Some(inner_ty) = inner_type {
+                if let syn::Type::Path(type_path) = inner_ty {
+                    if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
+                        quote! {
+                            // Convert the Vec<ArcValue> result to ArcValue using new_list
+                            let value_type = runar_serializer::ArcValue::new_list(result);
+                            Ok(value_type)
+                        }
+                    } else {
+                        quote! {
+                            // Convert the Vec<T> result to ArcValue using new_primitive
+                            let value_type = runar_serializer::ArcValue::new_primitive(result);
+                            Ok(value_type)
+                        }
+                    }
+                } else {
+                    quote! {
+                        // Convert the Vec<T> result to ArcValue using new_primitive
+                        let value_type = runar_serializer::ArcValue::new_primitive(result);
+                        Ok(value_type)
+                    }
+                }
+            } else {
+                quote! {
+                    // Convert the Vec<T> result to ArcValue using new_primitive
+                    let value_type = runar_serializer::ArcValue::new_primitive(result);
+                    Ok(value_type)
+                }
+            }
+        } else {
+            quote! {
+                // Convert the Vec<T> result to ArcValue using new_primitive
+                let value_type = runar_serializer::ArcValue::new_primitive(result);
+                Ok(value_type)
+            }
+        }
+    } else if return_type_info.is_struct {
+        // For struct types, use new_struct (let compiler handle trait bounds)
+        quote! {
+            // Convert the struct result to ArcValue using new_struct
+            let value_type = runar_serializer::ArcValue::new_struct(result);
             Ok(value_type)
         }
     } else {
@@ -605,9 +738,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
         return extractions;
     }
 
-    // If there is only one parameter, try to extract it from the payload in two ways:
-    // 1. First try to extract the parameter from a map where the key is the parameter name
-    // 2. If that fails, try to deserialize the entire input directly into the parameter type
+    // For single-parameter actions, handle different payload types intelligently
     if params.len() == 1 {
         let (param_ident, param_type) = &params[0];
         let param_name_str = param_ident.to_string();
@@ -625,52 +756,71 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
 
         extractions.extend(quote! {
             let #param_ident: #param_type = {
-                // First try to extract from a map if the payload is a map
-                let mut params_value_clone = params_value.clone();
-                let map_result = params_value_clone.as_map_ref();
-                match map_result {
-                    Ok(map_ref) => {
-                        // If it's a map, try to get the parameter by name
-                        if let Some(value) = map_ref.get(#param_name_str) {
-                            match value.clone().#extraction_method::<#param_type>() {
-                                Ok(val) => val,
-                                Err(map_err) => {
-                                    ctx.error(format!(
-                                        "Failed to parse parameter '{}' from map: {}",
-                                        #param_name_str,
-                                        map_err
-                                    ));
-                                    return Err(anyhow!(
-                                        format!("Failed to parse parameter '{}': {}", #param_name_str, map_err)
-                                    ));
+                // First try direct conversion (for primitives, structs, etc.)
+                match params_value.#extraction_method::<#param_type>() {
+                    Ok(val) => val,
+                    Err(_) => {
+                        // If direct conversion fails, try to extract from JSON object
+                        // This handles cases where a JSON object like {"message": "hello"} is sent
+                        // to an action expecting a String parameter named "message"
+                        if params_value.category == runar_serializer::ValueCategory::Json {
+                            let json_value = params_value.as_json_ref()
+                                .map_err(|err| {
+                                    ctx.error(format!("Failed to get JSON value: {}", err));
+                                    anyhow!("Failed to get JSON value: {}", err)
+                                })?;
+                            
+                            // Try to extract the field with the parameter name
+                            if let Some(field_value) = json_value.get(#param_name_str) {
+                                // Convert the JSON field value to the target type
+                                match serde_json::from_value::<#param_type>(field_value.clone()) {
+                                    Ok(val) => val,
+                                    Err(err) => {
+                                        ctx.error(format!(
+                                            "Failed to convert JSON field '{}' to type '{}': {}",
+                                            #param_name_str,
+                                            stringify!(#param_type),
+                                            err
+                                        ));
+                                        return Err(anyhow!("Failed to convert JSON field '{}': {}", #param_name_str, err));
+                                    }
                                 }
+                            } else {
+                                ctx.error(format!(
+                                    "JSON object does not contain field '{}' for parameter '{}'",
+                                    #param_name_str,
+                                    #param_name_str
+                                ));
+                                return Err(anyhow!("JSON object missing required field '{}'", #param_name_str));
                             }
                         } else {
-                            // Parameter not found in map, try direct deserialization
-                            match params_value.#extraction_method::<#param_type>() {
-                                Ok(val) => val,
-                                Err(err) => {
-                                    ctx.error(format!(
-                                        "Parameter '{}' not found in payload map and direct deserialization failed: {}",
-                                        #param_name_str,
-                                        err
-                                    ));
-                                    return Err(anyhow!(
-                                        format!("Parameter '{}' not found in payload", #param_name_str)
-                                    ));
+                            // If it's not JSON, try map extraction as fallback
+                            match params_value.as_map_ref() {
+                                Ok(map_ref) => {
+                                    match map_ref.get(#param_name_str) {
+                                        Some(arc_value_for_param) => {
+                                            arc_value_for_param.clone().#extraction_method::<#param_type>().map_err(|err| {
+                                                ctx.error(format!("Failed to convert map field '{}' to type '{}': {}", #param_name_str, stringify!(#param_type), err));
+                                                anyhow!("Failed to convert map field '{}': {}", #param_name_str, err)
+                                            })?
+                                        }
+                                        None => {
+                                            ctx.error(format!("Map does not contain field '{}' for parameter '{}'", #param_name_str, #param_name_str));
+                                            return Err(anyhow!("Map missing required field '{}'", #param_name_str));
+                                        }
+                                    }
                                 }
-                            }
-                        }
-                    },
-                    Err(_) => {
-                        // If it's not a map, try direct deserialization
-                        match params_value.#extraction_method::<#param_type>() {
-                            Ok(val) => val,
-                            Err(err) => {
-                                ctx.error(format!("Failed to parse parameter for single-parameter action: {}", err));
-                                return Err(anyhow!(
-                                    format!("Failed to parse parameter for single-parameter action: {}", err)
-                                ));
+                                Err(_) => {
+                                    // Final fallback - return the original error
+                                    params_value.#extraction_method::<#param_type>().map_err(|err| {
+                                        ctx.error(format!(
+                                            "Failed to parse parameter '{}' for single-parameter action: {}",
+                                            #param_name_str,
+                                            err
+                                        ));
+                                        anyhow!("Failed to parse parameter '{}': {}", #param_name_str, err)
+                                    })?
+                                }
                             }
                         }
                     }

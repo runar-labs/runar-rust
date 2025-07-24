@@ -4,7 +4,7 @@ use runar_common::{Component, Logger};
 use runar_gateway::GatwayService;
 use runar_macros::{action, service, service_impl};
 use runar_node::Node;
-use runar_serializer::ArcValue;
+use runar_serializer::{ArcValue, Plain};
 use runar_test_utils::create_node_test_config;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use tokio::time::{sleep, Duration};
 
 // --- Test Data Struct ---
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Plain)]
 struct MyTestData {
     id: i32,
     name: String,

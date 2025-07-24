@@ -202,16 +202,20 @@ impl ErasedArc {
 
     /// Compare the actual value behind the erased arc for equality
     pub fn eq_value(&self, other: &ErasedArc) -> bool {
+        let self_type = self.type_name();
+        let other_type = other.type_name();
+        
         // First, ensure type compatibility (ignoring namespaces)
-        if !compare_type_names(self.type_name(), other.type_name()) {
+        if !compare_type_names(self_type, other_type) {
             return false;
         }
 
-        // Try common primitive & standard types
+        // Try common primitive & standard types using safe pointer comparison
         macro_rules! try_downcast_eq {
             ($ty:ty) => {
-                if let (Ok(left), Ok(right)) = (self.as_arc::<$ty>(), other.as_arc::<$ty>()) {
-                    return *left == *right;
+                // Check if the type matches and use pointer comparison instead of unsafe as_arc
+                if compare_type_names(std::any::type_name::<$ty>(), self_type) {
+                    return self.reader.ptr() == other.reader.ptr();
                 }
             };
         }
@@ -282,13 +286,7 @@ fn compare_type_names(a: &str, b: &str) -> bool {
         return true;
     }
 
-    // Special case: if either type contains ArcValue as the value of a HashMap, consider compatible
-    if a.contains("HashMap")
-        && b.contains("HashMap")
-        && (a.contains("ArcValue") || b.contains("ArcValue"))
-    {
-        return true;
-    }
+
 
     false
 }

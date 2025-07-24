@@ -207,7 +207,7 @@ fn test_to_json_list() -> Result<()> {
 }
 
 #[test]
-fn test_from_json() -> Result<()> {
+fn test_new_json() -> Result<()> {
     let json_val = json!({
         "string": "hello",
         "number": 42,
@@ -216,8 +216,8 @@ fn test_from_json() -> Result<()> {
         "object": {"key": "value"}
     });
 
-    let val = ArcValue::from_json(json_val.clone());
-    assert_eq!(val.category, ValueCategory::Map);
+    let val = ArcValue::new_json(json_val.clone());
+    assert_eq!(val.category, ValueCategory::Json);
 
     let back_to_json = val.to_json()?;
     assert_eq!(back_to_json, json_val);

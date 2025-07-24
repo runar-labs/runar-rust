@@ -1012,16 +1012,6 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
-dependencies = [
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "ctor"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
@@ -2409,7 +2399,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55740c4ae1d8696773c78fdafd5d0e5fe9bc9f1b071c7ba493ba5c413a9184f3"
 dependencies = [
  "bitflags 2.9.1",
- "ctor 0.2.9",
+ "ctor",
  "napi-derive",
  "napi-sys",
  "once_cell",
@@ -3317,6 +3307,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "ctor",
  "futures",
  "prost",
  "prost-derive",
@@ -3416,7 +3407,7 @@ name = "runar-schemas"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor 0.2.9",
+ "ctor",
  "prost",
  "runar-serializer",
  "runar-serializer-macros",
@@ -3429,7 +3420,7 @@ name = "runar-serializer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor 0.2.9",
+ "ctor",
  "dashmap",
  "log",
  "once_cell",
@@ -3447,7 +3438,7 @@ name = "runar-serializer-macros"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor 0.2.9",
+ "ctor",
  "proc-macro2",
  "quote",
  "serde_cbor",
@@ -3501,7 +3492,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "ctor 0.1.26",
+ "ctor",
  "darling",
  "futures",
  "inventory",
@@ -3546,7 +3537,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "ctor 0.2.9",
+ "ctor",
  "dashmap",
  "env_logger",
  "futures",
@@ -3593,7 +3584,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
- "ctor 0.2.9",
+ "ctor",
  "futures",
  "hex",
  "prost",

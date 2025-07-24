@@ -29,7 +29,7 @@ async-trait = "0.1"
 runar_common = { path = "../runar-common" }
 inventory = "0.3"
 once_cell = "1.8"
-ctor = "0.1"
+ctor = "0.2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Optional dependencies

@@ -63,7 +63,7 @@ fn test_basic_primitives_to_json() {
 fn test_lists_to_json() {
     // Test list of primitives
     let list_json = json!(["apple", "banana", 123, true]);
-    let arc_value = ArcValue::from_json(list_json);
+    let arc_value = ArcValue::new_json(list_json);
 
     let result = arc_value.to_json().unwrap();
     assert_eq!(result, json!(["apple", "banana", 123, true]));
@@ -111,7 +111,7 @@ fn test_maps_to_json() {
         "key2": 123,
         "key3": true
     });
-    let arc_value = ArcValue::from_json(map_json);
+    let arc_value = ArcValue::new_json(map_json);
 
     let result = arc_value.to_json().unwrap();
     assert_eq!(result, json!({
@@ -167,7 +167,7 @@ fn test_nested_structures_to_json() {
         "map": {"a": "b", "c": "d"},
         "primitive": "test"
     });
-    let arc_value = ArcValue::from_json(nested_json);
+    let arc_value = ArcValue::new_json(nested_json);
 
     let result = arc_value.to_json().unwrap();
     assert_eq!(result, json!({
@@ -343,4 +343,32 @@ fn test_custom_structs_to_json() {
     assert_eq!(deserialized_nested_ref.inner.name, "Nested Inner");
     assert_eq!(deserialized_nested_ref.inner.active, true);
     assert_eq!(deserialized_nested_ref.count, 999);
+    
+    //start with json and extract as struct
+    let json_value = json!({
+        "id": 1,
+        "name": "Test Struct",
+        "active": true
+    });
+    let arc_value = ArcValue::new_json(json_value);
+    let struct_value = arc_value.as_type::<TestStruct>().unwrap();  
+    assert_eq!(struct_value.id, 1);
+    assert_eq!(struct_value.name, "Test Struct");
+    assert_eq!(struct_value.active, true);
+ 
+    //test serialization and deserialization
+    let serialized = arc_value.serialize(None).unwrap();
+    let deserialized = ArcValue::deserialize(&serialized, None).unwrap();
+    let struct_value = deserialized.as_type::<TestStruct>().unwrap();
+    assert_eq!(struct_value.id, 1);
+    assert_eq!(struct_value.name, "Test Struct");
+    assert_eq!(struct_value.active, true); 
+
+    //test as json
+    let json_value = deserialized.to_json().unwrap();
+    assert_eq!(json_value, json!({
+        "id": 1,
+        "name": "Test Struct",
+        "active": true
+    }));
 }

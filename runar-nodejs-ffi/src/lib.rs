@@ -169,7 +169,7 @@ impl JsNode {
         payload: Option<JsonValue>,
     ) -> napi::Result<JsonValue> {
         let node = self.inner.lock().await;
-        let payload_av: Option<ArcValue> = payload.map(ArcValue::from_json);
+        let payload_av: Option<ArcValue> = payload.map(ArcValue::new_json);
         let resp: JsonValue = node
             .request::<ArcValue, JsonValue>(path, payload_av)
             .await
@@ -180,7 +180,7 @@ impl JsNode {
     #[napi]
     pub async fn publish(&self, topic: String, data: Option<JsonValue>) -> napi::Result<()> {
         let node = self.inner.lock().await;
-        let data_av = data.map(ArcValue::from_json);
+        let data_av = data.map(ArcValue::new_json);
         node.publish(topic, data_av)
             .await
             .map_err(anyhow_to_napi_error)
@@ -363,7 +363,7 @@ impl AbstractService for JsWrapperService {
                         Ok(Ok(resp)) => {
                             // Remove from pending map on successful response
                             PENDING.remove(&id);
-                            Ok(ArcValue::from_json(resp))
+                            Ok(ArcValue::new_json(resp))
                         }
                         Ok(Err(_)) => {
                             // Remove from pending map on channel error

@@ -124,7 +124,7 @@ impl GatwayService {
                         ));
 
                         let req_path = format!("{service_path_clone}/{action_name_clone}");
-                        let request_arc_value = ArcValue::from_json(payload);
+                        let request_arc_value = ArcValue::new_json(payload);
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                         match ctx

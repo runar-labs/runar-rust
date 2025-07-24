@@ -408,13 +408,45 @@ impl ArcValue {
     {
         let inner = self.value.as_ref().ok_or_else(|| anyhow!("No value"))?;
 
+        let target_name = std::any::type_name::<T>();
+
         // Fast path – already materialised object stored inside ErasedArc.
         if !inner.is_lazy {
+
+            // if is not lazy.. and is of categoty JSON and the requested type is not JSON.. 
+            // then we need to convert from the json to ArcValue and then to the requested type 
+             if self.category == ValueCategory::Json && target_name != "serde_json::value::Value" {
+                let json_value = inner.as_arc::<JsonValue>()?;
+                if target_name.contains("ArcValue") {
+                    let converted_arc = Self::json_to_arc_value(json_value.as_ref());
+                    return converted_arc.as_type_ref::<T>();
+                } else {
+                    let result : T = serde_json::from_value::<T>(json_value.as_ref().clone())?;
+                    return Ok(Arc::new(result));
+                }
+            }
+
             return inner.as_arc::<T>();
         }
 
         // Use unified lazy data handling
-        self.handle_lazy_data(|payload, _type_name| {
+        self.handle_lazy_data(|payload, type_name| {
+
+            //handle the case when the serialized type is JSON and the requested type is not JSON
+            if type_name == "serde_json::value::Value" && target_name != type_name {
+                if let Ok(json_value) = serde_cbor::from_slice::<serde_json::value::Value>(payload) {
+                    if target_name.contains("ArcValue") {
+                        let converted_arc = Self::json_to_arc_value(&json_value);
+                        return converted_arc.as_type_ref::<T>();
+                    } else {
+                        let result : T = serde_json::from_value::<T>(json_value)?;
+                        return Ok(Arc::new(result));
+                    }  
+                } else {
+                    return Err(anyhow!("Failed to deserialize JSON from CBOR"));
+                }
+            }
+            
             // Attempt direct deserialisation (primitives, Plain structs, or when
             // the caller asked for the *encrypted* representation itself).
             if let Ok(val) = serde_cbor::from_slice::<T>(payload) {
@@ -556,10 +588,10 @@ impl ArcValue {
         process_fn(&payload, &lazy.type_name)
     }
 
-    pub fn from_json(json: JsonValue) -> Self {
+    fn json_to_arc_value(json: &JsonValue) -> Self {
         match json {
             JsonValue::Null => Self::null(),
-            JsonValue::Bool(b) => Self::new_primitive(b),
+            JsonValue::Bool(b) => Self::new_primitive(*b),
             JsonValue::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Self::new_primitive(i)
@@ -569,11 +601,11 @@ impl ArcValue {
                     Self::null()
                 }
             }
-            JsonValue::String(s) => Self::new_primitive(s),
-            JsonValue::Array(arr) => Self::new_list(arr.into_iter().map(Self::from_json).collect()),
+            JsonValue::String(s) => Self::new_primitive(s.clone()),
+            JsonValue::Array(arr) => Self::new_list(arr.iter().map(Self::json_to_arc_value).collect()),
             JsonValue::Object(obj) => Self::new_map(
-                obj.into_iter()
-                    .map(|(k, v)| (k, Self::from_json(v)))
+                obj.clone().into_iter()
+                    .map(|(k, v)| (k, Self::json_to_arc_value(&v)))
                     .collect(),
             ),
         }
@@ -595,24 +627,24 @@ impl ArcValue {
                 } else if let Ok(arc) = self.as_type_ref::<bool>() {
                     Ok(JsonValue::Bool(*arc))
                 } else {
-                    // Try to handle Vec<ArcValue> and HashMap<String, ArcValue> even if they're marked as Primitive
-                    if let Ok(vec) = self.as_type_ref::<Vec<ArcValue>>() {
-                        let mut json_array = Vec::new();
-                        for arc_value in vec.as_ref() {
-                            let json_value = arc_value.to_json()?;
-                            json_array.push(json_value);
-                        }
-                        Ok(JsonValue::Array(json_array))
-                    } else if let Ok(map) = self.as_type_ref::<HashMap<String, ArcValue>>() {
-                        let mut json_object = serde_json::Map::new();
-                        for (key, arc_value) in map.as_ref() {
-                            let json_value = arc_value.to_json()?;
-                            json_object.insert(key.clone(), json_value);
-                        }
-                        Ok(JsonValue::Object(json_object))
-                    } else {
-                        Err(anyhow!("Unsupported primitive for JSON"))
-                    }
+                    // // Try to handle Vec<ArcValue> and HashMap<String, ArcValue> even if they're marked as Primitive
+                    // if let Ok(vec) = self.as_type_ref::<Vec<ArcValue>>() {
+                    //     let mut json_array = Vec::new();
+                    //     for arc_value in vec.as_ref() {
+                    //         let json_value = arc_value.to_json()?;
+                    //         json_array.push(json_value);
+                    //     }
+                    //     Ok(JsonValue::Array(json_array))
+                    // } else if let Ok(map) = self.as_type_ref::<HashMap<String, ArcValue>>() {
+                    //     let mut json_object = serde_json::Map::new();
+                    //     for (key, arc_value) in map.as_ref() {
+                    //         let json_value = arc_value.to_json()?;
+                    //         json_object.insert(key.clone(), json_value);
+                    //     }
+                    //     Ok(JsonValue::Object(json_object))
+                    // } else {
+                    Err(anyhow!("Unsupported primitive for JSON"))
+                    // }
                 }
             }
             ValueCategory::List => {
