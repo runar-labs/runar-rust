@@ -760,7 +760,7 @@ async fn test_transport_message_header_bounds_checking(
     // Test CBOR serialization/deserialization (this is what the transport uses internally)
     let cbor_encoded = serde_cbor::to_vec(&test_msg)?;
     assert!(
-        cbor_encoded.len() > 0,
+        !cbor_encoded.is_empty(),
         "CBOR encoding should produce non-empty data"
     );
 

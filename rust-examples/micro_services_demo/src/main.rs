@@ -8,9 +8,7 @@ use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, Labe
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::time;
+use std::sync::Arc; 
 
 // Declare modules
 mod account_service;
@@ -385,11 +383,10 @@ async fn main() -> Result<()> {
         created_order.total_price_cents as f64 / 100.0
     );
 
+    node.stop().await?;
+
     println!("\n🎉 Microservices demo completed successfully!");
     println!("All operations completed with encryption support.");
-
-    // Keep the node running for a bit to see any async operations
-    time::sleep(Duration::from_secs(2)).await;
-
+ 
     Ok(())
 }
