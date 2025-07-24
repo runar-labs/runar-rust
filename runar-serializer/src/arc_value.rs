@@ -247,7 +247,7 @@ impl ArcValue {
         let is_encrypted = is_encrypted_byte == 0x01;
 
         let type_name_len = bytes[2] as usize;
-        if type_name_len + 2 > bytes.len() {
+        if type_name_len + 3 > bytes.len() {
             return Err(anyhow!("Invalid type name length"));
         }
         let type_name_bytes = &bytes[3..3 + type_name_len];

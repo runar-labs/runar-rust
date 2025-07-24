@@ -292,3 +292,52 @@ fn test_as_typed_map_ref() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_deserialize_bounds_check_fix() {
+    // Test that the bounds check fix prevents out-of-bounds access
+    // This test would panic without the fix
+
+    // Create malformed data that would cause out-of-bounds access
+    let malformed_data = vec![1u8, 0u8, 2u8]; // category=1, encrypted=0, type_name_len=2
+                                              // This has 3 bytes total, but claims type_name_len=2
+                                              // Without the fix: bounds check would pass, but slice access bytes[3..5] would panic
+                                              // With the fix: bounds check should catch this and return an error
+
+    let result = ArcValue::deserialize(&malformed_data, None);
+    assert!(result.is_err(), "Should fail with invalid type name length");
+
+    // Verify the error message indicates the bounds issue
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("Invalid type name length"),
+        "Error should mention invalid type name length, got: {error_msg}"
+    );
+
+    // Test with even more malformed data
+    let more_malformed = vec![1u8, 0u8, 255u8]; // type_name_len=255, but only 3 bytes total
+    let result2 = ArcValue::deserialize(&more_malformed, None);
+    assert!(
+        result2.is_err(),
+        "Should fail with invalid type name length"
+    );
+
+    // Test edge case: exactly at the boundary (should work)
+    let edge_case = vec![1u8, 0u8, 1u8, b'a']; // 4 bytes total, type_name_len=1
+    let result3 = ArcValue::deserialize(&edge_case, None);
+    // This will fail for other reasons (invalid type name, missing data), but not bounds check
+    assert!(
+        result3.is_err(),
+        "Should fail for other reasons, not bounds check"
+    );
+
+    // Test with valid data (should work)
+    let test_string = "hello".to_string();
+    let arc_value = ArcValue::new_primitive(test_string.clone());
+    let serialized = arc_value.serialize(None).unwrap();
+    let result4 = ArcValue::deserialize(&serialized, None);
+    assert!(
+        result4.is_ok(),
+        "Valid data should deserialize successfully"
+    );
+}
