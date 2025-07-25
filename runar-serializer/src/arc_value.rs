@@ -3,6 +3,7 @@ use std::fmt::{self, Debug};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use base64::Engine;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -127,6 +128,10 @@ impl ArcValue {
     where
         T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
+        let type_name = std::any::type_name::<T>();
+        if !is_primitive(type_name) {
+            panic!("Not a primitive");
+        }
         let arc = Arc::new(value);
         let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
             let val = erased.as_arc::<T>()?;
@@ -140,31 +145,45 @@ impl ArcValue {
         }
     }
 
-    pub fn new_list(list: Vec<ArcValue>) -> Self {
+    pub fn new_list<T>(list: Vec<T>) -> Self
+    where
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
+    {
         let arc = Arc::new(list);
         let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
-            let list = erased.as_arc::<Vec<ArcValue>>()?;
+            let list = erased.as_arc::<Vec<T>>()?;
             serde_cbor::to_vec(list.as_ref()).map_err(anyhow::Error::from)
+        });
+        let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
+            let list = erased.as_arc::<Vec<T>>()?;
+            serde_json::to_value(list.as_ref()).map_err(anyhow::Error::from)
         });
         Self {
             category: ValueCategory::List,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
-            to_json_fn: None,
+            to_json_fn: Some(to_json_fn),
         }
     }
 
-    pub fn new_map(map: HashMap<String, ArcValue>) -> Self {
+    pub fn new_map<T>(map: HashMap<String, T>) -> Self
+    where
+        T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
+    {
         let arc = Arc::new(map);
         let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
-            let map = erased.as_arc::<HashMap<String, ArcValue>>()?;
+            let map = erased.as_arc::<HashMap<String, T>>()?;
             serde_cbor::to_vec(map.as_ref()).map_err(anyhow::Error::from)
+        });
+        let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
+            let map = erased.as_arc::<HashMap<String, T>>()?;
+            serde_json::to_value(map.as_ref()).map_err(anyhow::Error::from)
         });
         Self {
             category: ValueCategory::Map,
             value: Some(ErasedArc::new(arc)),
             serialize_fn: Some(ser_fn),
-            to_json_fn: None,
+            to_json_fn: Some(to_json_fn),
         }
     }
 
@@ -613,56 +632,34 @@ impl ArcValue {
         match self.category {
             ValueCategory::Null => Ok(JsonValue::Null),
             ValueCategory::Primitive => {
-                // Handle different primitive types
-                if let Ok(arc) = self.as_type_ref::<String>() {
-                    Ok(JsonValue::String(arc.as_ref().clone()))
-                } else if let Ok(arc) = self.as_type_ref::<i64>() {
-                    Ok(JsonValue::Number((*arc).into()))
-                } else if let Ok(arc) = self.as_type_ref::<f64>() {
-                    Ok(JsonValue::Number(
-                        serde_json::Number::from_f64(*arc).unwrap_or(serde_json::Number::from(0)),
+                let inner = self.value.as_ref().ok_or_else(|| anyhow!("No value"))?;
+                let type_name = inner.type_name();
+
+                if is_string(type_name) {
+                    let value = inner.as_arc::<String>()?;
+                    Ok(JsonValue::String(value.as_ref().clone()))
+                } else if is_number(type_name) {
+                    to_json_number(inner, type_name)
+                } else if is_bool(type_name) {
+                    let value = inner.as_arc::<bool>()?;
+                    Ok(JsonValue::Bool(*value))
+                } else if is_char(type_name) {
+                    let value = inner.as_arc::<char>()?;
+                    Ok(JsonValue::String(value.to_string()))
+                } else if is_bytes(type_name) {
+                    let value = inner.as_arc::<Vec<u8>>()?;
+                    Ok(JsonValue::String(
+                        base64::engine::general_purpose::STANDARD.encode(value.as_ref()),
                     ))
-                } else if let Ok(arc) = self.as_type_ref::<bool>() {
-                    Ok(JsonValue::Bool(*arc))
                 } else {
-                    // // Try to handle Vec<ArcValue> and HashMap<String, ArcValue> even if they're marked as Primitive
-                    // if let Ok(vec) = self.as_type_ref::<Vec<ArcValue>>() {
-                    //     let mut json_array = Vec::new();
-                    //     for arc_value in vec.as_ref() {
-                    //         let json_value = arc_value.to_json()?;
-                    //         json_array.push(json_value);
-                    //     }
-                    //     Ok(JsonValue::Array(json_array))
-                    // } else if let Ok(map) = self.as_type_ref::<HashMap<String, ArcValue>>() {
-                    //     let mut json_object = serde_json::Map::new();
-                    //     for (key, arc_value) in map.as_ref() {
-                    //         let json_value = arc_value.to_json()?;
-                    //         json_object.insert(key.clone(), json_value);
-                    //     }
-                    //     Ok(JsonValue::Object(json_object))
-                    // } else {
-                    Err(anyhow!("Unsupported primitive for JSON"))
-                    // }
+                    Err(anyhow!(
+                        "Unsupported primitive type for JSON conversion: {}",
+                        type_name
+                    ))
                 }
-            }
-            ValueCategory::List => {
-                let list = self.as_list_ref()?;
-                let mut vec = Vec::new();
-                for item in list.iter() {
-                    vec.push(item.to_json()?);
-                }
-                Ok(JsonValue::Array(vec))
-            }
-            ValueCategory::Map => {
-                let map = self.as_map_ref()?;
-                let mut json_map = serde_json::Map::new();
-                for (k, v) in map.iter() {
-                    json_map.insert(k.clone(), v.to_json()?);
-                }
-                Ok(JsonValue::Object(json_map))
             }
             ValueCategory::Json => Ok(self.as_json_ref()?.as_ref().clone()),
-            ValueCategory::Struct => {
+            ValueCategory::Struct | ValueCategory::List | ValueCategory::Map => {
                 // First try the stored to_json_fn if available
                 if let Some(json_fn) = &self.to_json_fn {
                     let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
@@ -699,158 +696,185 @@ impl ArcValue {
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
+        // Check if this is JSON serialization by checking the serializer type
+        let is_json = std::any::type_name::<S>().contains("serde_json");
 
-        let mut state = serializer.serialize_struct("ArcValue", 3)?;
-
-        // Serialize category as integer using the enum directly
-        let category_int = self.category as u8;
-        state.serialize_field("category", &category_int)?;
-
-        let inner = self
-            .value
-            .as_ref()
-            .ok_or(serde::ser::Error::custom("No value to serialize"))?;
-        let type_name = inner.type_name();
-        state.serialize_field("typename", type_name)?;
-
-        // Serialize the actual value using the existing serialize_fn
-        if let Some(inner) = &self.value {
-            if let Some(ser_fn) = &self.serialize_fn {
-                let serialized_data =
-                    ser_fn(inner, None, None).map_err(serde::ser::Error::custom)?;
-                state.serialize_field("value", &serialized_data)?;
-            } else {
-                return Err(serde::ser::Error::custom("No serialize function available"));
+        if is_json {
+            // For JSON, use the to_json() method to get proper JSON representation
+            match self.to_json() {
+                Ok(json_value) => json_value.serialize(serializer),
+                Err(e) => Err(serde::ser::Error::custom(format!(
+                    "JSON conversion failed: {e}",
+                    
+                ))),
             }
         } else {
-            // For null values
-            state.serialize_field("value", &serde_json::Value::Null)?;
-        }
+            // For CBOR and other formats, use the original struct-based serialization
+            use serde::ser::SerializeStruct;
 
-        state.end()
+            let mut state = serializer.serialize_struct("ArcValue", 3)?;
+
+            // Serialize category as integer using the enum directly
+            let category_int = self.category as u8;
+            state.serialize_field("category", &category_int)?;
+
+            let inner = self
+                .value
+                .as_ref()
+                .ok_or(serde::ser::Error::custom("No value to serialize"))?;
+            let type_name = inner.type_name();
+            state.serialize_field("typename", type_name)?;
+
+            // Serialize the actual value using the existing serialize_fn
+            if let Some(inner) = &self.value {
+                if let Some(ser_fn) = &self.serialize_fn {
+                    let serialized_data =
+                        ser_fn(inner, None, None).map_err(serde::ser::Error::custom)?;
+                    state.serialize_field("value", &serialized_data)?;
+                } else {
+                    return Err(serde::ser::Error::custom("No serialize function available"));
+                }
+            } else {
+                // For null values
+                state.serialize_field("value", &serde_json::Value::Null)?;
+            }
+
+            state.end()
+        }
     }
 
     pub fn deserialize_serde<'de, D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
+        // Check if this is JSON deserialization by checking the deserializer type
+        let is_json = std::any::type_name::<D>().contains("serde_json");
 
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Category,
-            Value,
-            TypeName,
-        }
+        if is_json {
+            // For JSON, deserialize as a JsonValue and convert to ArcValue
+            let json_value = JsonValue::deserialize(deserializer)?;
+            Ok(Self::json_to_arc_value(&json_value))
+        } else {
+            // For CBOR and other formats, use the original struct-based deserialization
+            use serde::de::{self, MapAccess, Visitor};
+            use std::fmt;
 
-        struct ArcValueVisitor;
-
-        impl<'de> Visitor<'de> for ArcValueVisitor {
-            type Value = ArcValue;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("struct ArcValue")
+            #[derive(Deserialize)]
+            #[serde(field_identifier, rename_all = "lowercase")]
+            enum Field {
+                Category,
+                Value,
+                TypeName,
             }
 
-            fn visit_map<V>(self, mut map: V) -> Result<ArcValue, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut category = None;
-                let mut value = None;
-                let mut type_name: Option<String> = None;
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Category => {
-                            if category.is_some() {
-                                return Err(de::Error::duplicate_field("category"));
+            struct ArcValueVisitor;
+
+            impl<'de> Visitor<'de> for ArcValueVisitor {
+                type Value = ArcValue;
+
+                fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                    formatter.write_str("struct ArcValue")
+                }
+
+                fn visit_map<V>(self, mut map: V) -> Result<ArcValue, V::Error>
+                where
+                    V: MapAccess<'de>,
+                {
+                    let mut category = None;
+                    let mut value = None;
+                    let mut type_name: Option<String> = None;
+                    while let Some(key) = map.next_key()? {
+                        match key {
+                            Field::Category => {
+                                if category.is_some() {
+                                    return Err(de::Error::duplicate_field("category"));
+                                }
+                                let category_int: u8 = map.next_value()?;
+                                category = Some(ValueCategory::from_u8(category_int).ok_or_else(
+                                    || {
+                                        de::Error::unknown_variant(
+                                            &category_int.to_string(),
+                                            &["0", "1", "2", "3", "4", "5", "6"],
+                                        )
+                                    },
+                                )?);
                             }
-                            let category_int: u8 = map.next_value()?;
-                            category =
-                                Some(ValueCategory::from_u8(category_int).ok_or_else(|| {
-                                    de::Error::unknown_variant(
-                                        &category_int.to_string(),
-                                        &["0", "1", "2", "3", "4", "5", "6"],
-                                    )
-                                })?);
+                            Field::Value => {
+                                if value.is_some() {
+                                    return Err(de::Error::duplicate_field("value"));
+                                }
+                                value = Some(map.next_value()?);
+                            }
+                            Field::TypeName => {
+                                if type_name.is_some() {
+                                    return Err(de::Error::duplicate_field("typename"));
+                                }
+                                type_name = Some(map.next_value()?);
+                            }
                         }
-                        Field::Value => {
-                            if value.is_some() {
-                                return Err(de::Error::duplicate_field("value"));
+                    }
+
+                    let category = category.ok_or_else(|| de::Error::missing_field("category"))?;
+                    let type_name =
+                        type_name.ok_or_else(|| de::Error::missing_field("typename"))?;
+
+                    match category {
+                        ValueCategory::Null => Ok(ArcValue::null()),
+                        ValueCategory::Primitive => {
+                            // Eagerly deserialize primitives
+                            let value: Vec<u8> =
+                                value.ok_or_else(|| de::Error::missing_field("value"))?;
+                            // Try to deserialize as different primitive types
+                            if let Ok(s) = serde_cbor::from_slice::<String>(&value) {
+                                Ok(ArcValue::new_primitive(s))
+                            } else if let Ok(i) = serde_cbor::from_slice::<i64>(&value) {
+                                Ok(ArcValue::new_primitive(i))
+                            } else if let Ok(f) = serde_cbor::from_slice::<f64>(&value) {
+                                Ok(ArcValue::new_primitive(f))
+                            } else if let Ok(b) = serde_cbor::from_slice::<bool>(&value) {
+                                Ok(ArcValue::new_primitive(b))
+                            } else {
+                                Err(de::Error::custom("Failed to deserialize primitive value"))
                             }
-                            value = Some(map.next_value()?);
                         }
-                        Field::TypeName => {
-                            if type_name.is_some() {
-                                return Err(de::Error::duplicate_field("typename"));
-                            }
-                            type_name = Some(map.next_value()?);
+                        ValueCategory::Bytes => {
+                            // Bytes can also be eagerly deserialized
+                            let value: Vec<u8> =
+                                value.ok_or_else(|| de::Error::missing_field("value"))?;
+                            Ok(ArcValue::new_bytes(value))
+                        }
+                        _ => {
+                            // For complex types (List, Map, Struct, Json), create lazy structure
+                            let value: Vec<u8> =
+                                value.ok_or_else(|| de::Error::missing_field("value"))?;
+                            let value_len = value.len();
+                            // Create LazyDataWithOffset structure for complex types
+                            let lazy_data = LazyDataWithOffset {
+                                type_name: type_name.to_string(),
+                                original_buffer: Arc::from(value),
+                                start_offset: 0,
+                                end_offset: value_len,
+                                keystore: None,
+                                encrypted: false,
+                            };
+
+                            Ok(ArcValue {
+                                category,
+                                value: Some(ErasedArc::from_value(lazy_data)),
+                                serialize_fn: None,
+                                to_json_fn: None,
+                            })
                         }
                     }
                 }
-
-                let category = category.ok_or_else(|| de::Error::missing_field("category"))?;
-                let type_name = type_name.ok_or_else(|| de::Error::missing_field("typename"))?;
-
-                match category {
-                    ValueCategory::Null => Ok(ArcValue::null()),
-                    ValueCategory::Primitive => {
-                        // Eagerly deserialize primitives
-                        let value: Vec<u8> =
-                            value.ok_or_else(|| de::Error::missing_field("value"))?;
-                        // Try to deserialize as different primitive types
-                        if let Ok(s) = serde_cbor::from_slice::<String>(&value) {
-                            Ok(ArcValue::new_primitive(s))
-                        } else if let Ok(i) = serde_cbor::from_slice::<i64>(&value) {
-                            Ok(ArcValue::new_primitive(i))
-                        } else if let Ok(f) = serde_cbor::from_slice::<f64>(&value) {
-                            Ok(ArcValue::new_primitive(f))
-                        } else if let Ok(b) = serde_cbor::from_slice::<bool>(&value) {
-                            Ok(ArcValue::new_primitive(b))
-                        } else {
-                            Err(de::Error::custom("Failed to deserialize primitive value"))
-                        }
-                    }
-                    ValueCategory::Bytes => {
-                        // Bytes can also be eagerly deserialized
-                        let value: Vec<u8> =
-                            value.ok_or_else(|| de::Error::missing_field("value"))?;
-                        Ok(ArcValue::new_bytes(value))
-                    }
-                    _ => {
-                        // For complex types (List, Map, Struct, Json), create lazy structure
-                        let value: Vec<u8> =
-                            value.ok_or_else(|| de::Error::missing_field("value"))?;
-                        let value_len = value.len();
-                        // Create LazyDataWithOffset structure for complex types
-                        let lazy_data = LazyDataWithOffset {
-                            type_name: type_name.to_string(),
-                            original_buffer: Arc::from(value),
-                            start_offset: 0,
-                            end_offset: value_len,
-                            keystore: None,
-                            encrypted: false,
-                        };
-
-                        Ok(ArcValue {
-                            category,
-                            value: Some(ErasedArc::from_value(lazy_data)),
-                            serialize_fn: None,
-                            to_json_fn: None,
-                        })
-                    }
-                }
             }
-        }
 
-        deserializer.deserialize_struct(
-            "ArcValue",
-            &["category", "value", "typename"],
-            ArcValueVisitor,
-        )
+            deserializer.deserialize_struct(
+                "ArcValue",
+                &["category", "value", "typename"],
+                ArcValueVisitor,
+            )
+        }
     }
 }
 
@@ -926,4 +950,103 @@ impl AsArcValue for ArcValue {
     fn from_arc_value(value: ArcValue) -> Result<Self> {
         Ok(value)
     }
+}
+ 
+fn is_primitive(type_name: &str) -> bool {
+    is_string(type_name)
+        || is_number(type_name)
+        || is_bool(type_name)
+        || is_char(type_name)
+        || is_bytes(type_name)
+}
+
+fn is_string(type_name: &str) -> bool {
+    type_name.starts_with("alloc::string::String") || type_name.starts_with("std::string::String")
+}
+
+fn is_number(type_name: &str) -> bool {
+    type_name == "i8"
+        || type_name == "i16"
+        || type_name == "i32"
+        || type_name == "i64"
+        || type_name == "i128"
+        || type_name == "u8"
+        || type_name == "u16"
+        || type_name == "u32"
+        || type_name == "u64"
+        || type_name == "u128"
+        || type_name == "f32"
+        || type_name == "f64"
+}
+
+fn to_json_number(inner: &ErasedArc, type_name: &str) -> Result<JsonValue> {
+    match type_name {
+        "i8" => {
+            let value = inner.as_arc::<i8>()?;
+            Ok(JsonValue::Number((*value as i64).into()))
+        }
+        "i16" => {
+            let value = inner.as_arc::<i16>()?;
+            Ok(JsonValue::Number((*value as i64).into()))
+        }
+        "i32" => {
+            let value = inner.as_arc::<i32>()?;
+            Ok(JsonValue::Number((*value as i64).into()))
+        }
+        "i64" => {
+            let value = inner.as_arc::<i64>()?;
+            Ok(JsonValue::Number((*value).into()))
+        }
+        "i128" => {
+            let value = inner.as_arc::<i128>()?;
+            Ok(JsonValue::String(value.to_string()))
+        }
+        "u8" => {
+            let value = inner.as_arc::<u8>()?;
+            Ok(JsonValue::Number((*value as u64).into()))
+        }
+        "u16" => {
+            let value = inner.as_arc::<u16>()?;
+            Ok(JsonValue::Number((*value as u64).into()))
+        }
+        "u32" => {
+            let value = inner.as_arc::<u32>()?;
+            Ok(JsonValue::Number((*value as u64).into()))
+        }
+        "u64" => {
+            let value = inner.as_arc::<u64>()?;
+            Ok(JsonValue::Number((*value).into()))
+        }
+        "u128" => {
+            let value = inner.as_arc::<u128>()?;
+            Ok(JsonValue::String(value.to_string()))
+        }
+        "f32" => {
+            let value = inner.as_arc::<f32>()?;
+            Ok(JsonValue::Number(
+                serde_json::Number::from_f64(*value as f64)
+                    .ok_or_else(|| anyhow!("Invalid f32 value for JSON: {}", *value))?,
+            ))
+        }
+        "f64" => {
+            let value = inner.as_arc::<f64>()?;
+            Ok(JsonValue::Number(
+                serde_json::Number::from_f64(*value)
+                    .ok_or_else(|| anyhow!("Invalid f64 value for JSON: {}", *value))?,
+            ))
+        }
+        _ => Err(anyhow!("Unsupported number type: {}", type_name)),
+    }
+}
+
+fn is_bool(type_name: &str) -> bool {
+    type_name == "bool"
+}
+
+fn is_char(type_name: &str) -> bool {
+    type_name == "char"
+}
+
+fn is_bytes(type_name: &str) -> bool {
+    type_name == "alloc::vec::Vec<u8>"
 }

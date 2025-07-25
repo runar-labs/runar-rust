@@ -144,7 +144,7 @@ impl TestService {
             value: val_int,
         };
         // Manually wrap in ArcValue, like in micro_services_demo
-        Ok(ArcValue::new_primitive(data))
+        Ok(ArcValue::new_struct(data))
     }
 
     //the publish macro will do a ctx.publish("my_data_auto", ArcValue::new_struct(action_result.clone())).await?;
@@ -171,11 +171,8 @@ impl TestService {
             map_field: HashMap::new(),
             network_id: self.network_id(),
         };
-        ctx.publish(
-            "my_data_changed",
-            Some(ArcValue::new_primitive(data.clone())),
-        )
-        .await?;
+        ctx.publish("my_data_changed", Some(ArcValue::new_struct(data.clone())))
+            .await?;
         ctx.publish("age_changed", Some(ArcValue::new_primitive(25)))
             .await?;
         Ok(data)
@@ -203,11 +200,11 @@ impl TestService {
             let existing_vec = existing.as_type_ref::<Vec<MyData>>().unwrap();
             let mut new_vec = (*existing_vec).clone();
             new_vec.push(data.clone());
-            lock.insert("my_data_auto".to_string(), ArcValue::new_primitive(new_vec));
+            lock.insert("my_data_auto".to_string(), ArcValue::new_list(new_vec));
         } else {
             lock.insert(
                 "my_data_auto".to_string(),
-                ArcValue::new_primitive(vec![data.clone()]),
+                ArcValue::new_list(vec![data.clone()]),
             );
         }
 
@@ -224,9 +221,9 @@ impl TestService {
             let existing_vec = existing.as_type_ref::<Vec<f64>>().unwrap();
             let mut new_vec = (*existing_vec).clone();
             new_vec.push(total);
-            lock.insert("added".to_string(), ArcValue::new_primitive(new_vec));
+            lock.insert("added".to_string(), ArcValue::new_list(new_vec));
         } else {
-            lock.insert("added".to_string(), ArcValue::new_primitive(vec![total]));
+            lock.insert("added".to_string(), ArcValue::new_list(vec![total]));
         }
 
         Ok(())
@@ -242,14 +239,11 @@ impl TestService {
             let existing_vec = existing.as_type_ref::<Vec<MyData>>().unwrap();
             let mut new_vec = (*existing_vec).clone();
             new_vec.push(data.clone());
-            lock.insert(
-                "my_data_changed".to_string(),
-                ArcValue::new_primitive(new_vec),
-            );
+            lock.insert("my_data_changed".to_string(), ArcValue::new_list(new_vec));
         } else {
             lock.insert(
                 "my_data_changed".to_string(),
-                ArcValue::new_primitive(vec![data.clone()]),
+                ArcValue::new_list(vec![data.clone()]),
             );
         }
 
@@ -266,12 +260,9 @@ impl TestService {
             let existing_vec = existing.as_type_ref::<Vec<i32>>().unwrap();
             let mut new_vec = (*existing_vec).clone();
             new_vec.push(new_age);
-            lock.insert("age_changed".to_string(), ArcValue::new_primitive(new_vec));
+            lock.insert("age_changed".to_string(), ArcValue::new_list(new_vec));
         } else {
-            lock.insert(
-                "age_changed".to_string(),
-                ArcValue::new_primitive(vec![new_age]),
-            );
+            lock.insert("age_changed".to_string(), ArcValue::new_list(vec![new_age]));
         }
 
         Ok(())
@@ -292,12 +283,12 @@ impl TestService {
             new_vec.push(data.clone());
             lock.insert(
                 "echo_list_published".to_string(),
-                ArcValue::new_primitive(new_vec),
+                ArcValue::new_list(new_vec),
             );
         } else {
             lock.insert(
                 "echo_list_published".to_string(),
-                ArcValue::new_primitive(vec![data.clone()]),
+                ArcValue::new_list(vec![data.clone()]),
             );
         }
 
@@ -380,6 +371,7 @@ mod tests {
     use runar_node::config::LogLevel;
     use runar_node::config::LoggingConfig;
     use runar_node::Node;
+    use runar_serializer::ValueCategory;
     use runar_test_utils::create_node_test_config;
     use serde_json::json;
 
@@ -743,7 +735,7 @@ mod tests {
         let mut temp_map = HashMap::new();
         temp_map.insert("key1".to_string(), "value1".to_string());
         let param: Vec<HashMap<String, String>> = vec![temp_map];
-        let arc_value = ArcValue::new_primitive(param);
+        let arc_value = ArcValue::new_list(param);
         // complex_data
         let list_result_arc: ArcValue = ctx
             .node
@@ -753,6 +745,7 @@ mod tests {
         let list_result: Vec<HashMap<String, String>> = list_result_arc
             .as_type()
             .expect("Failed to convert to Vec<HashMap<String, String>>");
+        assert_eq!(list_result_arc.category, ValueCategory::List);
 
         assert_eq!(list_result.len(), 1);
         assert_eq!(list_result[0].get("key1").unwrap(), "value1");
@@ -904,11 +897,7 @@ mod tests {
             .expect("Failed to call echo_map action");
 
         // Check if the returned ArcValue has the correct category
-        ctx.logger.debug(format!(
-            "echo_map result category: {:?}",
-            map_result_arc.category
-        ));
-        // This should be Map, not Primitive
+        assert_eq!(map_result_arc.category, ValueCategory::Map);
 
         let map_result: HashMap<String, ArcValue> = map_result_arc
             .as_type()
@@ -920,8 +909,16 @@ mod tests {
             "value1"
         );
         assert_eq!(
+            map_result.get("key1").unwrap().category,
+            ValueCategory::Primitive
+        );
+        assert_eq!(
             map_result.get("key2").unwrap().as_type::<i32>().unwrap(),
             123
+        );
+        assert_eq!(
+            map_result.get("key2").unwrap().category,
+            ValueCategory::Primitive
         );
         assert_eq!(
             map_result
@@ -932,6 +929,10 @@ mod tests {
                 .len(),
             1
         );
+        assert_eq!(
+            map_result.get("nested").unwrap().category,
+            ValueCategory::Map
+        );
         assert!(map_result
             .get("nested")
             .unwrap()
@@ -941,6 +942,17 @@ mod tests {
             .unwrap()
             .as_type::<bool>()
             .unwrap());
+        assert_eq!(
+            map_result
+                .get("nested")
+                .unwrap()
+                .as_type::<HashMap<String, ArcValue>>()
+                .unwrap()
+                .get("n_key")
+                .unwrap()
+                .category,
+            ValueCategory::Primitive
+        );
 
         assert_eq!(map_result, test_map);
 
@@ -1096,7 +1108,12 @@ mod tests {
         let mut prof_map = HashMap::new();
         prof_map.insert("p1".to_string(), profile.clone());
         let profiles_param: Vec<HashMap<String, TestProfile>> = vec![prof_map];
-        let arc_value = ArcValue::new_primitive(profiles_param.clone());
+        let arc_value = ArcValue::new_list(profiles_param.clone());
+
+        let back_from_arc = arc_value
+            .as_type::<Vec<HashMap<String, TestProfile>>>()
+            .unwrap();
+        assert_eq!(back_from_arc, profiles_param);
 
         let profile_result_arc: ArcValue = ctx
             .node
@@ -1106,6 +1123,12 @@ mod tests {
         let profile_result: Vec<HashMap<String, TestProfile>> = profile_result_arc
             .as_type()
             .expect("Failed to convert to Vec<HashMap<String, TestProfile>>");
+
+        //check JSON conversion
+        let json_result = profile_result_arc
+            .to_json()
+            .expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!(profiles_param));
 
         assert_eq!(profile_result, profiles_param);
     }
@@ -1167,16 +1190,19 @@ mod tests {
         let json_result = my_data_result_arc
             .to_json()
             .expect("Failed to convert to JSON");
-        assert_eq!(json_result, json!({
-            "id": 42,
-            "text_field": "test",
-            "number_field": 42,
-            "boolean_field": true,
-            "float_field": 1500.0,
-            "vector_field": [1, 2, 3],
-            "map_field": {},
-            "network_id": ctx.default_network_id
-        }));
+        assert_eq!(
+            json_result,
+            json!({
+                "id": 42,
+                "text_field": "test",
+                "number_field": 42,
+                "boolean_field": true,
+                "float_field": 1500.0,
+                "vector_field": [1, 2, 3],
+                "map_field": {},
+                "network_id": ctx.default_network_id
+            })
+        );
 
         // Test 3: Verify that the published events are correctly serialized
         // Check that the events were stored with the correct serialization method
@@ -1233,20 +1259,15 @@ mod tests {
         ctx.logger.debug("Testing publish macro Vec<ArcValue> fix");
 
         // Test that Vec<ArcValue> is correctly serialized using new_list instead of new_primitive
-        let test_list = vec![
+        let test_list = ArcValue::new_list(vec![
             ArcValue::new_primitive("test1".to_string()),
             ArcValue::new_primitive(42i32),
             ArcValue::new_primitive(true),
-        ];
+        ]);
 
         let echo_list_result_arc: ArcValue = ctx
             .node
-            .request(
-                "math/echo_list_with_publish",
-                Some(params! {
-                    "params" => test_list.clone()
-                }),
-            )
+            .request("math/echo_list_with_publish", Some(test_list))
             .await
             .expect("Failed to call echo_list_with_publish action");
 

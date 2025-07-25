@@ -3,10 +3,7 @@
 // This module implements the publish macro, which automatically publishes
 // the result of an action to a specified topic.
 
-use crate::utils::{
-    extract_return_type_info, get_path_last_segment_ident_string, get_vec_inner_type,
-    ReturnTypeInfo,
-};
+use crate::utils::{extract_return_type_info, get_path_last_segment_ident_string, ReturnTypeInfo};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -57,32 +54,23 @@ impl Parse for PublishImpl {
 
 /// Generate the appropriate ArcValue creation based on return type
 fn generate_arc_value_creation(return_type_info: &ReturnTypeInfo) -> TokenStream2 {
-    if return_type_info.is_list {
-        // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
-        // Check if the inner type is ArcValue
-        let inner_type = get_vec_inner_type(&return_type_info.actual_type);
-        if let Some(syn::Type::Path(type_path)) = inner_type {
-            if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
-                quote! {
-                    runar_serializer::ArcValue::new_list(action_result.clone())
-                }
-            } else {
-                quote! {
-                    runar_serializer::ArcValue::new_primitive(action_result.clone())
-                }
-            }
-        } else {
-            quote! {
-                runar_serializer::ArcValue::new_primitive(action_result.clone())
-            }
+    if return_type_info.is_hashmap {
+        quote! {
+            runar_serializer::ArcValue::new_map(action_result.clone())
+        }
+    } else if return_type_info.is_list {
+        quote! {
+            runar_serializer::ArcValue::new_list(action_result.clone())
         }
     } else if return_type_info.is_struct {
-        // For struct types, use new_struct (let compiler handle trait bounds)
         quote! {
             runar_serializer::ArcValue::new_struct(action_result.clone())
         }
+    } else if return_type_info.type_name == "ArcValue" {
+        quote! {
+            action_result.clone()
+        }
     } else {
-        // For complex types, use new_primitive since new_struct requires RunarEncrypt trait
         quote! {
             runar_serializer::ArcValue::new_primitive(action_result.clone())
         }

@@ -8,4 +8,4 @@ pub mod mocks;
 pub mod network;
 
 // Re-export macros for convenience in tests
-pub use runar_macros_common::{hmap, params, vjson, vmap};
+pub use runar_macros_common::{hmap, params, vmap};

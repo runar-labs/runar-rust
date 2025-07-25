@@ -14,7 +14,7 @@ use syn::{
 
 use crate::utils::{
     extract_return_type_info, get_option_inner_type, get_path_last_segment_ident_string,
-    get_vec_inner_type, ReturnTypeInfo,
+    ReturnTypeInfo,
 };
 
 /// Implementation of the action macro
@@ -372,49 +372,31 @@ fn generate_register_action_method(params: RegisterActionMethodParams) -> TokenS
             Ok(value_type)
         }
     } else if params.return_type_info.is_hashmap {
-        // For HashMap<String, ArcValue>, use new_map
         quote! {
-            // Convert the HashMap result to ArcValue using new_map
             let value_type = runar_serializer::ArcValue::new_map(result);
             Ok(value_type)
         }
     } else if params.return_type_info.is_list {
-        // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
-        // Check if the inner type is ArcValue
-        let inner_type = get_vec_inner_type(&params.return_type_info.actual_type);
-        if let Some(syn::Type::Path(type_path)) = inner_type {
-            if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
-                quote! {
-                    // Convert the Vec<ArcValue> result to ArcValue using new_list
-                    let value_type = runar_serializer::ArcValue::new_list(result);
-                    Ok(value_type)
-                }
-            } else {
-                quote! {
-                    // Convert the Vec<T> result to ArcValue using new_primitive
-                    let value_type = runar_serializer::ArcValue::new_primitive(result);
-                    Ok(value_type)
-                }
-            }
-        } else {
-            quote! {
-                // Convert the Vec<T> result to ArcValue using new_primitive
-                let value_type = runar_serializer::ArcValue::new_primitive(result);
-                Ok(value_type)
-            }
+        quote! {
+            let value_type = runar_serializer::ArcValue::new_list(result);
+            Ok(value_type)
         }
     } else if params.return_type_info.is_struct {
-        // For struct types, use new_struct (let compiler handle trait bounds)
         quote! {
-            // Convert the struct result to ArcValue using new_struct
             let value_type = runar_serializer::ArcValue::new_struct(result);
             Ok(value_type)
         }
-    } else {
-        // For complex types, use new_primitive since new_struct requires RunarEncrypt trait
+    } else if params.return_type_info.type_name == "ArcValue" {
         quote! {
-            // Convert the complex result to ArcValue using new_primitive
-            // Note: new_struct requires RunarEncrypt trait, so we use new_primitive for compatibility
+            Ok(result)
+        }
+    } else if params.return_type_info.is_primitive {
+        quote! {
+            let value_type = runar_serializer::ArcValue::new_primitive(result);
+            Ok(value_type)
+        }
+    } else {
+        quote! {
             let value_type = runar_serializer::ArcValue::new_primitive(result);
             Ok(value_type)
         }

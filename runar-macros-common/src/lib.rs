@@ -70,26 +70,6 @@ macro_rules! vmap {
 ///
 /// ## Map Creation Usage:
 ///
-/// ```
-/// use runar_macros_common::hmap;
-/// use runar_serializer::ArcValue;
-/// // Create a HashMap<String, ArcValue> with heterogeneous primitive values:
-/// let params = hmap!(
-///     "name"   => ArcValue::new_primitive("John".to_string()),
-///     "age"    => ArcValue::new_primitive(30),
-///     "active" => ArcValue::new_primitive(true)
-/// );
-/// ```
-///
-/// ## Empty Map:
-///
-/// ```
-/// use runar_macros_common::hmap;
-/// use runar_serializer::ArcValue;
-/// use std::collections::HashMap;
-/// // Create an empty map (explicit type so inference succeeds)
-/// let empty: HashMap<String, ArcValue> = hmap!{};
-/// ```
 #[macro_export]
 macro_rules! hmap {
     // Empty map
@@ -97,7 +77,7 @@ macro_rules! hmap {
         {
             use std::collections::HashMap;
             let map: HashMap<String, _> = HashMap::new();
-            map
+            ArcValue::new_map(map)
         }
     };
 
@@ -105,18 +85,11 @@ macro_rules! hmap {
     { $($key:expr => $value:expr),* $(,)? } => {
         {
             use std::collections::HashMap;
+            use runar_serializer::ArcValue;
             let mut map = HashMap::new();
             $(map.insert($key.to_string(), $value);)*
-            map
+            ArcValue::new_map(map)
         }
-    };
-}
-
-// Define and export the vjson macro (JSON to ArcValue)
-#[macro_export]
-macro_rules! vjson {
-    ($($json:tt)+) => {
-        runar_serializer::ArcValue::from(serde_json::json!($($json)+))
     };
 }
 

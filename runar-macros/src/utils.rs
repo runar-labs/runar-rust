@@ -5,7 +5,7 @@
 
 use quote::quote;
 use syn::{FnArg, Ident, ItemFn, Pat, PatIdent, PatType};
-use syn::{GenericArgument, PathArguments, ReturnType, Type};
+use syn::{ReturnType, Type};
 
 /// Extract parameters from the function signature, skipping `self` and `ctx` or `*_ctx` parameters.
 pub fn extract_parameters(input: &ItemFn) -> Vec<(Ident, Type)> {
@@ -151,19 +151,12 @@ pub fn is_hashmap_type(ty: &syn::Type) -> bool {
             if segment.ident == "HashMap" {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if args.args.len() == 2 {
-                        if let (
-                            Some(syn::GenericArgument::Type(syn::Type::Path(key_path))),
-                            Some(syn::GenericArgument::Type(syn::Type::Path(value_path))),
-                        ) = (args.args.get(0), args.args.get(1))
+                        if let Some(syn::GenericArgument::Type(syn::Type::Path(key_path))) =
+                            args.args.get(0)
                         {
                             // Check if key type is String
                             if let Some(key_segment) = key_path.path.segments.last() {
-                                if key_segment.ident == "String" {
-                                    // Check if value type is ArcValue
-                                    if let Some(value_segment) = value_path.path.segments.last() {
-                                        return value_segment.ident == "ArcValue";
-                                    }
-                                }
+                                return key_segment.ident == "String";
                             }
                         }
                     }
@@ -221,23 +214,6 @@ pub fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
                     if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         return Some(inner_ty);
                     }
-                }
-            }
-        }
-    }
-    None
-}
-
-pub fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
-    if let syn::Type::Path(type_path) = ty {
-        if type_path.path.segments.len() == 1
-            && type_path.path.segments.first().unwrap().ident == "Vec"
-        {
-            if let PathArguments::AngleBracketed(params) =
-                &type_path.path.segments.first().unwrap().arguments
-            {
-                if let Some(GenericArgument::Type(inner_ty)) = params.args.first() {
-                    return Some(inner_ty);
                 }
             }
         }

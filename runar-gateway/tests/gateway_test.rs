@@ -64,7 +64,7 @@ impl EchoService {
 async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
     let logging_config = runar_node::config::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Error);
+        .with_default_level(runar_node::config::LogLevel::Debug);
     logging_config.apply();
 
     let node_config = create_node_test_config()
@@ -148,6 +148,7 @@ async fn test_gateway_routes() -> Result<()> {
         response_list.text().await?
     );
     let response_body_list: JsonValue = response_list.json().await?;
+    logger.debug(format!("Response body list: {response_body_list}"));
     assert_eq!(response_body_list, list_payload);
     logger.debug(format!("POST /{echo_service_path}/echo_list successful."));
 
