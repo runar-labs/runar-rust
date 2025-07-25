@@ -59,18 +59,12 @@ impl Parse for PublishImpl {
 fn generate_arc_value_creation(return_type_info: &ReturnTypeInfo) -> TokenStream2 {
     if return_type_info.is_list {
         // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
-        if return_type_info.type_name == "Vec" {
-            // Check if the inner type is ArcValue
-            let inner_type = get_vec_inner_type(&return_type_info.actual_type);
-            if let Some(syn::Type::Path(type_path)) = inner_type {
-                if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
-                    quote! {
-                        runar_serializer::ArcValue::new_list(action_result.clone())
-                    }
-                } else {
-                    quote! {
-                        runar_serializer::ArcValue::new_primitive(action_result.clone())
-                    }
+        // Check if the inner type is ArcValue
+        let inner_type = get_vec_inner_type(&return_type_info.actual_type);
+        if let Some(syn::Type::Path(type_path)) = inner_type {
+            if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
+                quote! {
+                    runar_serializer::ArcValue::new_list(action_result.clone())
                 }
             } else {
                 quote! {

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use axum::http::StatusCode as HttpStatus;
 use runar_common::{Component, Logger};
 use runar_gateway::GatwayService;
-use runar_macros::{action, service, service_impl};
+use runar_macros::{action, service};
 use runar_node::Node;
 use runar_serializer::{ArcValue, Plain};
 use runar_test_utils::create_node_test_config;
@@ -29,7 +29,7 @@ struct MyTestData {
 )]
 struct EchoService {/* No fields needed if stateless */}
 
-#[service_impl]
+#[service]
 impl EchoService {
     #[action]
     async fn ping(&self) -> Result<String> {

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use runar_macros::{action, service, service_impl};
+use runar_macros::{action, service};
 use runar_node::services::RequestContext;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,7 +22,7 @@ fn get_current_timestamp() -> Result<u64> {
 )]
 pub struct OrderService;
 
-#[service_impl]
+#[service]
 impl OrderService {
     #[action]
     pub async fn create_order(

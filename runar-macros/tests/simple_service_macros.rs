@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use futures::lock::Mutex;
-use runar_macros::{action, publish, service, service_impl, subscribe};
+use runar_macros::{action, publish, service, subscribe};
 use runar_macros_common::params;
 use runar_node::services::{EventContext, RequestContext};
 use runar_node::AbstractService;
@@ -73,7 +73,7 @@ pub struct TestService {
 
 // Macro-generated Clone implementation from #[service] provides deep clone including metadata.
 
-#[service_impl]
+#[service]
 impl TestService {
     fn new(path: impl Into<String>, store: Arc<Mutex<HashMap<String, ArcValue>>>) -> Self {
         let mut instance = Self {
@@ -498,6 +498,10 @@ mod tests {
         // Verify the response
         assert_eq!(response, 15.0);
 
+        // Test JSON serialization
+        let json_result = response_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!(15.0));
+
         // Test subtract action
         let response_arc: ArcValue = ctx
             .node
@@ -508,6 +512,10 @@ mod tests {
 
         // Verify the response
         assert_eq!(response, 5.0);
+
+        // Test JSON serialization
+        let json_result = response_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!(5.0));
 
         // Make a request to the multiply action (with custom name)
         // Create parameters for the add action
@@ -523,6 +531,10 @@ mod tests {
         // Verify the response
         assert_eq!(response, 15.0);
 
+        // Test JSON serialization
+        let json_result = response_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!(15.0));
+
         // Make a request to the divide action with valid parameters
         let params = params! { "a" => 6.0, "b" => 3.0 };
 
@@ -535,6 +547,10 @@ mod tests {
 
         // Verify the response
         assert_eq!(response, 2.0);
+
+        // Test JSON serialization
+        let json_result = response_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!(2.0));
 
         // Make a request to the divide action with invalid parameters (division by zero)
         // Create parameters for the add action
@@ -566,6 +582,18 @@ mod tests {
 
         // Verify the response
         assert_eq!(response.name, "John Doe");
+
+        // Test JSON serialization
+        let json_result = response_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!({
+                "id": 42,
+                "name": "John Doe",
+                "email": "john.doe@example.com",
+                "age": 30
+            })
+        );
     }
 
     #[tokio::test]
@@ -595,6 +623,22 @@ mod tests {
                 map_field: HashMap::new(),
                 network_id: Some(ctx.default_network_id.clone()),
             }
+        );
+
+        // Test JSON serialization
+        let json_result = response_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!({
+                "id": 100,
+                "text_field": "test",
+                "number_field": 100,
+                "boolean_field": true,
+                "float_field": 1500.0,
+                "vector_field": [1, 2, 3],
+                "map_field": {},
+                "network_id": ctx.default_network_id
+            })
         );
     }
 
@@ -712,6 +756,19 @@ mod tests {
 
         assert_eq!(list_result.len(), 1);
         assert_eq!(list_result[0].get("key1").unwrap(), "value1");
+
+        // Test JSON serialization
+        let json_result = list_result_arc
+            .to_json()
+            .expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!([
+                {
+                    "key1": "value1"
+                }
+            ])
+        );
     }
 
     #[tokio::test]
@@ -741,6 +798,18 @@ mod tests {
         assert_eq!(pre_wrapped_res.id, "test_pre_wrap");
         assert_eq!(pre_wrapped_res.value, 999);
 
+        // Test JSON serialization
+        let json_result = pre_wrapped_res_arc
+            .to_json()
+            .expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!({
+                "id": "test_pre_wrap",
+                "value": 999
+            })
+        );
+
         let pre_wrapped_option_res_arc: ArcValue = ctx
             .node
             .request(
@@ -756,6 +825,18 @@ mod tests {
         let unwrapped_option_res = pre_wrapped_option_res;
         assert_eq!(unwrapped_option_res.id, "test_pre_wrap");
         assert_eq!(unwrapped_option_res.value, 999);
+
+        // Test JSON serialization
+        let json_result = pre_wrapped_option_res_arc
+            .to_json()
+            .expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!({
+                "id": "test_pre_wrap",
+                "value": 999
+            })
+        );
     }
 
     #[tokio::test]
@@ -775,6 +856,10 @@ mod tests {
 
         assert_eq!(result, "Hello, world!");
 
+        // Test JSON serialization
+        let json_result = result_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!("Hello, world!"));
+
         let payload = Some(ArcValue::new_primitive("Hello, world!".to_string()));
         let result_arc: ArcValue = ctx
             .node
@@ -784,6 +869,10 @@ mod tests {
         let result: String = result_arc.as_type().expect("Failed to convert to String");
 
         assert_eq!(result, "Hello, world!");
+
+        // Test JSON serialization
+        let json_result = result_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!("Hello, world!"));
     }
 
     #[tokio::test]
@@ -854,6 +943,19 @@ mod tests {
             .unwrap());
 
         assert_eq!(map_result, test_map);
+
+        // Test JSON serialization
+        let json_result = map_result_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(
+            json_result,
+            json!({
+                "key1": "value1",
+                "key2": 123,
+                "nested": {
+                    "n_key": true
+                }
+            })
+        );
     }
 
     #[tokio::test]
@@ -917,6 +1019,10 @@ mod tests {
 
         // The echo action should extract the "message" field from the JSON object
         assert_eq!(result, "hello from gateway test");
+
+        // Test JSON serialization
+        let json_result = result_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!("hello from gateway test"));
     }
 
     #[tokio::test]
@@ -1028,6 +1134,10 @@ mod tests {
         let add_result: f64 = add_result_arc.as_type().expect("Failed to convert to f64");
         assert_eq!(add_result, 8.0);
 
+        // Test JSON serialization
+        let json_result = add_result_arc.to_json().expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!(8.0));
+
         // Test 2: Verify that struct types (MyData) use ArcValue::new_struct
         // This should fail compilation if MyData doesn't implement RunarEncrypt
         // The bug fix ensures that struct types are always serialized using new_struct,
@@ -1052,6 +1162,21 @@ mod tests {
         assert_eq!(my_data_result.number_field, 42); // Should be same as id
         assert!(my_data_result.boolean_field);
         assert_eq!(my_data_result.float_field, 1500.0); // Should be 1000.0 + 500.0
+
+        // Test JSON serialization
+        let json_result = my_data_result_arc
+            .to_json()
+            .expect("Failed to convert to JSON");
+        assert_eq!(json_result, json!({
+            "id": 42,
+            "text_field": "test",
+            "number_field": 42,
+            "boolean_field": true,
+            "float_field": 1500.0,
+            "vector_field": [1, 2, 3],
+            "map_field": {},
+            "network_id": ctx.default_network_id
+        }));
 
         // Test 3: Verify that the published events are correctly serialized
         // Check that the events were stored with the correct serialization method

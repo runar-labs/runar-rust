@@ -2,13 +2,13 @@
 //! duplicate static identifier conflicts.
 
 use anyhow::{anyhow, Result};
-use runar_macros::{action, service, service_impl};
+use runar_macros::{action, service};
 use runar_node::services::RequestContext;
 
 #[service(path = "alpha", name = "Alpha Service")]
 pub struct AlphaService;
 
-#[service_impl]
+#[service]
 impl AlphaService {
     #[action]
     async fn foo(&self, _ctx: &RequestContext) -> Result<()> {
@@ -19,7 +19,7 @@ impl AlphaService {
 #[service(path = "beta", name = "Beta Service")]
 pub struct BetaService;
 
-#[service_impl]
+#[service]
 impl BetaService {
     #[action]
     async fn bar(&self, _ctx: &RequestContext) -> Result<()> {

@@ -14,7 +14,7 @@ use syn::{
 
 use crate::utils::{
     extract_return_type_info, get_option_inner_type, get_path_last_segment_ident_string,
-    ReturnTypeInfo,
+    get_vec_inner_type, ReturnTypeInfo,
 };
 
 /// Implementation of the action macro
@@ -380,22 +380,14 @@ fn generate_register_action_method(params: RegisterActionMethodParams) -> TokenS
         }
     } else if params.return_type_info.is_list {
         // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
-        if params.return_type_info.type_name == "Vec" {
-            // Check if the inner type is ArcValue
-            let inner_type = get_option_inner_type(&params.return_type_info.actual_type);
-            if let Some(syn::Type::Path(type_path)) = inner_type {
-                if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
-                    quote! {
-                        // Convert the Vec<ArcValue> result to ArcValue using new_list
-                        let value_type = runar_serializer::ArcValue::new_list(result);
-                        Ok(value_type)
-                    }
-                } else {
-                    quote! {
-                        // Convert the Vec<T> result to ArcValue using new_primitive
-                        let value_type = runar_serializer::ArcValue::new_primitive(result);
-                        Ok(value_type)
-                    }
+        // Check if the inner type is ArcValue
+        let inner_type = get_vec_inner_type(&params.return_type_info.actual_type);
+        if let Some(syn::Type::Path(type_path)) = inner_type {
+            if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
+                quote! {
+                    // Convert the Vec<ArcValue> result to ArcValue using new_list
+                    let value_type = runar_serializer::ArcValue::new_list(result);
+                    Ok(value_type)
                 }
             } else {
                 quote! {

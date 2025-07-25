@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger};
-use runar_macros::{action, publish, service, service_impl, subscribe};
+use runar_macros::{action, publish, service, subscribe};
 use runar_macros_common::params;
 use runar_node::{
     services::{EventContext, RequestContext},
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 )]
 pub struct MathService;
 
-#[service_impl]
+#[service]
 impl MathService {
     /// Add two numbers and publish the total to `math/added`.
     #[publish(path = "added")]
@@ -34,7 +34,7 @@ pub struct StatsService {
     values: Arc<Mutex<Vec<f64>>>,
 }
 
-#[service_impl]
+#[service]
 impl StatsService {
     /// Record a value
     #[action]
