@@ -306,13 +306,15 @@ impl TopicPath {
             // Split at the first colon to separate network_id and path
             let parts: Vec<&str> = path.split(':').collect();
             if parts.len() != 2 {
-                return Err(format!("Invalid path format - should be 'network_id:service_path' or 'service_path': {path}"));
+                return Err(format!(
+                    "Invalid path format - should be 'network_id:service_path' received: {path}"
+                ));
             }
 
             // Reject empty network IDs
             if parts[0].is_empty() {
                 return Err(format!(
-                    "Invalid path format - network ID cannot be empty: {path}"
+                    "Invalid path format - network ID cannot be empty received: {path}"
                 ));
             }
 
@@ -320,7 +322,9 @@ impl TopicPath {
             let path_without_network = parts[1];
             Self::new(path_without_network, network_id)
         } else {
-            Err(format!("Invalid path format - missing network_id: {path}"))
+            Err(format!(
+                "Invalid path format - missing network_id received: {path}"
+            ))
         }
     }
 
