@@ -705,7 +705,6 @@ impl ArcValue {
                 Ok(json_value) => json_value.serialize(serializer),
                 Err(e) => Err(serde::ser::Error::custom(format!(
                     "JSON conversion failed: {e}",
-                    
                 ))),
             }
         } else {
@@ -951,7 +950,7 @@ impl AsArcValue for ArcValue {
         Ok(value)
     }
 }
- 
+
 fn is_primitive(type_name: &str) -> bool {
     is_string(type_name)
         || is_number(type_name)

@@ -386,16 +386,8 @@ fn generate_register_action_method(params: RegisterActionMethodParams) -> TokenS
             let value_type = runar_serializer::ArcValue::new_struct(result);
             Ok(value_type)
         }
-    } else if params.return_type_info.type_name == "ArcValue" {
-        quote! {
-            Ok(result)
-        }
-    } else if params.return_type_info.is_primitive {
-        quote! {
-            let value_type = runar_serializer::ArcValue::new_primitive(result);
-            Ok(value_type)
-        }
     } else {
+        // Default case: treat as primitive (fallback for any unhandled types)
         quote! {
             let value_type = runar_serializer::ArcValue::new_primitive(result);
             Ok(value_type)
