@@ -15,9 +15,8 @@ struct TestService {
     // This comment contains the word "struct" but shouldn't affect parsing
     // struct is also a keyword in Rust
     field2: i32,
-
     // String literal containing "impl" - should not affect parsing
-    description: String, // "This service implements the impl pattern"
+    // Note: The macro will add a 'description' field, so we don't define one here
 }
 
 #[service]

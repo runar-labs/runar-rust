@@ -64,12 +64,10 @@ fn test_vec_schema_generation() {
     // has been resolved.
 
     // If we get here, the macro processed Vec types correctly
-    assert!(true, "Vec schema generation is working correctly");
 }
 
 #[test]
 fn test_vec_schema_compilation() {
     // This test just verifies that the code compiles
     // The actual test is that this file compiles at all with Vec types
-    assert!(true, "Vec schema test compiles successfully");
 }

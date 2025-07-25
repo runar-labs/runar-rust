@@ -89,15 +89,15 @@ pub fn service_meta_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Metadata hidden fields
     let meta_fields = quote! {
         #[doc(hidden)]
-        __runar_name: ::std::string::String,
+        name: ::std::string::String,
         #[doc(hidden)]
-        __runar_path: ::std::string::String,
+        path: ::std::string::String,
         #[doc(hidden)]
-        __runar_description: ::std::string::String,
+        description: ::std::string::String,
         #[doc(hidden)]
-        __runar_version: ::std::string::String,
+        version: ::std::string::String,
         #[doc(hidden)]
-        __runar_network_id: ::std::option::Option<::std::string::String>,
+        network_id: ::std::option::Option<::std::string::String>,
     };
 
     // Build struct definition
@@ -124,11 +124,11 @@ pub fn service_meta_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn default() -> Self {
                 Self {
                     #default_inits
-                    __runar_name: #name_value.to_string(),
-                    __runar_path: #path_value.to_string(),
-                    __runar_description: #description_value.to_string(),
-                    __runar_version: #version_value.to_string(),
-                    __runar_network_id: None,
+                    name: #name_value.to_string(),
+                    path: #path_value.to_string(),
+                    description: #description_value.to_string(),
+                    version: #version_value.to_string(),
+                    network_id: None,
                 }
             }
         }
@@ -138,21 +138,21 @@ pub fn service_meta_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let helpers = quote! {
         impl #generics #struct_ident #generics #where_clause {
             #[inline]
-            pub fn get_name(&self) -> &str { &self.__runar_name }
+            pub fn get_name(&self) -> &str { &self.name }
             #[inline]
-            pub fn get_path(&self) -> &str { &self.__runar_path }
+            pub fn get_path(&self) -> &str { &self.path }
             #[inline]
-            pub fn get_description(&self) -> &str { &self.__runar_description }
+            pub fn get_description(&self) -> &str { &self.description }
             #[inline]
-            pub fn get_version(&self) -> &str { &self.__runar_version }
+            pub fn get_version(&self) -> &str { &self.version }
             #[inline]
-            pub fn get_network_id(&self) -> Option<String> { self.__runar_network_id.clone() }
+            pub fn get_network_id(&self) -> Option<String> { self.network_id.clone() }
 
-            pub fn set_name(&mut self, value: impl Into<String>) { self.__runar_name = value.into(); }
-            pub fn set_path(&mut self, value: impl Into<String>) { self.__runar_path = value.into(); }
-            pub fn set_description(&mut self, value: impl Into<String>) { self.__runar_description = value.into(); }
-            pub fn set_version(&mut self, value: impl Into<String>) { self.__runar_version = value.into(); }
-            pub fn set_network_id(&mut self, value: impl Into<String>) { self.__runar_network_id = Some(value.into()); }
+            pub fn set_name(&mut self, value: impl Into<String>) { self.name = value.into(); }
+            pub fn set_path(&mut self, value: impl Into<String>) { self.path = value.into(); }
+            pub fn set_description(&mut self, value: impl Into<String>) { self.description = value.into(); }
+            pub fn set_version(&mut self, value: impl Into<String>) { self.version = value.into(); }
+            pub fn set_network_id(&mut self, value: impl Into<String>) { self.network_id = Some(value.into()); }
         }
     };
 
@@ -162,11 +162,11 @@ pub fn service_meta_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn clone(&self) -> Self {
                 Self {
                     #clone_inits
-                    __runar_name: self.__runar_name.clone(),
-                    __runar_path: self.__runar_path.clone(),
-                    __runar_description: self.__runar_description.clone(),
-                    __runar_version: self.__runar_version.clone(),
-                    __runar_network_id: self.__runar_network_id.clone(),
+                    name: self.name.clone(),
+                    path: self.path.clone(),
+                    description: self.description.clone(),
+                    version: self.version.clone(),
+                    network_id: self.network_id.clone(),
                 }
             }
         }

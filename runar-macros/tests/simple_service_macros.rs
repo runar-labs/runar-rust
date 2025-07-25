@@ -8,7 +8,6 @@ use futures::lock::Mutex;
 use runar_macros::{action, publish, service, subscribe};
 use runar_macros_common::params;
 use runar_node::services::{EventContext, RequestContext};
-use runar_node::AbstractService;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
@@ -169,7 +168,7 @@ impl TestService {
             float_field: total,
             vector_field: vec![1, 2, 3],
             map_field: HashMap::new(),
-            network_id: self.network_id(),
+            network_id: self.get_network_id(),
         };
         ctx.publish("my_data_changed", Some(ArcValue::new_struct(data.clone())))
             .await?;

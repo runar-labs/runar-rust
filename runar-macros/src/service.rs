@@ -226,27 +226,27 @@ fn generate_abstract_service_impl(
         #[async_trait::async_trait]
         impl runar_node::services::abstract_service::AbstractService  for #struct_type {
             fn name(&self) -> &str {
-                &self.__runar_name
+                &self.name
             }
 
             fn path(&self) -> &str {
-                &self.__runar_path
+                &self.path
             }
 
             fn description(&self) -> &str {
-                &self.__runar_description
+                &self.description
             }
 
             fn version(&self) -> &str {
-                &self.__runar_version
+                &self.version
             }
 
             fn network_id(&self) -> Option<String> {
-                self.__runar_network_id.clone()
+                self.network_id.clone()
             }
 
             fn set_network_id(&mut self, network_id: String) {
-                self.__runar_network_id = Some(network_id);
+                self.network_id = Some(network_id);
             }
 
             async fn init(&self, context: runar_node::services::LifecycleContext) -> anyhow::Result<()> {
