@@ -173,26 +173,19 @@ impl MathService {
         context: RequestContext,
     ) -> Result<ArcValue> {
         context.info("Handling add operation request".to_string());
-        let data = params.expect("params are required");
+        let data = params.ok_or_else(|| anyhow!("params are required"))?;
         let map = data
             .as_map_ref()
             .map_err(|e| anyhow!(format!("Parameter extraction error: {e}")))?;
 
-        let extract = |key: &str| -> Result<f64> {
-            match map.get(key) {
-                Some(v) => v
-                    .as_type_ref::<f64>()
-                    .map(|arc| *arc)
-                    .map_err(|e| anyhow!(e)),
-                None => {
-                    context.error(format!("Missing parameter '{key}'"));
-                    Ok(0.0)
-                }
-            }
-        };
-
-        let a = extract("a")?;
-        let b = extract("b")?;
+        let a = map
+            .get("a")
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
+            .unwrap_or(0.0);
+        let b = map
+            .get("b")
+            .map(|v| v.as_type_ref::<f64>().map(|arc| *arc).unwrap_or(0.0))
+            .unwrap_or(0.0);
         let result = self.add(a, b, &context).await;
         context.info(format!("Addition successful: {a} + {b} = {result}"));
         Ok(ArcValue::new_primitive(result))

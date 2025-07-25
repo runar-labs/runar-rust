@@ -9,8 +9,12 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::parse::Parser;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, token::Comma, FnArg, GenericArgument, Ident, ItemFn,
-    Lit, Pat, PathArguments, ReturnType, Type,
+    parse_macro_input, punctuated::Punctuated, token::Comma, FnArg, Ident, ItemFn, Lit, Pat, Type,
+};
+
+use crate::utils::{
+    extract_return_type_info, get_option_inner_type, get_path_last_segment_ident_string,
+    ReturnTypeInfo,
 };
 
 /// Implementation of the action macro
@@ -195,247 +199,6 @@ pub fn action_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// Extract information about the return type for proper handling.
-// This function robustly supports all valid Rust types, including nested generics.
-fn extract_return_type_info(return_type: &ReturnType) -> ReturnTypeInfo {
-    let (
-        actual_type,
-        is_unit,
-        actual_type_is_option,
-        is_primitive,
-        type_name,
-        is_hashmap,
-        is_list,
-        is_struct,
-    ) = match return_type {
-        ReturnType::Default => (
-            syn::parse_quote! { () },
-            true,
-            false,
-            true,
-            "unit".to_string(),
-            false,
-            false,
-            false,
-        ),
-        ReturnType::Type(_, original_ty) => {
-            let mut current_type = *original_ty.clone();
-            let mut outer_is_option = false;
-
-            // Check for outer Result<T, E>
-            if let Some(inner_ty_of_result) = get_result_inner_type(&current_type) {
-                // is_result = true; // This info is not directly used by schema or ArcValue conversion logic anymore
-                current_type = inner_ty_of_result.clone();
-            }
-
-            // Check for outer Option<T> (could be Option<Result<...>> or Option<T>)
-            if let Some(inner_ty_of_option) = get_option_inner_type(&current_type) {
-                outer_is_option = true;
-                current_type = inner_ty_of_option.clone();
-            }
-
-            // Now current_type is the innermost T
-            let type_name_str = if let syn::Type::Path(type_path) = &current_type {
-                get_path_last_segment_ident_string(type_path)
-                    .unwrap_or_else(|| "unknown".to_string())
-            } else if let syn::Type::Tuple(tuple_type) = &current_type {
-                if tuple_type.elems.is_empty() {
-                    "unit".to_string()
-                } else {
-                    "tuple".to_string() // Or some other representation for non-unit tuples
-                }
-            } else {
-                // Handle other types like arrays, references, etc., or default to unknown
-                // For simplicity, using quote to stringify, but this might not be ideal for all cases.
-                quote!(#current_type).to_string().replace(" ", "")
-            };
-
-            let is_primitive_val = is_primitive_type(&current_type);
-
-            // Check if this is a HashMap<String, ArcValue> type
-            let is_hashmap_val = is_hashmap_type(&current_type);
-
-            // Check if this is a Vec<ArcValue> type
-            let is_list_val = is_vec_type(&current_type);
-
-            // Everything else is a struct (let compiler handle trait bounds)
-            let is_struct_val =
-                !is_primitive_val && !is_hashmap_val && !is_list_val && type_name_str != "unit";
-
-            (
-                current_type,
-                false,
-                outer_is_option,
-                is_primitive_val,
-                type_name_str,
-                is_hashmap_val,
-                is_list_val,
-                is_struct_val,
-            )
-        }
-    };
-
-    ReturnTypeInfo {
-        is_primitive,
-        is_unit,
-        actual_type,
-        actual_type_is_option,
-        type_name,
-        is_hashmap,
-        is_list,
-        is_struct,
-    }
-}
-
-/// Struct to hold information about the return type
-#[derive(Debug, Clone)]
-struct ReturnTypeInfo {
-    is_primitive: bool,
-    is_unit: bool,
-    actual_type: Type,
-    actual_type_is_option: bool,
-    type_name: String,
-    is_hashmap: bool,
-    is_list: bool,
-    is_struct: bool,
-}
-
-// Helper to get the last segment of a TypePath as a String
-fn get_path_last_segment_ident_string(type_path: &syn::TypePath) -> Option<String> {
-    type_path
-        .path
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-}
-
-// Helper to extract T from Option<T>
-fn get_option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
-    if let syn::Type::Path(type_path) = ty {
-        if type_path.path.segments.len() == 1
-            && type_path.path.segments.first().unwrap().ident == "Option"
-        {
-            if let PathArguments::AngleBracketed(params) =
-                &type_path.path.segments.first().unwrap().arguments
-            {
-                if let Some(syn::GenericArgument::Type(inner_ty)) = params.args.first() {
-                    return Some(inner_ty);
-                }
-            }
-        }
-    }
-    None
-}
-
-// Helper to check if a type is HashMap<String, ArcValue>
-fn is_hashmap_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        // Check if it's HashMap
-        if type_path.path.segments.len() == 1
-            && type_path.path.segments.first().unwrap().ident == "HashMap"
-        {
-            // Check if it has generic arguments
-            if let PathArguments::AngleBracketed(params) =
-                &type_path.path.segments.first().unwrap().arguments
-            {
-                // Check if it has exactly 2 type arguments (any K, V)
-                if params.args.len() == 2 {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-// Helper to check if a type is Vec<T> (which should use new_list)
-fn is_vec_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        if type_path.path.segments.len() == 1
-            && type_path.path.segments.first().unwrap().ident == "Vec"
-        {
-            if let PathArguments::AngleBracketed(params) =
-                &type_path.path.segments.first().unwrap().arguments
-            {
-                // Any Vec<T> should be treated as a list type for new_list()
-                if params.args.len() == 1 {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-// Helper to check if a type is a primitive or simple type
-fn is_primitive_type(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(type_path) = ty {
-        // Check if it's a standard library primitive or simple type
-        let type_name = get_path_last_segment_ident_string(type_path).unwrap_or_default();
-
-        // Standard library primitives only
-        matches!(
-            type_name.as_str(),
-            "String"
-                | "str"
-                | "i8"
-                | "i16"
-                | "i32"
-                | "i64"
-                | "i128"
-                | "isize"
-                | "u8"
-                | "u16"
-                | "u32"
-                | "u64"
-                | "u128"
-                | "usize"
-                | "f32"
-                | "f64"
-                | "bool"
-                | "char"
-                | "unit"
-        )
-    } else {
-        false
-    }
-}
-
-// Helper to extract T from Result<T, E>
-fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
-    if let syn::Type::Path(type_path) = ty {
-        if type_path.qself.is_none() && type_path.path.segments.len() == 1 {
-            let segment = &type_path.path.segments[0];
-            if segment.ident == "Result" {
-                if let syn::PathArguments::AngleBracketed(params) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(inner_ty)) = params.args.first() {
-                        return Some(inner_ty);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-// Helper to extract T from Vec<T>
-fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
-    if let syn::Type::Path(type_path) = ty {
-        if type_path.path.segments.len() == 1
-            && type_path.path.segments.first().unwrap().ident == "Vec"
-        {
-            if let PathArguments::AngleBracketed(params) =
-                &type_path.path.segments.first().unwrap().arguments
-            {
-                if let Some(GenericArgument::Type(inner_ty)) = params.args.first() {
-                    return Some(inner_ty); // Apply borrow as per E0308
-                }
-            }
-        }
-    }
-    None
-}
-
 fn generate_field_schema_for_type(
     field_name_str: &str,
     ty: &syn::Type,
@@ -471,7 +234,7 @@ fn generate_field_schema_for_type(
     let mut additional_fields_setup = quote! {};
 
     // Handle Vec<T>
-    if let Some(inner_ty_for_vec) = get_vec_inner_type(ty) {
+    if let Some(inner_ty_for_vec) = get_option_inner_type(ty) {
         // For Vec items, the name is often context-dependent (e.g., "item") or not explicitly named in the schema structure itself.
         // The FieldSchema for the array will have the field_name_str.
         // The items schema describes the type of elements in the array.
@@ -619,7 +382,7 @@ fn generate_register_action_method(params: RegisterActionMethodParams) -> TokenS
         // For Vec<T>, check if it's Vec<ArcValue> to use new_list, otherwise use new_primitive
         if params.return_type_info.type_name == "Vec" {
             // Check if the inner type is ArcValue
-            let inner_type = get_vec_inner_type(&params.return_type_info.actual_type);
+            let inner_type = get_option_inner_type(&params.return_type_info.actual_type);
             if let Some(syn::Type::Path(type_path)) = inner_type {
                 if get_path_last_segment_ident_string(type_path).as_deref() == Some("ArcValue") {
                     quote! {
