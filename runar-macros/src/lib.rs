@@ -22,7 +22,7 @@ use syn::{parse_macro_input, Item};
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Clone the item for parsing since we need to use it in both branches
     let item_clone = item.clone();
-    
+
     // Parse the item to determine if it's a struct or impl block
     match parse_macro_input!(item_clone as Item) {
         Item::Struct(_) => {

@@ -697,8 +697,9 @@ impl QuicTransport {
                                 //check if we already know about this peer
                                 let mut peers = self.state.peers.write().await;
                                 if let Some(peer) = peers.get(&peer_node_id) {
-                                    if peer.node_info_version > node_info_version {
-                                        self.logger.debug(format!("🔍 [bi_accept_loop] Known peer_node_id: {peer_node_id} with version: {node_info_version} is older than stored version {stored_version} - no update needed - we will skip sending the handshake response", stored_version = peer.node_info_version));
+                                    // Only update if the incoming version is strictly greater than the stored version
+                                    if node_info_version <= peer.node_info_version {
+                                        self.logger.debug(format!("🔍 [bi_accept_loop] Known peer_node_id: {peer_node_id} with version: {node_info_version} is not newer than stored version {stored_version} - no update needed - we will skip sending the handshake response", stored_version = peer.node_info_version));
                                         //skip sending the handshake response - not a first time handshake
                                         continue;
                                     } else {

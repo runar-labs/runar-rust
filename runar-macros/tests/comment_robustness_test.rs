@@ -2,7 +2,7 @@ use runar_macros::service;
 
 // Test that commented keywords don't interfere with macro parsing
 #[service(
-    name = "test_service", 
+    name = "test_service",
     path = "/test",
     description = "Test service with commented keywords",
     version = "0.0.1"
@@ -11,11 +11,11 @@ struct TestService {
     // This comment contains the word "impl" but shouldn't affect parsing
     // impl is a keyword in Rust
     field1: String,
-    
-    // This comment contains the word "struct" but shouldn't affect parsing  
+
+    // This comment contains the word "struct" but shouldn't affect parsing
     // struct is also a keyword in Rust
     field2: i32,
-    
+
     // String literal containing "impl" - should not affect parsing
     description: String, // "This service implements the impl pattern"
 }
@@ -24,14 +24,14 @@ struct TestService {
 impl TestService {
     // This comment contains "struct" but shouldn't affect impl parsing
     // struct is a keyword that defines data structures
-    
+
     #[allow(dead_code)]
     fn test_action(&self, input: String) -> String {
         // This comment mentions "impl" and "struct" keywords
         // impl blocks contain struct implementations
         format!("Processed: {input}")
     }
-    
+
     #[allow(dead_code)]
     fn another_action(&self, data: i32) -> i32 {
         // String literal with "struct" - should not break parsing
@@ -42,7 +42,7 @@ impl TestService {
 
 // Test with more complex comments
 #[service(
-    name = "complex_service", 
+    name = "complex_service",
     path = "/complex",
     description = "Complex service with commented keywords",
     version = "0.0.1"
@@ -60,7 +60,10 @@ impl ComplexService {
         // impl struct enum trait - keywords in comments
         // "impl" and "struct" in string literals
         let _debug_msg = "impl struct enum trait are Rust keywords";
-        items.into_iter().map(|item| format!("Processed: {item}")).collect()
+        items
+            .into_iter()
+            .map(|item| format!("Processed: {item}"))
+            .collect()
     }
 }
 
@@ -69,7 +72,7 @@ impl ComplexService {
 fn test_comment_robustness() {
     // This test verifies that the macro correctly parses struct and impl blocks
     // even when comments contain the keywords "impl" and "struct"
-    
+
     // If we get here, the macro parsed correctly despite commented keywords
     // The service macro adds additional fields, so we can't construct directly
     // Just verify that the compilation succeeded
@@ -79,4 +82,4 @@ fn test_comment_robustness() {
 fn test_comment_robustness_compile() {
     // This test just verifies that the code compiles
     // The actual test is that this file compiles at all
-} 
+}

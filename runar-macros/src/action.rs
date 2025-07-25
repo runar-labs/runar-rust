@@ -14,7 +14,7 @@ use syn::{
 
 use crate::utils::{
     extract_return_type_info, get_option_inner_type, get_path_last_segment_ident_string,
-    ReturnTypeInfo,
+    get_vec_inner_type, ReturnTypeInfo,
 };
 
 /// Implementation of the action macro
@@ -234,7 +234,7 @@ fn generate_field_schema_for_type(
     let mut additional_fields_setup = quote! {};
 
     // Handle Vec<T>
-    if let Some(inner_ty_for_vec) = get_option_inner_type(ty) {
+    if let Some(inner_ty_for_vec) = get_vec_inner_type(ty) {
         // For Vec items, the name is often context-dependent (e.g., "item") or not explicitly named in the schema structure itself.
         // The FieldSchema for the array will have the field_name_str.
         // The items schema describes the type of elements in the array.

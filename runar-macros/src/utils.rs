@@ -206,6 +206,21 @@ pub fn is_primitive_type(ty: &syn::Type) -> bool {
     false
 }
 
+pub fn get_vec_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if segment.ident == "Vec" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        return Some(inner_ty);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn get_result_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
     if let syn::Type::Path(type_path) = ty {
         if let Some(segment) = type_path.path.segments.last() {
