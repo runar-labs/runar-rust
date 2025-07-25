@@ -1,40 +1,80 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::HashSet;
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, LitStr, Type};
+use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Type};
 
-/// Capitalize first letter of a &str
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
-
-/// Parse a `#[runar(label1, label2)]` attribute and return Vec<label>
 fn parse_runar_labels(attr: &Attribute) -> Vec<String> {
     if !attr.path().is_ident("runar") {
         return vec![];
     }
-    // Parse inside the parentheses as a punctuated list of idents
-    let parsed: Punctuated<Ident, Comma> = match attr.parse_args_with(Punctuated::parse_terminated)
-    {
-        Ok(p) => p,
-        Err(_) => return vec![],
-    };
+    let parsed: Punctuated<Ident, Comma> =
+        attr.parse_args_with(Punctuated::parse_terminated).unwrap();
     parsed.iter().map(|ident| ident.to_string()).collect()
 }
 
-/// Derive macro for encryption
+fn label_to_camel_case(s: &str) -> String {
+    s.split(['_', '-'])
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect()
+}
+
+#[proc_macro_derive(Plain)]
+pub fn derive_plain(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let struct_name = input.ident.clone();
+
+    let expanded = quote! {
+        impl runar_serializer::traits::RunarEncryptable for #struct_name {}
+
+        impl runar_serializer::traits::RunarEncrypt for #struct_name {
+            type Encrypted = #struct_name;
+
+            fn encrypt_with_keystore(
+                &self,
+                _keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+                _resolver: &dyn runar_serializer::LabelResolver,
+            ) -> anyhow::Result<Self::Encrypted> {
+                Ok(self.clone())
+            }
+        }
+
+        impl runar_serializer::traits::RunarDecrypt for #struct_name {
+            type Decrypted = #struct_name;
+
+            fn decrypt_with_keystore(
+                &self,
+                _keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+            ) -> anyhow::Result<Self::Decrypted> {
+                Ok(self.clone())
+            }
+        }
+
+        // Automatically register JSON converter for this struct at program start.
+        const _: () = {
+            #[ctor::ctor]
+            fn register_json_converter() {
+                runar_serializer::registry::register_to_json::<#struct_name>();
+            }
+        };
+    };
+
+    TokenStream::from(expanded)
+}
+
 #[proc_macro_derive(Encrypt, attributes(runar))]
 pub fn derive_encrypt(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = input.ident.clone();
     let encrypted_name = format_ident!("Encrypted{}", struct_name);
 
-    // Collect fields metadata
     let mut plaintext_fields: Vec<(Ident, Type)> = Vec::new();
     let mut label_groups: std::collections::BTreeMap<String, Vec<(Ident, Type)>> =
         std::collections::BTreeMap::new();
@@ -44,10 +84,11 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             for field in named.named.iter() {
                 let field_ident = field.ident.clone().expect("Expected named field");
                 let field_ty = field.ty.clone();
-                let mut labels = Vec::new();
-                for attr in &field.attrs {
-                    labels.extend(parse_runar_labels(attr));
-                }
+                let labels = field
+                    .attrs
+                    .iter()
+                    .flat_map(parse_runar_labels)
+                    .collect::<Vec<_>>();
                 if labels.is_empty() {
                     plaintext_fields.push((field_ident, field_ty));
                 } else {
@@ -73,18 +114,6 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             .into();
     }
 
-    // ---------- Generate code tokens ----------
-    let mut substruct_defs = Vec::new();
-    let mut encrypt_label_match_arms = Vec::new();
-    let mut decrypt_label_blocks = Vec::new();
-    let mut encrypted_struct_label_fields = Vec::new();
-    // Proto generation collections
-    let mut proto_substruct_defs = Vec::new();
-    let mut _encrypted_struct_proto_label_fields_unused: Vec<proc_macro2::TokenStream> = Vec::new();
-    let mut label_to_proto_assigns = Vec::new();
-    let mut proto_to_label_assigns = Vec::new();
-
-    // Determine label processing order: system first, user second, then alphabetical
     let mut label_order: Vec<_> = label_groups.keys().cloned().collect();
     label_order.sort_by(|a, b| {
         let rank = |l: &String| match l.as_str() {
@@ -95,135 +124,83 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
     });
 
-    for label in &label_order {
+    let mut substruct_defs = Vec::new();
+    let mut encrypt_label_match_arms = Vec::new();
+    let mut decrypt_label_blocks = Vec::new();
+    let mut enc_label_tokens = Vec::new();
+    let mut proto_plaintext_fields = Vec::new();
+
+    for label in label_order.iter() {
         let fields = &label_groups[label];
-        let cap_label = capitalize(label);
+        let cap_label = label_to_camel_case(label);
         let substruct_ident = format_ident!("{}{}Fields", struct_name, cap_label);
-        let substruct_proto_ident = format_ident!("{}{}FieldsProto", struct_name, cap_label);
         let group_field_ident = format_ident!("{}_encrypted", label);
 
-        // Build substruct definition (plain struct without prost)
         let sub_fields_tokens: Vec<_> = fields
             .iter()
             .map(|(id, ty)| quote! { pub #id: #ty, })
             .collect();
-
-        // Keeping a plain substruct for ergonomic access; no derives needed beyond Clone for build
         substruct_defs.push(quote! {
-            #[derive(Clone)]
+            #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
             struct #substruct_ident {
                 #(#sub_fields_tokens)*
             }
         });
 
-        // Build encryption arm for this label using the *Proto* variant (which is prost::Message)
         let substruct_build_fields: Vec<_> = fields
             .iter()
             .map(|(id, _)| quote! { #id: self.#id.clone(), })
             .collect();
-        let label_lit = LitStr::new(label, proc_macro2::Span::call_site());
+        let label_lit = syn::LitStr::new(label, proc_macro2::Span::call_site());
         encrypt_label_match_arms.push(quote! {
             #group_field_ident: if resolver.can_resolve(#label_lit) {
-                let group_struct = #substruct_proto_ident { #(#substruct_build_fields)* };
-                Some(runar_serializer::encryption::encrypt_label_group(#label_lit, &group_struct, keystore, resolver)?)
-            } else { None },
+                let group_struct = #substruct_ident { #(#substruct_build_fields)* };
+                Some(runar_serializer::encryption::encrypt_label_group(#label_lit, &group_struct, keystore.as_ref(), resolver)?)
+            } else {
+                None
+            },
         });
 
-        // Build decryption block (will assign into `decrypted`)
         let assign_fields: Vec<_> = fields
             .iter()
             .map(|(id, _)| quote! { decrypted.#id = tmp.#id; })
             .collect();
-
         decrypt_label_blocks.push(quote! {
             if let Some(ref group) = self.#group_field_ident {
-                if let Ok(tmp) = runar_serializer::encryption::decrypt_label_group::<#substruct_proto_ident>(group, keystore) {
+                if let Ok(tmp) = runar_serializer::encryption::decrypt_label_group::<#substruct_ident>(group, keystore.as_ref()) {
                     #(#assign_fields)*
                 }
             }
         });
 
-        // field in encrypted struct
-        encrypted_struct_label_fields.push(quote! { pub #group_field_ident: Option<runar_serializer::encryption::EncryptedLabelGroup>, });
-
-        // -------- Proto specific --------
-
-        // Build proto substruct fields with prost attributes
-        let mut sub_fields_proto_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
-        for (idx, (fid, fty)) in fields.iter().enumerate() {
-            let tag_num = idx + 1;
-            // Map Rust types to prost types
-            let proto_ty_ident = match quote::quote!(#fty).to_string().replace(' ', "").as_str() {
-                "String" => proc_macro2::Ident::new("string", proc_macro2::Span::call_site()),
-                "u64" => proc_macro2::Ident::new("uint64", proc_macro2::Span::call_site()),
-                "u32" => proc_macro2::Ident::new("uint32", proc_macro2::Span::call_site()),
-                "i32" => proc_macro2::Ident::new("int32", proc_macro2::Span::call_site()),
-                "i64" => proc_macro2::Ident::new("int64", proc_macro2::Span::call_site()),
-                "bool" => proc_macro2::Ident::new("bool", proc_macro2::Span::call_site()),
-                _ => proc_macro2::Ident::new("bytes", proc_macro2::Span::call_site()),
-            };
-            sub_fields_proto_tokens.push(quote! {
-                #[prost(#proto_ty_ident, tag = #tag_num)]
-                pub #fid: #fty,
-            });
-        }
-
-        proto_substruct_defs.push(quote! {
-            #[derive(serde::Serialize, serde::Deserialize, Clone, prost::Message)]
-            pub struct #substruct_proto_ident {
-                #(#sub_fields_proto_tokens)*
-            }
-        });
-
-        // Field in encrypted *proto* struct uses raw bytes (serialized label group)
-        _encrypted_struct_proto_label_fields_unused
-            .push(quote! { pub #group_field_ident: Option<Vec<u8>>, });
-
-        // Conversion assignment tokens (Encrypted -> Proto)
-        label_to_proto_assigns.push(quote! {
-            #group_field_ident: value.#group_field_ident.as_ref().map(|g| {
-                let mut buf = Vec::new();
-                prost::Message::encode(g, &mut buf).expect("encode label group");
-                buf
-            }),
-        });
-
-        // Conversion assignment tokens (Proto -> Encrypted)
-        proto_to_label_assigns.push(quote! {
-            #group_field_ident: value.#group_field_ident.as_ref().map(|bytes| {
-                let group = prost::Message::decode(bytes.as_slice()).expect("decode label group");
-                group
-            }),
-        });
+        enc_label_tokens.push(quote! { pub #group_field_ident: ::core::option::Option<runar_serializer::encryption::EncryptedLabelGroup>, });
     }
 
-    // Initialisation tokens for plaintext fields in encrypt impl
+    for (fid, fty) in plaintext_fields.iter() {
+        proto_plaintext_fields.push(quote! { pub #fid: #fty, });
+    }
+
+    let encrypted_struct_def = quote! {
+        #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+        pub struct #encrypted_name {
+            #(#proto_plaintext_fields)*
+            #(#enc_label_tokens)*
+        }
+    };
+
     let encrypt_plaintext_inits: Vec<_> = plaintext_fields
         .iter()
         .map(|(id, _)| quote! { #id: self.#id.clone(), })
         .collect();
-
-    // For decrypted initial default values
     let decrypted_plaintext_init: Vec<_> = plaintext_fields
         .iter()
         .map(|(id, _)| quote! { #id: self.#id.clone(), })
         .collect();
-
-    // All labeled fields default init (Default::default())
-    let mut labeled_field_defaults = Vec::new();
-    for fields in label_groups.values() {
-        for (id, _) in fields {
-            labeled_field_defaults.push(quote! { #id: Default::default(), });
-        }
-    }
-
-    // Remove duplicates in labeled_field_defaults (if field belongs to multiple labels)
-    use std::collections::HashSet;
     let mut seen = HashSet::new();
-    let labeled_field_defaults: Vec<_> = labeled_field_defaults
-        .into_iter()
+    let labeled_field_defaults: Vec<_> = label_groups
+        .values()
+        .flat_map(|f| f.iter().map(|(id, _)| quote! { #id: Default::default(), }))
         .filter(|tok| {
-            // Extract ident name as string for uniqueness
             let s = tok.to_string();
             if seen.contains(&s) {
                 false
@@ -234,169 +211,79 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    // Build encrypted struct field tokens with prost attributes
-    let mut enc_plain_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
-    for (idx, (fid, fty)) in plaintext_fields.iter().enumerate() {
-        let tag_num = idx + 1;
-        let proto_ty_ident = match quote::quote!(#fty).to_string().replace(' ', "").as_str() {
-            "String" => proc_macro2::Ident::new("string", proc_macro2::Span::call_site()),
-            "u64" => proc_macro2::Ident::new("uint64", proc_macro2::Span::call_site()),
-            "u32" => proc_macro2::Ident::new("uint32", proc_macro2::Span::call_site()),
-            "i32" => proc_macro2::Ident::new("int32", proc_macro2::Span::call_site()),
-            "i64" => proc_macro2::Ident::new("int64", proc_macro2::Span::call_site()),
-            "bool" => proc_macro2::Ident::new("bool", proc_macro2::Span::call_site()),
-            _ => proc_macro2::Ident::new("bytes", proc_macro2::Span::call_site()),
-        };
-        enc_plain_tokens.push(quote! {
-            #[prost(#proto_ty_ident, tag = #tag_num)]
-            pub #fid: #fty,
-        });
-    }
+    let encrypt_impl = quote! { let encrypted = #encrypted_name { #(#encrypt_plaintext_inits)* #(#encrypt_label_match_arms)* }; Ok(encrypted) };
 
-    // Label field tokens
-    let mut enc_label_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
-    for (label_idx, label) in label_order.iter().enumerate() {
-        let group_field_ident = format_ident!("{}_encrypted", label);
-        let tag_num = plaintext_fields.len() + label_idx + 1;
-        enc_label_tokens.push(quote! {
-            #[prost(message, optional, tag = #tag_num)]
-            pub #group_field_ident: ::core::option::Option<runar_serializer::encryption::EncryptedLabelGroup>,
-        });
-    }
+    let decrypt_impl = quote! { let mut decrypted = #struct_name { #(#decrypted_plaintext_init)* #(#labeled_field_defaults)* }; #(#decrypt_label_blocks)* Ok(decrypted) };
 
-    let encrypted_struct_def = quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Clone, prost::Message)]
-        pub struct #encrypted_name {
-            #(#enc_plain_tokens)*
-            #(#enc_label_tokens)*
-        }
-    };
-
-    // ---------- Encrypted *Proto* struct definition ----------
-    let encrypted_proto_name = format_ident!("{}Proto", encrypted_name);
-    // Build proto plaintext fields with prost attributes
-    let mut proto_plaintext_fields_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
-    for (idx, (fid, fty)) in plaintext_fields.iter().enumerate() {
-        let tag_num = idx + 1;
-        // Map Rust types to prost types
-        let proto_ty_ident = match quote::quote!(#fty).to_string().replace(' ', "").as_str() {
-            "String" => proc_macro2::Ident::new("string", proc_macro2::Span::call_site()),
-            "u64" => proc_macro2::Ident::new("uint64", proc_macro2::Span::call_site()),
-            "u32" => proc_macro2::Ident::new("uint32", proc_macro2::Span::call_site()),
-            "i32" => proc_macro2::Ident::new("int32", proc_macro2::Span::call_site()),
-            "i64" => proc_macro2::Ident::new("int64", proc_macro2::Span::call_site()),
-            "bool" => proc_macro2::Ident::new("bool", proc_macro2::Span::call_site()),
-            _ => proc_macro2::Ident::new("bytes", proc_macro2::Span::call_site()),
-        };
-        proto_plaintext_fields_tokens.push(quote! {
-            #[prost(#proto_ty_ident, tag = #tag_num)]
-            pub #fid: #fty,
-        });
-    }
-
-    // Build proto label fields with prost attributes
-    let mut proto_label_field_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
-    for (label_idx, label) in label_order.iter().enumerate() {
-        let group_field_ident = format_ident!("{}_encrypted", label);
-        let tag_num = plaintext_fields.len() + label_idx + 1;
-        proto_label_field_tokens.push(quote! {
-            #[prost(bytes = "vec", optional, tag = #tag_num)]
-            pub #group_field_ident: ::core::option::Option<Vec<u8>>,
-        });
-    }
-
-    let encrypted_proto_struct_def = quote! {
-        #[derive(serde::Serialize, serde::Deserialize, Clone, prost::Message)]
-        pub struct #encrypted_proto_name {
-            #(#proto_plaintext_fields_tokens)*
-            #(#proto_label_field_tokens)*
-        }
-    };
-
-    // ---------- Conversion impls between encrypted and proto ----------
-
-    // Encrypted -> Proto
-    let proto_assign_plaintext: Vec<_> = plaintext_fields
-        .iter()
-        .map(|(id, _)| quote! { #id: value.#id.clone(), })
-        .collect();
-
-    let encrypted_to_proto_impl = quote! {
-        impl From<#encrypted_name> for #encrypted_proto_name {
-            fn from(value: #encrypted_name) -> Self {
-                Self {
-                    #(#proto_assign_plaintext)*
-                    #(#label_to_proto_assigns)*
-                }
-            }
-        }
-    };
-
-    // Proto -> Encrypted
-    let proto_to_encrypted_impl = quote! {
-        impl From<#encrypted_proto_name> for #encrypted_name {
-            fn from(value: #encrypted_proto_name) -> Self {
-                Self {
-                    #(#proto_assign_plaintext)* // plaintext cloning logic identical
-                    #(#proto_to_label_assigns)*
-                }
-            }
-        }
-    };
-
-    // Encrypt impl
-    let encrypt_impl = quote! {
-        let encrypted = #encrypted_name {
-            #(#encrypt_plaintext_inits)*
-            #(#encrypt_label_match_arms)*
-        };
-        Ok(encrypted)
-    };
-
-    // Decrypt impl
-    let decrypt_impl = quote! {
-        let mut decrypted = #struct_name {
-            #(#decrypted_plaintext_init)*
-            #(#labeled_field_defaults)*
-        };
-        #(#decrypt_label_blocks)*
-        Ok(decrypted)
-    };
-
-    // Final expanded tokens
     let expanded = quote! {
-        // ----- generated substructs -----
         #(#substruct_defs)*
-
-        // ----- generated proto substructs -----
-        #(#proto_substruct_defs)*
-
-        // ----- encrypted struct -----
         #encrypted_struct_def
 
-        // ----- encrypted proto struct -----
-        #encrypted_proto_struct_def
-
-        // ----- conversion impls between encrypted and proto -----
-        #encrypted_to_proto_impl
-        #proto_to_encrypted_impl
-
-        // ----- trait impls -----
         impl runar_serializer::traits::RunarEncryptable for #struct_name {}
 
         impl runar_serializer::traits::RunarEncrypt for #struct_name {
             type Encrypted = #encrypted_name;
-            fn encrypt_with_keystore(&self, keystore: &runar_serializer::traits::KeyStore, resolver: &dyn runar_serializer::traits::LabelResolver) -> anyhow::Result<Self::Encrypted> {
-                #encrypt_impl
+
+            fn encrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+                resolver: &dyn runar_serializer::LabelResolver,
+            ) -> anyhow::Result<Self::Encrypted> {
+                let encrypted = #encrypted_name { #(#encrypt_plaintext_inits)* #(#encrypt_label_match_arms)* };
+                Ok(encrypted)
             }
         }
 
         impl runar_serializer::traits::RunarDecrypt for #encrypted_name {
             type Decrypted = #struct_name;
-            fn decrypt_with_keystore(&self, keystore: &runar_serializer::traits::KeyStore) -> anyhow::Result<Self::Decrypted> {
+
+            fn decrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+            ) -> anyhow::Result<Self::Decrypted> {
+                let mut decrypted = #struct_name { #(#decrypted_plaintext_init)* #(#labeled_field_defaults)* };
+                #(#decrypt_label_blocks)*
+                Ok(decrypted)
+            }
+        }
+
+        impl #struct_name {
+            fn encrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+                resolver: &dyn runar_serializer::LabelResolver,
+            ) -> anyhow::Result<#encrypted_name> {
+                #encrypt_impl
+            }
+        }
+
+        impl #encrypted_name {
+            fn decrypt_with_keystore(
+                &self,
+                keystore: &std::sync::Arc<runar_serializer::KeyStore>,
+            ) -> anyhow::Result<#struct_name> {
                 #decrypt_impl
             }
         }
+
+        // Automatically register decryptor for this struct at program start.
+        const _: () = {
+            #[ctor::ctor]
+            fn register_decryptor() {
+                runar_serializer::registry::register_decrypt::<#struct_name, #encrypted_name>();
+            }
+        };
+
+        // Automatically register JSON converter for this struct at program start.
+        const _: () = {
+            #[ctor::ctor]
+            fn register_json_converter() {
+                runar_serializer::registry::register_to_json::<#struct_name>();
+            }
+        };
+
+        // Mark encrypted struct as RunarEncryptable so it can appear inside ArcValue without further bounds.
+        impl runar_serializer::traits::RunarEncryptable for #encrypted_name {}
     };
 
     TokenStream::from(expanded)

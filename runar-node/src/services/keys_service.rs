@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::services::{KeysDelegate, LifecycleContext, RequestContext};
 use crate::AbstractService;
 use runar_common::logging::Logger;
-use runar_common::types::ArcValue;
+use runar_serializer::ArcValue;
 
 /// Registry Info Service - provides information about registered services without holding state
 pub struct KeysService {
@@ -48,8 +48,10 @@ impl KeysService {
                     let inner_self = self_clone.clone();
                     let key_name: String = params
                         .expect("key_name parameter is required")
-                        .as_type()
-                        .expect("key_name parameter must be a string");
+                        .as_type_ref::<String>()
+                        .expect("key_name parameter must be a string")
+                        .as_ref()
+                        .clone();
                     Box::pin(
                         async move { inner_self.handle_ensure_symmetric_key(key_name, ctx).await },
                     )

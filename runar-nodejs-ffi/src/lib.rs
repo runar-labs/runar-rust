@@ -6,10 +6,10 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use once_cell::sync::OnceCell;
-use runar_common::types::ArcValue;
 use runar_node::{
     AbstractService, ActionHandler, LifecycleContext, Node, NodeConfig, NodeDelegate,
 };
+use runar_serializer::ArcValue;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -169,18 +169,20 @@ impl JsNode {
         payload: Option<JsonValue>,
     ) -> napi::Result<JsonValue> {
         let node = self.inner.lock().await;
-        let payload_av: Option<ArcValue> = payload.map(ArcValue::from_json);
-        let resp: JsonValue = node
-            .request::<ArcValue, JsonValue>(path, payload_av)
+        let payload_av: Option<ArcValue> = payload.map(ArcValue::new_json);
+        let resp_arc = node
+            .request(path, payload_av)
             .await
             .map_err(anyhow_to_napi_error)?;
+
+        let resp = resp_arc.to_json().map_err(anyhow_to_napi_error)?;
         Ok(resp)
     }
 
     #[napi]
     pub async fn publish(&self, topic: String, data: Option<JsonValue>) -> napi::Result<()> {
         let node = self.inner.lock().await;
-        let data_av = data.map(ArcValue::from_json);
+        let data_av = data.map(ArcValue::new_json);
         node.publish(topic, data_av)
             .await
             .map_err(anyhow_to_napi_error)
@@ -318,8 +320,8 @@ impl AbstractService for JsWrapperService {
                     // Convert payload to JSON that can be sent across the FFI boundary
                     let payload_json = match &payload {
                         Some(av) => {
-                            let mut av_mut = av.clone();
-                            av_mut.to_json_value().map_err(|e| {
+                            let av_mut = av.clone();
+                            av_mut.to_json().map_err(|e| {
                                 anyhow::anyhow!("Failed to convert payload to JSON: {e}")
                             })?
                         }
@@ -363,7 +365,7 @@ impl AbstractService for JsWrapperService {
                         Ok(Ok(resp)) => {
                             // Remove from pending map on successful response
                             PENDING.remove(&id);
-                            Ok(ArcValue::from_json(resp))
+                            Ok(ArcValue::new_json(resp))
                         }
                         Ok(Err(_)) => {
                             // Remove from pending map on channel error
@@ -409,6 +411,12 @@ pub fn register_js_dispatch(cb: JsFunction) -> napi::Result<()> {
             let js_obj = ctx.env.to_js_value(&ctx.value)?;
             Ok(vec![js_obj])
         })?;
+
+    // Ensure the TSFN is properly initialized and not already set
+    if JS_DISPATCHER.get().is_some() {
+        return Err(napi::Error::from_reason("Dispatcher already registered"));
+    }
+
     JS_DISPATCHER
         .set(tsfn)
         .map_err(|_| napi::Error::from_reason("Dispatcher already registered"))?;

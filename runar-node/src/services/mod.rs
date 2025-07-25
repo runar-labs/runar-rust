@@ -31,19 +31,19 @@ use crate::node::Node; // Added for concrete type Node
 use crate::routing::TopicPath;
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
-use runar_common::types::AsArcValue;
-use runar_common::types::{ActionMetadata, ArcValue, FieldSchema, SerializerRegistry};
+use runar_schemas::{ActionMetadata, FieldSchema};
+use runar_serializer::arc_value::AsArcValue;
+use runar_serializer::ArcValue;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 // Import types from submodules
 use crate::services::abstract_service::ServiceState;
 use crate::services::remote_service::RemoteService;
-use runar_common::types::schemas::ServiceMetadata;
+use runar_schemas::ServiceMetadata;
 
 // Re-export the context types from their dedicated modules
 pub use crate::services::event_context::EventContext;
@@ -91,27 +91,21 @@ pub struct LifecycleContext {
     pub logger: Arc<Logger>,
     /// Node delegate for node operations
     node_delegate: Arc<Node>,
-    /// Serializer registry for type registration
-    pub serializer: Arc<RwLock<SerializerRegistry>>,
+    // Removed serializer registry (no longer needed with redesigned serializer)
 }
 
 impl LifecycleContext {
     /// Create a new LifecycleContext with a topic path and logger
     ///
     /// This is the primary constructor that takes the minimum required parameters.
-    pub fn new(
-        topic_path: &TopicPath,
-        serializer: Arc<RwLock<SerializerRegistry>>,
-        node_delegate: Arc<Node>,
-        logger: Arc<Logger>,
-    ) -> Self {
+    pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, logger: Arc<Logger>) -> Self {
         Self {
             network_id: topic_path.network_id(),
             service_path: topic_path.service_path(),
             config: None,
             logger,
             node_delegate,
-            serializer,
+            // Removed serializer registry (no longer needed with redesigned serializer)
         }
     }
 
@@ -152,10 +146,9 @@ impl LifecycleContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (current network ID added)
     /// - Simple action: "action" (current network ID and service path added - calls own service)
-    pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
+    pub async fn request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
-        T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         let path_string = path.into();
         let full_path = if path_string.contains(':') {
@@ -172,7 +165,7 @@ impl LifecycleContext {
         self.logger.debug(format!(
             "LifecycleContext making request to processed path: {full_path}"
         ));
-        self.node_delegate.request::<P, T>(full_path, payload).await
+        self.node_delegate.request::<P>(full_path, payload).await
     }
 
     /// Publish an event from the lifecycle context.
@@ -692,10 +685,13 @@ pub trait EventDispatcher: Send + Sync {
 #[async_trait::async_trait]
 pub trait NodeDelegate: Send + Sync {
     /// Process a service request
-    async fn request<P, T>(&self, path: impl Into<String> + Send, payload: Option<P>) -> Result<T>
+    async fn request<P>(
+        &self,
+        path: impl Into<String> + Send,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
     where
-        P: AsArcValue + Send + Sync,
-        T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>;
+        P: AsArcValue + Send + Sync;
 
     /// Simplified publish for common cases
     async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()>;

@@ -30,8 +30,8 @@ use crate::routing::{PathTrie, TopicPath};
 use crate::services::abstract_service::{AbstractService, ServiceState};
 use crate::services::{ActionHandler, EventContext, RemoteService};
 use runar_common::logging::Logger;
-use runar_common::types::schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
-use runar_common::types::ArcValue;
+use runar_schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_serializer::ArcValue;
 
 /// Type definition for event callbacks
 ///
@@ -192,7 +192,6 @@ impl Clone for ServiceRegistry {
     }
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for ServiceRegistry {
     fn default() -> Self {
         Self::new_with_default_logger()

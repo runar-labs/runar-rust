@@ -3,10 +3,13 @@
 // This module implements the publish macro, which automatically publishes
 // the result of an action to a specified topic.
 
+use crate::utils::{extract_return_type_info, get_path_last_segment_ident_string, ReturnTypeInfo};
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{
-    parse::Parse, parse::ParseStream, parse_macro_input, Expr, ItemFn, Lit, LitStr, Meta, Result,
+    parse::Parse, parse::ParseStream, parse_macro_input, Expr, FnArg, Ident, ItemFn, Lit, LitStr,
+    Meta, Pat, Type,
 };
 
 // Define a struct to parse the macro attributes
@@ -15,7 +18,7 @@ pub struct PublishImpl {
 }
 
 impl Parse for PublishImpl {
-    fn parse(input: ParseStream) -> Result<Self> {
+    fn parse(input: ParseStream) -> Result<Self, syn::Error> {
         // Check if we have path="value" format
         if input.peek(syn::Ident) {
             let meta = input.parse::<Meta>()?;
@@ -49,6 +52,31 @@ impl Parse for PublishImpl {
     }
 }
 
+/// Generate the appropriate ArcValue creation based on return type
+fn generate_arc_value_creation(return_type_info: &ReturnTypeInfo) -> TokenStream2 {
+    if return_type_info.is_hashmap {
+        quote! {
+            runar_serializer::ArcValue::new_map(action_result.clone())
+        }
+    } else if return_type_info.is_list {
+        quote! {
+            runar_serializer::ArcValue::new_list(action_result.clone())
+        }
+    } else if return_type_info.is_struct {
+        quote! {
+            runar_serializer::ArcValue::new_struct(action_result.clone())
+        }
+    } else if return_type_info.type_name == "ArcValue" {
+        quote! {
+            action_result.clone()
+        }
+    } else {
+        quote! {
+            runar_serializer::ArcValue::new_primitive(action_result.clone())
+        }
+    }
+}
+
 /// Implementation of the publish macro
 pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Parse the input as a function
@@ -67,49 +95,109 @@ pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Check if the function is already async
     let is_async = input.sig.asyncness.is_some();
 
-    // Generate the modified function with publishing
-    let expanded = if is_async {
-        quote! {
-            #(#attrs)*
-            #vis #sig {
-                // Execute the original function body
-                let result = #block;
-
-                // If the result is Ok, publish it
-                if let Ok(ref action_result) = &result {
-                    // Publish the result to the specified topic
-                    match ctx.publish(#path, Some(runar_common::types::ArcValue::from_struct(action_result.clone()))).await {
-                        Ok(_) => {},
-                        Err(e) => {
-                            ctx.error(format!("Failed to publish result to {}: {}", #path, e));
-                        }
+    // Determine the identifier for the RequestContext parameter
+    let mut original_fn_ctx_ident_opt: Option<Ident> = None;
+    for fn_arg in &input.sig.inputs {
+        if let FnArg::Typed(pat_type) = fn_arg {
+            let type_to_check = match &*pat_type.ty {
+                Type::Reference(type_ref) => {
+                    // Check if it's an immutable reference before accessing elem
+                    if type_ref.mutability.is_none() {
+                        &*type_ref.elem
+                    } else {
+                        continue; // Skip mutable references for RequestContext
                     }
                 }
+                direct_type => direct_type,
+            };
 
-                // Return the original result
-                result
+            if let Type::Path(type_path) = type_to_check {
+                if get_path_last_segment_ident_string(type_path).as_deref()
+                    == Some("RequestContext")
+                {
+                    if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                        original_fn_ctx_ident_opt = Some(pat_ident.ident.clone());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let original_fn_has_request_context_param = original_fn_ctx_ident_opt.is_some();
+    let ctx_ident = original_fn_ctx_ident_opt
+        .unwrap_or_else(|| Ident::new("ctx", proc_macro2::Span::call_site()));
+
+    // Extract the return type information for proper handling
+    let return_type_info = extract_return_type_info(&input.sig.output);
+
+    // Generate the appropriate ArcValue creation
+    let arc_value_creation = generate_arc_value_creation(&return_type_info);
+
+    // Generate the modified function with publishing
+    let expanded = if original_fn_has_request_context_param {
+        // Function has RequestContext parameter, so we can add publishing logic
+        if is_async {
+            quote! {
+                #(#attrs)*
+                #vis #sig {
+                    // Execute the original function body
+                    let result = #block;
+
+                    // If the result is Ok, publish it
+                    if let Ok(ref action_result) = &result {
+                        // Publish the result to the specified topic
+                        match #ctx_ident.publish(#path, Some(#arc_value_creation)).await {
+                            Ok(_) => {},
+                            Err(e) => {
+                                #ctx_ident.error(format!("Failed to publish result to {}: {}", #path, e));
+                            }
+                        }
+                    }
+
+                    // Return the original result
+                    result
+                }
+            }
+        } else {
+            quote! {
+                #(#attrs)*
+                #vis async #sig {
+                    // Execute the original function body
+                    let result = (|| #block)();
+
+                    // If the result is Ok, publish it
+                    if let Ok(ref action_result) = &result {
+                        // Publish the result to the specified topic
+                        match #ctx_ident.publish(#path, Some(#arc_value_creation)).await {
+                            Ok(_) => {},
+                            Err(e) => {
+                                #ctx_ident.error(format!("Failed to publish result to {}: {}", #path, e));
+                            }
+                        }
+                    }
+
+                    // Return the original result
+                    result
+                }
             }
         }
     } else {
-        quote! {
-            #(#attrs)*
-            #vis async #sig {
-                // Execute the original function body
-                let result = (|| #block)();
-
-                // If the result is Ok, publish it
-                if let Ok(ref action_result) = &result {
-                    // Publish the result to the specified topic
-                    match ctx.publish(#path, Some(runar_common::types::ArcValue::from_struct(action_result.clone()))).await {
-                        Ok(_) => {},
-                        Err(e) => {
-                            ctx.error(format!("Failed to publish result to {}: {}", #path, e));
-                        }
-                    }
+        // Function doesn't have RequestContext parameter, so we can't add publishing logic
+        // Just pass through the function as-is
+        if is_async {
+            quote! {
+                #(#attrs)*
+                #vis #sig {
+                    #block
                 }
-
-                // Return the original result
-                result
+            }
+        } else {
+            quote! {
+                #(#attrs)*
+                #vis async #sig {
+                    #block
+                }
             }
         }
     };

@@ -1,29 +1,30 @@
-use runar_macros::{action, gateway, init, main, rest_api, service};
+use runar_macros::{action, service, service_impl};
 use runar_node::{
     anyhow::{self, Result},
     async_trait::async_trait,
-    node::NodeConfig,
     Node,
 };
-use runar_gateway::GatewayConfig;
+use runar_gateway::GatwayService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use runar_common::logging::{Component, Logger};
+use runar_node::services::RequestContext;
 
 // Define a simple invoice service
-#[service(name = "invoice_service")]
+#[service(name = "invoice_service", path="invoice_service")]
 pub struct InvoiceService {
     invoices: Arc<RwLock<HashMap<Uuid, Invoice>>>,
 }
 
-#[init]
+#[service_impl]
 impl InvoiceService {
-    pub async fn new() -> Result<Self> {
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             invoices: Arc::new(RwLock::new(HashMap::new())),
-        })
+        }
     }
 }
 
@@ -110,26 +111,26 @@ impl InvoiceService {
     pub async fn delete_invoice(&self, id: Uuid) -> Result<()> {
         let mut invoices = self.invoices.write().await;
         
-        if invoices.remove(&id).is_none() {
-            return Err(anyhow::anyhow!("Invoice not found"));
-        }
+        invoices
+            .remove(&id)
+            .ok_or_else(|| anyhow::anyhow!("Invoice not found"))?;
         
         Ok(())
     }
 }
 
-// Define a simple customer service
-#[service(name = "customer_service")]
+// Define a customer service
+#[service(name = "customer_service", path="customer_service")]
 pub struct CustomerService {
     customers: Arc<RwLock<HashMap<String, Customer>>>,
 }
 
-#[init]
+#[service_impl]
 impl CustomerService {
-    pub async fn new() -> Result<Self> {
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             customers: Arc::new(RwLock::new(HashMap::new())),
-        })
+        }
     }
 }
 
@@ -165,125 +166,158 @@ impl CustomerService {
     
     #[action]
     pub async fn create_customer(&self, req: CreateCustomerRequest) -> Result<Customer> {
-        let id = format!("cust_{}", Uuid::new_v4().to_string().split('-').next().unwrap());
-        
         let customer = Customer {
-            id: id.clone(),
+            id: Uuid::new_v4().to_string(),
             name: req.name,
             email: req.email,
         };
         
         let mut customers = self.customers.write().await;
-        customers.insert(id, customer.clone());
+        customers.insert(customer.id.clone(), customer.clone());
         
         Ok(customer)
     }
 }
 
-// Define the API gateway with REST API mappings
-#[service]
-#[gateway(
-    host = "0.0.0.0",
-    port = 8080,
-    services = [InvoiceService, CustomerService]
-)]
+// Define an API gateway service
+#[service(name = "api_gateway", path="api")]
 pub struct ApiGateway;
 
-#[init]
+#[service_impl]
 impl ApiGateway {
-    pub async fn new() -> Result<Self> {
-        Ok(Self {})
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
-// Map invoice service operations to REST endpoints
-#[rest_api(
-    prefix = "/api/v1",
-    service = "invoice_service"
-)]
+#[async_trait]
 impl ApiGateway {
-    #[action(GET, "/invoices")]
+    // Invoice endpoints
+    #[action]
     async fn get_invoices(&self) -> Result<Vec<Invoice>> {
-        // This maps to invoice_service.get_invoices()
-        self.context.request("invoice_service", "get_invoices", {}).await
+        // This would typically make a request to the invoice service
+        Ok(vec![])
     }
     
-    #[action(GET, "/invoices/:id")]
+    #[action]
     async fn get_invoice(&self, id: Uuid) -> Result<Invoice> {
-        // This maps to invoice_service.get_invoice(id)
-        self.context.request("invoice_service", "get_invoice", { id }).await
+        // This would typically make a request to the invoice service
+        Ok(Invoice {
+            id,
+            customer_id: "customer123".to_string(),
+            amount: 100.0,
+            paid: false,
+            due_date: "2024-12-31".to_string(),
+        })
     }
     
-    #[action(POST, "/invoices")]
+    #[action]
     async fn create_invoice(&self, req: CreateInvoiceRequest) -> Result<Invoice> {
-        // This maps to invoice_service.create_invoice(req)
-        self.context.request("invoice_service", "create_invoice", { req }).await
+        // This would typically make a request to the invoice service
+        Ok(Invoice {
+            id: Uuid::new_v4(),
+            customer_id: req.customer_id,
+            amount: req.amount,
+            paid: false,
+            due_date: req.due_date,
+        })
     }
     
-    #[action(PUT, "/invoices/:id")]
+    #[action]
     async fn update_invoice(&self, id: Uuid, req: UpdateInvoiceRequest) -> Result<Invoice> {
-        // This maps to invoice_service.update_invoice(id, req)
-        self.context.request("invoice_service", "update_invoice", { id, req }).await
+        // This would typically make a request to the invoice service
+        Ok(Invoice {
+            id,
+            customer_id: "customer123".to_string(),
+            amount: req.amount.unwrap_or(100.0),
+            paid: req.paid.unwrap_or(false),
+            due_date: req.due_date.unwrap_or_else(|| "2024-12-31".to_string()),
+        })
     }
     
-    #[action(DELETE, "/invoices/:id")]
+    #[action]
     async fn delete_invoice(&self, id: Uuid) -> Result<()> {
-        // This maps to invoice_service.delete_invoice(id)
-        self.context.request("invoice_service", "delete_invoice", { id }).await
+        // This would typically make a request to the invoice service
+        Ok(())
     }
 }
 
-// Map customer service operations to REST endpoints
-#[rest_api(
-    prefix = "/api/v1",
-    service = "customer_service"
-)]
+#[async_trait]
 impl ApiGateway {
-    #[action(GET, "/customers")]
+    // Customer endpoints
+    #[action]
     async fn get_customers(&self) -> Result<Vec<Customer>> {
-        // This maps to customer_service.get_customers()
-        self.context.request("customer_service", "get_customers", {}).await
+        // This would typically make a request to the customer service
+        Ok(vec![])
     }
     
-    #[action(GET, "/customers/:id")]
+    #[action]
     async fn get_customer(&self, id: String) -> Result<Customer> {
-        // This maps to customer_service.get_customer(id)
-        self.context.request("customer_service", "get_customer", { id }).await
+        // This would typically make a request to the customer service
+        Ok(Customer {
+            id,
+            name: "John Doe".to_string(),
+            email: "john@example.com".to_string(),
+        })
     }
     
-    #[action(POST, "/customers")]
+    #[action]
     async fn create_customer(&self, req: CreateCustomerRequest) -> Result<Customer> {
-        // This maps to customer_service.create_customer(req)
-        self.context.request("customer_service", "create_customer", { req }).await
+        // This would typically make a request to the customer service
+        Ok(Customer {
+            id: Uuid::new_v4().to_string(),
+            name: req.name,
+            email: req.email,
+        })
     }
 }
 
-// Main application entry point
-#[main]
+#[tokio::main]
 async fn main() -> Result<()> {
-    // Create and initialize node
-    let mut node = Node::new(NodeConfig {
-        node_id: "api_node".to_string(),
-        data_dir: "./data".to_string(),
-        db_path: "./data/db".to_string(),
-        p2p_config: None, // Configure if P2P is needed
-    }).await?;
+    // Setup logging
+    let logger = Arc::new(Logger::new_root(Component::System, "rest-api-example"));
     
-    // Initialize services
-    let invoice_service = InvoiceService::new().await?;
-    let customer_service = CustomerService::new().await?;
-    let api_gateway = ApiGateway::new().await?;
+    logger.info("🚀 Starting REST API Example");
     
-    // Register services with the node using the proper add_service method
+    // Create a node
+    let mut node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
+    
+    // Create and register services
+    let invoice_service = InvoiceService::new();
+    let customer_service = CustomerService::new();
+    let api_gateway = ApiGateway::new();
+    
     node.add_service(invoice_service).await?;
     node.add_service(customer_service).await?;
     node.add_service(api_gateway).await?;
     
-    // Start the node which will manage all services
+    // Create and register the HTTP gateway
+    let http_gateway = GatwayService::new("REST API Gateway", "gateway");
+    node.add_service(http_gateway).await?;
+    
+    // Start the node
     node.start().await?;
     
-    // Wait for the node to complete (typically runs until interrupted)
-    node.wait_for_shutdown().await?;
+    logger.info("✅ REST API example started successfully!");
+    logger.info("🌐 HTTP gateway should be available at http://localhost:3000");
+    logger.info("📡 Services registered:");
+    logger.info("   - invoice_service");
+    logger.info("   - customer_service");
+    logger.info("   - api_gateway");
+    logger.info("   - REST API gateway");
+    logger.info("📋 Available endpoints:");
+    logger.info("   - GET /invoice_service/get_invoices");
+    logger.info("   - GET /invoice_service/get_invoice/{id}");
+    logger.info("   - POST /invoice_service/create_invoice");
+    logger.info("   - PUT /invoice_service/update_invoice/{id}");
+    logger.info("   - DELETE /invoice_service/delete_invoice/{id}");
+    logger.info("   - GET /customer_service/get_customers");
+    logger.info("   - GET /customer_service/get_customer/{id}");
+    logger.info("   - POST /customer_service/create_customer");
+    
+    // Keep the node running
+    tokio::signal::ctrl_c().await?;
+    logger.info("🛑 Shutting down...");
     
     Ok(())
 } 

@@ -34,7 +34,7 @@ impl From<Component> for ComponentKey {
             Component::Registry => ComponentKey::Registry,
             Component::Service => ComponentKey::Service,
             Component::Database => ComponentKey::Database,
-            Component::Network => ComponentKey::Network,
+            Component::Transporter => ComponentKey::Network,
             Component::System => ComponentKey::System,
             Component::NetworkDiscovery => ComponentKey::Network,
             Component::Custom(name) => ComponentKey::Custom(name.to_string()),
@@ -79,7 +79,7 @@ impl LoggingConfig {
     /// Create a new logging configuration with default settings
     pub fn new() -> Self {
         Self {
-            default_level: LogLevel::Info,
+            default_level: LogLevel::Error,
             component_levels: HashMap::new(),
         }
     }
@@ -133,6 +133,8 @@ impl LoggingConfig {
 
             builder.filter(Some(target), level.to_level_filter());
         }
+
+        builder.filter(Some("quinn"), LogLevel::Info.to_level_filter());
 
         // Try to initialize the global logger, but don't panic if it's already initialized
         // This is especially important for tests where multiple tests might try to initialize the logger

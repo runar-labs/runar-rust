@@ -1,9 +1,17 @@
 use anyhow::{anyhow, Result};
-use runar_common::types::ArcValue;
-use runar_macros::{action, service, service_impl};
+use runar_macros::{action, service};
 use runar_node::services::RequestContext;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::Profile;
+
+// Helper function to safely get current timestamp
+fn get_current_timestamp() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|e| anyhow!("System clock error: {}", e))
+}
 
 // Define the Profile service
 #[service(
@@ -14,17 +22,69 @@ use crate::models::Profile;
 )]
 pub struct ProfileService;
 
-#[service_impl]
+#[service]
 impl ProfileService {
-    #[action(name = "get_profile")]
-    pub async fn get_profile(&self, user_id: String, _ctx: &RequestContext) -> Result<ArcValue> {
+    #[action]
+    pub async fn create_profile(
+        &self,
+        user_id: String,
+        full_name: String,
+        bio: String,
+        private_notes: String,
+        ctx: &RequestContext,
+    ) -> Result<Profile> {
         // Placeholder implementation
-        println!("ProfileService: Called get_profile for user_id: {user_id}");
-        Ok(ArcValue::from_struct(Profile {
-            id: "profile_456".to_string(), // Dummy ID
+        ctx.info(format!("Called create_profile for user_id: {user_id}"));
+
+        let now = get_current_timestamp()?;
+
+        Ok(Profile {
+            id: format!("profile_{user_id}"),
             user_id,
-            full_name: "Placeholder User".to_string(),
-            bio: Some("This is a test bio".to_string()),
-        }))
+            full_name,
+            bio,
+            private_notes,
+            last_updated: now,
+        })
+    }
+
+    #[action]
+    pub async fn get_profile(&self, user_id: String, ctx: &RequestContext) -> Result<Profile> {
+        // Placeholder implementation
+        ctx.info(format!("Called get_profile for user_id: {user_id}"));
+
+        let now = get_current_timestamp()?;
+
+        Ok(Profile {
+            id: format!("profile_{user_id}"),
+            user_id,
+            full_name: "John Doe".to_string(),
+            bio: "Software developer".to_string(),
+            private_notes: "Secret notes".to_string(),
+            last_updated: now,
+        })
+    }
+
+    #[action]
+    pub async fn update_profile(
+        &self,
+        user_id: String,
+        full_name: String,
+        bio: String,
+        ctx: &RequestContext,
+    ) -> Result<Profile> {
+        // Placeholder implementation
+        ctx.info(format!("Called update_profile for user_id: {user_id}"));
+
+        let now = get_current_timestamp()?;
+
+        Ok(Profile {
+            id: format!("profile_{user_id}"),
+            user_id,
+            full_name,
+            bio,
+            private_notes: "Secret notes".to_string(),
+            last_updated: now,
+        })
     }
 }

@@ -7,21 +7,17 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use runar_common::types::schemas::{ActionMetadata, ServiceMetadata};
-use runar_common::types::ArcValue;
 use runar_node::services::{EventContext, LifecycleContext};
 use runar_node::AbstractService;
-use serde_json::Value as JsonValue;
+use runar_schemas::{ActionMetadata, ServiceMetadata};
+use runar_serializer::ArcValue;
+use serde_json::{json, Value as JsonValue};
+
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex}; // Renamed to avoid conflict if any
 use tokio::sync::oneshot;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
-
-// Import Uuid if still needed, otherwise remove if not used after refactor
-// use uuid::Uuid;
-// Import HashMap if still needed
-// use std::collections::HashMap;
 
 /// Gateway service that exposes other services via HTTP REST API
 pub struct GatwayService {
@@ -95,12 +91,12 @@ impl GatwayService {
                 get(move |State(ctx): State<LifecycleContext>| async move {
                     let req_path = format!("{service_path_clone}/{action_name_clone}");
                     let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
-                    match ctx.request::<(), ArcValue>(req_path, None).await {
-                        Ok(mut arc_value) => {
+                    match ctx.request(req_path, None::<ArcValue>).await {
+                        Ok(arc_value) => {
                             let json_value = arc_value
-                                .to_json_value()
+                                .to_json()
                                 .expect("Failed to convert ArcValue to JSON");
-                            ctx.debug(format!("Response: {json_value}"));
+                            ctx.debug(format!("Response: {json_value:?}"));
                             (StatusCode::OK, AxumJson(json_value)).into_response()
                         }
                         Err(e) => {
@@ -128,19 +124,27 @@ impl GatwayService {
                         ));
 
                         let req_path = format!("{service_path_clone}/{action_name_clone}");
-                        let request_arc_value = ArcValue::from_json(payload);
+                        let request_arc_value = ArcValue::new_json(payload);
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                         match ctx
-                            .request::<ArcValue, serde_json::Value>(
-                                req_path,
-                                Some(request_arc_value),
-                            )
+                            .request(req_path, Some(request_arc_value))
                             .await
                         {
-                            Ok(json_value) => {
-                                ctx.debug(format!("Response: {json_value}"));
-                                (StatusCode::OK, AxumJson(json_value)).into_response()
+                            Ok(arc_value) => {
+                                // Now that ArcValue serialization is fixed, we can use proper JSON conversion
+                                match arc_value.to_json() {
+                                    Ok(json_value) => {
+                                        ctx.debug(format!("Response: {json_value}"));
+                                        (StatusCode::OK, AxumJson(json_value)).into_response()
+                                    }
+                                    Err(e) => {
+                                        ctx.error(format!("Failed to convert ArcValue to JSON: {e}"));
+                                        // Fallback to debug string if JSON conversion fails
+                                        let debug_str = format!("{arc_value:?}");
+                                        (StatusCode::OK, AxumJson(json!(debug_str))).into_response()
+                                    }
+                                }
                             }
                             Err(e) => {
                                 ctx.error(format!(
@@ -205,7 +209,7 @@ impl AbstractService for GatwayService {
                         Box::pin(async move {
                             if let Some(val) = value {
                                 event_ctx.info(format!(
-                                    "GatwayService '{service_name_clone}' received $registry/service/added event: {val}",
+                                    "GatwayService '{service_name_clone}' received $registry/service/added event: {val:?}",
                                 ));
                                 // TODO: Implement dynamic route updates if required
                             } else {
@@ -248,11 +252,19 @@ impl AbstractService for GatwayService {
         ));
 
         match context
-            .request::<(), Vec<ServiceMetadata>>("$registry/services/list".to_string(), None)
+            .request("$registry/services/list", None::<ArcValue>)
             .await
         {
-            Ok(services) => {
-                for service_meta in services {
+            Ok(services_arc_value) => {
+                let services_vec: Vec<ArcValue> = services_arc_value
+                    .as_type()
+                    .map_err(|e| anyhow!("Failed to convert ArcValue to Vec<ArcValue>: {}", e))?;
+
+                for service_arc_value in services_vec {
+                    let service_meta: ServiceMetadata =
+                        service_arc_value.as_type().map_err(|e| {
+                            anyhow!("Failed to convert ArcValue to ServiceMetadata: {}", e)
+                        })?;
                     if service_meta.service_path == self.path
                         || service_meta.service_path == "$registry"
                     {
@@ -344,3 +356,7 @@ impl AbstractService for GatwayService {
         Ok(())
     }
 }
+
+// -----------------------------------------------------------------------------
+// CustomFromBytes implementations for gateway-specific types
+// -----------------------------------------------------------------------------

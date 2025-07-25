@@ -19,6 +19,11 @@ tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
 runar_common = { path = "../runar-common", features = ["abstract_service"] }
 runar_node = { path = "../runar-node" }
 hex = "0.4"
+runar-serializer = { path = "../runar-serializer" }
+runar-serializer-macros = { path = "../runar-serializer-macros" }
+prost = "0.12"
+bincode = "1.3.3"
+ctor = "0.2"
 
 [dev-dependencies]
 tempfile = "3.10"
@@ -27,4 +32,5 @@ runar_common = { path = "../runar-common", features = ["abstract_service"] }
 runar_macros = { path = "../runar-macros" }
 runar-test-utils = { path = "../runar-test-utils" }
 serde_json = "1.0"
+runar_macros_common = { path = "../runar-macros-common" }
 # These are required for integration tests in tests/rusqlite_examples.rs

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_common::types::ArcValue;
-use runar_common::vmap; // Added for vmap!
+use runar_macros_common::vmap;
+use runar_serializer::ArcValue; // Added for vmap!
 
 use runar_node::Node;
 use runar_test_utils::create_node_test_config;
@@ -26,7 +26,7 @@ const CRUD_SERVICE_NAME: &str = "test_crud_service";
 const CRUD_SERVICE_PATH: &str = "crud_db";
 
 async fn setup_node_with_services() -> Result<Node> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     let node_config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
@@ -178,30 +178,32 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
     let collection_name = "users".to_string();
 
     // 1. Insert a document (ID will be auto-generated)
-    let mut user_doc_arc_value_map = vmap! {
+    let user_doc_arc_value_map = vmap! {
         "name" => "Alice".to_string(),
         "email" => "alice@example.com".to_string(),
         "age" => 30i64
     };
     // Convert ArcValue::Map back to HashMap for InsertOneRequest
-    let user_doc_auto_id_map: HashMap<String, ArcValue> = user_doc_arc_value_map
-        .as_type::<HashMap<String, ArcValue>>()
-        .expect("vmap! should produce a valid map");
+    let user_doc_auto_id_map: HashMap<String, ArcValue> = (*user_doc_arc_value_map
+        .as_type_ref::<HashMap<String, ArcValue>>()
+        .expect("vmap! should produce a valid map"))
+    .clone();
 
     let insert_req_auto = InsertOneRequest {
         collection: collection_name.clone(),
         document: user_doc_auto_id_map.clone(),
     };
-    let arc_insert_req_auto = ArcValue::from_struct(insert_req_auto);
+    let arc_insert_req_auto = ArcValue::new_struct(insert_req_auto);
 
-    let insert_resp_av: InsertOneResponse = node
+    let insert_resp_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_req_auto),
         )
         .await?;
 
-    let insert_response_auto = insert_resp_av; // Made mutable
+    let insert_response_auto: InsertOneResponse =
+        (*insert_resp_av.as_type_ref::<InsertOneResponse>()?).clone();
     let generated_id = insert_response_auto.inserted_id.clone(); // inserted_id is already a String
     assert!(!generated_id.is_empty(), "Generated ID should not be empty");
     println!("Inserted document with auto-generated ID: {generated_id}");
@@ -216,29 +218,30 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         collection: collection_name.clone(),
         filter: filter_auto_id_map,
     };
-    let arc_find_req_auto = ArcValue::from_struct(find_req_auto);
+    let arc_find_req_auto = ArcValue::new_struct(find_req_auto);
 
-    let find_resp_av: FindOneResponse = node
+    let find_resp_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_auto),
         )
         .await?;
-    let find_response_auto = find_resp_av; // Made mutable
+    let find_response_auto: FindOneResponse =
+        (*find_resp_av.as_type_ref::<FindOneResponse>()?).clone();
 
     let found_doc_auto = find_response_auto
         .document
         .expect("Document with auto_id should be found");
-    let mut id_av = found_doc_auto.get("_id").unwrap().clone();
+    let id_av = found_doc_auto.get("_id").unwrap().clone();
     let id_str_arc = id_av.as_type_ref::<String>()?;
     assert_eq!(*id_str_arc, generated_id);
-    let mut name_av = found_doc_auto.get("name").unwrap().clone();
+    let name_av = found_doc_auto.get("name").unwrap().clone();
     let name_str_arc = name_av.as_type_ref::<String>()?;
     assert_eq!(*name_str_arc, "Alice");
-    let mut email_av = found_doc_auto.get("email").unwrap().clone();
+    let email_av = found_doc_auto.get("email").unwrap().clone();
     let email_str_arc = email_av.as_type_ref::<String>()?;
     assert_eq!(*email_str_arc, "alice@example.com");
-    let mut age_av = found_doc_auto.get("age").unwrap().clone();
+    let age_av = found_doc_auto.get("age").unwrap().clone();
     let age_val_arc = age_av.as_type_ref::<i64>()?;
     assert_eq!(*age_val_arc, 30i64);
     println!("Successfully found document by auto-generated ID: {found_doc_auto:?}");
@@ -264,15 +267,16 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         collection: collection_name.clone(),
         document: user_doc_pre_id_map.clone(),
     };
-    let arc_insert_req_pre = ArcValue::from_struct(insert_req_pre);
+    let arc_insert_req_pre = ArcValue::new_struct(insert_req_pre);
 
-    let insert_resp_pre_av: InsertOneResponse = node
+    let insert_resp_pre_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_req_pre),
         )
         .await?;
-    let insert_response_pre = insert_resp_pre_av;
+    let insert_response_pre: InsertOneResponse =
+        (*insert_resp_pre_av.as_type_ref::<InsertOneResponse>()?).clone();
     assert_eq!(insert_response_pre.inserted_id, predefined_id);
     println!("Inserted document with predefined ID: {predefined_id}");
 
@@ -286,25 +290,27 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         collection: collection_name.clone(),
         filter: filter_pre_id_map,
     };
-    let arc_find_req_pre = ArcValue::from_struct(find_req_pre);
+    let arc_find_req_pre = ArcValue::new_struct(find_req_pre);
 
-    let find_resp_pre_av: FindOneResponse = node
+    let find_resp_pre_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_pre),
         )
         .await?;
 
-    let found_doc_pre = find_resp_pre_av
+    let find_response_pre: FindOneResponse =
+        (*find_resp_pre_av.as_type_ref::<FindOneResponse>()?).clone();
+    let found_doc_pre = find_response_pre
         .document
         .expect("Document with pre_id should be found");
-    let mut id_av_pre = found_doc_pre.get("_id").unwrap().clone();
+    let id_av_pre = found_doc_pre.get("_id").unwrap().clone();
     let id_str_arc_pre = id_av_pre.as_type_ref::<String>()?;
     assert_eq!(*id_str_arc_pre, predefined_id);
-    let mut name_av_pre = found_doc_pre.get("name").unwrap().clone();
+    let name_av_pre = found_doc_pre.get("name").unwrap().clone();
     let name_str_arc_pre = name_av_pre.as_type_ref::<String>()?;
     assert_eq!(*name_str_arc_pre, "Bob");
-    let mut email_av_pre = found_doc_pre.get("email").unwrap().clone();
+    let email_av_pre = found_doc_pre.get("email").unwrap().clone();
     let email_str_arc_pre = email_av_pre.as_type_ref::<String>()?;
     assert_eq!(*email_str_arc_pre, "bob@example.com");
     println!("Successfully found document by predefined ID: {found_doc_pre:?}");
@@ -320,14 +326,17 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         collection: collection_name.clone(),
         filter: filter_non_existent_map,
     };
-    let arc_find_req_non_existent = ArcValue::from_struct(find_req_non_existent);
+    let arc_find_req_non_existent = ArcValue::new_struct(find_req_non_existent);
 
-    let find_response_non_existent: FindOneResponse = node
+    let find_response_non_existent_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_non_existent),
         )
         .await?;
+
+    let find_response_non_existent: FindOneResponse =
+        (*find_response_non_existent_av.as_type_ref::<FindOneResponse>()?).clone();
 
     assert!(
         find_response_non_existent.document.is_none(),
@@ -357,14 +366,15 @@ async fn test_insert_into_different_collections() -> Result<()> {
         collection: "orders".to_string(),
         document: order_doc_map.clone(),
     };
-    let arc_insert_order_req = ArcValue::from_struct(insert_order_req);
-    let order_resp_av: InsertOneResponse = node
+    let arc_insert_order_req = ArcValue::new_struct(insert_order_req);
+    let order_resp_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_order_req),
         )
         .await?;
-    let order_insert_resp = order_resp_av;
+    let order_insert_resp: InsertOneResponse =
+        (*order_resp_av.as_type_ref::<InsertOneResponse>()?).clone();
     let order_id = order_insert_resp.inserted_id.clone();
     println!("Inserted order with ID: {order_id}");
 
@@ -381,14 +391,15 @@ async fn test_insert_into_different_collections() -> Result<()> {
         collection: "products".to_string(),
         document: product_doc_map.clone(),
     };
-    let arc_insert_product_req = ArcValue::from_struct(insert_product_req);
-    let product_resp_av: InsertOneResponse = node
+    let arc_insert_product_req = ArcValue::new_struct(insert_product_req);
+    let product_resp_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_product_req),
         )
         .await?;
-    let product_insert_resp = product_resp_av;
+    let product_insert_resp: InsertOneResponse =
+        (*product_resp_av.as_type_ref::<InsertOneResponse>()?).clone();
 
     let product_id = product_insert_resp.inserted_id.clone();
     println!("Inserted product with ID: {product_id}");
@@ -400,22 +411,23 @@ async fn test_insert_into_different_collections() -> Result<()> {
         collection: "orders".to_string(),
         filter: filter_order_map,
     };
-    let arc_find_order_req = ArcValue::from_struct(find_order_req);
-    let find_order_resp_av: FindOneResponse = node
+    let arc_find_order_req = ArcValue::new_struct(find_order_req);
+    let find_order_resp_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_order_req),
         )
         .await?;
-    let find_order_resp = find_order_resp_av;
+    let find_order_resp: FindOneResponse =
+        (*find_order_resp_av.as_type_ref::<FindOneResponse>()?).clone();
     let found_order = find_order_resp.document.expect("Order should be found");
-    let mut order_product_id_av = found_order.get("product_id").unwrap().clone();
+    let order_product_id_av = found_order.get("product_id").unwrap().clone();
     let order_product_id_arc = order_product_id_av.as_type_ref::<String>()?;
     assert_eq!(*order_product_id_arc, "prod_123");
-    let mut order_quantity_av = found_order.get("quantity").unwrap().clone();
+    let order_quantity_av = found_order.get("quantity").unwrap().clone();
     let order_quantity_arc = order_quantity_av.as_type_ref::<i64>()?;
     assert_eq!(*order_quantity_arc, 2i64);
-    let mut order_total_price_av = found_order.get("total_price").unwrap().clone();
+    let order_total_price_av = found_order.get("total_price").unwrap().clone();
     let order_total_price_arc = order_total_price_av.as_type_ref::<f64>()?;
     assert_eq!(*order_total_price_arc, 50.99f64);
 
@@ -429,22 +441,23 @@ async fn test_insert_into_different_collections() -> Result<()> {
         collection: "products".to_string(),
         filter: filter_product_map,
     };
-    let arc_find_product_req = ArcValue::from_struct(find_product_req);
-    let find_product_resp_av: FindOneResponse = node
+    let arc_find_product_req = ArcValue::new_struct(find_product_req);
+    let find_product_resp_av: ArcValue = node
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_product_req),
         )
         .await?;
-    let find_product_resp = find_product_resp_av;
+    let find_product_resp: FindOneResponse =
+        (*find_product_resp_av.as_type_ref::<FindOneResponse>()?).clone();
     let found_product = find_product_resp.document.expect("Product should be found");
-    let mut product_name_av = found_product.get("name").unwrap().clone();
+    let product_name_av = found_product.get("name").unwrap().clone();
     let product_name_arc = product_name_av.as_type_ref::<String>()?;
     assert_eq!(*product_name_arc, "Super Widget");
-    let mut product_price_av = found_product.get("price").unwrap().clone();
+    let product_price_av = found_product.get("price").unwrap().clone();
     let product_price_arc = product_price_av.as_type_ref::<f64>()?;
     assert_eq!(*product_price_arc, 25.49f64);
-    let mut product_in_stock_av = found_product.get("in_stock").unwrap().clone();
+    let product_in_stock_av = found_product.get("in_stock").unwrap().clone();
     let product_in_stock_arc = product_in_stock_av.as_type_ref::<bool>()?;
     assert!(*product_in_stock_arc);
 

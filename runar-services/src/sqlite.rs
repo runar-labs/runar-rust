@@ -1,11 +1,9 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
-use runar_common::types::erased_arc::ErasedArc;
-use runar_common::types::ArcValue;
-use runar_common::types::ValueCategory;
 use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
+use runar_serializer::{ArcValue, Plain};
 use rusqlite::types::ToSqlOutput;
 use rusqlite::types::{Null, ValueRef as RusqliteValueRef};
 use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};
@@ -392,7 +390,7 @@ fn internal_value_to_arc_value(value: &Value) -> ArcValue {
         Value::Text(s) => ArcValue::new_primitive(s.clone()),
         Value::Blob(b) => {
             // Ensure this matches how ArcValue expects Bytes. ErasedArc is appropriate here.
-            ArcValue::new(ErasedArc::from_value(b.clone()), ValueCategory::Bytes)
+            ArcValue::new_bytes(b.clone())
         }
         Value::Boolean(b) => ArcValue::new_primitive(*b),
     }
@@ -467,7 +465,7 @@ impl Params {
 } // No more named parameter logic
 
 /// SQL Query with typed parameters
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Plain)]
 pub struct SqlQuery {
     pub statement: String,
     pub params: Params,
@@ -604,7 +602,7 @@ impl Clone for SqliteService {
 }
 
 impl SqliteService {
-    #[allow(clippy::too_many_arguments)] // Common for service constructors
+    // Common for service constructors
     pub fn new(name: String, path: String, config: SqliteConfig) -> Self {
         Self {
             name,
@@ -722,10 +720,10 @@ impl AbstractService for SqliteService {
                 move |params_opt: Option<ArcValue>, _req_ctx: RequestContext| {
                     let service_clone = s_arc.clone();
                     Box::pin(async move {
-                        let mut query_arc_value = params_opt // Made mutable
+                        let query_arc_value = params_opt // Made mutable
                             .ok_or_else(|| anyhow!("Missing payload for 'execute_query' action. Expected ArcValue wrapping SqlQuery."))?;
 
-                        let sql_query_struct = query_arc_value.as_type::<SqlQuery>()
+                        let sql_query_struct = query_arc_value.as_type_ref::<SqlQuery>()
                             .map_err(|original_error_from_as_type| {
                                 anyhow!(format!(
                                     "Invalid payload type for 'execute_query'. Expected SqlQuery, got {:?}. Original error: {:?}",
@@ -735,7 +733,7 @@ impl AbstractService for SqliteService {
                             })?;
 
                         let sql_statement = sql_query_struct.statement.clone(); // Keep a copy for the SELECT check
-                        let query_to_send = sql_query_struct.clone(); // Clone the whole SqlQuery for the command
+                        let query_to_send = sql_query_struct.as_ref().clone(); // Clone the whole SqlQuery for the command
 
                         let trimmed_sql = sql_statement.trim_start().to_uppercase();
                         if trimmed_sql.starts_with("SELECT") {
@@ -823,10 +821,14 @@ impl AbstractService for SqliteService {
                 self.version,
                 self.network_id.as_ref().expect("network_id is required")
             );
-            let key: Vec<u8> = context
-                .request("$keys/ensure_symmetric_key", Some(key_name))
+            let key_arc = context
+                .request(
+                    "$keys/ensure_symmetric_key",
+                    Some(ArcValue::new_primitive(key_name)),
+                )
                 .await?;
-            encryption_key = Some(key);
+            let key = key_arc.as_type_ref::<Vec<u8>>()?;
+            encryption_key = Some(key.as_ref().clone());
         } else {
             context.warn("SqliteService encryption disabled.");
         }

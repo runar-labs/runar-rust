@@ -2,16 +2,20 @@
 members = [
     "runar-node",
     "runar-macros",
+    "runar-macros-common",
     "runar-common",
     "runar-services",
     "rust-examples/micro_services_demo",
     "runar-keys",
     "runar-gateway",
     "rust-examples/simple",
-    "runar-serializer",
     "runar-serializer-macros",
+    "runar-serializer",
     "runar-nodejs-ffi",
-    "runar-cli", "runar-test-utils",
+    "runar-cli", 
+    "runar-test-utils",
+    "runar-node-tests",
+    "runar-schemas",
 ]
 exclude = [
     "quinn",

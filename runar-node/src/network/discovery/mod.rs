@@ -7,11 +7,12 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use multicast_discovery::PeerInfo;
+
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-use runar_common::types::ServiceMetadata;
+use runar_schemas::ServiceMetadata;
 
 pub mod memory_discovery;
 pub mod mock;
@@ -58,7 +59,7 @@ pub const DEFAULT_MULTICAST_ADDR: &str = "239.255.42.98";
 ///
 /// INTENTION: Represents a snapshot of a node's presence and capabilities
 /// within one or more networks. This information is shared via discovery mechanisms.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct NodeInfo {
     /// The node's unique identifier
     pub node_public_key: Vec<u8>,
@@ -69,8 +70,8 @@ pub struct NodeInfo {
     pub addresses: Vec<String>,
     /// Node services representing the services provided by this node
     pub services: Vec<ServiceMetadata>,
-    /// incremental version counter that change everytime the ndoe chagnes (new services added, new event subscriptions, etc)
-    /// //when taht happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
+    /// incremental version counter that change everytime the node changes (new services added, new event subscriptions, etc)
+    /// when that happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
     pub version: i64,
 }
 

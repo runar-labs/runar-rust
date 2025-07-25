@@ -301,6 +301,33 @@ impl TopicPath {
         Ok(path)
     }
 
+    pub fn from_full_path(path: &str) -> Result<Self, String> {
+        if path.contains(':') {
+            // Split at the first colon to separate network_id and path
+            let parts: Vec<&str> = path.split(':').collect();
+            if parts.len() != 2 {
+                return Err(format!(
+                    "Invalid path format - should be 'network_id:service_path' received: {path}"
+                ));
+            }
+
+            // Reject empty network IDs
+            if parts[0].is_empty() {
+                return Err(format!(
+                    "Invalid path format - network ID cannot be empty received: {path}"
+                ));
+            }
+
+            let network_id = parts[0];
+            let path_without_network = parts[1];
+            Self::new(path_without_network, network_id)
+        } else {
+            Err(format!(
+                "Invalid path format - missing network_id received: {path}"
+            ))
+        }
+    }
+
     /// Create a new TopicPath from a string
     ///
     /// INTENTION: Validate and construct a TopicPath from a string input,

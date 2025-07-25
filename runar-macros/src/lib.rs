@@ -12,17 +12,32 @@ mod service_meta;
 mod subscribe;
 mod utils;
 use proc_macro::TokenStream;
+use syn::{parse_macro_input, Item};
 
-/// Struct-level metadata macro (was `service_meta`)
+/// Unified service macro that works on both struct definitions and impl blocks
+///
+/// When used on a struct: #[service(name = "...", path = "...", ...)]
+/// When used on an impl block: #[service]
 #[proc_macro_attribute]
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
-    service_meta::service_meta_impl(attr, item)
-}
+    // Clone the item for parsing since we need to use it in both branches
+    let item_clone = item.clone();
 
-/// Impl-level macro that wires the service to the runtime (was `service`)
-#[proc_macro_attribute]
-pub fn service_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
-    service::service_macro(attr, item)
+    // Parse the item to determine if it's a struct or impl block
+    match parse_macro_input!(item_clone as Item) {
+        Item::Struct(_) => {
+            // It's a struct - use the struct-level implementation
+            service_meta::service_meta_impl(attr, item)
+        }
+        Item::Impl(_) => {
+            // It's an impl block - use the impl-level implementation
+            service::service_macro(attr, item)
+        }
+        _ => {
+            // Neither struct nor impl - return a compilation error
+            panic!("#[service] macro can only be used on struct definitions or impl blocks")
+        }
+    }
 }
 
 /// Action macro for registering service actions

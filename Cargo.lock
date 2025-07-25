@@ -754,7 +754,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9"
 dependencies = [
  "ciborium-io",
- "half",
+ "half 2.6.0",
 ]
 
 [[package]]
@@ -1008,16 +1008,6 @@ dependencies = [
  "generic-array",
  "rand_core 0.6.4",
  "typenum",
-]
-
-[[package]]
-name = "ctor"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
-dependencies = [
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -1326,7 +1316,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f83197f59927b46c04a183a619b7c29df34e63e63c7869320862268c0ef687e0"
 dependencies = [
  "bit_field",
- "half",
+ "half 2.6.0",
  "lebe",
  "miniz_oxide",
  "rayon-core",
@@ -1635,6 +1625,12 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle",
 ]
+
+[[package]]
+name = "half"
+version = "1.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
 
 [[package]]
 name = "half"
@@ -2349,10 +2345,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "ctor",
  "futures",
+ "prost",
+ "runar-keys",
+ "runar-schemas",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
  "serde",
  "serde_json",
@@ -2399,7 +2401,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55740c4ae1d8696773c78fdafd5d0e5fe9bc9f1b071c7ba493ba5c413a9184f3"
 dependencies = [
  "bitflags 2.9.1",
- "ctor 0.2.9",
+ "ctor",
  "napi-derive",
  "napi-sys",
  "once_cell",
@@ -3307,8 +3309,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "ctor",
  "futures",
+ "prost",
+ "prost-derive",
  "reqwest",
+ "runar-schemas",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
@@ -3352,6 +3359,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-node-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "prost",
+ "rand 0.8.5",
+ "runar-keys",
+ "runar-schemas",
+ "runar-serializer",
+ "runar-test-utils",
+ "runar_common",
+ "runar_macros_common",
+ "runar_node",
+ "rustls 0.23.28",
+ "serde",
+ "serde_cbor",
+ "serde_json",
+ "tokio",
+ "tokio-test",
+ "uuid",
+]
+
+[[package]]
 name = "runar-nodejs-ffi"
 version = "0.1.0"
 dependencies = [
@@ -3363,6 +3394,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "once_cell",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_node",
@@ -3373,16 +3405,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-schemas"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctor",
+ "prost",
+ "runar-serializer",
+ "runar-serializer-macros",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "runar-serializer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
+ "ctor",
+ "dashmap",
  "log",
+ "once_cell",
  "prost",
  "runar-keys",
  "runar-serializer-macros",
  "runar_common",
  "serde",
+ "serde_cbor",
  "serde_json",
 ]
 
@@ -3390,9 +3440,11 @@ dependencies = [
 name = "runar-serializer-macros"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "ctor",
  "proc-macro2",
- "prost",
  "quote",
+ "serde_cbor",
  "syn 2.0.104",
 ]
 
@@ -3423,6 +3475,8 @@ dependencies = [
  "env_logger",
  "lazy_static",
  "log",
+ "prost",
+ "prost-derive",
  "rustc-hash 1.1.0",
  "serde",
  "serde_bytes",
@@ -3441,17 +3495,22 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "ctor 0.1.26",
+ "ctor",
  "darling",
  "futures",
  "inventory",
  "linkme",
  "once_cell",
  "proc-macro2",
+ "prost",
+ "prost-derive",
  "quote",
  "rand 0.8.5",
+ "runar-schemas",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
+ "runar_macros_common",
  "runar_node",
  "rusqlite",
  "serde",
@@ -3459,6 +3518,15 @@ dependencies = [
  "syn 2.0.104",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "runar_macros_common"
+version = "0.1.0"
+dependencies = [
+ "runar-serializer",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3472,25 +3540,34 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
+ "ctor",
  "dashmap",
  "env_logger",
+ "futures",
  "futures-util",
  "hex",
  "log",
+ "once_cell",
  "p256",
  "pkcs8",
+ "prost",
  "quinn",
  "rand 0.9.1",
  "rcgen 0.11.3",
  "ring 0.17.14",
  "runar-keys",
+ "runar-schemas",
+ "runar-serializer",
+ "runar-serializer-macros",
  "runar-test-utils",
  "runar_common",
+ "runar_macros_common",
  "rustls 0.23.28",
  "rustls-native-certs 0.6.3",
  "rustls-pemfile",
  "rustls-pki-types",
  "serde",
+ "serde_cbor",
  "serde_json",
  "socket2 0.5.10",
  "thiserror 1.0.69",
@@ -3509,11 +3586,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
+ "ctor",
  "futures",
  "hex",
+ "prost",
+ "runar-serializer",
+ "runar-serializer-macros",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
  "rusqlite",
  "serde",
@@ -3865,6 +3948,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_cbor"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bef2ebfde456fb76bbcf9f59315333decc4fda0b2b44b420243c11e0f5ec1f5"
+dependencies = [
+ "half 1.8.3",
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3989,10 +4082,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "runar-schemas",
+ "runar-serializer",
  "runar-test-utils",
  "runar_common",
  "runar_macros",
+ "runar_macros_common",
  "runar_node",
+ "serde_json",
  "tokio",
 ]
 

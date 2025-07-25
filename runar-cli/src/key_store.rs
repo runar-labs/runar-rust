@@ -81,25 +81,6 @@ impl OsKeyStore {
 
         entry.get_password().is_ok()
     }
-
-    /// Remove keys from OS key store
-    ///
-    /// # Arguments
-    /// * `keys_name` - Unique identifier for the keys (format: runar_{uuid})
-    #[allow(dead_code)]
-    pub fn remove_node_keys(&self, keys_name: &str) -> Result<()> {
-        let entry =
-            Entry::new("runar-node", keys_name).context("Failed to create keyring entry")?;
-
-        entry
-            .delete_password()
-            .with_context(|| format!("Failed to remove keys from OS key store: {keys_name}"))?;
-
-        self.logger
-            .info(format!("Node keys removed from OS key store: {keys_name}"));
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -127,10 +108,6 @@ mod tests {
                 // Test retrieving keys
                 let retrieved_data = key_store.retrieve_node_keys(test_keys_name).unwrap();
                 assert_eq!(retrieved_data, test_data);
-
-                // Test removing keys
-                assert!(key_store.remove_node_keys(test_keys_name).is_ok());
-                assert!(!key_store.keys_exist(test_keys_name));
 
                 println!("All key store operations completed successfully");
             }

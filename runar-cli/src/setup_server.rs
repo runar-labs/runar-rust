@@ -77,12 +77,6 @@ impl SetupServer {
         Err(anyhow::anyhow!("Setup server stream ended unexpectedly"))
     }
 
-    #[allow(dead_code)]
-    pub async fn wait_for_certificate(&self) -> Result<NodeCertificateMessage> {
-        let setup_data = self.wait_for_setup_data().await?;
-        Ok(setup_data.certificate_message)
-    }
-
     async fn handle_connection(&self, socket: TcpStream) -> Result<SetupData> {
         self.logger.debug("Handling mobile device connection");
 

@@ -8,7 +8,6 @@
 // Standard library imports
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use bincode;
 use core::fmt;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
@@ -60,19 +59,18 @@ impl fmt::Display for PeerInfo {
 
 // Message formats for multicast communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum MulticastMessage {
-    // Node announces its presence
-    Announce(PeerInfo),
-    // Node is leaving the network
-    Goodbye(String),
+pub struct MulticastMessage {
+    pub announce: Option<PeerInfo>,
+    pub goodbye: Option<String>,
 }
 
 impl MulticastMessage {
     // Helper to get the sender ID if the message contains it
     fn sender_id(&self) -> Option<String> {
-        match self {
-            MulticastMessage::Announce(peer_info) => Some(compact_id(&peer_info.public_key)),
-            MulticastMessage::Goodbye(id) => Some(id.clone()),
+        if let Some(peer_info) = &self.announce {
+            Some(compact_id(&peer_info.public_key))
+        } else {
+            self.goodbye.clone()
         }
     }
 }
@@ -104,6 +102,8 @@ impl MulticastDiscovery {
         options: DiscoveryOptions,
         logger: Logger,
     ) -> Result<Self> {
+        let logger = logger.with_component(Component::NetworkDiscovery);
+
         // Parse multicast group - handle both formats: "239.255.42.98" and "239.255.42.98:45678"
         let (multicast_addr, port) = if options.multicast_group.contains(':') {
             // Parse as a SocketAddr "IP:PORT"
@@ -140,7 +140,7 @@ impl MulticastDiscovery {
         ));
 
         // Create a Network component logger
-        let discovery_logger = logger.with_component(Component::Network);
+        let discovery_logger = logger.with_component(Component::Transporter);
 
         let instance = Self {
             options: Arc::new(RwLock::new(options)),
@@ -250,7 +250,7 @@ impl MulticastDiscovery {
                         logger.debug(format!(
                             "Received multicast message from {src}, size: {len}",
                         ));
-                        match bincode::deserialize::<MulticastMessage>(&buf[..len]) {
+                        match serde_cbor::from_slice::<MulticastMessage>(&buf[..len]) {
                             Ok(message) => {
                                 // Use helper method to check sender ID
                                 let mut skip = false;
@@ -311,7 +311,10 @@ impl MulticastDiscovery {
                 ));
 
                 if tx
-                    .send(MulticastMessage::Announce(peer_info.clone()))
+                    .send(MulticastMessage {
+                        announce: Some(peer_info.clone()),
+                        goodbye: None,
+                    })
                     .await
                     .is_err()
                 {
@@ -377,19 +380,17 @@ impl MulticastDiscovery {
             drop(local_node_guard);
 
             while let Some(mut message) = rx.recv().await {
-                match &mut message {
-                    MulticastMessage::Announce(ref mut discovery_msg) => {
-                        // Update the node info with our local peer ID
-                        discovery_msg.public_key = local_node_info.node_public_key.clone();
-                        discovery_msg.addresses = local_node_info.addresses.clone();
-                    }
-                    MulticastMessage::Goodbye(ref mut id) => {
-                        // Set the goodbye message's peer ID to our local ID
-                        *id = compact_id(&local_node_info.node_public_key);
-                    }
+                // Update announce message with our local info
+                if let Some(ref mut discovery_msg) = message.announce {
+                    discovery_msg.public_key = local_node_info.node_public_key.clone();
+                    discovery_msg.addresses = local_node_info.addresses.clone();
+                }
+                // Update goodbye message with our local ID
+                if let Some(ref mut id) = message.goodbye {
+                    *id = compact_id(&local_node_info.node_public_key);
                 }
 
-                match bincode::serialize(&message) {
+                match serde_cbor::to_vec(&message) {
                     Ok(data) => {
                         logger.debug(format!(
                             "Sending multicast message to {}, size: {}",
@@ -434,51 +435,54 @@ impl MulticastDiscovery {
         let local_peer_node_id = compact_id(&local_node_info.node_public_key);
         let local_addresses = local_node_info.addresses.clone();
 
-        match message {
+        if let Some(peer_info) = &message.announce {
             // Announce: Store info and notify listeners
-            MulticastMessage::Announce(peer_info) => {
-                let peer_node_id = compact_id(&peer_info.public_key);
-                //ignore messages from self
-                if local_peer_node_id == peer_node_id {
-                    return;
+            let peer_node_id = compact_id(&peer_info.public_key);
+            //ignore messages from self
+            if local_peer_node_id == peer_node_id {
+                return;
+            }
+
+            logger.debug(format!("Processing announce message from {peer_node_id}"));
+
+            // Check if this is a new peer before responding
+            let is_new_peer = {
+                let nodes_read = nodes.read().await;
+                !nodes_read.contains_key(&peer_node_id)
+            };
+
+            // Store the peer info - clone peer_public_key before using it outside this block
+            {
+                let mut nodes_write = nodes.write().await;
+                nodes_write.insert(peer_node_id.clone(), peer_info.clone());
+            }
+
+            // Notify listeners
+            {
+                let listeners_read = listeners.read().await;
+                for listener in listeners_read.iter() {
+                    let fut = listener(peer_info.clone());
+                    fut.await;
                 }
+            }
 
-                logger.debug(format!("Processing announce message from {peer_node_id}"));
+            // Only respond if this is a new peer we haven't seen before
+            if is_new_peer {
+                // Build a discovery message with our own info
+                let local_info_msg = PeerInfo::new(
+                    local_node_info.node_public_key.clone(),
+                    local_addresses.clone(),
+                );
 
-                // Check if this is a new peer before responding
-                let is_new_peer = {
-                    let nodes_read = nodes.read().await;
-                    !nodes_read.contains_key(&peer_node_id)
+                logger.debug(format!(
+                    "Auto-responding to new peer announcement with our own info: {local_peer_node_id}"
+                ));
+                let response_msg = MulticastMessage {
+                    announce: Some(local_info_msg),
+                    goodbye: None,
                 };
-
-                // Store the peer info - clone peer_public_key before using it outside this block
-                {
-                    let mut nodes_write = nodes.write().await;
-                    nodes_write.insert(peer_node_id.clone(), peer_info.clone());
-                }
-
-                // Notify listeners
-                {
-                    let listeners_read = listeners.read().await;
-                    for listener in listeners_read.iter() {
-                        let fut = listener(peer_info.clone());
-                        fut.await;
-                    }
-                }
-
-                // Only respond if this is a new peer we haven't seen before
-                if is_new_peer {
-                    // Build a discovery message with our own info
-                    let local_info_msg = PeerInfo::new(
-                        local_node_info.node_public_key.clone(),
-                        local_addresses.clone(),
-                    );
-
-                    logger.debug(format!(
-                        "Auto-responding to new peer announcement with our own info: {local_peer_node_id}"
-                    ));
-                    let response_msg = MulticastMessage::Announce(local_info_msg);
-                    if let Ok(data) = bincode::serialize(&response_msg) {
+                match serde_cbor::to_vec(&response_msg) {
+                    Ok(data) => {
                         // Small delay to avoid collision
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         // Respond directly to the sender
@@ -486,19 +490,22 @@ impl MulticastDiscovery {
                             logger.error(format!("Failed to send auto-response to {src}: {e}"));
                         }
                     }
-                } else {
-                    logger.debug(format!(
-                        "Skipping auto-response for already known peer: {peer_node_id}"
-                    ));
+                    Err(e) => logger.error(format!("Failed to serialize response message: {e}")),
                 }
+            } else {
+                logger.debug(format!(
+                    "Skipping auto-response for already known peer: {peer_node_id}"
+                ));
             }
+        } else if let Some(identifier) = &message.goodbye {
             // Goodbye: Remove node
-            MulticastMessage::Goodbye(identifier) => {
-                logger.debug(format!("Processing goodbye message from {identifier}"));
-                let key = identifier.to_string();
-                let mut nodes_write = nodes.write().await;
-                nodes_write.remove(&key);
-            }
+            logger.debug(format!("Processing goodbye message from {identifier}"));
+            let key = identifier.to_string();
+            let mut nodes_write = nodes.write().await;
+            nodes_write.remove(&key);
+        } else {
+            // No message content
+            logger.warn("Received multicast message with no content".to_string());
         }
     }
 }
@@ -575,9 +582,12 @@ impl NodeDiscovery for MulticastDiscovery {
             local_info.addresses.clone(),
         );
 
-        tx.send(MulticastMessage::Announce(peer_info))
-            .await
-            .map_err(|e| anyhow!("Failed to send initial announcement: {e}"))?;
+        tx.send(MulticastMessage {
+            announce: Some(peer_info),
+            goodbye: None,
+        })
+        .await
+        .map_err(|e| anyhow!("Failed to send initial announcement: {e}"))?;
 
         let task = self.start_announce_task(tx.clone(), local_info.clone(), interval);
         *self.announce_task.lock().await = Some(task);

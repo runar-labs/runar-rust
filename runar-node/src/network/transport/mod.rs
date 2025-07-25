@@ -2,6 +2,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use rand;
+use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -18,13 +19,14 @@ use rustls_pki_types::{CertificateDer, ServerName};
 // Internal module declarations
 pub mod connection_pool;
 pub mod peer_state;
-pub mod quic_transport;
+// legacy implementation removed.  New best-practice transport lives in `quic_transport.rs`.
+pub mod quic_transport; // new best-practice implementation
 pub mod stream_pool;
 
+use crate::routing::TopicPath;
 pub use connection_pool::ConnectionPool;
 pub use peer_state::PeerState;
 pub use stream_pool::StreamPool;
-
 // --- Moved from quic_transport.rs ---
 /// Custom certificate verifier that skips verification for testing
 ///
@@ -86,7 +88,6 @@ impl ServerCertVerifier for SkipServerVerification {
 // Re-export types/traits from submodules or parent modules
 // pub use peer_registry::{PeerEntry, PeerRegistry, PeerRegistryOptions, PeerStatus};
 pub use quic_transport::{QuicTransport, QuicTransportOptions};
-// Don't re-export pick_free_port since it's defined in this module
 
 use super::discovery::multicast_discovery::PeerInfo;
 // Import NodeInfo from the discovery module
@@ -130,7 +131,6 @@ pub struct TransportOptions {
     pub bind_address: SocketAddr,
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for TransportOptions {
     fn default() -> Self {
         let port = pick_free_port(50000..51000).unwrap_or(0);
@@ -203,12 +203,12 @@ pub enum NetworkMessageType {
     Heartbeat,
 }
 
-/// Represents a payload item in a network message
-///
-/// IMPORTANT: This is implemented as a struct with fields, not as a tuple.
-/// The serialized data is stored in value_bytes and should be deserialized
-/// using SerializerRegistry when needed.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageContext {
+    pub profile_public_key: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMessagePayloadItem {
     /// The path/topic associated with this payload
     pub path: String,
@@ -216,23 +216,42 @@ pub struct NetworkMessagePayloadItem {
     /// The serialized value/payload data as bytes
     pub value_bytes: Vec<u8>,
 
+    pub context: Option<MessageContext>,
+
     /// Correlation ID for request/response tracking
     pub correlation_id: String,
 }
 
 impl NetworkMessagePayloadItem {
     /// Create a new NetworkMessagePayloadItem
-    pub fn new(path: String, value_bytes: Vec<u8>, correlation_id: String) -> Self {
+    pub fn new(
+        path: String,
+        value_bytes: Vec<u8>,
+        correlation_id: String,
+        context: MessageContext,
+    ) -> Self {
         Self {
             path,
             value_bytes,
             correlation_id,
+            context: Some(context),
         }
     }
 }
 
+pub const MESSAGE_TYPE_DISCOVERY: u32 = 1;
+pub const MESSAGE_TYPE_HEARTBEAT: u32 = 2;
+pub const MESSAGE_TYPE_ANNOUNCEMENT: u32 = 3;
+pub const MESSAGE_TYPE_HANDSHAKE: u32 = 4;
+pub const MESSAGE_TYPE_REQUEST: u32 = 5;
+pub const MESSAGE_TYPE_RESPONSE: u32 = 6;
+pub const MESSAGE_TYPE_EVENT: u32 = 7;
+pub const MESSAGE_TYPE_ERROR: u32 = 8;
+pub const MESSAGE_TYPE_NODE_INFO_UPDATE: u32 = 9;
+pub const MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE: u32 = 10;
+
 /// Represents a message exchanged between nodes
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMessage {
     /// Source node identifier
     pub source_node_id: String,
@@ -241,14 +260,34 @@ pub struct NetworkMessage {
     pub destination_node_id: String,
 
     /// Message type (Request, Response, Event, etc.)
-    pub message_type: String,
+    pub message_type: u32,
 
     /// List of payloads  
     pub payloads: Vec<NetworkMessagePayloadItem>,
 }
 
-/// Handler function type for incoming network messages
-pub type MessageHandler = Box<dyn Fn(NetworkMessage) -> Result<()> + Send + Sync>;
+/// Handler function type for incoming network messages that may return a response
+pub type MessageHandler = Box<
+    dyn Fn(
+            NetworkMessage,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<Option<NetworkMessage>, NetworkError>>
+                    + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
+/// Handler function type for one-way network messages (fire-and-forget)
+pub type OneWayMessageHandler = Box<
+    dyn Fn(
+            NetworkMessage,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Callback type for message handling with future
 pub type MessageCallback =
@@ -264,7 +303,7 @@ pub trait NetworkTransport: Send + Sync {
     // No init method - all required fields should be provided in constructor
 
     /// Start listening for incoming connections
-    async fn start(&self) -> Result<(), NetworkError>;
+    async fn start(self: Arc<Self>) -> Result<(), NetworkError>;
 
     /// Stop listening for incoming connections
     async fn stop(&self) -> Result<(), NetworkError>;
@@ -275,13 +314,23 @@ pub trait NetworkTransport: Send + Sync {
     /// Check if connected to a specific node
     async fn is_connected(&self, node_id: String) -> bool;
 
-    /// Send a message to a remote node
-    async fn send_message(&self, message: NetworkMessage) -> Result<(), NetworkError>;
+    /// Perform an RPC request/response exchange (pattern A). The transport
+    /// opens a fresh bidirectional stream, writes the request, finishes the
+    /// send half, reads the response and returns the deserialized `ArcValue`.
+    async fn request(
+        &self,
+        topic_path: &TopicPath,
+        params: Option<ArcValue>,
+        peer_node_id: &str,
+        context: MessageContext,
+    ) -> Result<ArcValue, NetworkError>;
 
-    /// connect to a discovered node
-    ///
-    /// Returns the NodeInfo of the connected peer after successful handshake
-    async fn connect_peer(&self, discovery_msg: PeerInfo) -> Result<(), NetworkError>;
+    /// Fire-and-forget / broadcast message (pattern B) such as announcements,
+    /// events or heart-beats.
+    async fn publish(&self, message: NetworkMessage) -> Result<(), NetworkError>;
+
+    /// connect to a discovered node and perform the NodeInfo handshake.
+    async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError>;
 
     /// Get the local address this transport is bound to as a string
     fn get_local_address(&self) -> String;
@@ -289,17 +338,11 @@ pub trait NetworkTransport: Send + Sync {
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
 
-    // /// Register a message handler for incoming messages
-    // async fn register_message_handler(
-    //     &self,
-    //     handler: Box<dyn Fn(NetworkMessage) -> Result<(), NetworkError> + Send + Sync + 'static>,
-    // ) -> Result<(), NetworkError>;
+    /// Expose the transport-owned keystore (read-only).
+    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
 
-    /// Subscribe to peer node info updates
-    ///
-    /// INTENTION: Allow callers to subscribe to peer node info updates when they are received
-    /// during handshakes. This is used by the Node to create RemoteService instances.
-    async fn subscribe_to_peer_node_info(&self) -> tokio::sync::broadcast::Receiver<NodeInfo>;
+    /// Expose the transport-owned label resolver.
+    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver>;
 }
 
 /// Error type for network operations

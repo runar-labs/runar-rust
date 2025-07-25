@@ -15,12 +15,9 @@ use crate::node::Node; // Added for concrete type
 use crate::routing::TopicPath;
 use crate::services::NodeDelegate;
 use anyhow::Result;
-use runar_common::{
-    logging::{Component, Logger, LoggingContext},
-    types::ArcValue,   // Added ValueCategory for AsArcValue for S
-    types::AsArcValue, // Moved from this file
-};
-use std::fmt::Debug;
+use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_serializer::arc_value::AsArcValue;
+use runar_serializer::ArcValue;
 
 // AsArcValue trait and implementations moved to runar_common::types
 // -----------------------------------------------------------------------------
@@ -54,6 +51,8 @@ pub struct RequestContext {
     /// Path parameters extracted from template matching
     pub path_params: HashMap<String, String>,
 
+    pub user_profile_public_key: Vec<u8>,
+
     /// Node delegate for making requests or publishing events
     pub(crate) node_delegate: Arc<Node>,
 }
@@ -81,6 +80,7 @@ impl Clone for RequestContext {
             logger: self.logger.clone(),
             path_params: self.path_params.clone(),
             node_delegate: self.node_delegate.clone(),
+            user_profile_public_key: self.user_profile_public_key.clone(),
         }
     }
 }
@@ -116,6 +116,7 @@ impl RequestContext {
             logger: action_logger,
             node_delegate,
             path_params: HashMap::new(),
+            user_profile_public_key: vec![],
         }
     }
 
@@ -124,6 +125,11 @@ impl RequestContext {
     /// Use builder-style methods instead of specialized constructors.
     pub fn with_metadata(mut self, metadata: ArcValue) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    pub fn with_user_profile_public_key(mut self, user_profile_public_key: Vec<u8>) -> Self {
+        self.user_profile_public_key = user_profile_public_key;
         self
     }
 
@@ -217,10 +223,9 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P, T>(&self, path: impl Into<String>, payload: Option<P>) -> Result<T>
+    pub async fn request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
-        T: 'static + Send + Sync + Clone + Debug + for<'de> serde::Deserialize<'de>,
     {
         let path_string = path.into();
 
@@ -247,9 +252,7 @@ impl RequestContext {
         self.logger
             .debug(format!("Making request to processed path: {full_path}"));
 
-        // Call Node::request, specifying the generic types P and T.
-        // Node::request itself will handle deserialization to T.
-        self.node_delegate.request::<P, T>(full_path, payload).await
+        self.node_delegate.request::<P>(full_path, payload).await
     }
 }
 

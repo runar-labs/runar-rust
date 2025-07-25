@@ -16,12 +16,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::services::LifecycleContext;
+use runar_serializer_macros::Plain;
 
 /// Represents a service's current state
 ///
 /// INTENTION: Track the lifecycle stage of a service
 /// for proper initialization and operational management.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Plain)]
 pub enum ServiceState {
     /// Service is created but not initialized
     Created,

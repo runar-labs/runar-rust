@@ -5,9 +5,7 @@
 // Export modules
 pub mod errors;
 pub mod logging;
-pub mod macros;
 pub mod service_info;
-pub mod types;
 pub mod utils;
 
 // Re-export traits and types at the root level

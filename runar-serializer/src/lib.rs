@@ -1,4 +1,4 @@
-//! Enhanced serialization with selective field encryption for Runar
+//! Serialization with selective field encryption for Runar, using macro-based approach without runtime registry
 //!
 //! This crate provides:
 //! - Derive macros for selective field encryption
@@ -8,15 +8,19 @@
 
 pub mod arc_value;
 pub mod encryption;
+pub mod erased_arc;
+pub mod primitive_types;
 pub mod registry;
 pub mod traits;
+pub mod utils;
 
 pub use encryption::*;
-pub use registry::*;
 pub use traits::*;
+// pub use traits::{serialize_with_context, deserialize_with_context};
 
 // Re-export macros
 pub use runar_serializer_macros::*;
 
-// Re-export so callers can write `runar_serializer::ArcValue`.
-pub use arc_value::*;
+// Re-export core types so callers can write `runar_serializer::ArcValue`.
+pub use arc_value::{ArcValue, LazyDataWithOffset, ValueCategory};
+pub use erased_arc::ErasedArc;

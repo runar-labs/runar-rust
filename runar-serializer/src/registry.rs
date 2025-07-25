@@ -1,357 +1,392 @@
-use crate::traits::{KeyStore, LabelResolver, RunarDecrypt, RunarEncrypt};
-use anyhow::{anyhow, Result};
-use prost::Message;
-use runar_common::logging::Logger;
-use runar_common::types::arc_value::{
-    DeserializerFnWrapper, SerializerRegistry as BaseSerializerRegistry,
-};
-use runar_common::types::ArcValue;
-use std::any::Any;
+//! Global decryptor registry used by ArcValue.
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Enhanced SerializerRegistry with encryption support
-pub struct SerializerRegistry {
-    /// Base registry from runar-common
-    base_registry: BaseSerializerRegistry,
-    /// Key store for encryption/decryption operations
-    keystore: Option<Arc<KeyStore>>,
-    /// Label resolver for mapping labels to public keys
-    label_resolver: Option<Arc<dyn LabelResolver>>,
+use anyhow::Result;
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+use serde_json::Value as JsonValue;
+
+use crate::traits::{KeyStore, RunarDecrypt};
+use crate::ArcValue;
+use serde::de::DeserializeOwned;
+
+/// Function pointer stored in the registry.
+pub type DecryptFn = fn(&[u8], &Arc<KeyStore>) -> Result<Box<dyn Any + Send + Sync>>;
+
+/// Function pointer for JSON conversion stored in the registry.
+pub type ToJsonFn = fn(&[u8]) -> Result<JsonValue>;
+
+/// Global, thread-safe map: PlainTypeId -> decrypt function.
+static STRUCT_REGISTRY: Lazy<DashMap<TypeId, DecryptFn>> = Lazy::new(DashMap::new);
+
+/// Global, thread-safe map: Type name string -> JSON conversion function.
+static JSON_REGISTRY: Lazy<DashMap<String, ToJsonFn>> = Lazy::new(DashMap::new);
+
+/// Register a decryptor for `Plain` using the encrypted representation `Enc`.
+///
+/// This is intended to be invoked automatically by the `Encrypt` derive macro
+/// through a `#[ctor]`-annotated function, so user code never calls it
+/// directly.
+pub fn register_decrypt<Plain, Enc>()
+where
+    Plain: 'static + Send + Sync,
+    Enc: 'static + RunarDecrypt<Decrypted = Plain> + DeserializeOwned,
+{
+    // Mono-morphise a concrete decryptor function and insert it.
+    fn decrypt_impl<Plain, Enc>(
+        bytes: &[u8],
+        ks: &Arc<KeyStore>,
+    ) -> Result<Box<dyn Any + Send + Sync>>
+    where
+        Plain: 'static + Send + Sync,
+        Enc: 'static + RunarDecrypt<Decrypted = Plain> + DeserializeOwned,
+    {
+        let enc: Enc = serde_cbor::from_slice(bytes)?;
+        let plain = enc.decrypt_with_keystore(ks)?;
+        Ok(Box::new(plain))
+    }
+
+    STRUCT_REGISTRY.insert(
+        TypeId::of::<Plain>(),
+        decrypt_impl::<Plain, Enc> as DecryptFn,
+    );
 }
 
-impl SerializerRegistry {
-    /// Create a new registry with default logger
-    pub fn new(logger: Arc<Logger>) -> Self {
-        Self {
-            base_registry: BaseSerializerRegistry::new(logger),
-            keystore: None,
-            label_resolver: None,
-        }
-    }
-
-    /// Create a new registry with keystore and label resolver
-    pub fn with_keystore(
-        logger: Arc<Logger>,
-        keystore: Arc<KeyStore>,
-        label_resolver: Arc<dyn LabelResolver>,
-    ) -> Self {
-        Self {
-            base_registry: BaseSerializerRegistry::new(logger),
-            keystore: Some(keystore),
-            label_resolver: Some(label_resolver),
-        }
-    }
-
-    /// Initialize with default types
-    pub fn with_defaults(logger: Arc<Logger>) -> Self {
-        let mut registry = Self::new(logger);
-        registry.register_defaults();
-        registry
-    }
-
-    /// Register default type handlers
-    fn register_defaults(&mut self) {
-        // Register primitive types
-        self.register::<i32>().unwrap();
-        self.register::<i64>().unwrap();
-        self.register::<f32>().unwrap();
-        self.register::<f64>().unwrap();
-        self.register::<bool>().unwrap();
-        self.register::<String>().unwrap();
-
-        // Register common container types
-        self.register::<Vec<i32>>().unwrap();
-        self.register::<Vec<i64>>().unwrap();
-        self.register::<Vec<f32>>().unwrap();
-        self.register::<Vec<f64>>().unwrap();
-        self.register::<Vec<bool>>().unwrap();
-        self.register::<Vec<String>>().unwrap();
-
-        // Register common map types
-        self.register_map::<String, String>().unwrap();
-        self.register_map::<String, i32>().unwrap();
-        self.register_map::<String, i64>().unwrap();
-        self.register_map::<String, f64>().unwrap();
-        self.register_map::<String, bool>().unwrap();
-    }
-
-    /// Seal the registry to prevent further modifications
-    pub fn seal(&mut self) {
-        self.base_registry.seal();
-    }
-
-    /// Check if the registry is sealed
-    pub fn is_sealed(&self) -> bool {
-        self.base_registry.is_sealed()
-    }
-
-    /// Register a non-encryptable type (plaintext serialization)
-    pub fn register<T>(&mut self) -> Result<()>
+/// Register a JSON conversion function for type `T`.
+///
+/// This is intended to be invoked automatically by the `Plain` and `Encrypt` derive macros
+/// through a `#[ctor]`-annotated function, so user code never calls it directly.
+pub fn register_to_json<T>()
+where
+    T: 'static + serde::Serialize + serde::de::DeserializeOwned,
+{
+    // Mono-morphise a concrete JSON conversion function and insert it.
+    fn to_json_impl<T>(bytes: &[u8]) -> Result<JsonValue>
     where
-        T: 'static + serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + Send + Sync,
+        T: 'static + serde::Serialize + serde::de::DeserializeOwned,
     {
-        self.register_without_encryption::<T>()
+        let value: T = serde_cbor::from_slice(bytes)?;
+        serde_json::to_value(&value).map_err(anyhow::Error::from)
     }
 
-    /// Register an encryptable type that implements RunarEncrypt / RunarDecrypt
-    pub fn register_encryptable<T>(&mut self) -> Result<()>
-    where
-        T: 'static
-            //+ prost::Message
-            + crate::traits::RunarEncrypt
-            + serde::Serialize
-            + for<'de> serde::Deserialize<'de>
-            + Clone
-            + Send
-            + Sync
-            //+ prost::Message
-            + Default,
-        T::Encrypted: 'static
-            + prost::Message
-            + crate::traits::RunarDecrypt<Decrypted = T>
-            + serde::Serialize
-            + for<'de> serde::Deserialize<'de>
-            + Clone
-            + Send
-            + Sync
-            //+ prost::Message
-            + Default,
-    {
-        self.register_with_encryption::<T>()
-    }
+    let type_name = std::any::type_name::<T>();
+    let func = to_json_impl::<T>;
 
-    /// Register a type with encryption support
-    fn register_with_encryption<T>(&mut self) -> Result<()>
-    where
-        T: 'static
-            // + prost::Message
-            + RunarEncrypt
-            + serde::Serialize
-            + for<'de> serde::Deserialize<'de>
-            + Clone
-            + Send
-            + Sync
-            // + prost::Message
-            + Default,
-        T::Encrypted: 'static
-            + prost::Message
-            + RunarDecrypt<Decrypted = T>
-            + serde::Serialize
-            + for<'de> serde::Deserialize<'de>
-            + Clone
-            + Send
-            + Sync
-            //+ prost::Message
-            + Default,
-    {
-        let type_name = std::any::type_name::<T>();
+    JSON_REGISTRY.insert(type_name.to_string(), func);
+}
 
-        // Prepare serializer that performs encryption
-        let keystore = self.keystore.clone();
-        let label_resolver = self.label_resolver.clone();
-        let serializer_closure = Box::new(move |value: &dyn Any| -> Result<Vec<u8>> {
-            if let Some(typed_value) = value.downcast_ref::<T>() {
-                if let (Some(ref ks), Some(ref lr)) = (&keystore, &label_resolver) {
-                    let encrypted = typed_value.encrypt_with_keystore(ks.as_ref(), lr.as_ref())?;
-                    let mut buf = Vec::new();
-                    Message::encode(&encrypted, &mut buf)?;
-                    Ok(buf)
-                } else {
-                    // let mut buf = Vec::new();
-                    // Message::encode(typed_value, &mut buf)?;
-                    // Ok(buf)
-                    Err(anyhow!("Cannot serialize plain type {type_name}"))
-                }
-            } else {
-                Err(anyhow!("Type mismatch during serialization"))
-            }
-        });
+/// Attempt to decrypt the payload into `T` using the registered decryptor.
+/// Returns an error if no decryptor is found.
+pub fn try_decrypt_into<T>(bytes: &[u8], ks: &Arc<KeyStore>) -> Result<T>
+where
+    T: 'static + Send + Sync,
+{
+    let func = STRUCT_REGISTRY.get(&TypeId::of::<T>()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "No decryptor registered for type {}",
+            std::any::type_name::<T>()
+        )
+    })?;
 
-        // Register custom serializer
-        self.base_registry
-            .register_custom_serializer(type_name, serializer_closure)?;
+    let any_plain = (func.value())(bytes, ks)?;
+    // Downcast into the concrete type we need.
+    any_plain.downcast::<T>().map(|boxed| *boxed).map_err(|_| {
+        anyhow::anyhow!(
+            "Decryptor returned wrong type for {}",
+            std::any::type_name::<T>()
+        )
+    })
+}
 
-        // ---------- Encrypted< T > direct serializer/deserializer ----------
-        let encrypted_type_name = std::any::type_name::<T::Encrypted>();
+/// Get a JSON conversion function for a type name.
+/// Returns None if no converter is registered for the type name.
+pub fn get_json_converter(type_name: &str) -> Option<ToJsonFn> {
+    JSON_REGISTRY.get(type_name).map(|entry| *entry.value())
+}
 
-        // Serializer for EncryptedT (no decryption, plain prost encode)
-        let enc_name_clone = encrypted_type_name.to_string();
-        let enc_serializer = Box::new(move |value: &dyn Any| -> Result<Vec<u8>> {
-            if let Some(enc) = value.downcast_ref::<T::Encrypted>() {
-                let mut buf = Vec::new();
-                prost::Message::encode(enc, &mut buf)?;
-                Ok(buf)
-            } else {
-                Err(anyhow!(
-                    "Type mismatch during encrypted serialization for {}",
-                    enc_name_clone
-                ))
-            }
-        });
+// Common JSON converters for Vec<V> and HashMap<K, V>
+// Using all primitive variants of K and V where V can be Vec and Map also.
+// Use CTOR to register the converters
 
-        self.base_registry
-            .register_custom_serializer(encrypted_type_name, enc_serializer)?;
+#[ctor::ctor]
+fn register_vec_arcvalue_converter() {
+    register_to_json::<Vec<ArcValue>>();
+    register_to_json::<HashMap<String, ArcValue>>();
+    register_to_json::<Vec<HashMap<String, ArcValue>>>();
+    register_to_json::<HashMap<String, Vec<ArcValue>>>();
+    register_to_json::<HashMap<String, HashMap<String, ArcValue>>>();
+    register_to_json::<Vec<Vec<ArcValue>>>();
+    register_to_json::<Vec<HashMap<String, ArcValue>>>();
+    register_to_json::<HashMap<String, Vec<ArcValue>>>();
+    register_to_json::<HashMap<String, HashMap<String, ArcValue>>>();
+}
 
-        // Deserializer for EncryptedT (prost decode only, no decryption)
-        let enc_deser_wrapper = DeserializerFnWrapper::new(|bytes: &[u8]| {
-            let decoded = T::Encrypted::decode(bytes)?;
-            Ok(Box::new(decoded))
-        });
+// Vec converters for primitive types
+#[ctor::ctor]
+fn register_vec_primitive_converters() {
+    // Vec of primitive types - ALL combinations
+    register_to_json::<Vec<i8>>();
+    register_to_json::<Vec<i16>>();
+    register_to_json::<Vec<i32>>();
+    register_to_json::<Vec<i64>>();
+    register_to_json::<Vec<i128>>();
+    register_to_json::<Vec<u8>>();
+    register_to_json::<Vec<u16>>();
+    register_to_json::<Vec<u32>>();
+    register_to_json::<Vec<u64>>();
+    register_to_json::<Vec<u128>>();
+    register_to_json::<Vec<f32>>();
+    register_to_json::<Vec<f64>>();
+    register_to_json::<Vec<bool>>();
+    register_to_json::<Vec<char>>();
+    register_to_json::<Vec<String>>();
+    register_to_json::<Vec<Vec<u8>>>();
+}
 
-        self.base_registry
-            .register_custom_deserializer(encrypted_type_name, enc_deser_wrapper)?;
+// HashMap converters for primitive types
+#[ctor::ctor]
+fn register_hashmap_primitive_converters() {
+    // HashMap<String, primitive> converters - ALL combinations
+    register_to_json::<HashMap<String, i8>>();
+    register_to_json::<HashMap<String, i16>>();
+    register_to_json::<HashMap<String, i32>>();
+    register_to_json::<HashMap<String, i64>>();
+    register_to_json::<HashMap<String, i128>>();
+    register_to_json::<HashMap<String, u8>>();
+    register_to_json::<HashMap<String, u16>>();
+    register_to_json::<HashMap<String, u32>>();
+    register_to_json::<HashMap<String, u64>>();
+    register_to_json::<HashMap<String, u128>>();
+    register_to_json::<HashMap<String, f32>>();
+    register_to_json::<HashMap<String, f64>>();
+    register_to_json::<HashMap<String, bool>>();
+    register_to_json::<HashMap<String, char>>();
+    register_to_json::<HashMap<String, String>>();
+    register_to_json::<HashMap<String, Vec<u8>>>();
+}
 
-        // Prepare deserializer that tries encrypted first
-        let keystore_for_deser = self.keystore.clone();
-        let deserializer_wrapper =
-            DeserializerFnWrapper::new(move |bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
-                // Attempt encrypted deserialization
-                if let Ok(enc_obj) = T::Encrypted::decode(bytes) {
-                    if let Some(ref ks) = keystore_for_deser {
-                        let dec = enc_obj.decrypt_with_keystore(ks.as_ref())?;
-                        return Ok(Box::new(dec));
-                    }
-                }
-                // Fallback to plaintext
-                // let obj: T = T::decode(bytes)?;
-                // Ok(Box::new(obj))
-                Err(anyhow!("Cannot deserialize plain type {type_name}"))
-            });
+// Nested container converters - ALL combinations
+#[ctor::ctor]
+fn register_nested_container_converters() {
+    // Vec of Vec - ALL primitive combinations
+    register_to_json::<Vec<Vec<i8>>>();
+    register_to_json::<Vec<Vec<i16>>>();
+    register_to_json::<Vec<Vec<i32>>>();
+    register_to_json::<Vec<Vec<i64>>>();
+    register_to_json::<Vec<Vec<i128>>>();
+    register_to_json::<Vec<Vec<u8>>>();
+    register_to_json::<Vec<Vec<u16>>>();
+    register_to_json::<Vec<Vec<u32>>>();
+    register_to_json::<Vec<Vec<u64>>>();
+    register_to_json::<Vec<Vec<u128>>>();
+    register_to_json::<Vec<Vec<f32>>>();
+    register_to_json::<Vec<Vec<f64>>>();
+    register_to_json::<Vec<Vec<bool>>>();
+    register_to_json::<Vec<Vec<char>>>();
+    register_to_json::<Vec<Vec<String>>>();
+    register_to_json::<Vec<Vec<Vec<u8>>>>();
 
-        self.base_registry
-            .register_custom_deserializer(type_name, deserializer_wrapper)?;
+    // Vec of HashMap - ALL primitive combinations
+    register_to_json::<Vec<HashMap<String, i8>>>();
+    register_to_json::<Vec<HashMap<String, i16>>>();
+    register_to_json::<Vec<HashMap<String, i32>>>();
+    register_to_json::<Vec<HashMap<String, i64>>>();
+    register_to_json::<Vec<HashMap<String, i128>>>();
+    register_to_json::<Vec<HashMap<String, u8>>>();
+    register_to_json::<Vec<HashMap<String, u16>>>();
+    register_to_json::<Vec<HashMap<String, u32>>>();
+    register_to_json::<Vec<HashMap<String, u64>>>();
+    register_to_json::<Vec<HashMap<String, u128>>>();
+    register_to_json::<Vec<HashMap<String, f32>>>();
+    register_to_json::<Vec<HashMap<String, f64>>>();
+    register_to_json::<Vec<HashMap<String, bool>>>();
+    register_to_json::<Vec<HashMap<String, char>>>();
+    register_to_json::<Vec<HashMap<String, String>>>();
+    register_to_json::<Vec<HashMap<String, Vec<u8>>>>();
 
-        Ok(())
-    }
+    // HashMap of Vec - ALL primitive combinations
+    register_to_json::<HashMap<String, Vec<i8>>>();
+    register_to_json::<HashMap<String, Vec<i16>>>();
+    register_to_json::<HashMap<String, Vec<i32>>>();
+    register_to_json::<HashMap<String, Vec<i64>>>();
+    register_to_json::<HashMap<String, Vec<i128>>>();
+    register_to_json::<HashMap<String, Vec<u8>>>();
+    register_to_json::<HashMap<String, Vec<u16>>>();
+    register_to_json::<HashMap<String, Vec<u32>>>();
+    register_to_json::<HashMap<String, Vec<u64>>>();
+    register_to_json::<HashMap<String, Vec<u128>>>();
+    register_to_json::<HashMap<String, Vec<f32>>>();
+    register_to_json::<HashMap<String, Vec<f64>>>();
+    register_to_json::<HashMap<String, Vec<bool>>>();
+    register_to_json::<HashMap<String, Vec<char>>>();
+    register_to_json::<HashMap<String, Vec<String>>>();
+    register_to_json::<HashMap<String, Vec<Vec<u8>>>>();
 
-    /// Register a type without encryption
-    fn register_without_encryption<T>(&mut self) -> Result<()>
-    where
-        T: 'static + serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + Send + Sync,
-    {
-        self.base_registry.register::<T>()
-    }
+    // HashMap of HashMap - ALL primitive combinations
+    register_to_json::<HashMap<String, HashMap<String, i8>>>();
+    register_to_json::<HashMap<String, HashMap<String, i16>>>();
+    register_to_json::<HashMap<String, HashMap<String, i32>>>();
+    register_to_json::<HashMap<String, HashMap<String, i64>>>();
+    register_to_json::<HashMap<String, HashMap<String, i128>>>();
+    register_to_json::<HashMap<String, HashMap<String, u8>>>();
+    register_to_json::<HashMap<String, HashMap<String, u16>>>();
+    register_to_json::<HashMap<String, HashMap<String, u32>>>();
+    register_to_json::<HashMap<String, HashMap<String, u64>>>();
+    register_to_json::<HashMap<String, HashMap<String, u128>>>();
+    register_to_json::<HashMap<String, HashMap<String, f32>>>();
+    register_to_json::<HashMap<String, HashMap<String, f64>>>();
+    register_to_json::<HashMap<String, HashMap<String, bool>>>();
+    register_to_json::<HashMap<String, HashMap<String, char>>>();
+    register_to_json::<HashMap<String, HashMap<String, String>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<u8>>>>();
+}
 
-    /// Register a map type
-    pub fn register_map<K, V>(&mut self) -> Result<()>
-    where
-        K: 'static
-            + serde::Serialize
-            + for<'de> serde::Deserialize<'de>
-            + Clone
-            + Send
-            + Sync
-            + Eq
-            + std::hash::Hash,
-        V: 'static + serde::Serialize + for<'de> serde::Deserialize<'de> + Clone + Send + Sync,
-    {
-        self.register::<HashMap<K, V>>()
-    }
+// Triple nested container converters - ALL combinations
+#[ctor::ctor]
+fn register_triple_nested_container_converters() {
+    // Vec of Vec of Vec - ALL primitive combinations
+    register_to_json::<Vec<Vec<Vec<i8>>>>();
+    register_to_json::<Vec<Vec<Vec<i16>>>>();
+    register_to_json::<Vec<Vec<Vec<i32>>>>();
+    register_to_json::<Vec<Vec<Vec<i64>>>>();
+    register_to_json::<Vec<Vec<Vec<i128>>>>();
+    register_to_json::<Vec<Vec<Vec<u8>>>>();
+    register_to_json::<Vec<Vec<Vec<u16>>>>();
+    register_to_json::<Vec<Vec<Vec<u32>>>>();
+    register_to_json::<Vec<Vec<Vec<u64>>>>();
+    register_to_json::<Vec<Vec<Vec<u128>>>>();
+    register_to_json::<Vec<Vec<Vec<f32>>>>();
+    register_to_json::<Vec<Vec<Vec<f64>>>>();
+    register_to_json::<Vec<Vec<Vec<bool>>>>();
+    register_to_json::<Vec<Vec<Vec<char>>>>();
+    register_to_json::<Vec<Vec<Vec<String>>>>();
+    register_to_json::<Vec<Vec<Vec<Vec<u8>>>>>();
 
-    /// Serialize a value to bytes, returning an Arc<[u8]>
-    pub fn serialize_value(&self, value: &ArcValue) -> Result<Arc<[u8]>> {
-        // Check if this is an encryptable type and we have keystore
-        if let (Some(ref _keystore), Some(ref _resolver)) = (&self.keystore, &self.label_resolver) {
-            // Try to encrypt if possible
-            if let Some(erased_arc) = &value.value {
-                if !erased_arc.is_lazy {
-                    // Check if this is an encryptable type
-                    let type_name = erased_arc.type_name();
-                    if self.is_encryptable_type_by_name(type_name) {
-                        // This is a simplified approach - in practice, we would need to
-                        // downcast and encrypt here
-                        log::warn!("Encryption not yet implemented for type: {type_name}");
-                    }
-                }
-            }
-        }
+    // Vec of Vec of HashMap - ALL primitive combinations
+    register_to_json::<Vec<Vec<HashMap<String, i8>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, i16>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, i32>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, i64>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, i128>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, u8>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, u16>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, u32>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, u64>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, u128>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, f32>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, f64>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, bool>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, char>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, String>>>>();
+    register_to_json::<Vec<Vec<HashMap<String, Vec<u8>>>>>();
 
-        self.base_registry.serialize_value(value)
-    }
+    // Vec of HashMap of Vec - ALL primitive combinations
+    register_to_json::<Vec<HashMap<String, Vec<i8>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<i16>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<i32>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<i64>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<i128>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<u8>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<u16>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<u32>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<u64>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<u128>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<f32>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<f64>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<bool>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<char>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<String>>>>();
+    register_to_json::<Vec<HashMap<String, Vec<Vec<u8>>>>>();
 
-    /// Deserialize bytes to an ArcValue
-    pub fn deserialize_value(&self, bytes_arc: Arc<[u8]>) -> Result<ArcValue> {
-        // The base registry already handles header parsing, lazy construction, and alias
-        // detection (e.g. `Encrypted<T>`).  Re-use it directly so we maintain a single
-        // implementation of this fairly complex logic.
+    // Vec of HashMap of HashMap - ALL primitive combinations
+    register_to_json::<Vec<HashMap<String, HashMap<String, i8>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, i16>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, i32>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, i64>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, i128>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, u8>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, u16>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, u32>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, u64>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, u128>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, f32>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, f64>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, bool>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, char>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, String>>>>();
+    register_to_json::<Vec<HashMap<String, HashMap<String, Vec<u8>>>>>();
 
-        self.base_registry.deserialize_value(bytes_arc)
-    }
+    // HashMap of Vec of Vec - ALL primitive combinations
+    register_to_json::<HashMap<String, Vec<Vec<i8>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<i16>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<i32>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<i64>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<i128>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<u8>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<u16>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<u32>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<u64>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<u128>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<f32>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<f64>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<bool>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<char>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<String>>>>();
+    register_to_json::<HashMap<String, Vec<Vec<Vec<u8>>>>>();
 
-    /// Directly deserialize raw bytes into a concrete type `T` using the registered deserializer logic.
-    /// This bypasses the ArcValue lazy layer and is encryption-aware (i.e. handles `T::Encrypted`).
-    pub fn deserialize_bytes_to<T>(&self, bytes: &[u8]) -> Result<T>
-    where
-        T: 'static + Clone + Send + Sync,
-    {
-        // Parse header to locate actual payload bytes
-        if bytes.is_empty() {
-            return Err(anyhow!("Empty byte slice"));
-        }
+    // HashMap of Vec of HashMap - ALL primitive combinations
+    register_to_json::<HashMap<String, Vec<HashMap<String, i8>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, i16>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, i32>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, i64>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, i128>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, u8>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, u16>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, u32>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, u64>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, u128>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, f32>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, f64>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, bool>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, char>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, String>>>>();
+    register_to_json::<HashMap<String, Vec<HashMap<String, Vec<u8>>>>>();
 
-        // Category byte (we currently ignore it, but validate minimal length)
-        let _category = bytes[0];
-        if bytes.len() < 2 {
-            return Err(anyhow!("Byte slice too short for header"));
-        }
-        let type_len = bytes[1] as usize;
-        if bytes.len() < 2 + type_len {
-            return Err(anyhow!("Byte slice too short for stated type length"));
-        }
-        let type_name_in_bytes = &bytes[2..2 + type_len];
-        let type_name_in_header = std::str::from_utf8(type_name_in_bytes)?.to_string();
+    // HashMap of HashMap of Vec - ALL primitive combinations
+    register_to_json::<HashMap<String, HashMap<String, Vec<i8>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<i16>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<i32>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<i64>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<i128>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<u8>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<u16>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<u32>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<u64>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<u128>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<f32>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<f64>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<bool>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<char>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<String>>>>();
+    register_to_json::<HashMap<String, HashMap<String, Vec<Vec<u8>>>>>();
 
-        let payload_start = 2 + type_len;
-
-        let expected_type_name = std::any::type_name::<T>();
-
-        let deser_type_name = if type_name_in_header == expected_type_name {
-            expected_type_name
-        } else {
-            // Header might contain encrypted variant name, but we still want to use T's deserializer.
-            expected_type_name
-        };
-
-        let deser = self.get_deserializer_arc(deser_type_name).ok_or_else(|| {
-            anyhow!(format!(
-                "No deserializer registered for type {deser_type_name}"
-            ))
-        })?;
-        let boxed = deser.call(bytes[payload_start..].as_ref())?;
-        boxed
-            .downcast::<T>()
-            .map(|b| (*b).clone())
-            .map_err(|_| anyhow!("Failed to downcast to {expected_type_name}"))
-    }
-
-    /// Get a stored deserializer by type name
-    pub fn get_deserializer_arc(&self, type_name: &str) -> Option<DeserializerFnWrapper> {
-        self.base_registry.get_deserializer_arc(type_name)
-    }
-
-    /// Print all registered deserializers for debugging
-    pub fn debug_print_deserializers(&self) {
-        self.base_registry.debug_print_deserializers();
-    }
-
-    /// Check if a type name represents an encryptable type
-    fn is_encryptable_type_by_name(&self, _type_name: &str) -> bool {
-        false // Detection now handled by explicit registration
-    }
-
-    /// Decrypt an `EncryptedLabelGroup` into its plain struct using the registry's keystore.
-    pub fn decrypt_label_group<T>(
-        &self,
-        group: &crate::encryption::EncryptedLabelGroup,
-    ) -> Result<T>
-    where
-        T: for<'de> serde::Deserialize<'de> + prost::Message + Default,
-    {
-        let ks = self
-            .keystore
-            .as_ref()
-            .ok_or_else(|| anyhow!("SerializerRegistry has no keystore configured"))?;
-        crate::encryption::decrypt_label_group::<T>(group, ks.as_ref())
-    }
+    // HashMap of HashMap of HashMap - ALL primitive combinations
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, i8>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, i16>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, i32>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, i64>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, i128>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, u8>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, u16>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, u32>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, u64>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, u128>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, f32>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, f64>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, bool>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, char>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, String>>>>();
+    register_to_json::<HashMap<String, HashMap<String, HashMap<String, Vec<u8>>>>>();
 }

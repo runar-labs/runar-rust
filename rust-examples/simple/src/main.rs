@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Result};
-use runar_common::{params, types::ArcValue};
-use runar_macros::{action, publish, service, service_impl, subscribe};
+use runar_common::logging::{Component, Logger};
+use runar_macros::{action, publish, service, subscribe};
+use runar_macros_common::params;
 use runar_node::{
     services::{EventContext, RequestContext},
     Node,
 };
+use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
 use std::sync::{Arc, Mutex};
 
@@ -16,7 +18,7 @@ use std::sync::{Arc, Mutex};
 )]
 pub struct MathService;
 
-#[service_impl]
+#[service]
 impl MathService {
     /// Add two numbers and publish the total to `math/added`.
     #[publish(path = "added")]
@@ -32,7 +34,7 @@ pub struct StatsService {
     values: Arc<Mutex<Vec<f64>>>,
 }
 
-#[service_impl]
+#[service]
 impl StatsService {
     /// Record a value
     #[action]
@@ -50,8 +52,7 @@ impl StatsService {
     /// React to math/added events
     #[subscribe(path = "math/added")]
     async fn on_math_added(&self, total: f64, ctx: &EventContext) -> Result<()> {
-        let _: () = ctx
-            .request("stats/record", Some(ArcValue::new_primitive(total)))
+        ctx.request("stats/record", Some(ArcValue::new_primitive(total)))
             .await
             .expect("Call to stats/record failed");
         Ok(())
@@ -60,6 +61,9 @@ impl StatsService {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Setup logging
+    let logger = Arc::new(Logger::new_root(Component::System, "simple-example"));
+
     // Create a minimal Node configuration
     let config = create_node_test_config().expect("Error creating test config");
     let mut node = Node::new(config).await?;
@@ -69,14 +73,16 @@ async fn main() -> Result<()> {
     node.add_service(StatsService::default()).await?;
 
     // call math/add
-    let sum: f64 = node
+    let sum_arc: ArcValue = node
         .request("math/add", Some(params! { "a" => 1.0, "b" => 2.0 }))
         .await?;
+    let sum: f64 = sum_arc.as_type()?;
     assert_eq!(sum, 3.0);
 
     // Query stats count
-    let count: usize = node.request("stats/count", None::<ArcValue>).await?;
+    let count_arc: ArcValue = node.request("stats/count", None::<ArcValue>).await?;
+    let count: usize = count_arc.as_type()?;
     assert_eq!(count, 1);
-    println!("All good – stats recorded {count} value(s)");
+    logger.info(format!("All good – stats recorded {count} value(s)"));
     Ok(())
 }
