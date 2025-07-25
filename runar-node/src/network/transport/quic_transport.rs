@@ -32,6 +32,7 @@ pub struct QuicTransportOptions {
     local_node_info: Option<NodeInfo>,
     bind_addr: Option<SocketAddr>,
     message_handler: Option<super::MessageHandler>,
+    one_way_message_handler: Option<super::OneWayMessageHandler>,
     logger: Option<Arc<Logger>>,
     keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
     label_resolver: Option<Arc<dyn runar_serializer::traits::LabelResolver>>,
@@ -135,6 +136,11 @@ impl QuicTransportOptions {
         self
     }
 
+    pub fn with_one_way_message_handler(mut self, handler: super::OneWayMessageHandler) -> Self {
+        self.one_way_message_handler = Some(handler);
+        self
+    }
+
     pub fn with_logger(mut self, logger: Arc<Logger>) -> Self {
         self.logger = Some(logger);
         self
@@ -182,6 +188,10 @@ impl QuicTransportOptions {
         self.message_handler.as_ref()
     }
 
+    pub fn one_way_message_handler(&self) -> Option<&super::OneWayMessageHandler> {
+        self.one_way_message_handler.as_ref()
+    }
+
     pub fn logger(&self) -> Option<&Arc<Logger>> {
         self.logger.as_ref()
     }
@@ -206,6 +216,7 @@ impl Clone for QuicTransportOptions {
             local_node_info: self.local_node_info.clone(),
             bind_addr: self.bind_addr,
             message_handler: None, // MessageHandler doesn't implement Clone
+            one_way_message_handler: None, // OneWayMessageHandler doesn't implement Clone
             logger: self.logger.clone(),
             keystore: self.keystore.clone(),
             label_resolver: self.label_resolver.clone(),
@@ -375,6 +386,7 @@ pub struct QuicTransport {
 
     // callback into Node layer
     message_handler: super::MessageHandler,
+    one_way_message_handler: super::OneWayMessageHandler,
 
     // crypto helpers
     keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
@@ -403,6 +415,10 @@ impl QuicTransport {
             .message_handler
             .take()
             .ok_or("message_handler is required")?;
+        let one_way_message_handler = options
+            .one_way_message_handler
+            .take()
+            .ok_or("one_way_message_handler is required")?;
         let logger = (options.logger.take().ok_or("logger is required")?)
             .with_component(runar_common::Component::Transporter);
         let keystore = options.keystore.take().ok_or("keystore is required")?;
@@ -424,6 +440,7 @@ impl QuicTransport {
             endpoint: Arc::new(RwLock::new(None)),
             logger: Arc::new(logger),
             message_handler,
+            one_way_message_handler,
             keystore,
             label_resolver,
             state: Self::shared_state(),
@@ -572,12 +589,8 @@ impl QuicTransport {
                 .await
                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
             let msg = self.read_message(&mut recv).await?;
-            let response = (self.message_handler)(msg).await?;
-            if response.is_some() {
-                // Handle response if needed
-                self.logger
-                    .warn("Received response from message handler when it shuold not have been");
-            }
+            // Use the one-way message handler for unidirectional streams
+            (self.one_way_message_handler)(msg).await?;
         }
     }
 

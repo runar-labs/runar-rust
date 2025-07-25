@@ -698,15 +698,33 @@ impl Node {
                     .clone()
                     .ok_or_else(|| anyhow!("QUIC options not provided"))?;
 
+                let self_arc_for_message = self_arc.clone();
                 let message_handler: crate::network::transport::MessageHandler =
                     Box::new(move |message: NetworkMessage| {
-                        let self_arc = self_arc.clone();
+                        let self_arc = self_arc_for_message.clone();
                         Box::pin(async move {
                             self_arc.handle_network_message(message).await.map_err(|e| {
                                 crate::network::transport::NetworkError::TransportError(
                                     e.to_string(),
                                 )
                             })
+                        })
+                    });
+
+                let one_way_message_handler: crate::network::transport::OneWayMessageHandler =
+                    Box::new(move |message: NetworkMessage| {
+                        let self_arc = self_arc.clone();
+                        Box::pin(async move {
+                            // For one-way messages, we call the same handler but ignore the response
+                            let _response = self_arc
+                                .handle_network_message(message)
+                                .await
+                                .map_err(|e| {
+                                    crate::network::transport::NetworkError::TransportError(
+                                        e.to_string(),
+                                    )
+                                })?;
+                            Ok(())
                         })
                     });
 
@@ -725,6 +743,7 @@ impl Node {
                     .with_local_node_info(local_node_info)
                     .with_bind_addr(bind_addr)
                     .with_message_handler(message_handler)
+                    .with_one_way_message_handler(one_way_message_handler)
                     .with_logger(self.logger.clone())
                     .with_keystore(self.keys_manager.clone())
                     .with_label_resolver(self.label_resolver.clone());

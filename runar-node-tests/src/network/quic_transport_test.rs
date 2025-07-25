@@ -15,6 +15,7 @@ use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
     MessageHandler, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
+    OneWayMessageHandler,
 };
 use runar_node::routing::TopicPath;
 use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
@@ -164,6 +165,12 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     let node1_id_clone = node1_id.clone();
     let node2_id_clone = node2_id.clone();
 
+    // Clone variables for one-way handlers
+    let logger_1_one_way = logger_1.clone();
+    let logger_2_one_way = logger_2.clone();
+    let node1_messages_one_way = node1_messages_clone.clone();
+    let node2_messages_one_way = node2_messages_clone.clone();
+
     // Message handlers that track all received messages and return responses
     let node1_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
         let logger = logger_1.clone();
@@ -267,6 +274,49 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         })
     });
 
+    // One-way message handlers for unidirectional streams
+    let node1_one_way_handler: OneWayMessageHandler = Box::new(move |message: NetworkMessage| {
+        let logger = logger_1_one_way.clone();
+        let messages = node1_messages_one_way.clone();
+        let msg_type = message.message_type;
+        let source = message.source_node_id.clone();
+
+        logger.info(format!(
+            "📥 [Transport1-OneWay] Received one-way message: Type={}, From={}, Payloads={}",
+            msg_type,
+            source,
+            message.payloads.len()
+        ));
+
+        let messages_clone = messages.clone();
+        Box::pin(async move {
+            let mut msgs = messages_clone.lock().await;
+            msgs.push(message);
+            Ok(())
+        })
+    });
+
+    let node2_one_way_handler: OneWayMessageHandler = Box::new(move |message: NetworkMessage| {
+        let logger = logger_2_one_way.clone();
+        let messages = node2_messages_one_way.clone();
+        let msg_type = message.message_type;
+        let source = message.source_node_id.clone();
+
+        logger.info(format!(
+            "📥 [Transport2-OneWay] Received one-way message: Type={}, From={}, Payloads={}",
+            msg_type,
+            source,
+            message.payloads.len()
+        ));
+
+        let messages_clone = messages.clone();
+        Box::pin(async move {
+            let mut msgs = messages_clone.lock().await;
+            msgs.push(message);
+            Ok(())
+        })
+    });
+
     // ==================================================
     // STEP 7: Initialize QuicTransport Instances
     // ==================================================
@@ -360,6 +410,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         .with_local_node_info(node1_info.clone())
         .with_bind_addr("127.0.0.1:50069".parse::<SocketAddr>()?)
         .with_message_handler(node1_handler)
+        .with_one_way_message_handler(node1_one_way_handler)
         .with_logger(logger.clone())
         .with_keystore(Arc::new(NoCrypto))
         .with_label_resolver(empty_resolver.clone());
@@ -370,6 +421,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         .with_local_node_info(node2_info.clone())
         .with_bind_addr("127.0.0.1:50044".parse::<SocketAddr>()?)
         .with_message_handler(node2_handler)
+        .with_one_way_message_handler(node2_one_way_handler)
         .with_logger(logger.clone())
         .with_keystore(Arc::new(NoCrypto))
         .with_label_resolver(empty_resolver.clone());

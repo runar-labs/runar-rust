@@ -266,7 +266,7 @@ pub struct NetworkMessage {
     pub payloads: Vec<NetworkMessagePayloadItem>,
 }
 
-/// Handler function type for incoming network messages
+/// Handler function type for incoming network messages that may return a response
 pub type MessageHandler = Box<
     dyn Fn(
             NetworkMessage,
@@ -276,6 +276,16 @@ pub type MessageHandler = Box<
                     + Send,
             >,
         > + Send
+        + Sync,
+>;
+
+/// Handler function type for one-way network messages (fire-and-forget)
+pub type OneWayMessageHandler = Box<
+    dyn Fn(
+            NetworkMessage,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send>>
+        + Send
         + Sync,
 >;
 
