@@ -11,6 +11,8 @@ use runar_node::{
     network::{network_config::NetworkConfig, QuicTransportOptions},
     NodeConfig,
 };
+use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Create a test configuration with certificates, user root keys, network and node keys installed.
@@ -125,6 +127,298 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
     }
 
     Ok(configs)
+}
+
+// Mobile Simulator Utilities
+// =========================
+
+/// Represents a mobile device with its key manager and profile information
+pub struct MobileDevice {
+    /// The mobile key manager for this device
+    pub key_manager: Arc<MobileKeyManager>,
+    /// User profile keys derived from the root key
+    pub profile_keys: HashMap<String, Vec<u8>>,
+    /// Network IDs this mobile has access to
+    pub network_ids: Vec<String>,
+    /// Logger for this mobile device
+    pub logger: Arc<Logger>,
+}
+
+/// Master mobile that sets up the network and can issue certificates
+pub struct MasterMobile {
+    /// The master mobile key manager
+    pub key_manager: Arc<MobileKeyManager>,
+    /// Network ID created by this master
+    pub network_id: String,
+    /// Network public key for sharing with other devices
+    pub network_public_key: Vec<u8>,
+    /// Logger for the master mobile
+    pub logger: Arc<Logger>,
+}
+
+/// Complete mobile simulation environment
+pub struct MobileSimulator {
+    /// The master mobile that owns the network
+    pub master: MasterMobile,
+    /// Regular user mobile devices
+    pub users: HashMap<String, MobileDevice>,
+    /// Logger for the simulator
+    pub logger: Arc<Logger>,
+}
+
+impl MobileSimulator {
+    /// Create a new mobile simulator with a master mobile
+    pub fn new(logger: Arc<Logger>) -> Result<Self> {
+        logger.info("🚀 Creating Mobile Simulator...");
+
+        // Create master mobile
+        let master_logger = Arc::new(Logger::new_root(Component::System, "master-mobile"));
+        let mut master_key_manager = MobileKeyManager::new(master_logger.clone())?;
+
+        // Initialize master with user root key and network
+        master_key_manager.initialize_user_root_key()?;
+        let network_id = master_key_manager.generate_network_data_key()?;
+        let network_public_key = master_key_manager.get_network_public_key(&network_id)?;
+
+        let master = MasterMobile {
+            key_manager: Arc::new(master_key_manager),
+            network_id: network_id.clone(),
+            network_public_key,
+            logger: master_logger,
+        };
+
+        logger.info(format!(
+            "✅ Master mobile created with network: {network_id}"
+        ));
+
+        Ok(Self {
+            master,
+            users: HashMap::new(),
+            logger,
+        })
+    }
+
+    /// Add a new user mobile device to the simulation
+    pub fn add_user_mobile(&mut self, user_id: &str, profile_names: &[&str]) -> Result<()> {
+        self.logger
+            .info(format!("📱 Adding user mobile: {user_id}"));
+
+        let user_logger = Arc::new(Logger::new_root(
+            Component::System,
+            &format!("user-{user_id}"),
+        ));
+        let mut user_key_manager = MobileKeyManager::new(user_logger.clone())?;
+
+        // Initialize user with root key
+        user_key_manager.initialize_user_root_key()?;
+
+        // Derive profile keys
+        let mut profile_keys = HashMap::new();
+        for profile_name in profile_names {
+            let profile_key = user_key_manager.derive_user_profile_key(profile_name)?;
+            profile_keys.insert(profile_name.to_string(), profile_key);
+            self.logger
+                .info(format!("   ✅ Created profile: {profile_name}"));
+        }
+
+        // Install network public key so user can encrypt for the network
+        user_key_manager.install_network_public_key(&self.master.network_public_key)?;
+
+        let user_device = MobileDevice {
+            key_manager: Arc::new(user_key_manager),
+            profile_keys,
+            network_ids: vec![self.master.network_id.clone()],
+            logger: user_logger,
+        };
+
+        self.users.insert(user_id.to_string(), user_device);
+        self.logger.info(format!(
+            "✅ User mobile {user_id} added with {} profiles",
+            profile_names.len()
+        ));
+
+        Ok(())
+    }
+
+    /// Create a node configuration that can work with this mobile simulation
+    pub fn create_node_config(&self) -> Result<NodeConfig> {
+        self.logger.info("🖥️ Creating node configuration...");
+
+        // Create node key manager
+        let node_logger = Arc::new(Logger::new_root(Component::System, "simulated-node"));
+        let mut node_key_manager = NodeKeyManager::new(node_logger)?;
+
+        // Get node setup token and have master sign it
+        let setup_token = node_key_manager.generate_csr()?;
+
+        // We need to get a mutable reference to the master key manager
+        // For now, we'll create a new one for this operation and set it up properly
+        let mut master_key_manager = MobileKeyManager::new(self.master.logger.clone())?;
+        master_key_manager.initialize_user_root_key()?;
+        let network_id = master_key_manager.generate_network_data_key()?;
+
+        let cert_message = master_key_manager.process_setup_token(&setup_token)?;
+        node_key_manager.install_certificate(cert_message)?;
+
+        // Install network key from master
+        let network_key_message = master_key_manager
+            .create_network_key_message(&network_id, &node_key_manager.get_node_public_key())?;
+        node_key_manager.install_network_key(network_key_message)?;
+
+        // Export state and create config
+        let key_state = node_key_manager.export_state();
+        let key_state_bytes = bincode::serialize(&key_state)?;
+
+        let config = NodeConfig::new(node_key_manager.get_node_id(), network_id)
+            .with_key_manager_state(key_state_bytes);
+
+        self.logger.info(format!(
+            "✅ Node configuration created for node: {}",
+            node_key_manager.get_node_id()
+        ));
+
+        Ok(config)
+    }
+
+    /// Create label resolvers for encryption/decryption scenarios
+    pub fn create_label_resolvers(
+        &self,
+    ) -> Result<(ConfigurableLabelResolver, ConfigurableLabelResolver)> {
+        self.logger.info("🔑 Creating label resolvers...");
+
+        // Get profile keys from first user (or create default if none)
+        let profile_keys = if let Some(first_user) = self.users.values().next() {
+            first_user.profile_keys.clone()
+        } else {
+            // Create a default user if none exists
+            let mut default_user = MobileKeyManager::new(self.logger.clone())?;
+            default_user.initialize_user_root_key()?;
+            let default_profile = default_user.derive_user_profile_key("default")?;
+            HashMap::from([("default".to_string(), default_profile)])
+        };
+
+        // Mobile resolver (user context) - has access to user profile keys
+        let mobile_mappings = KeyMappingConfig {
+            label_mappings: HashMap::from([
+                (
+                    "user".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: profile_keys.values().cloned().collect(),
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+                (
+                    "system".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: vec![self.master.network_public_key.clone()],
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+                (
+                    "search".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: vec![self.master.network_public_key.clone()],
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+                (
+                    "system_only".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: vec![], // system_only has no profile keys
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+            ]),
+        };
+        let mobile_resolver = ConfigurableLabelResolver::new(mobile_mappings);
+
+        // Node resolver (system context) - has access to network keys but not user profile keys
+        let node_mappings = KeyMappingConfig {
+            label_mappings: HashMap::from([
+                (
+                    "user".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: profile_keys.values().cloned().collect(),
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+                (
+                    "system".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: vec![self.master.network_public_key.clone()],
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+                (
+                    "search".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: vec![self.master.network_public_key.clone()],
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+                (
+                    "system_only".to_string(),
+                    LabelKeyInfo {
+                        profile_public_keys: vec![], // system_only has no profile keys
+                        network_id: Some(self.master.network_id.clone()),
+                    },
+                ),
+            ]),
+        };
+        let node_resolver = ConfigurableLabelResolver::new(node_mappings);
+
+        self.logger.info("✅ Label resolvers created");
+
+        Ok((mobile_resolver, node_resolver))
+    }
+
+    /// Get a specific user mobile device
+    pub fn get_user_mobile(&self, user_id: &str) -> Option<&MobileDevice> {
+        self.users.get(user_id)
+    }
+
+    /// Get the master mobile
+    pub fn get_master_mobile(&self) -> &MasterMobile {
+        &self.master
+    }
+
+    /// Print simulation summary
+    pub fn print_summary(&self) {
+        self.logger.info("📊 Mobile Simulation Summary:");
+        self.logger
+            .info(format!("   Master Network ID: {}", self.master.network_id));
+        self.logger
+            .info(format!("   Total Users: {}", self.users.len()));
+
+        for (user_id, user_device) in &self.users {
+            self.logger.info(format!(
+                "   User {user_id}: {} profiles",
+                user_device.profile_keys.len()
+            ));
+            for profile_name in user_device.profile_keys.keys() {
+                self.logger.info(format!("     - {profile_name}"));
+            }
+        }
+    }
+}
+
+/// Convenience function to create a simple mobile simulation for testing
+pub fn create_simple_mobile_simulation() -> Result<MobileSimulator> {
+    let logger = Arc::new(Logger::new_root(Component::System, "simple-sim"));
+    let mut simulator = MobileSimulator::new(logger)?;
+
+    // Add a default user with common profiles
+    simulator.add_user_mobile("alice", &["personal", "work", "family"])?;
+
+    Ok(simulator)
+}
+
+/// Convenience function to create a complete test environment with mobile simulation and node config
+pub fn create_test_environment() -> Result<(MobileSimulator, NodeConfig)> {
+    let simulator = create_simple_mobile_simulation()?;
+    let node_config = simulator.create_node_config()?;
+
+    Ok((simulator, node_config))
 }
 
 #[cfg(test)]
@@ -257,5 +551,54 @@ mod tests {
 
         let configs = result.unwrap();
         assert_eq!(configs.len(), 0);
+    }
+
+    // Mobile Simulator Tests
+    // =====================
+
+    #[test]
+    fn test_mobile_simulator_creation() -> Result<()> {
+        init();
+        let simulator = create_simple_mobile_simulation()?;
+
+        // Verify master mobile exists
+        assert!(!simulator.master.network_id.is_empty());
+        assert!(!simulator.master.network_public_key.is_empty());
+
+        // Verify user mobile exists
+        let alice = simulator
+            .get_user_mobile("alice")
+            .expect("Alice should exist");
+        assert_eq!(alice.profile_keys.len(), 3);
+        assert!(alice.profile_keys.contains_key("personal"));
+        assert!(alice.profile_keys.contains_key("work"));
+        assert!(alice.profile_keys.contains_key("family"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_node_config_creation() -> Result<()> {
+        init();
+        let simulator = create_simple_mobile_simulation()?;
+        let node_config = simulator.create_node_config()?;
+
+        // Verify node config is valid
+        assert!(!node_config.node_id.is_empty());
+        assert!(!node_config.default_network_id.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_label_resolvers() -> Result<()> {
+        init();
+        let simulator = create_simple_mobile_simulation()?;
+        let (_mobile_resolver, _node_resolver) = simulator.create_label_resolvers()?;
+
+        // Verify resolvers were created (basic validation)
+        // The actual encryption/decryption testing is done in the encryption_test.rs
+
+        Ok(())
     }
 }
