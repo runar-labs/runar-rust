@@ -199,11 +199,7 @@ pub fn setup_database_services() -> (
     let schema = create_database_schema();
 
     // Setup SqliteService (in-memory for demo)
-    let sqlite_config = SqliteConfig {
-        db_path: ":memory:".to_string(),
-        schema: schema.clone(),
-        encryption: false,
-    };
+    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema.clone(), false);
     let sqlite_service = SqliteService::new(
         "sqlite_service".to_string(),
         "internal_db".to_string(),

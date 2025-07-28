@@ -1147,6 +1147,7 @@ impl Node {
             let event_context = Arc::new(EventContext::new(
                 &topic_path,
                 Arc::new(self.clone()),
+                false,
                 self.logger.clone(),
             ));
 
@@ -1240,7 +1241,30 @@ impl Node {
         self.logger
             .debug(format!("Processing request: {topic_path}"));
 
-        // First check for local handlers
+        // First check service state - if no state exists, no local service exists
+        let service_topic = TopicPath::new_service(&self.network_id, &topic_path.service_path());
+        let service_state = self.service_registry.get_service_state(&service_topic).await;
+
+        // If service state exists, check if it's running
+        if let Some(state) = service_state {
+            if state != ServiceState::Running {
+                self.logger.debug(format!(
+                    "Service {} is in {:?} state, trying remote handlers",
+                    topic_path.service_path(),
+                    state
+                ));
+                // Try remote handlers instead
+                match self.remote_request(topic_path.as_str(), request_payload_av).await {
+                    Ok(response) => return Ok(response),
+                    Err(_) => {
+                        // Remote request failed - return state-specific error since we know local service exists but is not running
+                        return Err(anyhow!("Service is in {} state", state));
+                    }
+                }
+            }
+        }
+
+        // Service is either running or doesn't exist locally - check for local handler
         if let Some((handler, registration_path)) = self
             .service_registry
             .get_local_action_handler(&topic_path)
@@ -1265,11 +1289,28 @@ impl Node {
 
             // Execute the handler and return result
             let response_av = handler(request_payload_av.clone(), context).await?;
-
             return Ok(response_av);
         }
 
-        // If no local handler found, look for remote handlers
+        // No local handler found - try remote handlers
+        self.remote_request(topic_path.as_str(), request_payload_av).await
+    }
+
+    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    where
+        P: AsArcValue + Send + Sync,
+    {
+        let request_payload_av = payload.map(|p| p.into_arc_value());
+        let path_string = path.into();
+        let topic_path = match TopicPath::new(&path_string, &self.network_id) {
+            Ok(tp) => tp,
+            Err(e) => return Err(anyhow!("Failed to parse topic path: {path_string} : {e}",)),
+        };
+
+        self.logger
+            .debug(format!("Processing remote request: {topic_path}"));
+
+        // Look for remote handlers
         let remote_handlers = self
             .service_registry
             .get_remote_action_handlers(&topic_path)
@@ -1310,7 +1351,7 @@ impl Node {
             return Ok(response_av);
         }
 
-        // No handler found
+        // No remote handlers found
         Err(anyhow!("No handler found for action: {topic_path}"))
     }
 
@@ -1338,6 +1379,7 @@ impl Node {
             let event_context = Arc::new(EventContext::new(
                 &topic_path,
                 Arc::new(self.clone()),
+                true,
                 self.logger.clone(),
             ));
             // Execute the callback with correct arguments
@@ -1915,6 +1957,28 @@ impl RegistryDelegate for Node {
         self.service_registry
             .remove_remote_action_handler(topic_path)
             .await
+    }
+
+    async fn update_service_state_if_valid(
+        &self,
+        service_path: &TopicPath,
+        new_state: ServiceState,
+        current_state: ServiceState,
+    ) -> Result<()> {
+        // Delegate to the service registry
+        self.service_registry
+            .update_service_state_if_valid(service_path, new_state, current_state)
+            .await
+    }
+
+    async fn validate_pause_transition(&self, service_path: &TopicPath) -> Result<()> {
+        // Delegate to the service registry
+        self.service_registry.validate_pause_transition(service_path).await
+    }
+
+    async fn validate_resume_transition(&self, service_path: &TopicPath) -> Result<()> {
+        // Delegate to the service registry
+        self.service_registry.validate_resume_transition(service_path).await
     }
 }
 

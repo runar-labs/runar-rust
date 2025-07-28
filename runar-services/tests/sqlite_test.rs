@@ -115,6 +115,7 @@ mod tests {
             db_path: db_guard.path().to_string(),
             schema,
             encryption: true,
+            replication: None,
         };
 
         let service = SqliteService::new(service_name, service_path, sqlite_config);

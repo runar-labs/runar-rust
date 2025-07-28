@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
-use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture};
+use runar_node::services::{LifecycleContext, RequestContext, ServiceFuture, EventContext};
 use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
 use rusqlite::types::ToSqlOutput;
@@ -9,9 +9,11 @@ use rusqlite::types::{Null, ValueRef as RusqliteValueRef};
 use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::time::SystemTime;
+use std::pin::Pin;
+use std::future::Future;
 use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
 
 // Schema definition structs
@@ -272,6 +274,8 @@ fn execute_internal(
     params: &Params, // Changed: Now takes &Params
     logger: &Arc<Logger>,
 ) -> Result<usize, String> {
+    logger.debug(format!("Executing SQL: {}", sql));
+    
     let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> =
         params.values.iter().map(value_to_to_sql).collect(); // Changed: uses value_to_to_sql
 
@@ -562,6 +566,8 @@ pub struct SqliteConfig {
     pub schema: Schema,
     /// Encryption flag
     pub encryption: bool,
+    /// Optional replication configuration
+    pub replication: Option<crate::replication::ReplicationConfig>,
 }
 
 impl SqliteConfig {
@@ -571,7 +577,14 @@ impl SqliteConfig {
             db_path: db_path.into(),
             schema,
             encryption,
+            replication: None,
         }
+    }
+    
+    /// Add replication configuration to the SQLite config
+    pub fn with_replication(mut self, replication: crate::replication::ReplicationConfig) -> Self {
+        self.replication = Some(replication);
+        self
     }
 }
 
@@ -583,6 +596,8 @@ pub struct SqliteService {
     pub config: SqliteConfig,
     worker_tx: Arc<RwLock<Option<mpsc::Sender<SqliteWorkerCommand>>>>,
     network_id: Option<String>,
+    /// Optional replication manager
+    replication_manager: Arc<RwLock<Option<Arc<crate::replication::ReplicationManager>>>>,
 }
 
 // Manual Clone implementation because mpsc::Sender is Clone but not Copy.
@@ -595,8 +610,8 @@ impl Clone for SqliteService {
             description: self.description.clone(),
             config: self.config.clone(),
             worker_tx: self.worker_tx.clone(),
-            //schema: self.schema.clone(), // Clone the new schema field
             network_id: self.network_id.clone(),
+            replication_manager: self.replication_manager.clone(),
         }
     }
 }
@@ -611,12 +626,12 @@ impl SqliteService {
             description: "SQLite service".to_string(),
             config,
             worker_tx: Arc::new(RwLock::new(None)),
-            // schema: Some(schema_clone), // Store the cloned schema
             network_id: None,
+            replication_manager: Arc::new(RwLock::new(None)),
         }
     }
 
-    async fn send_command<T: Send + 'static>(
+    pub async fn send_command<T: Send + 'static>(
         &self,
         constructor: impl FnOnce(oneshot::Sender<Result<T, String>>) -> SqliteWorkerCommand,
     ) -> Result<T, String> {
@@ -655,6 +670,9 @@ impl SqliteService {
             )
         }
     }
+
+    /// Manually trigger startup synchronization after network connections are established
+
 
     async fn apply_schema(&self, schema: Schema, context: &LifecycleContext) -> Result<()> {
         let schema_to_apply = schema; // Use the passed schema argument
@@ -711,13 +729,16 @@ impl AbstractService for SqliteService {
     async fn init(&self, context: LifecycleContext) -> Result<()> {
         context.info(format!("Initializing SqliteService: {}", self.name));
 
+        // Note: Replication manager will be initialized in start() method
+        // since we need mutable access to store it in the service
+
         // Register 'execute_query' action
         let service_arc = Arc::new(self.clone()); // SqliteService must be Clone
 
         let execute_query_handler = {
             let s_arc = service_arc.clone();
             Arc::new(
-                move |params_opt: Option<ArcValue>, _req_ctx: RequestContext| {
+                move |params_opt: Option<ArcValue>, req_ctx: RequestContext| {
                     let service_clone = s_arc.clone();
                     Box::pin(async move {
                         let query_arc_value = params_opt // Made mutable
@@ -771,6 +792,42 @@ impl AbstractService for SqliteService {
                                 })
                                 .await
                                 .map_err(|e: String| anyhow!(e))?;
+                            
+                            // Emit event for non-SELECT operations if replication is enabled
+                            if let Some(replication_config) = &service_clone.config.replication {
+                                // Extract table name from SQL statement
+                                if let Some(table_name) = extract_table_name(&sql_statement) {
+                                    let table_name = table_name.clone();
+                                    if replication_config.enabled_tables.contains(&table_name) {
+                                        let event = crate::replication::SqliteEvent {
+                                            operation: determine_operation_type(&trimmed_sql).to_lowercase(),
+                                            table: table_name.clone(),
+                                            data: Some(query_arc_value.clone()),
+                                            timestamp: SystemTime::now(),
+                                        };
+                                        
+                                        // Use proper namespacing: user_db/<table_name>/<operation>
+                                        let event_path = format!("user_db/{}/{}", table_name, event.operation);
+                                        
+                                        req_ctx.info(format!(
+                                            "📤 Publishing SQLite event: path={}, table={}, operation={}",
+                                            event_path, table_name, event.operation
+                                        ));
+                                        
+                                        req_ctx.publish(event_path, Some(ArcValue::new_struct(event))).await?;
+                                        
+                                        req_ctx.info("✅ SQLite event published successfully");
+                                    } else {
+                                        req_ctx.debug(format!(
+                                            "⏭️  Skipping event for table '{}' - not in enabled_tables: {:?}",
+                                            table_name, replication_config.enabled_tables
+                                        ));
+                                    }
+                                } else {
+                                    req_ctx.debug("⏭️  Could not extract table name from SQL statement");
+                                }
+                            }
+                            
                             Ok(ArcValue::new_primitive(affected_rows as i64))
                         }
                     }) as ServiceFuture // ServiceFuture is Pin<Box<dyn Future<Output = Result<ArcValue>> + Send>>
@@ -784,6 +841,101 @@ impl AbstractService for SqliteService {
             "'execute_query' action registered for SqliteService: {}",
             self.name
         ));
+
+        // Register paginated API for replication if enabled
+        if let Some(_replication_config) = &self.config.replication {
+            let get_table_events_handler = {
+                let service_arc = Arc::new(self.clone());
+                Arc::new(
+                    move |params_opt: Option<ArcValue>, _req_ctx: RequestContext| {
+                        let service_clone = service_arc.clone();
+                        Box::pin(async move {
+                            if let Some(request_data) = params_opt {
+                                let request = (*request_data.as_type_ref::<crate::replication::TableEventsRequest>()?).clone();
+                                
+                                if let Some(replication_manager) = {
+                                    let manager_guard = service_clone.replication_manager
+                                        .read()
+                                        .map_err(|e| anyhow!("Failed to acquire read lock on replication_manager: {e}"))?;
+                                    manager_guard.clone()
+                                } {
+                                    let response = replication_manager.get_table_events(request).await?;
+                                    Ok(ArcValue::new_struct(response))
+                                } else {
+                                    Err(anyhow!("Replication not enabled"))
+                                }
+                            } else {
+                                Err(anyhow!("No request data provided"))
+                            }
+                        }) as ServiceFuture
+                    },
+                )
+            };
+            
+                                context
+                        .register_action("replication/get_table_events", get_table_events_handler)
+                        .await?;
+                    context.info("'replication/get_table_events' action registered for replication");
+        }
+
+        // Register event handlers for replication if enabled
+        if let Some(_replication_config) = &self.config.replication {
+            let service_arc = Arc::new(self.clone());
+            
+            // Subscribe to all user_db events for enabled tables with proper namespacing
+            for table in &self.config.replication.as_ref().unwrap().enabled_tables {
+                let create_path = format!("user_db/{}/create", table);
+                let update_path = format!("user_db/{}/update", table);
+                let delete_path = format!("user_db/{}/delete", table);
+                
+                // Create a single handler for all operation types
+                let event_handler = {
+                    let s_arc = service_arc.clone();
+                    Box::new(move |ctx: Arc<EventContext>, event: Option<ArcValue>| {
+                        let service_clone = s_arc.clone();
+                        Box::pin(async move {
+                            ctx.info("🎯 Event handler triggered");
+                            
+                            if let Some(event_data) = event {
+                                ctx.info("📦 Event data received");
+                                
+                                if let Some(replication_manager) = {
+                                    let manager_guard = service_clone.replication_manager
+                                        .read()
+                                        .map_err(|e| anyhow!("Failed to acquire read lock on replication_manager: {e}"))?;
+                                    manager_guard.clone()
+                                } {
+                                    let sqlite_event = (*event_data.as_type_ref::<crate::replication::SqliteEvent>()?).clone();
+                                    let is_local = ctx.is_local();
+                                    
+                                    ctx.info(format!(
+                                        "🔄 Processing SQLite event: table={}, operation={}, is_local={}",
+                                        sqlite_event.table, sqlite_event.operation, is_local
+                                    ));
+                                    
+                                    replication_manager.handle_sqlite_event(sqlite_event, is_local).await?;
+                                    
+                                    ctx.info("✅ Event processing completed");
+                                } else {
+                                    ctx.warn("⚠️  No replication manager available");
+                                }
+                            } else {
+                                ctx.debug("📭 No event data provided");
+                            }
+                            Ok(())
+                        }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
+                    })
+                };
+                
+                // Subscribe to all operation types for this table
+                context.subscribe(create_path, event_handler.clone()).await?;
+                context.subscribe(update_path, event_handler.clone()).await?;
+                context.subscribe(delete_path, event_handler).await?;
+            }
+        }
+
+        context.info("Event handlers registered for replication");
+
         Ok(())
     }
 
@@ -870,6 +1022,39 @@ impl AbstractService for SqliteService {
         // Now that the worker is confirmed to be running, apply the schema
         self.apply_schema(schema_clone, &context).await?;
 
+        // If replication is enabled, initialize the replication manager
+        if let Some(replication_config) = &self.config.replication {
+            context.info("Initializing replication manager...");
+            
+            let node_id = self.network_id.clone()
+                .ok_or_else(|| anyhow!("Network ID is required for replication"))?;
+            
+            let replication_manager = Arc::new(crate::replication::ReplicationManager::new(
+                Arc::new(self.clone()),
+                replication_config.clone(),
+                context.logger.clone(),
+                node_id,
+            ));
+            
+            // Store the replication manager
+            {
+                let mut manager_guard = self.replication_manager
+                    .write()
+                    .map_err(|e| anyhow!("Failed to acquire write lock on replication_manager: {e}"))?;
+                *manager_guard = Some(replication_manager.clone());
+            }
+            
+            // Create event tables
+            replication_manager.create_event_tables(&context).await?;
+            
+            // Perform startup sync if enabled
+            if replication_config.startup_sync {
+                context.info("Starting replication synchronization...");
+                replication_manager.sync_on_startup(&context).await?;
+                context.info("Replication synchronization completed");
+            }
+        }
+
         context.info(format!(
             "SqliteService '{}' started successfully.",
             self.name
@@ -885,5 +1070,46 @@ impl AbstractService for SqliteService {
         }
         // The channel will be dropped, and the worker thread should exit gracefully.
         Ok(())
+    }
+}
+
+// Helper functions for replication
+pub fn extract_table_name(sql: &str) -> Option<String> {
+    let sql_upper = sql.trim_start().to_uppercase();
+    
+    if sql_upper.starts_with("INSERT INTO ") {
+        // Extract table name after "INSERT INTO "
+        let after_insert = &sql_upper[12..];
+        if let Some(space_pos) = after_insert.find(' ') {
+            return Some(after_insert[..space_pos].to_lowercase());
+        }
+    } else if sql_upper.starts_with("UPDATE ") {
+        // Extract table name after "UPDATE "
+        let after_update = &sql_upper[7..];
+        if let Some(space_pos) = after_update.find(' ') {
+            return Some(after_update[..space_pos].to_lowercase());
+        }
+    } else if sql_upper.starts_with("DELETE FROM ") {
+        // Extract table name after "DELETE FROM "
+        let after_delete = &sql_upper[12..];
+        if let Some(space_pos) = after_delete.find(' ') {
+            return Some(after_delete[..space_pos].to_lowercase());
+        }
+    }
+    
+    None
+}
+
+pub fn determine_operation_type(sql: &str) -> String {
+    let sql_upper = sql.trim_start().to_uppercase();
+    
+    if sql_upper.starts_with("INSERT") {
+        "CREATE".to_string()
+    } else if sql_upper.starts_with("UPDATE") {
+        "UPDATE".to_string()
+    } else if sql_upper.starts_with("DELETE") {
+        "DELETE".to_string()
+    } else {
+        "OTHER".to_string()
     }
 }

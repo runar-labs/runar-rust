@@ -295,3 +295,397 @@ async fn test_registry_service_missing_parameter() {
         Err(_) => panic!("Test timed out after 10 seconds"),
     }
 }
+
+/// Test that the Registry Service can pause a running service
+///
+/// INTENTION: This test validates that:
+/// - The Registry Service can pause a service that is in Running state
+/// - The service state is correctly updated to Paused
+/// - Invalid pause attempts are properly rejected
+#[tokio::test]
+async fn test_registry_service_pause_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Create a test service
+        let math_service = MathService::new("Math", "math");
+
+        // Add the service to the node
+        node.add_service(math_service).await.unwrap();
+
+        // Start the service
+        node.start().await.unwrap();
+
+        // Verify service is in Running state
+        let state_av: ArcValue = node
+            .request("$registry/services/math/state", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+        let initial_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
+        assert_eq!(initial_state, ServiceState::Running, "Service should be in Running state");
+
+        // Pause the service
+        let pause_response: ArcValue = node
+            .request("$registry/services/math/pause", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+        let paused_state: ServiceState = ServiceState::from_arc_value(pause_response.clone()).unwrap();
+        assert_eq!(paused_state, ServiceState::Paused, "Service should be paused");
+
+        // Verify service is now in Paused state
+        let state_av: ArcValue = node
+            .request("$registry/services/math/state", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+        let current_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
+        assert_eq!(current_state, ServiceState::Paused, "Service should be in Paused state");
+
+        // Try to pause again (should fail)
+        let pause_again_result: Result<ArcValue> = node
+            .request("$registry/services/math/pause", Option::<ArcValue>::None)
+            .await;
+        assert!(pause_again_result.is_err(), "Pausing a paused service should fail");
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that the Registry Service can resume a paused service
+///
+/// INTENTION: This test validates that:
+/// - The Registry Service can resume a service that is in Paused state
+/// - The service state is correctly updated to Running
+/// - Invalid resume attempts are properly rejected
+#[tokio::test]
+async fn test_registry_service_resume_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Create a test service
+        let math_service = MathService::new("Math", "math");
+
+        // Add the service to the node
+        node.add_service(math_service).await.unwrap();
+
+        // Start the service
+        node.start().await.unwrap();
+
+        // Pause the service first
+        let _pause_response: ArcValue = node
+            .request("$registry/services/math/pause", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+
+        // Verify service is in Paused state
+        let state_av: ArcValue = node
+            .request("$registry/services/math/state", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+        let paused_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
+        assert_eq!(paused_state, ServiceState::Paused, "Service should be in Paused state");
+
+        // Resume the service
+        let resume_response: ArcValue = node
+            .request("$registry/services/math/resume", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+        let resumed_state: ServiceState = ServiceState::from_arc_value(resume_response.clone()).unwrap();
+        assert_eq!(resumed_state, ServiceState::Running, "Service should be resumed");
+
+        // Verify service is now in Running state
+        let state_av: ArcValue = node
+            .request("$registry/services/math/state", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+        let current_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
+        assert_eq!(current_state, ServiceState::Running, "Service should be in Running state");
+
+        // Try to resume again (should fail)
+        let resume_again_result: Result<ArcValue> = node
+            .request("$registry/services/math/resume", Option::<ArcValue>::None)
+            .await;
+        assert!(resume_again_result.is_err(), "Resuming a running service should fail");
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that requests to paused services are properly handled
+///
+/// INTENTION: This test validates that:
+/// - Requests to paused services return appropriate error messages
+/// - The error message indicates the service state rather than "service not found"
+#[tokio::test]
+async fn test_registry_service_request_to_paused_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Create a test service
+        let math_service = MathService::new("Math", "math");
+
+        // Add the service to the node
+        node.add_service(math_service).await.unwrap();
+
+        // Start the service
+        node.start().await.unwrap();
+
+        // Pause the service
+        let _pause_response: ArcValue = node
+            .request("$registry/services/math/pause", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+
+        // Try to call a service action while it's paused
+        let request_result: Result<ArcValue> = node
+            .request("math/add", Some(ArcValue::new_list(vec![
+                ArcValue::new_primitive(5i32),
+                ArcValue::new_primitive(3i32),
+            ])))
+            .await;
+
+        // The request should fail with a state-related error
+        assert!(request_result.is_err(), "Request to paused service should fail");
+        let error_message = request_result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("Paused"),
+            "Error message should indicate service is in Paused state, got: {error_message}"
+        );
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that pause action on non-existent service returns proper error
+///
+/// INTENTION: This test validates that:
+/// - Attempting to pause a non-existent service returns a proper error message
+/// - The error message indicates the service was not found
+#[tokio::test]
+async fn test_registry_service_pause_nonexistent_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node (no services added)
+        node.start().await.unwrap();
+
+        // Try to pause a non-existent service
+        let pause_result: Result<ArcValue> = node
+            .request("$registry/services/nonexistent/pause", Option::<ArcValue>::None)
+            .await;
+
+        // The request should fail with a service not found error
+        assert!(pause_result.is_err(), "Pausing non-existent service should fail");
+        let error_message = pause_result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("not found"),
+            "Error message should indicate service not found, got: {error_message}"
+        );
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that resume action on non-existent service returns proper error
+///
+/// INTENTION: This test validates that:
+/// - Attempting to resume a non-existent service returns a proper error message
+/// - The error message indicates the service was not found
+#[tokio::test]
+async fn test_registry_service_resume_nonexistent_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node (no services added)
+        node.start().await.unwrap();
+
+        // Try to resume a non-existent service
+        let resume_result: Result<ArcValue> = node
+            .request("$registry/services/nonexistent/resume", Option::<ArcValue>::None)
+            .await;
+
+        // The request should fail with a service not found error
+        assert!(resume_result.is_err(), "Resuming non-existent service should fail");
+        let error_message = resume_result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("not found"),
+            "Error message should indicate service not found, got: {error_message}"
+        );
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that resume action on running service returns proper error
+///
+/// INTENTION: This test validates that:
+/// - Attempting to resume a service that is already running returns a proper error message
+/// - The error message indicates the service is in the wrong state
+#[tokio::test]
+async fn test_registry_service_resume_running_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Create a test service
+        let math_service = MathService::new("Math", "math");
+
+        // Add the service to the node
+        node.add_service(math_service).await.unwrap();
+
+        // Start the service (puts it in Running state)
+        node.start().await.unwrap();
+
+        // Try to resume a service that is already running
+        let resume_result: Result<ArcValue> = node
+            .request("$registry/services/math/resume", Option::<ArcValue>::None)
+            .await;
+
+        // The request should fail with a state-related error
+        assert!(resume_result.is_err(), "Resuming a running service should fail");
+        let error_message = resume_result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("Running"),
+            "Error message should indicate service is in Running state, got: {error_message}"
+        );
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that pause action on already paused service returns proper error
+///
+/// INTENTION: This test validates that:
+/// - Attempting to pause a service that is already paused returns a proper error message
+/// - The error message indicates the service is in the wrong state
+#[tokio::test]
+async fn test_registry_service_pause_already_paused_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Create a test service
+        let math_service = MathService::new("Math", "math");
+
+        // Add the service to the node
+        node.add_service(math_service).await.unwrap();
+
+        // Start the service
+        node.start().await.unwrap();
+
+        // Pause the service first
+        let _pause_response: ArcValue = node
+            .request("$registry/services/math/pause", Option::<ArcValue>::None)
+            .await
+            .unwrap();
+
+        // Try to pause the service again (should fail)
+        let pause_again_result: Result<ArcValue> = node
+            .request("$registry/services/math/pause", Option::<ArcValue>::None)
+            .await;
+
+        // The request should fail with a state-related error
+        assert!(pause_again_result.is_err(), "Pausing an already paused service should fail");
+        let error_message = pause_again_result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("Paused"),
+            "Error message should indicate service is in Paused state, got: {error_message}"
+        );
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that requests to non-existent services return proper error messages
+///
+/// INTENTION: This test validates that:
+/// - Requests to non-existent services return appropriate error messages
+/// - The error message indicates "No handler found" rather than state-related errors
+#[tokio::test]
+async fn test_registry_service_request_to_nonexistent_service() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node (no services added)
+        node.start().await.unwrap();
+
+        // Try to call a service action for a non-existent service
+        let request_result: Result<ArcValue> = node
+            .request("nonexistent/add", Some(ArcValue::new_list(vec![
+                ArcValue::new_primitive(5i32),
+                ArcValue::new_primitive(3i32),
+            ])))
+            .await;
+
+        // The request should fail with a "No handler found" error
+        assert!(request_result.is_err(), "Request to non-existent service should fail");
+        let error_message = request_result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("No handler found"),
+            "Error message should indicate no handler found, got: {error_message}"
+        );
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}

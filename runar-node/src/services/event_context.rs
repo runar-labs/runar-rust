@@ -44,6 +44,9 @@ pub struct EventContext {
 
     /// Delivery options used when publishing this event
     pub delivery_options: Option<PublishOptions>,
+
+    /// Whether this event is local or remote
+    is_local: bool,
 }
 
 impl fmt::Debug for EventContext {
@@ -78,7 +81,7 @@ impl EventContext {
     /// Create a new EventContext with the given topic path and logger
     ///
     /// This is the primary constructor that takes the minimum required parameters.
-    pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, logger: Arc<Logger>) -> Self {
+    pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, is_local: bool, logger: Arc<Logger>) -> Self {
         // Add event path to logger if available from topic_path
         let event_path = topic_path.action_path();
         let event_logger = if !event_path.is_empty() {
@@ -93,6 +96,7 @@ impl EventContext {
             logger: event_logger,
             node_delegate,
             delivery_options: None,
+            is_local,
         }
     }
 
@@ -132,6 +136,14 @@ impl EventContext {
         self.logger.error(message);
     }
 
+    /// Check if this event originated from the local node
+    ///
+    /// INTENTION: Allow event handlers to distinguish between local and remote events.
+    /// This is critical for replication systems to avoid processing loops.
+    pub fn is_local(&self) -> bool {
+        self.is_local
+    }
+ 
     /// Publish an event
     ///
     /// INTENTION: Allow event handlers to publish their own events.
@@ -168,6 +180,38 @@ impl EventContext {
         self.logger
             .debug(format!("Publishing to processed topic: {full_topic}"));
         self.node_delegate.publish(full_topic, data).await
+    }
+
+    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    where
+        P: AsArcValue + Send + Sync,
+    {
+        let path_string = path.into();
+
+        // Process the path based on its format
+        let full_path = if path_string.contains(':') {
+            // Already has network ID, use as is
+            path_string
+        } else if path_string.contains('/') {
+            // Has service/action but no network ID
+            format!(
+                "{network_id}:{path_string}",
+                network_id = self.topic_path.network_id()
+            )
+        } else {
+            // Simple action name - add both service path and network ID
+            format!(
+                "{}:{}/{}",
+                self.topic_path.network_id(),
+                self.topic_path.service_path(),
+                path_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Making request to processed path: {full_path}"));
+
+        self.node_delegate.remote_request::<P>(full_path, payload).await
     }
 
     /// Make a service request

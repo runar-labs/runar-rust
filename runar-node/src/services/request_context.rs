@@ -213,6 +213,38 @@ impl RequestContext {
         self.node_delegate.publish(full_topic, data).await
     }
 
+    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    where
+        P: AsArcValue + Send + Sync,
+    {
+        let path_string = path.into();
+
+        // Process the path based on its format
+        let full_path = if path_string.contains(':') {
+            // Already has network ID, use as is
+            path_string
+        } else if path_string.contains('/') {
+            // Has service/action but no network ID
+            format!(
+                "{network_id}:{path_string}",
+                network_id = self.topic_path.network_id()
+            )
+        } else {
+            // Simple action name - add both service path and network ID
+            format!(
+                "{}:{}/{}",
+                self.topic_path.network_id(),
+                self.topic_path.service_path(),
+                path_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Making request to processed path: {full_path}"));
+
+        self.node_delegate.remote_request::<P>(full_path, payload).await
+    }
+
     /// Make a service request
     ///
     /// INTENTION: Allow event handlers to make requests to other services.

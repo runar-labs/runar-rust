@@ -251,29 +251,47 @@ impl MobileSimulator {
         // Get node setup token and have master sign it
         let setup_token = node_key_manager.generate_csr()?;
 
-        // We need to get a mutable reference to the master key manager
-        // For now, we'll create a new one for this operation and set it up properly
-        let mut master_key_manager = MobileKeyManager::new(self.master.logger.clone())?;
-        master_key_manager.initialize_user_root_key()?;
-        let network_id = master_key_manager.generate_network_data_key()?;
-
+        // Export the master key manager state and create a new instance with the same state
+        let master_state = self.master.key_manager.export_state();
+        let mut master_key_manager = MobileKeyManager::from_state(master_state, self.master.logger.clone())?;
+        
+        // Use the existing network ID from the master
         let cert_message = master_key_manager.process_setup_token(&setup_token)?;
         node_key_manager.install_certificate(cert_message)?;
 
-        // Install network key from master
+        // Install network key from master using the existing network ID
         let network_key_message = master_key_manager
-            .create_network_key_message(&network_id, &node_key_manager.get_node_public_key())?;
+            .create_network_key_message(&self.master.network_id, &node_key_manager.get_node_public_key())?;
         node_key_manager.install_network_key(network_key_message)?;
+
+        // Get the CA certificate to use as root certificate for validation
+        let ca_certificate = master_key_manager
+            .get_ca_certificate()
+            .to_rustls_certificate();
+
+        // Get QUIC certificate configuration for this node
+        let node_cert_config = node_key_manager
+            .get_quic_certificate_config()
+            .expect("Failed to get QUIC certificates for node");
 
         // Export state and create config
         let key_state = node_key_manager.export_state();
         let key_state_bytes = bincode::serialize(&key_state)?;
 
-        let config = NodeConfig::new(node_key_manager.get_node_id(), network_id)
-            .with_key_manager_state(key_state_bytes);
+        // Create transport options with QUIC certificates
+        let transport_options = QuicTransportOptions::new()
+            .with_certificates(node_cert_config.certificate_chain)
+            .with_private_key(node_cert_config.private_key)
+            .with_root_certificates(vec![ca_certificate]);
+
+        let config = NodeConfig::new(node_key_manager.get_node_id(), self.master.network_id.clone())
+            .with_key_manager_state(key_state_bytes)
+            .with_network_config(
+                NetworkConfig::with_quic(transport_options).with_multicast_discovery(),
+            );
 
         self.logger.info(format!(
-            "✅ Node configuration created for node: {}",
+            "✅ Node configuration created for node: {} with network transport",
             node_key_manager.get_node_id()
         ));
 
@@ -598,6 +616,61 @@ mod tests {
 
         // Verify resolvers were created (basic validation)
         // The actual encryption/decryption testing is done in the encryption_test.rs
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mobile_simulator_network_discovery() -> Result<()> {
+        init();
+        
+        // Configure logging
+        let logging_config = runar_node::config::LoggingConfig::new()
+            .with_default_level(runar_node::config::LogLevel::Error);
+        logging_config.apply();
+
+        let logger = Arc::new(Logger::new_root(
+            Component::Custom("mobile_sim_network_test"),
+            "",
+        ));
+
+        // Create mobile simulator
+        let simulator = create_simple_mobile_simulation()?;
+        
+        // Create two node configurations using the simulator
+        let node1_config = simulator.create_node_config()?;
+        let node2_config = simulator.create_node_config()?;
+        
+        let node1_id = node1_config.node_id.clone();
+        let node2_id = node2_config.node_id.clone();
+
+        logger.info(format!("Node1 ID: {node1_id}"));
+        logger.info(format!("Node2 ID: {node2_id}"));
+        logger.info(format!("Network ID: {}", simulator.master.network_id));
+
+        // Create nodes
+        let mut node1 = runar_node::Node::new(node1_config).await?;
+        let mut node2 = runar_node::Node::new(node2_config).await?;
+
+        // Start nodes
+        node1.start().await?;
+        logger.info("✅ Node 1 started");
+        
+        node2.start().await?;
+        logger.info("✅ Node 2 started");
+
+        // Wait for nodes to discover each other
+        logger.info("⏳ Waiting for nodes to discover each other...");
+        node2.wait_for_peer(node1_id, std::time::Duration::from_secs(5)).await?;
+        node1.wait_for_peer(node2_id, std::time::Duration::from_secs(5)).await?;
+        
+        logger.info("✅ Nodes successfully discovered each other!");
+
+        // Cleanup
+        node2.stop().await?;
+        node1.stop().await?;
+        
+        logger.info("✅ Mobile simulator network discovery test completed successfully!");
 
         Ok(())
     }

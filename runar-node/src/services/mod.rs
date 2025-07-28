@@ -137,6 +137,28 @@ impl LifecycleContext {
         self.logger.error(message);
     }
 
+    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    where
+        P: AsArcValue + Send + Sync,
+    {
+        let path_string = path.into();
+        let full_path = if path_string.contains(':') {
+            path_string
+        } else if path_string.contains('/') {
+            format!("{0}:{1}", self.network_id, path_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, path_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Making request to processed path: {full_path}"));
+
+        self.node_delegate.remote_request::<P>(full_path, payload).await
+    }
+
     /// Make a service request from the lifecycle context.
     ///
     /// INTENTION: Allow services during their lifecycle (e.g., init, shutdown)
@@ -789,6 +811,29 @@ pub trait RegistryDelegate: Send + Sync {
     ) -> Result<()>;
 
     async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()>;
+
+    /// Update service state only if the transition is valid
+    ///
+    /// INTENTION: Validate state transitions before updating service state.
+    /// This ensures that services can only transition to valid states.
+    async fn update_service_state_if_valid(
+        &self,
+        service_path: &TopicPath,
+        new_state: ServiceState,
+        current_state: ServiceState,
+    ) -> Result<()>;
+
+    /// Validate that a service can be paused
+    ///
+    /// INTENTION: Check if the service is in a state that allows pausing.
+    /// Only services in Running state can be paused.
+    async fn validate_pause_transition(&self, service_path: &TopicPath) -> Result<()>;
+
+    /// Validate that a service can be resumed
+    ///
+    /// INTENTION: Check if the service is in a state that allows resuming.
+    /// Only services in Paused state can be resumed.
+    async fn validate_resume_transition(&self, service_path: &TopicPath) -> Result<()>;
 }
 
 /// Remote service lifecycle context

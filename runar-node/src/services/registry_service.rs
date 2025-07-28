@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::routing::TopicPath;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
-use crate::AbstractService;
+use crate::{AbstractService, ServiceState};
 use runar_common::logging::Logger;
 use runar_serializer::ArcValue;
 
@@ -139,6 +139,56 @@ impl RegistryService {
         Ok(())
     }
 
+    /// Register the pause service action
+    async fn register_pause_action(&self, context: &LifecycleContext) -> Result<()> {
+        let self_clone = self.clone();
+
+        // Add debug to see what is registered
+        context
+            .logger
+            .debug("Registering pause handler with path: services/{service_path}/pause");
+
+        context
+            .register_action(
+                "services/{service_path}/pause",
+                Arc::new(move |_params, ctx| {
+                    let inner_self = self_clone.clone();
+                    Box::pin(async move { inner_self.handle_pause_service(ctx).await })
+                }),
+            )
+            .await?;
+
+        context
+            .logger
+            .debug("Registered services/{service_path}/pause action");
+        Ok(())
+    }
+
+    /// Register the resume service action
+    async fn register_resume_action(&self, context: &LifecycleContext) -> Result<()> {
+        let self_clone = self.clone();
+
+        // Add debug to see what is registered
+        context
+            .logger
+            .debug("Registering resume handler with path: services/{service_path}/resume");
+
+        context
+            .register_action(
+                "services/{service_path}/resume",
+                Arc::new(move |_params, ctx| {
+                    let inner_self = self_clone.clone();
+                    Box::pin(async move { inner_self.handle_resume_service(ctx).await })
+                }),
+            )
+            .await?;
+
+        context
+            .logger
+            .debug("Registered services/{service_path}/resume action");
+        Ok(())
+    }
+
     /// Handler for listing all services
     async fn handle_list_services(
         &self,
@@ -223,6 +273,72 @@ impl RegistryService {
             Ok(ArcValue::null())
         }
     }
+
+    /// Handler for pausing a service
+    async fn handle_pause_service(&self, ctx: RequestContext) -> Result<ArcValue> {
+        // Extract the service path from path parameters
+        let service_path = match self.extract_service_path(&ctx) {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(anyhow!(
+                    "Missing required 'service_path' parameter: {}",
+                    error
+                ));
+            }
+        };
+        let network_id_string = ctx.network_id().clone();
+        let service_topic = TopicPath::new_service(&network_id_string, &service_path);
+
+        // Validate that the service can be paused
+        self.registry_delegate.validate_pause_transition(&service_topic).await?;
+
+        // Get current state and update to Paused
+        if let Some(current_state) = self.registry_delegate.get_service_state(&service_topic).await {
+            self.registry_delegate
+                .update_service_state_if_valid(&service_topic, ServiceState::Paused, current_state)
+                .await?;
+
+            ctx.logger.info(format!("Service '{service_path}' paused successfully"));
+            Ok(ArcValue::new_struct(ServiceState::Paused))
+        } else {
+            ctx.logger
+                .debug(format!("Service '{service_path}' not found"));
+            Ok(ArcValue::null())
+        }
+    }
+
+    /// Handler for resuming a service
+    async fn handle_resume_service(&self, ctx: RequestContext) -> Result<ArcValue> {
+        // Extract the service path from path parameters
+        let service_path = match self.extract_service_path(&ctx) {
+            Ok(path) => path,
+            Err(error) => {
+                return Err(anyhow!(
+                    "Missing required 'service_path' parameter: {}",
+                    error
+                ));
+            }
+        };
+        let network_id_string = ctx.network_id().clone();
+        let service_topic = TopicPath::new_service(&network_id_string, &service_path);
+
+        // Validate that the service can be resumed
+        self.registry_delegate.validate_resume_transition(&service_topic).await?;
+
+        // Get current state and update to Running
+        if let Some(current_state) = self.registry_delegate.get_service_state(&service_topic).await {
+            self.registry_delegate
+                .update_service_state_if_valid(&service_topic, ServiceState::Running, current_state)
+                .await?;
+
+            ctx.logger.info(format!("Service '{service_path}' resumed successfully"));
+            Ok(ArcValue::new_struct(ServiceState::Running))
+        } else {
+            ctx.logger
+                .debug(format!("Service '{service_path}' not found"));
+            Ok(ArcValue::null())
+        }
+    }
 }
 
 #[async_trait]
@@ -279,6 +395,18 @@ impl AbstractService for RegistryService {
         context
             .logger
             .debug("Registered handler for service state with path parameter");
+
+        // Pause service uses the {service_path} parameter
+        self.register_pause_action(&context).await?;
+        context
+            .logger
+            .debug("Registered handler for pause service with path parameter");
+
+        // Resume service uses the {service_path} parameter
+        self.register_resume_action(&context).await?;
+        context
+            .logger
+            .debug("Registered handler for resume service with path parameter");
 
         context
             .logger

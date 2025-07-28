@@ -361,6 +361,7 @@ mod service_registry_wildcard_tests {
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -376,6 +377,7 @@ mod service_registry_wildcard_tests {
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -391,6 +393,7 @@ mod service_registry_wildcard_tests {
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -406,6 +409,7 @@ mod service_registry_wildcard_tests {
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -421,6 +425,7 @@ mod service_registry_wildcard_tests {
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -522,6 +527,7 @@ mod service_registry_wildcard_tests {
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;

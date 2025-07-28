@@ -1006,4 +1006,73 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
     async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()> {
         self.remove_remote_action_handler(topic_path).await
     }
+
+    async fn update_service_state_if_valid(
+        &self,
+        service_path: &TopicPath,
+        new_state: ServiceState,
+        current_state: ServiceState,
+    ) -> Result<()> {
+        // Validate the state transition
+        match (current_state, new_state) {
+            (ServiceState::Running, ServiceState::Paused) => {
+                // Valid transition: Running -> Paused
+                self.update_service_state(service_path, new_state).await
+            }
+            (ServiceState::Paused, ServiceState::Running) => {
+                // Valid transition: Paused -> Running
+                self.update_service_state(service_path, new_state).await
+            }
+            _ => {
+                // Invalid transition
+                Err(anyhow!(
+                    "Invalid state transition from {:?} to {:?}",
+                    current_state,
+                    new_state
+                ))
+            }
+        }
+    }
+
+    async fn validate_pause_transition(&self, service_path: &TopicPath) -> Result<()> {
+        let current_state = self.get_service_state(service_path).await;
+        match current_state {
+            Some(ServiceState::Running) => {
+                // Valid state for pausing
+                Ok(())
+            }
+            Some(state) => {
+                // Invalid state for pausing
+                Err(anyhow!(
+                    "Cannot pause service in {:?} state. Service must be in Running state.",
+                    state
+                ))
+            }
+            None => {
+                // Service not found
+                Err(anyhow!("Service not found: {}", service_path.as_str()))
+            }
+        }
+    }
+
+    async fn validate_resume_transition(&self, service_path: &TopicPath) -> Result<()> {
+        let current_state = self.get_service_state(service_path).await;
+        match current_state {
+            Some(ServiceState::Paused) => {
+                // Valid state for resuming
+                Ok(())
+            }
+            Some(state) => {
+                // Invalid state for resuming
+                Err(anyhow!(
+                    "Cannot resume service in {:?} state. Service must be in Paused state.",
+                    state
+                ))
+            }
+            None => {
+                // Service not found
+                Err(anyhow!("Service not found: {}", service_path.as_str()))
+            }
+        }
+    }
 }
