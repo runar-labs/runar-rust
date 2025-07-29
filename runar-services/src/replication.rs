@@ -10,6 +10,10 @@ use uuid::Uuid;
 
 use crate::sqlite::{SqliteService, SqlQuery, Value};
 
+// Constants for action names to avoid hardcoding
+const REPLICATION_GET_TABLE_EVENTS_ACTION: &str = "replication/get_table_events";
+const EVENT_TABLE_SUFFIX: &str = "_Events";
+
 // Replication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicationConfig {
@@ -245,7 +249,7 @@ impl ReplicationManager {
     // Returns current state of a table for startup synchronization
     pub async fn get_table_state(&self, table_name: &str) -> Result<TableState> {
         // Query the event table to get latest sequence number
-        let event_table_name = format!("{}_Events", table_name);
+        let event_table_name = format!("{}{}", table_name, EVENT_TABLE_SUFFIX);
         
         let query = SqlQuery::new(&format!(
             "SELECT MAX(sequence_number) as max_seq, MAX(timestamp) as max_time FROM {}",
@@ -327,7 +331,7 @@ impl ReplicationManager {
     }
     
     async fn store_event(&self, event: &ReplicationEvent, processed: bool) -> Result<()> {
-        let event_table_name = format!("{}_Events", event.table_name);
+        let event_table_name = format!("{}{}", event.table_name, EVENT_TABLE_SUFFIX);
         
         self.logger.debug(format!(
             "Storing replication event: id={}, table={}, operation={}, processed={}",
@@ -370,7 +374,7 @@ impl ReplicationManager {
     async fn is_event_processed(&self, event_id: &str) -> Result<bool> {
         // Check if event is already in any event table
         for table in self.enabled_tables.iter() {
-            let event_table_name = format!("{}_Events", table);
+            let event_table_name = format!("{}{}", table, EVENT_TABLE_SUFFIX);
             let query = SqlQuery::new(&format!(
                 "SELECT COUNT(*) as count FROM {} WHERE id = ?",
                 event_table_name
@@ -435,7 +439,7 @@ impl ReplicationManager {
         // Request from remote nodes with the same SQLite service
         // Use proper namespacing: <sqlite_service_path>/replication/get_table_events
         let service_path = self.sqlite_service.path();
-        let remote_path = format!("{}/replication/get_table_events", service_path);
+        let remote_path = format!("{}/{}", service_path, REPLICATION_GET_TABLE_EVENTS_ACTION);
         
         context.debug(format!("Requesting events from remote nodes: {}", remote_path));
         
@@ -462,7 +466,7 @@ impl ReplicationManager {
 
     // Returns paginated events for a table (for startup sync)
     pub async fn get_table_events(&self, request: TableEventsRequest) -> Result<TableEventsResponse> {
-        let event_table_name = format!("{}_Events", request.table_name);
+        let event_table_name = format!("{}{}", request.table_name, EVENT_TABLE_SUFFIX);
         
         self.logger.debug(format!(
             "Querying events from {}: page={}, page_size={}, from_sequence={}",
@@ -589,7 +593,7 @@ impl ReplicationManager {
     // Creates event tables for enabled tables
     pub async fn create_event_tables(&self, context: &LifecycleContext) -> Result<()> {
         for table in self.enabled_tables.iter() {
-            let event_table_name = format!("{}_Events", table);
+            let event_table_name = format!("{}{}", table, EVENT_TABLE_SUFFIX);
             
             let create_table_sql = format!(
                 "CREATE TABLE IF NOT EXISTS {} (

@@ -16,6 +16,10 @@ use std::pin::Pin;
 use std::future::Future;
 use tokio::sync::{mpsc, oneshot}; // Added mpsc, oneshot, thread // Added for Arc<Logger>
 
+// Constants for action names to avoid hardcoding
+const EXECUTE_QUERY_ACTION: &str = "execute_query";
+const REPLICATION_GET_TABLE_EVENTS_ACTION: &str = "replication/get_table_events";
+
 // Schema definition structs
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DataType {
@@ -806,8 +810,9 @@ impl AbstractService for SqliteService {
                                             timestamp: SystemTime::now(),
                                         };
                                         
-                                        // Use proper namespacing: user_db/<table_name>/<operation>
-                                        let event_path = format!("user_db/{}/{}", table_name, event.operation);
+                                        // Use proper namespacing: <service_path>/<table_name>/<operation>
+                                        let service_path = service_clone.path.clone();
+                                        let event_path = format!("{}/{}/{}", service_path, table_name, event.operation);
                                         
                                         req_ctx.info(format!(
                                             "📤 Publishing SQLite event: path={}, table={}, operation={}",
@@ -835,11 +840,11 @@ impl AbstractService for SqliteService {
             )
         };
         context
-            .register_action("execute_query", execute_query_handler)
+            .register_action(EXECUTE_QUERY_ACTION, execute_query_handler)
             .await?;
         context.info(format!(
-            "'execute_query' action registered for SqliteService: {}",
-            self.name
+            "'{}' action registered for SqliteService: {}",
+            EXECUTE_QUERY_ACTION, self.name
         ));
 
         // Register paginated API for replication if enabled
@@ -874,13 +879,13 @@ impl AbstractService for SqliteService {
                 )
             };
             
-                                context.info(format!("About to register replication/get_table_events action for service {}", self.name));
+                                context.info(format!("About to register {} action for service {}", REPLICATION_GET_TABLE_EVENTS_ACTION, self.name));
                                 let result = context
-                        .register_action("replication/get_table_events", get_table_events_handler)
+                        .register_action(REPLICATION_GET_TABLE_EVENTS_ACTION, get_table_events_handler)
                         .await;
                     match result {
-                        Ok(_) => context.info(format!("'replication/get_table_events' action registered successfully for service {}", self.name)),
-                        Err(e) => context.error(format!("Failed to register 'replication/get_table_events' action for service {}: {}", self.name, e)),
+                        Ok(_) => context.info(format!("'{}' action registered successfully for service {}", REPLICATION_GET_TABLE_EVENTS_ACTION, self.name)),
+                        Err(e) => context.error(format!("Failed to register '{}' action for service {}: {}", REPLICATION_GET_TABLE_EVENTS_ACTION, self.name, e)),
                     }
         }
 
@@ -888,11 +893,11 @@ impl AbstractService for SqliteService {
         if let Some(_replication_config) = &self.config.replication {
             let service_arc = Arc::new(self.clone());
             
-            // Subscribe to all user_db events for enabled tables with proper namespacing
+            // Subscribe to all events for enabled tables with proper namespacing
             for table in &self.config.replication.as_ref().unwrap().enabled_tables {
-                let create_path = format!("user_db/{}/create", table);
-                let update_path = format!("user_db/{}/update", table);
-                let delete_path = format!("user_db/{}/delete", table);
+                let create_path = format!("{}/{}/create", self.path, table);
+                let update_path = format!("{}/{}/update", self.path, table);
+                let delete_path = format!("{}/{}/delete", self.path, table);
                 
                 // Create a single handler for all operation types
                 let event_handler = {
