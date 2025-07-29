@@ -286,6 +286,18 @@ impl RequestContext {
 
         self.node_delegate.request::<P>(full_path, payload).await
     }
+
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Allow event handlers to wait for specific events to occur
+    /// before proceeding with their logic.
+    ///
+    /// Returns Ok(Option<ArcValue>) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    pub async fn on(&self, topic: impl Into<String>, timeout: std::time::Duration) -> Result<Option<ArcValue>>
+    {
+        self.node_delegate.on(topic, timeout).await
+    }
 }
 
 impl LoggingContext for RequestContext {

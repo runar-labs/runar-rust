@@ -216,6 +216,18 @@ impl LifecycleContext {
         ));
         self.node_delegate.publish(full_topic, data).await
     }
+ 
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Allow services during their lifecycle to wait for specific events
+    /// to occur before proceeding with their logic.
+    ///
+    /// Returns Ok(Option<ArcValue>) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    pub async fn on(&self, topic: impl Into<String>, timeout: std::time::Duration) -> Result<Option<ArcValue>>
+    {
+        self.node_delegate.on(topic, timeout).await
+    }
 
     /// Register an action handler
     ///
@@ -552,6 +564,17 @@ pub struct PublishOptions {
     pub target: Option<String>,
 }
 
+impl PublishOptions {
+    pub fn local_only() -> Self {
+        Self {
+            broadcast: false,
+            guaranteed_delivery: false,
+            retention_seconds: None,
+            target: None,
+        }
+    }
+}
+
 /// Options for registering an action handler
 ///
 /// INTENTION: Provide a way to specify metadata about an action when registering it,
@@ -759,6 +782,15 @@ pub trait NodeDelegate: Send + Sync {
         handler: ActionHandler,
         metadata: Option<ActionMetadata>,
     ) -> Result<()>;
+ 
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Allow services to wait for specific events to occur
+    /// before proceeding with their logic.
+    ///
+    /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    async fn on(&self, topic: impl Into<String> + Send, timeout: std::time::Duration) -> Result<Option<ArcValue>>;
 }
 
 /// Registry Delegate trait for keys service operations

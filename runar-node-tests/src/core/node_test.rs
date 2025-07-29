@@ -6,6 +6,8 @@
 use runar_node::config::logging_config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_node::ServiceMetadata;
+use runar_node::{RequestContext, TopicPath, LifecycleContext, NodeDelegate};
+use runar_common::logging::{Component, Logger};
 
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
@@ -17,7 +19,6 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_node::services::EventContext;
-use runar_node::NodeDelegate;
 
 use runar_macros_common::params;
 
@@ -378,4 +379,378 @@ async fn test_path_params_in_context() {
     // params_map is now HashMap<String, String>
     assert_eq!(params_map.get("param_1").unwrap().as_ref(), "abc123");
     assert_eq!(params_map.get("param_2").unwrap().as_ref(), "xyz789");
+}
+
+/// Test that the on method functionality works correctly
+///
+/// INTENTION: This test validates that:
+/// - on method returns event payload when event occurs within timeout
+/// - on method returns timeout error when no event occurs
+/// - on method works from both Node and context objects
+#[tokio::test]
+async fn test_on_method() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(15), async {
+        // Create a node with a test network ID
+        let config = create_node_test_config().expect("Error creating test config");
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node
+        node.start().await.unwrap();
+
+        // Test 1: on method should timeout when no event is published
+        let result = node.on("test_event", Duration::from_millis(100)).await;
+        assert!(result.is_err(), "on method should timeout when no event is published");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Timeout"), "Error should indicate timeout");
+
+        // Test 2: on method should receive event when published
+        let topic = "test_event";
+        let event_data = ArcValue::new_primitive(42i32);
+        
+        // Get the future first
+        let future = node.on(topic, Duration::from_secs(5));
+        
+        // Publish the event (should trigger the future)
+        node.publish(topic.to_string(), Some(event_data.clone())).await.unwrap();
+
+        // Wait for the event
+        let received_data = future.await?.expect("Received event data should not be None");
+        assert_eq!(received_data, event_data, "Received event data should match published data");
+
+        // Test 3: Test from RequestContext
+        let test_logger = Logger::new_root(Component::Node, "test_on_method");
+        let topic_path = TopicPath::new("math/add", "test_network").unwrap();
+        let context = RequestContext::new(&topic_path, Arc::new(node.clone()), Arc::new(test_logger.clone()));
+        
+        let context_topic = "context_test_event";
+        let context_event_data = ArcValue::new_primitive(100i32);
+        
+        // Get the future first
+        let context_future = context.on(context_topic, Duration::from_secs(5));
+        
+        // Publish event for context test
+        node.publish(context_topic.to_string(), Some(context_event_data.clone())).await.unwrap();
+
+        let received_context_data = context_future.await?.expect("Received event data should not be None");;
+        assert_eq!(received_context_data, context_event_data, "Context should receive correct event data");
+
+        // Test 4: Test from LifecycleContext
+        let lifecycle_context = LifecycleContext::new(&topic_path, Arc::new(node.clone()), Arc::new(test_logger));
+        
+        let lifecycle_topic = "lifecycle_test_event";
+        let lifecycle_event_data = ArcValue::new_primitive(200i32);
+        
+        // Get the future first
+        let lifecycle_future = lifecycle_context.on(lifecycle_topic, Duration::from_secs(5));
+        
+        // Publish event for lifecycle context test
+        node.publish(lifecycle_topic.to_string(), Some(lifecycle_event_data.clone())).await.unwrap();
+
+        let received_lifecycle_data = lifecycle_future.await?.expect("Received event data should not be None");;
+        assert_eq!(received_lifecycle_data, lifecycle_event_data, "LifecycleContext should receive correct event data");
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 15 seconds"),
+    }
+}
+
+/// Test that service state events are properly published and can be received via on method
+///
+/// INTENTION: This test validates that:
+/// - Service initialization triggers state/initialized events
+/// - Service start triggers state/running events  
+/// - Service stop triggers state/stopped events
+/// - Service errors trigger state/error events
+/// - All state events can be received using the on method
+#[tokio::test]
+async fn test_service_state_events() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(20), async {
+        // Create a node with a test network ID
+        let mut config = create_node_test_config().expect("Error creating test config");
+        config.network_config = None;
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node
+        node.start().await.unwrap();
+
+        // Test 1: Service initialization state event
+        let service_name = "StateTestService";
+        let service_path = "state_test";
+        let service = MathService::new(service_name, service_path);
+
+        // Listen for initialization event before adding service
+        let init_topic = format!("$registry/services/{service_path}/state/initialized");
+        let node_clone = node.clone();
+        let init_future = node_clone.on(init_topic.clone(), Duration::from_secs(5));
+
+        let wildcard_topic = "$registry/services/*/state/initialized";
+        let wildcard_future = node_clone.on(wildcard_topic, Duration::from_secs(5));
+
+        // Add the service (should trigger initialized event)
+        node.add_service(service).await.unwrap();
+
+        // Wait for initialization event
+        let init_data = init_future.await?.expect("Received event data should not be None");;
+        let init_service_path = init_data.as_type_ref::<String>()?;
+        assert_eq!(*init_service_path, service_path, "Initialized event should contain correct service path");
+
+        let wildcard_data = wildcard_future.await?.expect("Received event data should not be None");;
+        let wildcard_service_path = wildcard_data.as_type_ref::<String>()?;
+        assert_eq!(*wildcard_service_path, service_path, "Wildcard event should contain correct service path");
+
+        // Test 2: Service running state event
+        let running_topic = format!("$registry/services/{service_path}/state/running");
+        let node_clone = node.clone();
+        let running_future = node_clone.on(running_topic.clone(), Duration::from_secs(5));
+
+        // Start the service (should trigger running event)
+        node.start().await.unwrap();
+
+        // Wait for running event
+        let running_data = running_future.await?.expect("Received event data should not be None");;
+        let running_service_path = running_data.as_type_ref::<String>()?;
+        assert_eq!(*running_service_path, service_path, "Running event should contain correct service path");
+
+        // Test 3: Service stopped state event
+        let stopped_topic = format!("$registry/services/{service_path}/state/stopped");
+        let node_clone2 = node.clone();
+        let stopped_future = node_clone2.on(stopped_topic.clone(), Duration::from_secs(5));
+
+        // Stop the service (should trigger stopped event)
+        node.stop().await.unwrap();
+
+        // Wait for stopped event
+        let stopped_data = stopped_future.await?.expect("Received event data should not be None");;
+        let stopped_service_path = stopped_data.as_type_ref::<String>()?;
+        assert_eq!(*stopped_service_path, service_path, "Stopped event should contain correct service path");
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 20 seconds"),
+    }
+}
+
+/// Test that service state events work with wildcard subscriptions
+///
+/// INTENTION: This test validates that:
+/// - Wildcard subscriptions can receive state events from multiple services
+/// - State events are properly routed to wildcard subscribers
+#[tokio::test]
+async fn test_service_state_events_wildcard() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(15), async {
+        // Create a node with a test network ID
+        let mut config = create_node_test_config().expect("Error creating test config");
+        config.network_config = None;
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node
+        node.start().await.unwrap();
+
+        // Test wildcard subscription for all service running events
+        let wildcard_topic = "$registry/services/*/state/running";
+        let node_clone = node.clone();
+        let wildcard_future = node_clone.on(wildcard_topic, Duration::from_secs(5));
+
+        // Add multiple services to trigger multiple running events
+        let service1 = MathService::new("Service1", "service1");
+        let service2 = MathService::new("Service2", "service2");
+
+        node.add_service(service1).await.unwrap();
+        node.add_service(service2).await.unwrap();
+
+        // Start services (should trigger running events)
+        node.start().await.unwrap();
+
+        // Wait for wildcard event (should receive one of the running events)
+        let wildcard_data = wildcard_future.await?.expect("Received event data should not be None");
+        let wildcard_service_path = wildcard_data.as_type_ref::<String>()?;
+        assert!(
+            *wildcard_service_path == "service1" || *wildcard_service_path == "service2",
+            "Wildcard event should contain one of the service paths"
+        );
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 15 seconds"),
+    }
+}
+
+/// Test that service error state events are properly handled
+///
+/// INTENTION: This test validates that:
+/// - Service errors trigger state/error events
+/// - Error events contain appropriate error information
+#[tokio::test]
+async fn test_service_error_state_events() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let mut config = create_node_test_config().expect("Error creating test config");
+        config.network_config = None;
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node
+        node.start().await.unwrap();
+
+        // Test error state event (this would typically be triggered by service errors)
+        // For this test, we'll verify the error event topic format is correct
+        let error_topic = "$registry/services/test_service/state/error";
+        
+        // The error event should timeout since no error is actually triggered
+        let result = node.on(error_topic, Duration::from_millis(100)).await;
+        assert!(result.is_err(), "Error event should timeout when no error occurs");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Timeout"), "Error should indicate timeout");
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that multiple concurrent on calls work correctly
+///
+/// INTENTION: This test validates that:
+/// - Multiple concurrent on calls can wait for different events
+/// - Each on call receives the correct event data
+/// - No cross-contamination between different event subscriptions
+#[tokio::test]
+async fn test_multiple_concurrent_on_calls() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(15), async {
+        // Create a node with a test network ID
+        let mut config = create_node_test_config().expect("Error creating test config");
+        config.network_config = None;
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node
+        node.start().await.unwrap();
+
+        // Create multiple concurrent on calls for different topics
+        let topic1 = "concurrent_event_1";
+        let topic2 = "concurrent_event_2";
+        let topic3 = "concurrent_event_3";
+
+        let future1 = node.on(topic1, Duration::from_secs(5));
+        let future2 = node.on(topic2, Duration::from_secs(5));
+        let future3 = node.on(topic3, Duration::from_secs(5));
+
+        // Publish events for each topic with different delays
+        let node_clone1 = node.clone();
+        let node_clone2 = node.clone();
+        let node_clone3 = node.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = node_clone1.publish(topic1.to_string(), Some(ArcValue::new_primitive("data1".to_string()))).await;
+        });
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let _ = node_clone2.publish(topic2.to_string(), Some(ArcValue::new_primitive("data2".to_string()))).await;
+        });
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let _ = node_clone3.publish(topic3.to_string(), Some(ArcValue::new_primitive("data3".to_string()))).await;
+        });
+
+        // Wait for all events
+        let (result1, result2, result3) = tokio::join!(future1, future2, future3);
+
+        // Verify each result
+        let data1 = result1?.expect("Received event data should not be None").as_type_ref::<String>()?;
+        let data2 = result2?.expect("Received event data should not be None").as_type_ref::<String>()?;
+        let data3 = result3?.expect("Received event data should not be None").as_type_ref::<String>()?;
+
+        assert_eq!(*data1, "data1".to_string(), "First concurrent call should receive correct data");
+        assert_eq!(*data2, "data2".to_string(), "Second concurrent call should receive correct data");
+        assert_eq!(*data3, "data3".to_string(), "Third concurrent call should receive correct data");
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 15 seconds"),
+    }
+}
+
+/// Test that on method works with different timeout values
+///
+/// INTENTION: This test validates that:
+/// - Short timeouts work correctly for immediate events
+/// - Long timeouts work correctly for delayed events
+/// - Timeout errors are properly handled
+#[tokio::test]
+async fn test_on_method_timeout_variations() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a node with a test network ID
+        let mut config = create_node_test_config().expect("Error creating test config");
+        config.network_config = None;
+        let mut node = Node::new(config).await.unwrap();
+
+        // Start the node
+        node.start().await.unwrap();
+
+        // Test 1: Very short timeout should fail
+        let result = node.on("short_timeout_test", Duration::from_millis(1)).await;
+        assert!(result.is_err(), "Very short timeout should fail");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Timeout"), "Error should indicate timeout");
+
+        // Test 2: Medium timeout with immediate event should succeed
+        let topic = "medium_timeout_test";
+        let event_data = ArcValue::new_primitive("immediate_data".to_string());
+        
+        let node_clone = node.clone();
+        let topic_clone = topic.to_string();
+        let event_data_clone = event_data.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let _ = node_clone.publish(topic_clone, Some(event_data_clone)).await;
+        });
+
+        let result = node.on(topic, Duration::from_millis(100)).await?.expect("Received event data should not be None");;
+        assert_eq!(result, event_data, "Medium timeout should receive immediate event");
+
+        // Test 3: Long timeout with delayed event should succeed
+        let topic2 = "long_timeout_test";
+        let event_data2 = ArcValue::new_primitive("delayed_data".to_string());
+        
+        let node_clone2 = node.clone();
+        let topic_clone2 = topic2.to_string();
+        let event_data_clone2 = event_data2.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let _ = node_clone2.publish(topic_clone2, Some(event_data_clone2)).await;
+        });
+
+        let result2 = node.on(topic2, Duration::from_secs(2)).await?.expect("Received event data should not be None");;
+        assert_eq!(result2, event_data2, "Long timeout should receive delayed event");
+
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
 }

@@ -622,6 +622,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mobile_simulator_network_discovery() -> Result<()> {
+        use std::time::Duration;
         init();
         
         // Configure logging
@@ -661,8 +662,9 @@ mod tests {
 
         // Wait for nodes to discover each other
         logger.info("⏳ Waiting for nodes to discover each other...");
-        node2.wait_for_peer(node1_id, std::time::Duration::from_secs(5)).await?;
-        node1.wait_for_peer(node2_id, std::time::Duration::from_secs(5)).await?;
+        let _ = node2.on(format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()), Duration::from_secs(3)).await?;
+        let _ = node1.on(format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()), Duration::from_secs(3)).await?;
+  
         
         logger.info("✅ Nodes successfully discovered each other!");
 

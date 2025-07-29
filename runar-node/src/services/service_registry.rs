@@ -245,10 +245,7 @@ impl ServiceRegistry {
             .write()
             .await
             .set_value(service_topic.clone(), service);
-
-        self.update_service_state(&service_topic, service_entry.service_state)
-            .await?;
-
+        //TODO understand why we have this duplciation of local_services and local_services_list
         self.local_services_list
             .write()
             .await

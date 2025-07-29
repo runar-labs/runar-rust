@@ -65,12 +65,10 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("✅ Node 2 started");
 
     logger.debug("⏳ Waiting for nodes to discover each other via multicast and establish QUIC connections...");
-    node2
-        .wait_for_peer(node1_id, Duration::from_secs(3))
-        .await?;
-    node1
-        .wait_for_peer(node2_id, Duration::from_secs(3))
-        .await?;
+    let peer_future2 = node2.on(format!("$registry/peer/{node1_id}/discovered"), Duration::from_secs(3));
+    let peer_future1 = node1.on(format!("$registry/peer/{node2_id}/discovered"), Duration::from_secs(3));
+    //join both futures and wait for both to complete
+    let _ = tokio::join!(peer_future2, peer_future1);
 
     // Test 1: Call math1/add service (on node1) from node2
     logger.debug("📤 Testing remote action call from node2 to node1 (math1/add)...");

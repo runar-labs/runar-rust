@@ -17,6 +17,7 @@ use tokio::time::timeout;
 // Import the test fixtures
 use crate::fixtures::math_service::MathService;
 
+
 /// Test that the Registry Service correctly lists all services
 ///
 /// INTENTION: This test validates that:
@@ -689,3 +690,6 @@ async fn test_registry_service_request_to_nonexistent_service() {
         Err(_) => panic!("Test timed out after 10 seconds"),
     }
 }
+
+
+

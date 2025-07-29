@@ -388,12 +388,14 @@ impl Node {
             registry
                 .update_service_state(&service_topic, ServiceState::Error)
                 .await?;
+            self.publish_with_options(format!("$registry/services/{}/state/error", service_topic.service_path()), 
+                Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
             return Err(anyhow!("Failed to initialize service: {e}"));
         }
         registry
             .update_service_state(&service_topic, ServiceState::Initialized)
             .await?;
-
+        self.publish_with_options(format!("$registry/services/{}/state/initialized", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
         // Service initialized successfully, create the ServiceEntry and register it
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -415,24 +417,89 @@ impl Node {
         if self.running.load(Ordering::SeqCst) {
             self.registry_version.fetch_add(1, Ordering::SeqCst);
             let _ = self.notify_node_change().await;
-            //TODO fire service added event -> $registry/service/added
         }
 
         Ok(())
     }
 
-    /// Wait for a peer to be known by the node with a timeout
-    pub async fn wait_for_peer(&self, peer_node_id: String, timeout: Duration) -> Result<()> {
-        tokio::time::timeout(timeout, async {
-            loop {
-                if self.known_peers.read().await.contains_key(&peer_node_id) {
-                    return Ok(());
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
+    /// Get the node ID
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+ 
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Subscribe to an event topic and wait for the first event to occur,
+    /// or timeout if no event occurs within the specified duration.
+    ///
+    /// Handles different topic formats:
+    /// - Full topic with network ID: "network:service/topic" (used as is)
+    /// - Topic with service: "service/topic" (default network ID added)
+    /// - Simple topic: "topic" (default network ID and service path added)
+    ///
+    /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    pub async fn on(&self, topic: impl Into<String>, timeout: Duration) -> Result<Option<ArcValue>>
+    {
+        let topic_string = topic.into();
+        
+        // Process the topic based on its format
+        let full_topic = if topic_string.contains(':') {
+            // Already has network ID, use as is
+            topic_string
+        } else if topic_string.contains('/') {
+            // Has service/topic but no network ID
+            format!(
+                "{network_id}:{topic_string}",
+                network_id = self.network_id
+            )
+        } else {
+            // Simple topic name - add service path and network ID
+            format!(
+                "{}:{}/{}",
+                self.network_id,
+                "default", // Use default service path for simple topics
+                topic_string
+            )
+        };
+
+        self.logger.debug(format!("Waiting for event on topic: {full_topic}"));
+
+        // Create a channel to receive the event
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
+        
+        // Create a subscription that will send the first event to our channel
+        let subscription_id = self.subscribe_with_options(
+            full_topic.clone(),
+            Box::new(move |_context, data| {
+                let tx = tx.clone();
+                Box::pin(async move {
+                    // Send the event data to our channel
+                    let _ = tx.send(data).await;
+                    Ok(())
+                })
+            }),
+            EventRegistrationOptions::default(),
+        ).await?;
+
+        // Wait for the event with timeout
+        match tokio::time::timeout(timeout, rx.recv()).await {
+            Ok(Some(event_data)) => {
+                // Event received, unsubscribe and return data
+                self.unsubscribe(Some(&subscription_id)).await?;
+                Ok(event_data)
             }
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("Timeout waiting for peer {}", peer_node_id))?
+            Ok(None) => {
+                // Channel closed
+                self.unsubscribe(Some(&subscription_id)).await?;
+                Err(anyhow!("Channel closed while waiting for event on topic: {full_topic}"))
+            }
+            Err(_) => {
+                // Timeout
+                self.unsubscribe(Some(&subscription_id)).await?;
+                Err(anyhow!("Timeout waiting for event on topic: {full_topic}"))
+            }
+        }
     }
 
     /// Start the Node and all registered services
@@ -475,7 +542,7 @@ impl Node {
                         .with_component(runar_common::Component::Service),
                 ),
             );
-
+            //TODO service start can take a long time and it shuold not block this loop..  the update to sate runnig and the event dispath shoould wait for it.. but the loop shuood bot be blocked.
             // Start the service using the context
             if let Err(e) = service.start(start_context).await {
                 self.logger.error(format!(
@@ -484,12 +551,16 @@ impl Node {
                 registry
                     .update_service_state(&service_topic, ServiceState::Error)
                     .await?;
+                self.publish_with_options(format!("$registry/services/{}/state/error", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
                 continue;
             }
-
+            
             registry
                 .update_service_state(&service_topic, ServiceState::Running)
                 .await?;
+
+            self.publish_with_options(format!("$registry/services/{}/state/running", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
+
         }
 
         // Start networking if enabled
@@ -562,6 +633,7 @@ impl Node {
             registry
                 .update_service_state(&service_topic, ServiceState::Stopped)
                 .await?;
+            self.publish_with_options(format!("$registry/services/{}/state/stopped", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;   
         }
 
         self.logger.info("Stopping networking...");
@@ -606,7 +678,6 @@ impl Node {
             self.logger.info("Initializing network transport...");
 
             // Create network transport using the factory pattern based on transport_type
-            // let node_identifier = self.peer_node_id.clone();
             let transport = self.create_transport(network_config).await?;
 
             transport.clone().start().await?;
@@ -635,7 +706,6 @@ impl Node {
                 let provider_type = format!("{provider_config:?}");
 
                 // Create network transport using the factory pattern based on transport_type
-                // let node_identifier = self.peer_node_id.clone();
                 let discovery_provider = self
                     .create_discovery_provider(provider_config, Some(discovery_options.clone()))
                     .await?;
@@ -889,13 +959,12 @@ impl Node {
             }
             MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
             MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
-            // "Discovery" => self.handle_network_discovery(message).await,
             _ => {
                 self.logger.warn(format!(
                     "Unknown message type: {message_type}",
                     message_type = message.message_type
                 ));
-                Ok(None)
+                Err(anyhow!("Unknown message type: {message_type}", message_type =  message.message_type))
             }
         }
     }
@@ -1425,13 +1494,18 @@ impl Node {
                 //remove and add again
                 known_peers.remove(&new_peer_node_id);
                 known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
-                return self.add_new_peer(new_peer).await;
+                let res = self.add_new_peer(new_peer).await;
+                self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/updated"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
+                return res;
             }
         } else {
             known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
-            return self.add_new_peer(new_peer).await;
+            let res = self.add_new_peer(new_peer).await;
+            self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/discovered"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
+            return res;
         }
         drop(known_peers);
+
         Ok(Vec::new())
     }
 
@@ -1892,6 +1966,17 @@ impl NodeDelegate for Node {
         self.service_registry
             .register_local_action_handler(&topic_path, handler, metadata)
             .await
+    }
+ 
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Allow services to wait for specific events to occur
+    /// before proceeding with their logic.
+    ///
+    /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    async fn on(&self, topic: impl Into<String> + Send, timeout: std::time::Duration) -> Result<Option<ArcValue>> {
+        self.on(topic, timeout).await
     }
 }
 
