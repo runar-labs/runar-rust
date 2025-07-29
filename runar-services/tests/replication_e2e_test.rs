@@ -7,7 +7,7 @@ use runar_services::{
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::ArcValue;
-use runar_test_utils::{create_networked_node_test_config, create_test_environment, MobileSimulator};
+use runar_test_utils::{create_networked_node_test_config, create_test_environment};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -94,13 +94,13 @@ fn create_test_schema() -> Schema {
     }
 }
 
-fn create_replicated_sqlite_service(name: &str, path: &str, db_path: &str) -> SqliteService {
+fn create_replicated_sqlite_service(name: &str, path: &str, db_path: &str, startup_sync: bool) -> SqliteService {
     let schema = create_test_schema();
     let config = SqliteConfig::new(db_path.to_string(), schema, false)
         .with_replication(ReplicationConfig {
             enabled_tables: vec!["users".to_string(), "posts".to_string()],
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
-            startup_sync: true, // Enable startup sync for this test
+            startup_sync : startup_sync, // Enable startup sync for this test
             event_retention_days: 30,
         });
 
@@ -129,8 +129,8 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     let node2_config = configs[1].clone();
 
     // Create SQLite services for both nodes (using in-memory databases)
-    let sqlite_service1 = create_replicated_sqlite_service("users_db", "users_db", ":memory:");
-    let sqlite_service2 = create_replicated_sqlite_service("users_db", "users_db", ":memory:");
+    let sqlite_service1 = create_replicated_sqlite_service("users_db", "users_db", ":memory:", false);
+    let sqlite_service2 = create_replicated_sqlite_service("users_db", "users_db", ":memory:", true);
 
     // Start Node 1 and add some initial data
     logger.info("Starting Node 1...");
@@ -138,10 +138,6 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     logger.info("✅ Node 1 started");
-
-    // Wait a moment for Node 1 to be fully ready
-    sleep(Duration::from_millis(500)).await;
-
     // Add some initial data to Node 1
     logger.info("Adding initial data to Node 1...");
     
@@ -188,8 +184,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     }
 
     // Verify data exists on Node 1
-    let users_result = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+    let users_result = node1.request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -215,18 +210,15 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     // Now start Node 2 - it should sync during startup
     logger.info("Starting Node 2 (should sync during startup)...");
     let mut node2 = Node::new(node2_config).await?;
-    node2.add_service(sqlite_service2).await?;
     node2.start().await?;
     logger.info("✅ Node 2 started");
     
     // Wait for nodes to discover each other and exchange service information
     logger.info("Waiting for nodes to discover each other...");
-    node2.wait_for_peer(node1.node_id().to_string(), Duration::from_secs(5)).await?;
-    node1.wait_for_peer(node2.node_id().to_string(), Duration::from_secs(5)).await?;
+    let _ = node2.on(format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()), Duration::from_secs(3)).await?;
     logger.info("✅ Nodes discovered each other");
 
-    // Wait a bit more for replication to complete
-    sleep(Duration::from_secs(2)).await;
+    node2.add_service(sqlite_service2).await?;
 
     // Verify that Node 2 has the same data (replication worked)
     logger.info("Verifying replication to Node 2...");
@@ -359,8 +351,8 @@ async fn test_service_availability_during_sync() -> Result<()> {
     logging_config.apply();
 
     // Create SQLite services
-    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:");
-    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:");
+    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", false);
+    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:", true);
 
     // Start Node 1 and add substantial data
     println!("Starting Node 1 and adding substantial data...");
@@ -433,8 +425,9 @@ async fn test_service_availability_during_sync() -> Result<()> {
 
     // Wait for nodes to discover each other
     println!("Waiting for nodes to discover each other...");
-    node1.wait_for_peer(node2.node_id().to_string(), Duration::from_secs(5)).await?;
-    node2.wait_for_peer(node1.node_id().to_string(), Duration::from_secs(5)).await?;
+    let _ = node2.on(format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()), Duration::from_secs(3)).await?;
+    let _ = node1.on(format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()), Duration::from_secs(3)).await?;
+    
     println!("✅ Nodes discovered each other");
 
     // Wait a bit more for replication to complete
@@ -583,8 +576,8 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     logging_config.apply();
 
     // Create SQLite services
-    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:");
-    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:");
+    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", false);
+    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:", true);
 
     // Start Node 1
     println!("Starting Node 1...");
@@ -662,8 +655,9 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 
     // Wait for nodes to discover each other and sync
     println!("Waiting for nodes to discover each other...");
-    node1.wait_for_peer(node2.node_id().to_string(), Duration::from_secs(5)).await?;
-    node2.wait_for_peer(node1.node_id().to_string(), Duration::from_secs(5)).await?;
+    let _ = node2.on(format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()), Duration::from_secs(3)).await?;
+    let _ = node1.on(format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()), Duration::from_secs(3)).await?;
+    
     println!("✅ Nodes discovered each other");
 
     // Wait for replication
@@ -783,8 +777,8 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     let node2_config = simulator.create_node_config()?;
 
     // Create SQLite services with replication enabled
-    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:");
-    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:");
+    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", false);
+    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:", true);
 
     // Start Node 1
     println!("Starting Node 1...");
@@ -837,8 +831,9 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 
     // Wait for nodes to discover each other
     println!("Waiting for nodes to discover each other...");
-    node1.wait_for_peer(node2.node_id().to_string(), Duration::from_secs(5)).await?;
-    node2.wait_for_peer(node1.node_id().to_string(), Duration::from_secs(5)).await?;
+    let _ = node2.on(format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()), Duration::from_secs(3)).await?;
+    let _ = node1.on(format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()), Duration::from_secs(3)).await?;
+    
     println!("✅ Nodes discovered each other");
 
     // Wait for replication to complete
@@ -972,7 +967,7 @@ async fn test_single_node_replication() -> Result<()> {
     simulator.print_summary();
 
     // Create SQLite service with replication enabled
-    let sqlite_service = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:");
+    let sqlite_service = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", true);
 
     // Start Node
     println!("Starting Node...");

@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::Logger;
-use runar_node::services::LifecycleContext;
+use runar_node::{services::LifecycleContext, ServiceState};
 use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, atomic::{AtomicI64, Ordering}};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use uuid::Uuid;
 
 use crate::sqlite::{SqliteService, SqlQuery, Value};
@@ -103,8 +103,45 @@ impl ReplicationManager {
 
     // Handles startup synchronization
     pub async fn sync_on_startup(&self, context: &LifecycleContext) -> Result<()> {
-        context.info("Starting replication synchronization...");
+        context.info("Starting replication synchronization - waiting for node discovery...");
         
+        // Wait for service discovery
+        let service_path = self.sqlite_service.path();
+        
+        // Check if remote service is already running (we want remote services, not local)
+        let service_running = match context.request(format!("$registry/services/{service_path}/state"), Some(ArcValue::new_primitive(false))).await {
+            Ok(response) => { 
+                match response.as_type::<ServiceState>() {
+                    Ok(ServiceState::Running) => {
+                        context.debug(format!("Service already running in the network for: {service_path}"));
+                        true
+                    }
+                    Ok(state) => {
+                        context.debug(format!("Service found but not running (state: {state:?}) for: {service_path}"));
+                        false
+                    }
+                    Err(e) => {
+                        context.error(format!("Failed to parse service state for {service_path}: {e}"));
+                        return Err(e);
+                    }
+                }
+            } 
+            Err(e) => {
+                context.info(format!("Service state request failed for {service_path}: {e}"));
+                return Err(e);
+            }
+        };
+
+        // If service is not running, wait for it to become available
+        if !service_running {
+            if context.on(format!("$registry/services/{service_path}/state/running"), Duration::from_secs(10)).await.is_ok() {
+                context.info(format!("Service found in the network for: {service_path}"));
+            } else {
+                context.info(format!("Service discovery timed out - No service found in the network for: {service_path}"));
+                return Ok(());
+            }
+        }
+
         // Request latest state from network for each enabled table
         for table in self.enabled_tables.iter() {
             let mut page = 0;

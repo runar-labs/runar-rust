@@ -164,8 +164,11 @@ pub struct ServiceRegistry {
     /// Remote services registry (using PathTrie instead of HashMap)
     remote_services: Arc<RwLock<PathTrie<Arc<RemoteService>>>>,
 
-    /// Service lifecycle states - moved from Node
-    service_states_by_service_path: Arc<RwLock<HashMap<String, ServiceState>>>,
+    /// Local service lifecycle states
+    local_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
+    
+    /// Remote service lifecycle states
+    remote_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
 
     /// Logger instance
     logger: Arc<Logger>,
@@ -186,7 +189,8 @@ impl Clone for ServiceRegistry {
             local_services: self.local_services.clone(),
             local_services_list: self.local_services_list.clone(),
             remote_services: self.remote_services.clone(),
-            service_states_by_service_path: self.service_states_by_service_path.clone(),
+            local_service_states: self.local_service_states.clone(),
+            remote_service_states: self.remote_service_states.clone(),
             logger: self.logger.clone(),
         }
     }
@@ -215,7 +219,8 @@ impl ServiceRegistry {
             local_services: Arc::new(RwLock::new(PathTrie::new())),
             local_services_list: Arc::new(RwLock::new(HashMap::new())),
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
-            service_states_by_service_path: Arc::new(RwLock::new(HashMap::new())),
+            local_service_states: Arc::new(RwLock::new(HashMap::new())),
+            remote_service_states: Arc::new(RwLock::new(HashMap::new())),
             logger,
         }
     }
@@ -283,6 +288,8 @@ impl ServiceRegistry {
             .write()
             .await
             .remove_values(service_topic);
+
+        self.remove_remote_service_state(service_topic).await?;
 
         Ok(())
     }
@@ -605,29 +612,67 @@ impl ServiceRegistry {
     }
 
     //FIX: this mnethods should reveive a topiPAth instead of a string for service_path
-    /// Update service state
+    /// Update local service state
     ///
-    /// INTENTION: Track the lifecycle state of a service.
-    pub async fn update_service_state(
+    /// INTENTION: Track the lifecycle state of a local service.
+    pub async fn update_local_service_state(
         &self,
         service_topic: &TopicPath,
         state: ServiceState,
     ) -> Result<()> {
         self.logger.debug(format!(
-            "Updating service state for {}: {:?}",
+            "Updating local service state for {}: {:?}",
             service_topic.clone(),
             state
         ));
-        let mut states = self.service_states_by_service_path.write().await;
+        let mut states = self.local_service_states.write().await;
         states.insert(service_topic.as_str().to_string(), state);
         Ok(())
     }
 
-    pub async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        let map = self.service_states_by_service_path.read().await;
+    /// Update remote service state
+    ///
+    /// INTENTION: Track the lifecycle state of a remote service.
+    pub async fn update_remote_service_state(
+        &self,
+        service_topic: &TopicPath,
+        state: ServiceState,
+    ) -> Result<()> {
+        self.logger.debug(format!(
+            "Updating remote service state for {}: {:?}",
+            service_topic.clone(),
+            state
+        ));
+        let mut states = self.remote_service_states.write().await;
+        states.insert(service_topic.as_str().to_string(), state);
+        Ok(())
+    }
+
+    pub async fn remove_remote_service_state(
+        &self,
+        service_topic: &TopicPath, 
+    ) -> Result<()> {
+        self.logger.debug(format!(
+            "Removing remote service state for {}",
+            service_topic.clone(), 
+        ));
+        let mut states = self.remote_service_states.write().await;
+        states.remove(service_topic.as_str());
+        Ok(())
+    }
+
+    /// Get local service state
+    pub async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
+        let map = self.local_service_states.read().await;
         map.get(service_path.as_str()).copied()
     }
 
+    /// Get remote service state
+    pub async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
+        let map = self.remote_service_states.read().await;
+        map.get(service_path.as_str()).copied()
+    }
+ 
     /// Get metadata for all events under a specific service path
     ///
     /// INTENTION: Retrieve metadata for all events registered under a service path.
@@ -926,12 +971,12 @@ impl ServiceRegistry {
 
 #[async_trait::async_trait]
 impl crate::services::RegistryDelegate for ServiceRegistry {
-    async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        self.service_states_by_service_path
-            .read()
-            .await
-            .get(service_path.as_str())
-            .cloned()
+    async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
+        self.get_local_service_state(service_path).await
+    }
+
+    async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
+        self.get_remote_service_state(service_path).await
     }
 
     // This method is now implemented as a public method above
@@ -1004,7 +1049,7 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
         self.remove_remote_action_handler(topic_path).await
     }
 
-    async fn update_service_state_if_valid(
+    async fn update_local_service_state_if_valid(
         &self,
         service_path: &TopicPath,
         new_state: ServiceState,
@@ -1014,11 +1059,11 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
         match (current_state, new_state) {
             (ServiceState::Running, ServiceState::Paused) => {
                 // Valid transition: Running -> Paused
-                self.update_service_state(service_path, new_state).await
+                self.update_local_service_state(service_path, new_state).await
             }
             (ServiceState::Paused, ServiceState::Running) => {
                 // Valid transition: Paused -> Running
-                self.update_service_state(service_path, new_state).await
+                self.update_local_service_state(service_path, new_state).await
             }
             _ => {
                 // Invalid transition
@@ -1032,7 +1077,7 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
     }
 
     async fn validate_pause_transition(&self, service_path: &TopicPath) -> Result<()> {
-        let current_state = self.get_service_state(service_path).await;
+        let current_state = self.get_local_service_state(service_path).await;
         match current_state {
             Some(ServiceState::Running) => {
                 // Valid state for pausing
@@ -1053,7 +1098,7 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
     }
 
     async fn validate_resume_transition(&self, service_path: &TopicPath) -> Result<()> {
-        let current_state = self.get_service_state(service_path).await;
+        let current_state = self.get_local_service_state(service_path).await;
         match current_state {
             Some(ServiceState::Paused) => {
                 // Valid state for resuming

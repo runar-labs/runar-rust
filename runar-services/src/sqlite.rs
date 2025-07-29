@@ -843,7 +843,9 @@ impl AbstractService for SqliteService {
         ));
 
         // Register paginated API for replication if enabled
+        context.info(format!("Checking replication config for service {}: {:?}", self.name, self.config.replication.is_some()));
         if let Some(_replication_config) = &self.config.replication {
+            context.info(format!("Replication enabled for service {}, registering get_table_events action", self.name));
             let get_table_events_handler = {
                 let service_arc = Arc::new(self.clone());
                 Arc::new(
@@ -872,10 +874,14 @@ impl AbstractService for SqliteService {
                 )
             };
             
-                                context
+                                context.info(format!("About to register replication/get_table_events action for service {}", self.name));
+                                let result = context
                         .register_action("replication/get_table_events", get_table_events_handler)
-                        .await?;
-                    context.info("'replication/get_table_events' action registered for replication");
+                        .await;
+                    match result {
+                        Ok(_) => context.info(format!("'replication/get_table_events' action registered successfully for service {}", self.name)),
+                        Err(e) => context.error(format!("Failed to register 'replication/get_table_events' action for service {}: {}", self.name, e)),
+                    }
         }
 
         // Register event handlers for replication if enabled

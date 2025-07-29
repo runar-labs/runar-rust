@@ -126,9 +126,16 @@ impl RegistryService {
         context
             .register_action(
                 "services/{service_path}/state",
-                Arc::new(move |_params, ctx| {
+                Arc::new(move |params, ctx| {
                     let inner_self = self_clone.clone();
-                    Box::pin(async move { inner_self.handle_service_state(ctx).await })
+                    Box::pin(async move {
+                        let is_local = params
+                            .map(|p| p.as_type::<bool>().unwrap_or(true))
+                            .unwrap_or(true);
+                        inner_self
+                            .handle_service_state(is_local, ctx)
+                            .await
+                    })
                 }),
             )
             .await?;
@@ -246,7 +253,7 @@ impl RegistryService {
     }
 
     /// Handler for getting just the state of a service
-    async fn handle_service_state(&self, ctx: RequestContext) -> Result<ArcValue> {
+    async fn handle_service_state(&self, is_local: bool, ctx: RequestContext) -> Result<ArcValue> {
         // Extract the service path from path parameters
         let service_path = match self.extract_service_path(&ctx) {
             Ok(path) => path,
@@ -260,17 +267,24 @@ impl RegistryService {
         let network_id_string = ctx.network_id().clone();
         let service_topic = TopicPath::new_service(&network_id_string, &service_path);
 
-        // Get service state directly from the registry delegate
-        if let Some(service_state) = self
-            .registry_delegate
-            .get_service_state(&service_topic)
-            .await
-        {
-            Ok(ArcValue::new_struct(service_state))
+        ctx.logger.debug(format!(
+            "Getting service state for '{service_path}' (is_local: {is_local})"
+        ));
+
+        // Get service state based on is_local parameter
+        let service_state = if is_local {
+            self.registry_delegate.get_local_service_state(&service_topic).await
         } else {
-            ctx.logger
-                .debug(format!("Service '{service_path}' not found"));
-            Ok(ArcValue::null())
+            self.registry_delegate.get_remote_service_state(&service_topic).await
+        };
+
+        match service_state {
+            Some(state) => Ok(ArcValue::new_struct(state)),
+            None => {
+                ctx.logger
+                    .debug(format!("Service '{service_path}' not found (param is_local: {is_local})"));
+                Ok(ArcValue::new_struct(ServiceState::Unknown))
+            }
         }
     }
 
@@ -293,9 +307,9 @@ impl RegistryService {
         self.registry_delegate.validate_pause_transition(&service_topic).await?;
 
         // Get current state and update to Paused
-        if let Some(current_state) = self.registry_delegate.get_service_state(&service_topic).await {
+        if let Some(current_state) = self.registry_delegate.get_local_service_state(&service_topic).await {
             self.registry_delegate
-                .update_service_state_if_valid(&service_topic, ServiceState::Paused, current_state)
+                .update_local_service_state_if_valid(&service_topic, ServiceState::Paused, current_state)
                 .await?;
 
             ctx.logger.info(format!("Service '{service_path}' paused successfully"));
@@ -326,9 +340,9 @@ impl RegistryService {
         self.registry_delegate.validate_resume_transition(&service_topic).await?;
 
         // Get current state and update to Running
-        if let Some(current_state) = self.registry_delegate.get_service_state(&service_topic).await {
+        if let Some(current_state) = self.registry_delegate.get_local_service_state(&service_topic).await {
             self.registry_delegate
-                .update_service_state_if_valid(&service_topic, ServiceState::Running, current_state)
+                .update_local_service_state_if_valid(&service_topic, ServiceState::Running, current_state)
                 .await?;
 
             ctx.logger.info(format!("Service '{service_path}' resumed successfully"));

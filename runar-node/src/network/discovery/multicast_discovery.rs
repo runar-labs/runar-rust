@@ -445,25 +445,31 @@ impl MulticastDiscovery {
 
             logger.debug(format!("Processing announce message from {peer_node_id}"));
 
-            // Check if this is a new peer before responding
+            // Check if this is a new peer before responding AND notifying
             let is_new_peer = {
                 let nodes_read = nodes.read().await;
                 !nodes_read.contains_key(&peer_node_id)
             };
 
-            // Store the peer info - clone peer_public_key before using it outside this block
+            // Store the peer info
             {
                 let mut nodes_write = nodes.write().await;
                 nodes_write.insert(peer_node_id.clone(), peer_info.clone());
             }
 
-            // Notify listeners
-            {
-                let listeners_read = listeners.read().await;
-                for listener in listeners_read.iter() {
-                    let fut = listener(peer_info.clone());
-                    fut.await;
+            // ONLY notify listeners if this is a new peer
+            if is_new_peer {
+                // Notify listeners
+                {
+                    let listeners_read = listeners.read().await;
+                    for listener in listeners_read.iter() {
+                        let fut = listener(peer_info.clone());
+                        fut.await;
+                    }
                 }
+                logger.debug(format!("Notified listeners about new peer: {peer_node_id}"));
+            } else {
+                logger.debug(format!("Skipping listener notification for existing peer: {peer_node_id}"));
             }
 
             // Only respond if this is a new peer we haven't seen before

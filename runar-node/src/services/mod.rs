@@ -812,7 +812,9 @@ pub trait KeysDelegate: Send + Sync {
 /// the functionality needed by registry operations.
 #[async_trait::async_trait]
 pub trait RegistryDelegate: Send + Sync {
-    async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState>;
+    async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState>;
+
+    async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState>;
 
     /// Get metadata for a specific service
     async fn get_service_metadata(&self, service_path: &TopicPath) -> Option<ServiceMetadata>;
@@ -848,12 +850,18 @@ pub trait RegistryDelegate: Send + Sync {
     ///
     /// INTENTION: Validate state transitions before updating service state.
     /// This ensures that services can only transition to valid states.
-    async fn update_service_state_if_valid(
+    async fn update_local_service_state_if_valid(
         &self,
         service_path: &TopicPath,
         new_state: ServiceState,
         current_state: ServiceState,
     ) -> Result<()>;
+
+    // async fn update_remote_service_state(
+    //     &self,
+    //     service_path: &TopicPath,
+    //     new_state: ServiceState,
+    // ) -> Result<()>;
 
     /// Validate that a service can be paused
     ///

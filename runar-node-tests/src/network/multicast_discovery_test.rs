@@ -203,3 +203,87 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_no_duplicate_notifications() -> Result<()> {
+    // Create random node public keys
+    let node_1_public_key: [u8; 32] = rand::random();
+    let node_1_id = compact_id(&node_1_public_key);
+
+    let node_2_public_key: [u8; 32] = rand::random();
+    let node_2_id = compact_id(&node_2_public_key);
+
+    // Create two discovery instances
+    let discovery1 =
+        create_test_discovery("test-network", &node_1_id, &node_1_public_key).await?;
+    let discovery2 =
+        create_test_discovery("test-network", &node_2_id, &node_2_public_key).await?;
+
+    // Create a counter to track how many times we receive notifications
+    let notification_count = Arc::new(tokio::sync::Mutex::new(0));
+    let notification_count_clone = Arc::clone(&notification_count);
+
+    // Create a channel to receive notifications
+    let (tx, mut rx) = mpsc::channel::<PeerInfo>(10);
+
+    // Set discovery listener for discovery1 that counts notifications
+    let node_2_id_clone = node_2_id.clone();
+    discovery1
+        .set_discovery_listener(Arc::new(move |peer_info: PeerInfo| {
+            let tx = tx.clone();
+            let count = Arc::clone(&notification_count_clone);
+            let node_2_id = node_2_id_clone.clone();
+
+            Box::pin(async move {
+                // Only count for node2
+                let peer_id = compact_id(&peer_info.public_key);
+                if peer_id == node_2_id {
+                    // Increment counter
+                    {
+                        let mut count_guard = count.lock().await;
+                        *count_guard += 1;
+                        println!("Received notification #{count_guard} for peer {peer_id}");
+                    }
+
+                    // Send the peer info to our channel
+                    if let Err(e) = tx.send(peer_info).await {
+                        eprintln!("Channel send error: {e}");
+                    }
+                }
+            })
+        }))
+        .await?;
+
+    // Start announcing for both nodes
+    discovery1.start_announcing().await?;
+    discovery2.start_announcing().await?;
+
+    // Wait for initial discovery
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Wait for multiple announcement cycles (each 1 second)
+    // This should trigger multiple announcements but only one notification
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Check the notification count
+    let final_count = *notification_count.lock().await;
+    println!("Final notification count: {final_count}");
+
+    // We should have received exactly 1 notification, not multiple
+    assert_eq!(final_count, 1, "Expected exactly 1 notification, got {final_count}");
+
+    // Verify we received the peer info
+    if let Ok(peer_info) = rx.try_recv() {
+        let received_peer_id = compact_id(&peer_info.public_key);
+        assert_eq!(received_peer_id, node_2_id, "Received wrong peer ID");
+        println!("Successfully received peer info for: {received_peer_id}");
+    } else {
+        panic!("No peer info received in channel");
+    }
+
+    // Shutdown both discoveries
+    discovery1.stop_announcing().await?;
+    discovery2.stop_announcing().await?;
+
+    Ok(())
+}

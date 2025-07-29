@@ -146,6 +146,8 @@ impl std::fmt::Display for NodeConfig {
     }
 }
 
+const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
+
 /// The Node is the main entry point for the application
 ///
 /// INTENTION: Provide a high-level interface for services to communicate
@@ -386,14 +388,14 @@ impl Node {
                 "Failed to initialize service: {service_name}, error: {e}",
             ));
             registry
-                .update_service_state(&service_topic, ServiceState::Error)
+                .update_local_service_state(&service_topic, ServiceState::Error)
                 .await?;
             self.publish_with_options(format!("$registry/services/{}/state/error", service_topic.service_path()), 
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
             return Err(anyhow!("Failed to initialize service: {e}"));
         }
         registry
-            .update_service_state(&service_topic, ServiceState::Initialized)
+            .update_local_service_state(&service_topic, ServiceState::Initialized)
             .await?;
         self.publish_with_options(format!("$registry/services/{}/state/initialized", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
         // Service initialized successfully, create the ServiceEntry and register it
@@ -402,19 +404,20 @@ impl Node {
             .unwrap_or_default()
             .as_secs();
 
-        let service_entry = ServiceEntry {
+        let service_entry =Arc::new( ServiceEntry {
             service: Arc::new(service),
-            service_topic,
+            service_topic: service_topic.clone(),
             service_state: ServiceState::Initialized,
             registration_time: now,
             last_start_time: None, // Will be set when the service is started
-        };
+        });
         registry
-            .register_local_service(Arc::new(service_entry))
+            .register_local_service(service_entry.clone())
             .await?;
 
         //if started... need to increment  -> registry_version
         if self.running.load(Ordering::SeqCst) {
+            self.start_service(&service_topic, service_entry.as_ref()).await;
             self.registry_version.fetch_add(1, Ordering::SeqCst);
             let _ = self.notify_node_change().await;
         }
@@ -525,42 +528,40 @@ impl Node {
         let registry = Arc::clone(&self.service_registry);
         let local_services = registry.get_local_services().await;
 
-        // start each service
-        for (service_topic, service_entry) in local_services {
-            self.logger
-                .info(format!("Initializing service: {service_topic}"));
+        let internal_services = local_services.iter().filter(|(_, service_entry)| INTERNAL_SERVICES.contains(&service_entry.service.path())).collect::<HashMap<_, _>>();
+        let non_internal_services = local_services.iter().filter(|(_, service_entry)| !INTERNAL_SERVICES.contains(&service_entry.service.path())).collect::<HashMap<_, _>>();
 
-            let service = service_entry.service.clone();
+        // start internal services first
+        for (service_topic, service_entry) in internal_services {
+            self.start_service(service_topic, service_entry).await;
+        }
 
-            // Create a lifecycle context for starting
-            let start_context = crate::services::LifecycleContext::new(
-                &service_topic,
-                Arc::new(self.clone()), // Node delegate
-                Arc::new(
-                    self.logger
-                        .clone()
-                        .with_component(runar_common::Component::Service),
-                ),
-            );
-            //TODO service start can take a long time and it shuold not block this loop..  the update to sate runnig and the event dispath shoould wait for it.. but the loop shuood bot be blocked.
-            // Start the service using the context
-            if let Err(e) = service.start(start_context).await {
-                self.logger.error(format!(
-                    "Failed to start service: {service_topic}, error: {e}"
-                ));
-                registry
-                    .update_service_state(&service_topic, ServiceState::Error)
-                    .await?;
-                self.publish_with_options(format!("$registry/services/{}/state/error", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
-                continue;
-            }
+        // Start non-internal services in parallel to avoid blocking the loop
+        let mut service_tasks = Vec::new();
+        
+        for (service_topic, service_entry) in non_internal_services {
+            let node_clone = Arc::new(self.clone());
+            let service_topic_clone = service_topic.clone();
+            let service_entry_clone = service_entry.clone();
             
-            registry
-                .update_service_state(&service_topic, ServiceState::Running)
-                .await?;
-
-            self.publish_with_options(format!("$registry/services/{}/state/running", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
-
+            let task = tokio::spawn(async move {
+                node_clone.start_service(&service_topic_clone, &service_entry_clone).await;
+            });
+            
+            service_tasks.push((service_topic.clone(), task));
+        }
+        
+        // Wait for all service start tasks to complete
+        for (service_topic, task) in service_tasks {
+            match task.await {
+                Ok(()) => {
+                    self.logger.info(format!("Service start task completed: {service_topic}"));
+                }
+                Err(e) => {
+                    self.logger.error(format!("Task panicked for service: {service_topic}, error: {e}"));
+                    // Continue with other services even if one panics
+                }
+            }
         }
 
         // Start networking if enabled
@@ -578,6 +579,51 @@ impl Node {
         self.registry_version.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
+    }
+
+    async fn start_service(&self, service_topic: &TopicPath, service_entry: &ServiceEntry) {
+        self.logger
+            .info(format!("Starting service: {service_topic}"));
+
+        let service = service_entry.service.clone();
+        let registry = &self.service_registry.clone();
+
+        // Create a lifecycle context for starting
+        let start_context = crate::services::LifecycleContext::new(
+            service_topic,
+            Arc::new(self.clone()), // Node delegate
+            Arc::new(
+                self.logger
+                    .clone()
+                    .with_component(runar_common::Component::Service),
+            ),
+        );
+        
+        // Start the service using the context
+        if let Err(e) = service.start(start_context).await {
+            self.logger.error(format!(
+                "Failed to start service: {service_topic}, error: {e}"
+            ));
+            if let Err(update_err) = registry
+                .update_local_service_state(service_topic, ServiceState::Error)
+                .await {
+                self.logger.error(format!("Failed to update service state to Error: {update_err}"));
+            }
+            if let Err(publish_err) = self.publish_with_options(format!("$registry/services/{}/state/error", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await {
+                self.logger.error(format!("Failed to publish error state: {publish_err}"));
+            }
+            return;
+        }
+        
+        if let Err(update_err) = registry
+            .update_local_service_state(service_topic, ServiceState::Running)
+            .await {
+            self.logger.error(format!("Failed to update service state to Running: {update_err}"));
+        }
+
+        if let Err(publish_err) = self.publish_with_options(format!("$registry/services/{}/state/running", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await {
+            self.logger.error(format!("Failed to publish running state: {publish_err}"));
+        }
     }
 
     /// Stop the Node and all registered services
@@ -631,7 +677,7 @@ impl Node {
             }
 
             registry
-                .update_service_state(&service_topic, ServiceState::Stopped)
+                .update_local_service_state(&service_topic, ServiceState::Stopped)
                 .await?;
             self.publish_with_options(format!("$registry/services/{}/state/stopped", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;   
         }
@@ -872,23 +918,7 @@ impl Node {
         self.logger.info(format!(
             "Discovery listener found node: {discovered_peer_id}",
         ));
-
-        // **CRITICAL FIX**: Implement lexicographic ordering to prevent duplicate connections
-        // Only the node with the smaller peer ID should initiate the connection
-        // let should_initiate = self.node_id < discovered_peer_id;
-
-        // if !should_initiate {
-        //     self.logger.info(format!(
-        //         "🚫 [ConnectionOrdering] Not initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is larger, waiting for them to connect to us", node_id=self.node_id
-        //     ));
-        //     return Ok(());
-        // }
-
-        // self.logger.info(format!(
-        //     "✅ [ConnectionOrdering] Initiating connection to {discovered_peer_id} - our peer ID ({node_id}) is smaller",
-        //     node_id=self.node_id
-        // ));
-
+ 
         // Check if we're already connected to this peer
         let transport_guard = self.network_transport.read().await;
         if let Some(transport) = transport_guard.as_ref() {
@@ -1310,9 +1340,9 @@ impl Node {
         self.logger
             .debug(format!("Processing request: {topic_path}"));
 
-        // First check service state - if no state exists, no local service exists
+        // First check local service state - if no state exists, no local service exists
         let service_topic = TopicPath::new_service(&self.network_id, &topic_path.service_path());
-        let service_state = self.service_registry.get_service_state(&service_topic).await;
+        let service_state = self.service_registry.get_local_service_state(&service_topic).await;
 
         // If service state exists, check if it's running
         if let Some(state) = service_state {
@@ -1614,6 +1644,7 @@ impl Node {
                     path = service.path()
                 ));
             }
+            self.service_registry.update_remote_service_state(&service_topic_path, ServiceState::Running).await?;
         }
 
         self.logger.info(format!(
@@ -1693,12 +1724,10 @@ impl Node {
         // Build capability information for each service
         let mut services = Vec::new();
 
-        let internal_services = ["$registry", "$keys"];
-
         for (service_path, service_entry) in service_paths {
             let service = &service_entry.service;
             // Skip internals services:
-            if internal_services.contains(&service.path()) {
+            if INTERNAL_SERVICES.contains(&service.path()) {
                 continue;
             }
 
@@ -1905,7 +1934,7 @@ impl NodeDelegate for Node {
             data_schema: options.data_schema,
         };
 
-        self.logger.info(format!(
+        self.logger.debug(format!(
             "Node: subscribe_with_options called for topic_path '{topic_path}', metadata.path '{metadata_path}'",
             topic_path=topic_path.as_str(), metadata_path=event_metadata.path
         ));
@@ -1992,8 +2021,12 @@ impl KeysDelegate for Node {
 #[async_trait]
 impl RegistryDelegate for Node {
     /// Get service state
-    async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        self.service_registry.get_service_state(service_path).await
+    async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
+        self.service_registry.get_local_service_state(service_path).await
+    }
+
+    async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
+        self.service_registry.get_remote_service_state(service_path).await
     }
 
     /// Get metadata for a specific service
@@ -2044,7 +2077,7 @@ impl RegistryDelegate for Node {
             .await
     }
 
-    async fn update_service_state_if_valid(
+    async fn update_local_service_state_if_valid(
         &self,
         service_path: &TopicPath,
         new_state: ServiceState,
@@ -2052,7 +2085,7 @@ impl RegistryDelegate for Node {
     ) -> Result<()> {
         // Delegate to the service registry
         self.service_registry
-            .update_service_state_if_valid(service_path, new_state, current_state)
+            .update_local_service_state_if_valid(service_path, new_state, current_state)
             .await
     }
 
