@@ -849,28 +849,30 @@ impl AbstractService for SqliteService {
 
         // Register paginated API for replication if enabled
         context.info(format!("Checking replication config for service {}: {:?}", self.name, self.config.replication.is_some()));
-        if let Some(_replication_config) = &self.config.replication {
-            context.info(format!("Replication enabled for service {}, registering get_table_events action", self.name));
+        if let Some(replication_config) = &self.config.replication {
+
+            context.info("Initializing replication manager...");
+            
+            let node_id = self.network_id.clone()
+                .ok_or_else(|| anyhow!("Network ID is required for replication"))?;
+            
+            let replication_manager = Arc::new(crate::replication::ReplicationManager::new(
+                Arc::new(self.clone()),
+                replication_config.clone(),
+                context.logger.clone(),
+                node_id,
+            ));
+
             let get_table_events_handler = {
-                let service_arc = Arc::new(self.clone());
+                let replication_manager_clone = replication_manager.clone();
                 Arc::new(
                     move |params_opt: Option<ArcValue>, _req_ctx: RequestContext| {
-                        let service_clone = service_arc.clone();
+                        let replication_manager_clone = replication_manager_clone.clone();
                         Box::pin(async move {
                             if let Some(request_data) = params_opt {
-                                let request = (*request_data.as_type_ref::<crate::replication::TableEventsRequest>()?).clone();
-                                
-                                if let Some(replication_manager) = {
-                                    let manager_guard = service_clone.replication_manager
-                                        .read()
-                                        .map_err(|e| anyhow!("Failed to acquire read lock on replication_manager: {e}"))?;
-                                    manager_guard.clone()
-                                } {
-                                    let response = replication_manager.get_table_events(request).await?;
-                                    Ok(ArcValue::new_struct(response))
-                                } else {
-                                    Err(anyhow!("Replication not enabled"))
-                                }
+                                let request = request_data.as_type_ref::<crate::replication::TableEventsRequest>()?;
+                                let response = replication_manager_clone.get_table_events(request).await?;
+                                Ok(ArcValue::new_struct(response))
                             } else {
                                 Err(anyhow!("No request data provided"))
                             }
@@ -879,19 +881,18 @@ impl AbstractService for SqliteService {
                 )
             };
             
-                                context.info(format!("About to register {} action for service {}", REPLICATION_GET_TABLE_EVENTS_ACTION, self.name));
-                                let result = context
-                        .register_action(REPLICATION_GET_TABLE_EVENTS_ACTION, get_table_events_handler)
-                        .await;
-                    match result {
-                        Ok(_) => context.info(format!("'{}' action registered successfully for service {}", REPLICATION_GET_TABLE_EVENTS_ACTION, self.name)),
-                        Err(e) => context.error(format!("Failed to register '{}' action for service {}: {}", REPLICATION_GET_TABLE_EVENTS_ACTION, self.name, e)),
-                    }
-        }
-
-        // Register event handlers for replication if enabled
-        if let Some(_replication_config) = &self.config.replication {
-            let service_arc = Arc::new(self.clone());
+            context
+                .register_action(REPLICATION_GET_TABLE_EVENTS_ACTION, get_table_events_handler)
+                .await?;
+        
+            // Store the replication manager
+            {
+                let mut manager_guard = self.replication_manager
+                    .write()
+                    .map_err(|e| anyhow!("Failed to acquire write lock on replication_manager: {e}"))?;
+                *manager_guard = Some(replication_manager.clone());
+            }
+            
             
             // Subscribe to all events for enabled tables with proper namespacing
             for table in &self.config.replication.as_ref().unwrap().enabled_tables {
@@ -901,35 +902,27 @@ impl AbstractService for SqliteService {
                 
                 // Create a single handler for all operation types
                 let event_handler = {
-                    let s_arc = service_arc.clone();
+                    let replication_manager_clone = replication_manager.clone(); // Just clone the Arc
                     Box::new(move |ctx: Arc<EventContext>, event: Option<ArcValue>| {
-                        let service_clone = s_arc.clone();
+                        let replication_manager_clone = replication_manager_clone.clone(); // Just clone the Arc
                         Box::pin(async move {
                             ctx.info("🎯 Event handler triggered");
                             
                             if let Some(event_data) = event {
                                 ctx.info("📦 Event data received");
+                                 
+                                let sqlite_event = (*event_data.as_type_ref::<crate::replication::SqliteEvent>()?).clone();
+                                let is_local = ctx.is_local();
                                 
-                                if let Some(replication_manager) = {
-                                    let manager_guard = service_clone.replication_manager
-                                        .read()
-                                        .map_err(|e| anyhow!("Failed to acquire read lock on replication_manager: {e}"))?;
-                                    manager_guard.clone()
-                                } {
-                                    let sqlite_event = (*event_data.as_type_ref::<crate::replication::SqliteEvent>()?).clone();
-                                    let is_local = ctx.is_local();
-                                    
-                                    ctx.info(format!(
-                                        "🔄 Processing SQLite event: table={}, operation={}, is_local={}",
-                                        sqlite_event.table, sqlite_event.operation, is_local
-                                    ));
-                                    
-                                    replication_manager.handle_sqlite_event(sqlite_event, is_local).await?;
-                                    
-                                    ctx.info("✅ Event processing completed");
-                                } else {
-                                    ctx.warn("⚠️  No replication manager available");
-                                }
+                                ctx.info(format!(
+                                    "🔄 Processing SQLite event: table={}, operation={}, is_local={}",
+                                    sqlite_event.table, sqlite_event.operation, is_local
+                                ));
+                                
+                                replication_manager_clone.handle_sqlite_event(sqlite_event, is_local).await?;
+                                
+                                ctx.info("✅ Event processing completed");
+                                
                             } else {
                                 ctx.debug("📭 No event data provided");
                             }
@@ -951,6 +944,7 @@ impl AbstractService for SqliteService {
     }
 
     async fn start(&self, context: LifecycleContext) -> Result<()> {
+        let service_arc = Arc::new(self.clone());
         context.info(format!(
             "SqliteService '{}' starting worker and applying schema.",
             self.name
@@ -1035,34 +1029,27 @@ impl AbstractService for SqliteService {
 
         // If replication is enabled, initialize the replication manager
         if let Some(replication_config) = &self.config.replication {
-            context.info("Initializing replication manager...");
+            context.info("Starting replication manager...");
             
-            let node_id = self.network_id.clone()
-                .ok_or_else(|| anyhow!("Network ID is required for replication"))?;
+            // let node_id = self.network_id.clone()
+            //     .ok_or_else(|| anyhow!("Network ID is required for replication"))?;
             
-            let replication_manager = Arc::new(crate::replication::ReplicationManager::new(
-                Arc::new(self.clone()),
-                replication_config.clone(),
-                context.logger.clone(),
-                node_id,
-            ));
+            if let Some(replication_manager) = {
+                let manager_guard = service_arc.replication_manager
+                    .read()
+                    .map_err(|e| anyhow!("Failed to acquire read lock on replication_manager: {e}"))?;
+                manager_guard.clone()
+            } {
             
-            // Store the replication manager
-            {
-                let mut manager_guard = self.replication_manager
-                    .write()
-                    .map_err(|e| anyhow!("Failed to acquire write lock on replication_manager: {e}"))?;
-                *manager_guard = Some(replication_manager.clone());
-            }
-            
-            // Create event tables
-            replication_manager.create_event_tables(&context).await?;
-            
-            // Perform startup sync if enabled
-            if replication_config.startup_sync {
-                context.info("Starting replication synchronization...");
-                replication_manager.sync_on_startup(&context).await?;
-                context.info("Replication synchronization completed");
+                // Create event tables
+                replication_manager.create_event_tables(&context).await?;
+                
+                // Perform startup sync if enabled
+                if replication_config.startup_sync {
+                    context.info("Starting replication synchronization...");
+                    replication_manager.sync_on_startup(&context).await?;
+                    context.info("Replication synchronization completed");
+                }
             }
         }
 

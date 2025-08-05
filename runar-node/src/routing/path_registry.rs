@@ -235,19 +235,9 @@ impl<T: Clone> PathTrie<T> {
         // Handle different segment types
         if segment == "*" {
             // Single wildcard - match any single segment
-            // Check all children at this level
-            for child in self.children.values() {
-                child.collect_wildcard_matches(pattern_segments, index + 1, results);
-            }
-
-            // Also check wildcard and template children if they exist
-            if let Some(child) = &self.wildcard_child {
-                child.collect_wildcard_matches(pattern_segments, index + 1, results);
-            }
-
-            if let Some(child) = &self.template_child {
-                child.collect_wildcard_matches(pattern_segments, index + 1, results);
-            }
+            // For * wildcard, we need to collect ALL handlers from this node and ALL descendants
+            // This is equivalent to a multi-wildcard (>) at this level
+            self.collect_all_handlers(results);
         } else if segment == ">" {
             // Multi-wildcard - match everything below this level
             // Add all handlers from this level and all children recursively

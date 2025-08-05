@@ -465,7 +465,7 @@ impl ReplicationManager {
     }
 
     // Returns paginated events for a table (for startup sync)
-    pub async fn get_table_events(&self, request: TableEventsRequest) -> Result<TableEventsResponse> {
+    pub async fn get_table_events(&self, request: Arc<TableEventsRequest>) -> Result<TableEventsResponse> {
         let event_table_name = format!("{}{}", request.table_name, EVENT_TABLE_SUFFIX);
         
         self.logger.debug(format!(
