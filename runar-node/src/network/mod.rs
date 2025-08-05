@@ -10,7 +10,7 @@ pub use discovery::{
     DiscoveryListener, DiscoveryOptions, MemoryDiscovery, MulticastDiscovery, NodeDiscovery,
     NodeInfo,
 };
-pub use runar_schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
+pub use runar_schemas::{ActionMetadata, ServiceMetadata};
 pub use transport::{
     MessageHandler, NetworkMessage, NetworkMessageType, NetworkTransport, QuicTransport,
     QuicTransportOptions, TransportOptions,

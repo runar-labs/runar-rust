@@ -28,9 +28,9 @@ use uuid::Uuid;
 
 use crate::routing::{PathTrie, TopicPath};
 use crate::services::abstract_service::{AbstractService, ServiceState};
-use crate::services::{ActionHandler, EventContext, RemoteService};
+use crate::services::{ActionHandler, EventContext, EventRegistrationOptions, RemoteService};
 use runar_common::logging::Logger;
-use runar_schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
 use runar_serializer::ArcValue;
 
 /// Type definition for event callbacks
@@ -119,10 +119,10 @@ impl std::fmt::Debug for ServiceEntry {
 pub type LocalActionEntryValue = (ActionHandler, TopicPath, Option<ActionMetadata>);
 
 // Type alias for the Vec stored in local_event_subscriptions PathTrie
-pub type LocalEventSubscribersVec = Vec<(String, EventCallback, Option<EventMetadata>)>;
+pub type LocalEventSubscribersVec = Vec<(String, EventCallback, SubscriptionMetadata)>;
 
 // Type alias for the Vec stored in remote_event_subscriptions PathTrie
-pub type RemoteEventSubscribersVec = Vec<(String, EventCallback)>;
+pub type RemoteEventSubscribersVec = Vec<(String, EventCallback, SubscriptionMetadata)>;
 
 /// Service registry for managing services and their handlers
 ///
@@ -136,10 +136,7 @@ pub struct ServiceRegistry {
     /// Local action handlers organized by path (using PathTrie instead of HashMap)
     /// Store both the handler and the original registration topic path for parameter extraction
     local_action_handlers: Arc<RwLock<PathTrie<LocalActionEntryValue>>>,
-
-    //index to store the events that a service listens to
-    local_events_by_service: Arc<RwLock<PathTrie<Vec<EventMetadata>>>>,
-
+    
     /// Remote action handlers organized by path (using PathTrie instead of HashMap)
     remote_action_handlers: Arc<RwLock<PathTrie<Vec<ActionHandler>>>>,
 
@@ -178,7 +175,6 @@ impl Clone for ServiceRegistry {
     fn clone(&self) -> Self {
         ServiceRegistry {
             local_action_handlers: self.local_action_handlers.clone(),
-            local_events_by_service: self.local_events_by_service.clone(),
             remote_action_handlers: self.remote_action_handlers.clone(),
             local_event_subscriptions: self.local_event_subscriptions.clone(),
             remote_event_subscriptions: self.remote_event_subscriptions.clone(),
@@ -196,11 +192,11 @@ impl Clone for ServiceRegistry {
     }
 }
 
-impl Default for ServiceRegistry {
-    fn default() -> Self {
-        Self::new_with_default_logger()
-    }
-}
+// impl Default for ServiceRegistry {
+//     fn default() -> Self {
+//         Self::new_with_default_logger()
+//     }
+// }
 
 impl ServiceRegistry {
     /// Create a new registry with a provided logger
@@ -210,7 +206,6 @@ impl ServiceRegistry {
     pub fn new(logger: Arc<Logger>) -> Self {
         Self {
             local_action_handlers: Arc::new(RwLock::new(PathTrie::new())),
-            local_events_by_service: Arc::new(RwLock::new(PathTrie::new())),
             remote_action_handlers: Arc::new(RwLock::new(PathTrie::new())),
             local_event_subscriptions: Arc::new(RwLock::new(PathTrie::new())),
             remote_event_subscriptions: Arc::new(RwLock::new(PathTrie::new())),
@@ -223,17 +218,6 @@ impl ServiceRegistry {
             remote_service_states: Arc::new(RwLock::new(HashMap::new())),
             logger,
         }
-    }
-
-    /// Create a new registry with a default root logger
-    ///
-    /// INTENTION: Create a registry with a default logger when no parent logger
-    /// is available. This is primarily used for testing or standalone usage.
-    pub fn new_with_default_logger() -> Self {
-        Self::new(Arc::new(Logger::new_root(
-            runar_common::Component::Registry,
-            "global",
-        )))
     }
 
     /// Register a local service
@@ -461,10 +445,10 @@ impl ServiceRegistry {
         &self,
         topic_path: &TopicPath,
         callback: EventCallback,
-        metadata: Option<EventMetadata>,
+        _options: EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
-
+         
         // Store in local event subscriptions using PathTrie
         {
             let mut subscriptions = self.local_event_subscriptions.write().await;
@@ -474,7 +458,9 @@ impl ServiceRegistry {
                 // No existing subscriptions for this topic
                 subscriptions.set_value(
                     topic_path.clone(),
-                    vec![(subscription_id.clone(), callback.clone(), metadata.clone())],
+                    vec![(subscription_id.clone(), callback.clone(), SubscriptionMetadata{
+                        path: topic_path.as_str().to_string(),
+                    })],
                 );
             } else {
                 // Add to existing subscriptions
@@ -482,11 +468,12 @@ impl ServiceRegistry {
                 updated_subscriptions.push((
                     subscription_id.clone(),
                     callback.clone(),
-                    metadata.clone(),
+                    SubscriptionMetadata{
+                        path: topic_path.as_str().to_string(),
+                    },
                 ));
 
-                // First remove the old handlers, then add the updated ones
-                subscriptions.remove_handler(topic_path, |_| true);
+                // Replace the existing content with the updated list
                 subscriptions.set_value(topic_path.clone(), updated_subscriptions);
             }
         }
@@ -499,26 +486,6 @@ impl ServiceRegistry {
 
         let service_topic =
             TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
-
-        // store metadata in local_events_by_service
-        if let Some(metadata) = metadata {
-            let mut events = self.local_events_by_service.write().await;
-            let matches = events.find_matches(&service_topic);
-
-            if matches.is_empty() {
-                // No existing events for this service
-                //add a vec with one item -> topic_path indexed by the source_service_path
-                events.set_value(service_topic.clone(), vec![metadata]);
-            } else {
-                // Add to existing events
-                let mut updated_events = matches[0].content.clone();
-                updated_events.push(metadata);
-
-                // First remove the old handlers, then add the updated ones
-                events.remove_handler(&service_topic, |_| true);
-                events.set_value(service_topic.clone(), updated_events);
-            }
-        }
 
         //store in subscription_id_to_service_topic_path
         {
@@ -536,9 +503,10 @@ impl ServiceRegistry {
         &self,
         topic_path: &TopicPath,
         callback: EventCallback,
+        _options: EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
-
+         
         // Store in remote event subscriptions using PathTrie
         {
             let mut subscriptions = self.remote_event_subscriptions.write().await;
@@ -548,15 +516,18 @@ impl ServiceRegistry {
                 // No existing subscriptions for this topic
                 subscriptions.set_value(
                     topic_path.clone(),
-                    vec![(subscription_id.clone(), callback.clone())],
+                    vec![(subscription_id.clone(), callback.clone(), SubscriptionMetadata{
+                        path: topic_path.as_str().to_string(),
+                    })],
                 );
             } else {
                 // Add to existing subscriptions
                 let mut updated_subscriptions = matches[0].content.clone();
-                updated_subscriptions.push((subscription_id.clone(), callback.clone()));
+                updated_subscriptions.push((subscription_id.clone(), callback.clone(), SubscriptionMetadata{
+                    path: topic_path.as_str().to_string(),
+                }));
 
-                // First remove the old handlers, then add the updated ones
-                subscriptions.remove_handler(topic_path, |_| true);
+                // Replace the existing content with the updated list
                 subscriptions.set_value(topic_path.clone(), updated_subscriptions);
             }
         }
@@ -576,15 +547,20 @@ impl ServiceRegistry {
     pub async fn get_local_event_subscribers(
         &self,
         topic_path: &TopicPath,
-    ) -> Vec<(String, EventCallback)> {
+    ) -> Vec<(String, EventCallback, SubscriptionMetadata)> {
         let subscriptions = self.local_event_subscriptions.read().await;
         let matches = subscriptions.find_matches(topic_path);
 
         let mut result = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        
         for match_item in matches {
-            // Each item in content is a (String, EventCallback, Option<EventMetadata>) tuple
-            for (subscription_id, callback, _metadata) in match_item.content.clone() {
-                result.push((subscription_id, callback));
+            // Each item in content is a (String, EventCallback, SubscriptionMetadata) tuple
+            for (subscription_id, callback, metadata) in match_item.content.clone() {
+                // Deduplicate by subscription ID to prevent the same subscription from appearing multiple times
+                if seen_ids.insert(subscription_id.clone()) {
+                    result.push((subscription_id, callback, metadata));
+                }
             }
         }
         result
@@ -596,16 +572,21 @@ impl ServiceRegistry {
     pub async fn get_remote_event_subscribers(
         &self,
         topic_path: &TopicPath,
-    ) -> Vec<(String, EventCallback)> {
+    ) -> Vec<(String, EventCallback, SubscriptionMetadata)> {
         let subscriptions = self.remote_event_subscriptions.read().await;
         let matches = subscriptions.find_matches(topic_path);
 
         // Flatten all matches into a single vector
         let mut result = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        
         for match_item in matches {
-            // Each item in content is already a (String, EventCallback) tuple
-            for (subscription_id, callback) in match_item.content.clone() {
-                result.push((subscription_id, callback));
+            // Each item in content is already a (String, EventCallback, SubscriptionMetadata) tuple
+            for (subscription_id, callback, metadata) in match_item.content.clone() {
+                // Deduplicate by subscription ID to prevent the same subscription from appearing multiple times
+                if seen_ids.insert(subscription_id.clone()) {
+                    result.push((subscription_id, callback, metadata));
+                }
             }
         }
         result
@@ -677,9 +658,9 @@ impl ServiceRegistry {
     ///
     /// INTENTION: Retrieve metadata for all events registered under a service path.
     /// This is useful for service discovery and introspection.
-    pub async fn get_events_metadata(&self, search_path: &TopicPath) -> Vec<EventMetadata> {
+    pub async fn get_subscriptions_metadata(&self, search_path: &TopicPath) -> Vec<SubscriptionMetadata> {
         // Search in the events trie local_event_handlers
-        let events = self.local_events_by_service.read().await;
+        let events = self.local_event_subscriptions.read().await;
         let matches = events.find_matches(search_path);
 
         // Collect all events that match the service path
@@ -690,8 +671,9 @@ impl ServiceRegistry {
             let event_topic_list = &match_item.content;
 
             //iterate event_topic_list
-            for event_metadata in event_topic_list {
-                result.push(event_metadata.clone());
+            for (_, _    , metadata) in event_topic_list {
+                //TODO when EventRegistrationOptions is defined.. we need to pass that info here in the metadata to be sent to a remote node
+                result.push(metadata.clone());
             }
         }
 
@@ -758,67 +740,38 @@ impl ServiceRegistry {
                 let mut updated_subscriptions = Vec::new();
 
                 // Create a new list without the subscription we want to remove
-                for (id, callback, metadata) in matches[0].content.clone() {
+                for (id, callback, options) in matches[0].content.clone() {
                     if id != subscription_id {
-                        updated_subscriptions.push((id, callback, metadata));
+                        updated_subscriptions.push((id, callback, options));
                     }
                 }
 
-                // Remove the old list and add the updated one
-                let removed = subscriptions.remove_handler(&topic_path, |_| true);
-
+                // Replace the existing content with the updated list
                 if !updated_subscriptions.is_empty() {
-                    // If we still have subscriptions for this topic, add them back
                     subscriptions.set_value(topic_path.clone(), updated_subscriptions);
-                }
-
-                if removed {
-                    // Also remove from the ID map
-                    {
-                        let mut id_to_topic_path_map =
-                            self.subscription_id_to_topic_path.write().await;
-                        id_to_topic_path_map.remove(subscription_id);
-                    }
-                    self.logger.debug(format!(
-                        "Successfully unsubscribed from topic: {} with ID: {}",
-                        topic_path.as_str(),
-                        subscription_id
-                    ));
                 } else {
-                    let msg = format!("Subscription handler not found for topic path {topic_path} and ID {subscription_id}, although ID was mapped. Potential race condition?");
-                    self.logger.warn(msg.clone());
-                    return Err(anyhow!(msg));
+                    // If no subscriptions remain, remove the topic entirely
+                    subscriptions.remove_values(&topic_path);
                 }
 
-                //remove from service topic path map
-                let service_topic_path = self.subscription_id_to_service_topic_path.read().await;
-                let service_topic_path = service_topic_path.get(subscription_id).cloned();
-
-                if let Some(service_topic_path) = service_topic_path {
-                    self.logger.debug(format!(
-                        "Unsubscribing from service topic : {} at service path: {}",
-                        topic_path.as_str(),
-                        service_topic_path.as_str()
-                    ));
-                    let mut events = self.local_events_by_service.write().await;
-                    let events_by_service = events.find_matches(&service_topic_path);
-                    if !events_by_service.is_empty() {
-                        for match_item in events_by_service {
-                            let mut updated_list = Vec::new();
-                            let items = match_item.content.clone();
-                            for event_metadata in items {
-                                if event_metadata.path == topic_path.as_str() {
-                                    continue;
-                                }
-                                updated_list.push(event_metadata);
-                            }
-                            events.remove_handler(&service_topic_path, |_| true);
-                            if !updated_list.is_empty() {
-                                events.set_value(service_topic_path.clone(), updated_list);
-                            }
-                        }
-                    }
+                // Remove from the ID map
+                {
+                    let mut id_to_topic_path_map =
+                        self.subscription_id_to_topic_path.write().await;
+                    id_to_topic_path_map.remove(subscription_id);
                 }
+
+                // Remove from service topic path map
+                {
+                    let mut service_topic_map = self.subscription_id_to_service_topic_path.write().await;
+                    service_topic_map.remove(subscription_id);
+                }
+
+                self.logger.debug(format!(
+                    "Successfully unsubscribed from topic: {} with ID: {}",
+                    topic_path.as_str(),
+                    subscription_id
+                ));
                 Ok(())
             } else {
                 let msg = format!(
@@ -867,10 +820,10 @@ impl ServiceRegistry {
                 let mut updated_subscriptions = Vec::new();
 
                 // Create a new list without the subscription we want to remove
-                for (id, callback) in matches[0].content.clone() {
+                for (id, callback, options) in matches[0].content.clone() {
                     if id != subscription_id {
-                        updated_subscriptions.push((id, callback));
-                    }
+                        updated_subscriptions.push((id, callback, options));
+                    }   
                 }
 
                 // Remove the old list and add the updated one
@@ -945,7 +898,7 @@ impl ServiceRegistry {
             let actions = self.get_actions_metadata(&service_topic_path).await;
 
             // Get events metadata for this service - create a wildcard path
-            let events = self.get_events_metadata(&service_topic_path).await;
+            let events = self.get_subscriptions_metadata(&service_topic_path).await;
 
             // Create metadata using individual getter methods from the service
             result.insert(
@@ -958,7 +911,7 @@ impl ServiceRegistry {
                     version: service.version().to_string(),
                     description: service.description().to_string(),
                     actions,
-                    events,
+                    subscriptions: events,
                     registration_time: service_entry.registration_time,
                     last_start_time: service_entry.last_start_time,
                 },
@@ -1006,7 +959,7 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
             let actions = self.get_actions_metadata(&service_topic_path).await;
 
             // Get events metadata for this service - create a wildcard path
-            let events = self.get_events_metadata(&service_topic_path).await;
+            let subscriptions = self.get_subscriptions_metadata(&service_topic_path).await;
 
             // Create metadata using individual getter methods
             return Some(ServiceMetadata {
@@ -1016,7 +969,7 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
                 version: service.version().to_string(),
                 description: service.description().to_string(),
                 actions,
-                events,
+                subscriptions,
                 registration_time: service_entry.registration_time,
                 last_start_time: service_entry.last_start_time,
             });

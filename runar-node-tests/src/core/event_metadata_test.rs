@@ -4,6 +4,7 @@
 // which services subscribe to which events and can retrieve that information.
 
 use anyhow::Result;
+use runar_schemas::SubscriptionMetadata;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -13,8 +14,7 @@ use tokio::time::timeout;
 use runar_common::logging::{Component, Logger};
 use runar_node::routing::TopicPath;
 use runar_node::services::service_registry::ServiceRegistry;
-use runar_node::services::EventContext;
-use runar_node::EventMetadata;
+use runar_node::services::{EventContext, EventRegistrationOptions}; 
 use runar_serializer::ArcValue;
 
 /// Test that verifies the get_events_metadata_by_subscriber method returns correct metadata for events
@@ -23,7 +23,7 @@ use runar_serializer::ArcValue;
 /// - Register multiple event subscriptions for a service
 /// - Return the correct metadata for all events a service has subscribed to
 #[tokio::test]
-async fn test_get_events_metadata_by_subscriber() {
+async fn test_get_subscription_metadata() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Set up test logger
@@ -33,7 +33,7 @@ async fn test_get_events_metadata_by_subscriber() {
         let registry = ServiceRegistry::new(logger.clone());
 
         // Create a service path and event paths
-        let service_path = TopicPath::new("sensor-service", "test-network").unwrap();
+        //let service_path = TopicPath::new("sensor-service", "test-network").unwrap();
         let temperature_event_path =
             TopicPath::new("sensor-service/temperature_changed", "test-network").unwrap();
         let humidity_event_path =
@@ -80,11 +80,7 @@ async fn test_get_events_metadata_by_subscriber() {
             .register_local_event_subscription(
                 &temperature_event_path,
                 temperature_callback,
-                Some(EventMetadata {
-                    path: temperature_event_path.as_str().to_string(),
-                    description: "Temperature changed".to_string(),
-                    data_schema: None,
-                }),
+                EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -93,11 +89,7 @@ async fn test_get_events_metadata_by_subscriber() {
             .register_local_event_subscription(
                 &humidity_event_path,
                 humidity_callback,
-                Some(EventMetadata {
-                    path: humidity_event_path.as_str().to_string(),
-                    description: "Humidity changed".to_string(),
-                    data_schema: None,
-                }),
+                EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -106,27 +98,24 @@ async fn test_get_events_metadata_by_subscriber() {
             .register_local_event_subscription(
                 &pressure_event_path,
                 pressure_callback,
-                Some(EventMetadata {
-                    path: pressure_event_path.as_str().to_string(),
-                    description: "Pressure changed".to_string(),
-                    data_schema: None,
-                }),
+                EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
 
         // Get the events metadata for the service using the subscriber-based approach
-        let events_metadata = registry.get_events_metadata(&service_path).await;
+        let search_path = TopicPath::new("sensor-service/*", "test-network").unwrap();
+        let subscriptions_metadata = registry.get_subscriptions_metadata(&search_path).await;
 
         // Verify that we got metadata for all three events
         assert_eq!(
-            events_metadata.len(),
+            subscriptions_metadata.len(),
             3,
             "Should have metadata for all three events"
         );
 
         // Verify the paths of the events in the metadata
-        let event_paths: Vec<String> = events_metadata.iter().map(|m| m.path.clone()).collect();
+        let event_paths: Vec<String> = subscriptions_metadata.iter().map(|m| m.path.clone()).collect();
         assert!(
             event_paths.contains(&temperature_event_path.as_str().to_string()),
             "Missing temperature event path"
@@ -140,33 +129,13 @@ async fn test_get_events_metadata_by_subscriber() {
             "Missing pressure event path"
         );
 
-        // Verify that the descriptions contain the event names
-        for metadata in &events_metadata {
-            if metadata.path.contains("/events/temperature") {
-                assert!(
-                    metadata.description.contains("temperature"),
-                    "Description should contain event name"
-                );
-            } else if metadata.path.contains("/events/humidity") {
-                assert!(
-                    metadata.description.contains("humidity"),
-                    "Description should contain event name"
-                );
-            } else if metadata.path.contains("/events/pressure") {
-                assert!(
-                    metadata.description.contains("pressure"),
-                    "Description should contain event name"
-                );
-            }
-        }
-
         registry
             .unsubscribe_local(&temperature_subscription_id)
             .await
             .unwrap();
 
         // Verify that the unsubscribed event is no longer in the metadata
-        let updated_events_metadata = registry.get_events_metadata(&service_path).await;
+        let updated_events_metadata = registry.get_subscriptions_metadata(&search_path).await;
         assert_eq!(
             updated_events_metadata.len(),
             2,

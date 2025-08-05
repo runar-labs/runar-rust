@@ -583,10 +583,8 @@ impl PublishOptions {
 /// Options for registering an event subscription with metadata.
 #[derive(Clone, Debug, Default)]
 pub struct EventRegistrationOptions {
-    /// Description of what the event signifies.
-    pub description: Option<String>,
-    /// Schema for the event data, for validation and documentation.
-    pub data_schema: Option<FieldSchema>,
+    // this shuold be options related to the subscription behavior. like once, so after the first event is received the subscription is removed.
+    // and etc.
 }
 
 pub struct ActionRegistrationOptions {

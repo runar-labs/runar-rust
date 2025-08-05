@@ -15,10 +15,10 @@ pub struct ActionMetadata {
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
-pub struct EventMetadata {
+pub struct SubscriptionMetadata {
     pub path: String,
-    pub description: String,
-    pub data_schema: Option<FieldSchema>,
+    // pub description: String,
+    // pub data_schema: Option<FieldSchema>,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
@@ -29,7 +29,7 @@ pub struct ServiceMetadata {
     pub version: String,
     pub description: String,
     pub actions: Vec<ActionMetadata>,
-    pub events: Vec<EventMetadata>,
+    pub subscriptions: Vec<SubscriptionMetadata>,
     pub registration_time: u64,
     pub last_start_time: Option<u64>,
 }
@@ -271,58 +271,12 @@ mod tests {
                     output_schema: Some(FieldSchema::double("result")),
                 },
             ],
-            events: vec![
-                EventMetadata {
-                    path: "calculation.completed".to_string(),
-                    description: "Emitted when a calculation is completed".to_string(),
-                    data_schema: Some(FieldSchema::object(
-                        "CalculationCompleted",
-                        HashMap::from([
-                            (
-                                "operation".to_string(),
-                                Box::new(FieldSchema::string("operation")),
-                            ),
-                            (
-                                "result".to_string(),
-                                Box::new(FieldSchema::double("result")),
-                            ),
-                            (
-                                "timestamp".to_string(),
-                                Box::new(FieldSchema::timestamp("timestamp")),
-                            ),
-                            (
-                                "user_id".to_string(),
-                                Box::new(FieldSchema::string("user_id")),
-                            ),
-                        ]),
-                        Some(vec![
-                            "operation".to_string(),
-                            "result".to_string(),
-                            "timestamp".to_string(),
-                        ]),
-                    )),
+            subscriptions: vec![
+                SubscriptionMetadata {
+                    path: "calculation.completed".to_string(), 
                 },
-                EventMetadata {
+                SubscriptionMetadata {
                     path: "error.occurred".to_string(),
-                    description: "Emitted when an error occurs".to_string(),
-                    data_schema: Some(FieldSchema::object(
-                        "ErrorOccurred",
-                        HashMap::from([
-                            (
-                                "error_code".to_string(),
-                                Box::new(FieldSchema::integer("error_code")),
-                            ),
-                            (
-                                "error_message".to_string(),
-                                Box::new(FieldSchema::string("error_message")),
-                            ),
-                            (
-                                "stack_trace".to_string(),
-                                Box::new(FieldSchema::string("stack_trace")),
-                            ),
-                        ]),
-                        Some(vec!["error_code".to_string(), "error_message".to_string()]),
-                    )),
                 },
             ],
             registration_time: 1640995200, // 2022-01-01 00:00:00 UTC
@@ -363,9 +317,9 @@ mod tests {
         assert_eq!(extracted_metadata.actions[2].name, "calculate");
 
         // Verify events
-        assert_eq!(extracted_metadata.events.len(), 2);
-        assert_eq!(extracted_metadata.events[0].path, "calculation.completed");
-        assert_eq!(extracted_metadata.events[1].path, "error.occurred");
+        assert_eq!(extracted_metadata.subscriptions.len(), 2);
+        assert_eq!(extracted_metadata.subscriptions[0].path, "calculation.completed");
+        assert_eq!(extracted_metadata.subscriptions[1].path, "error.occurred");
 
         // Verify that input schemas are preserved
         assert!(extracted_metadata.actions[0].input_schema.is_some());
@@ -376,16 +330,13 @@ mod tests {
         assert!(extracted_metadata.actions[0].output_schema.is_some());
         assert!(extracted_metadata.actions[1].output_schema.is_some());
         assert!(extracted_metadata.actions[2].output_schema.is_some());
-
-        // Verify that event data schemas are preserved
-        assert!(extracted_metadata.events[0].data_schema.is_some());
-        assert!(extracted_metadata.events[1].data_schema.is_some());
+ 
 
         println!("✅ ServiceMetadata serialization roundtrip test passed!");
         println!("   - Network ID: {}", extracted_metadata.network_id);
         println!("   - Service Path: {}", extracted_metadata.service_path);
         println!("   - Actions: {}", extracted_metadata.actions.len());
-        println!("   - Events: {}", extracted_metadata.events.len());
+        println!("   - Events: {}", extracted_metadata.subscriptions.len());
 
         Ok(())
     }
@@ -665,14 +616,9 @@ mod tests {
         assert!(obj_instance.actions[0].output_schema.is_some());
 
         // Verify events
-        assert_eq!(obj_instance.events.len(), 1);
-        assert_eq!(obj_instance.events[0].path, "user.created");
-        assert_eq!(
-            obj_instance.events[0].description,
-            "Emitted when a new user is created"
-        );
-        assert!(obj_instance.events[0].data_schema.is_some());
-
+        assert_eq!(obj_instance.subscriptions.len(), 1);
+        assert_eq!(obj_instance.subscriptions[0].path, "user.created");
+ 
         println!("   - Successfully converted JSON to typed ServiceMetadata");
         println!("   - All fields match the input JSON structure");
 

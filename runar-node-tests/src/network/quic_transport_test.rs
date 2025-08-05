@@ -5,6 +5,7 @@ use runar_node::network::transport::{
     MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
     MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 };
+use runar_schemas::SubscriptionMetadata;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -18,7 +19,7 @@ use runar_node::network::transport::{
     OneWayMessageHandler,
 };
 use runar_node::routing::TopicPath;
-use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_node::{ActionMetadata, ServiceMetadata};
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
 use runar_serializer::ArcValue;
 use std::collections::HashMap;
@@ -345,10 +346,8 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
                     output_schema: None,
                 },
             ],
-            events: vec![EventMetadata {
+            subscriptions: vec![SubscriptionMetadata {
                 path: "data_processed".to_string(),
-                description: "Data processing completed".to_string(),
-                data_schema: None,
             }],
             registration_time: 0,
             last_start_time: None,
@@ -380,10 +379,8 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
                     output_schema: None,
                 },
             ],
-            events: vec![EventMetadata {
+            subscriptions: vec![SubscriptionMetadata {
                 path: "storage_updated".to_string(),
-                description: "Storage state changed".to_string(),
-                data_schema: None,
             }],
             registration_time: 0,
             last_start_time: None,

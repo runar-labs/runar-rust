@@ -17,7 +17,7 @@ use runar_common::logging::{Component, Logger};
 use runar_node::routing::TopicPath;
 use runar_node::services::abstract_service::ServiceState;
 use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
-use runar_node::services::{ActionHandler, EventContext, RequestContext};
+use runar_node::services::{ActionHandler, EventContext, EventRegistrationOptions, RequestContext};
 use runar_serializer::ArcValue;
 
 use crate::fixtures::math_service::MathService;
@@ -54,7 +54,7 @@ async fn test_subscribe_and_unsubscribe() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create a TopicPath for the test topic
         let topic = TopicPath::new("test/event", "net1").expect("Valid topic path");
@@ -79,7 +79,7 @@ async fn test_subscribe_and_unsubscribe() {
 
         // Subscribe to the topic using the correct method
         let subscription_id = registry
-            .register_local_event_subscription(&topic, callback, None)
+            .register_local_event_subscription(&topic, callback, EventRegistrationOptions::default())
             .await
             .unwrap();
 
@@ -116,7 +116,7 @@ async fn test_wildcard_subscriptions() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create a callback
         let callback = Arc::new(
@@ -133,11 +133,11 @@ async fn test_wildcard_subscriptions() {
 
         // Subscribe to wildcard topics using the correct method
         let _id1 = registry
-            .register_local_event_subscription(&wildcard1, callback.clone(), None)
+            .register_local_event_subscription(&wildcard1, callback.clone(), EventRegistrationOptions::default())
             .await
             .unwrap();
         let id2 = registry
-            .register_local_event_subscription(&wildcard2, callback.clone(), None)
+            .register_local_event_subscription(&wildcard2, callback.clone(), EventRegistrationOptions::default())
             .await
             .unwrap();
 
@@ -434,7 +434,7 @@ async fn test_multiple_event_handlers() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create test topics
         let topic1 = TopicPath::new("events/created", "net1").expect("Valid topic path");
@@ -475,11 +475,11 @@ async fn test_multiple_event_handlers() {
 
         // Subscribe handlers to topics using the correct method
         let id1 = registry
-            .register_local_event_subscription(&topic1, handler1, None)
+            .register_local_event_subscription(&topic1, handler1, EventRegistrationOptions::default())
             .await
             .unwrap();
         let id2 = registry
-            .register_local_event_subscription(&topic2, handler2, None)
+            .register_local_event_subscription(&topic2, handler2, EventRegistrationOptions::default())
             .await
             .unwrap();
 

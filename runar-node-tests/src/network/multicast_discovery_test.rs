@@ -9,7 +9,8 @@ use runar_node::network::discovery::DEFAULT_MULTICAST_ADDR;
 use runar_node::network::discovery::{
     DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo,
 };
-use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_node::{ActionMetadata, ServiceMetadata};
+use runar_schemas::SubscriptionMetadata;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -59,10 +60,8 @@ async fn create_test_discovery(
                 input_schema: None,
                 output_schema: None,
             }],
-            events: vec![EventMetadata {
+            subscriptions: vec![SubscriptionMetadata {
                 path: "event".to_string(),
-                description: "Test event".to_string(),
-                data_schema: None,
             }],
         }],
         version: 0,

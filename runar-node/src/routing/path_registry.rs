@@ -134,7 +134,7 @@ impl<T: Clone> PathTrie<T> {
     /// Internal recursive implementation of add
     fn set_values_internal(&mut self, segments: &[String], index: usize, handlers: Vec<T>) {
         if index >= segments.len() {
-            // We've reached the end of the path, add handlers here
+            // We've reached the end of the path, replace handlers here
             self.content.extend(handlers);
             return;
         }

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
-use runar_schemas::EventMetadata;
+ 
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
@@ -1267,7 +1267,7 @@ impl Node {
                 Some(payload)
             };
             // Notify all subscribers
-            for (_subscription_id, callback) in subscribers {
+            for (_subscription_id, callback, _options) in subscribers {
                 let ctx = event_context.clone();
                 // Invoke callback. errors are logged but not propagated to avoid affecting other subscribers
                 let result = callback(ctx, payload_option.clone()).await;
@@ -1473,7 +1473,7 @@ impl Node {
             .service_registry
             .get_local_event_subscribers(&topic_path)
             .await;
-        for (_subscription_id, callback) in local_subscribers {
+        for (_subscription_id, callback, _options) in local_subscribers {
             // Create an event context for this subscriber
             let event_context = Arc::new(EventContext::new(
                 &topic_path,
@@ -1925,23 +1925,15 @@ impl NodeDelegate for Node {
                 "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'", 
                 network_id=self.network_id
             ))?;
-
-        // Construct EventMetadata from EventRegistrationOptions.
-        // The `metadata.path` should be the service-relative path, which is the `topic` string itself.
-        let event_metadata = EventMetadata {
-            path: topic.clone(), // Service-relative path for metadata
-            description: options.description.unwrap_or_default(),
-            data_schema: options.data_schema,
-        };
-
+ 
         self.logger.debug(format!(
-            "Node: subscribe_with_options called for topic_path '{topic_path}', metadata.path '{metadata_path}'",
-            topic_path=topic_path.as_str(), metadata_path=event_metadata.path
+            "Node: subscribe_with_options called for topic_path '{topic_path}'",
+            topic_path=topic_path.as_str()
         ));
 
         let subscription_id = self
             .service_registry
-            .register_local_event_subscription(&topic_path, callback.into(), Some(event_metadata))
+            .register_local_event_subscription(&topic_path, callback.into(), options)
             .await?;
 
         if self.running.load(Ordering::SeqCst) {

@@ -377,41 +377,7 @@ impl AbstractService for MathService {
 
         // Subscribe to an event with specific metadata
         let event_options = EventRegistrationOptions {
-            description: Some(
-                "Notification for when math service configuration is updated.".to_string(),
-            ),
-            data_schema: Some(FieldSchema {
-                name: "ConfigUpdatePayload".to_string(),
-                data_type: SchemaDataType::Object,
-                description: Some("Payload describing the configuration changes.".to_string()),
-                nullable: Some(false),
-                properties: {
-                    let mut props = HashMap::new();
-                    props.insert(
-                        "updated_setting".to_string(),
-                        Box::new(FieldSchema {
-                            name: "updated_setting".to_string(),
-                            data_type: SchemaDataType::String,
-                            description: Some("Name of the setting that was updated.".to_string()),
-                            nullable: Some(false),
-                            ..FieldSchema::string("updated_setting") // Base with defaults
-                        }),
-                    );
-                    props.insert(
-                        "new_value".to_string(),
-                        Box::new(FieldSchema {
-                            name: "new_value".to_string(),
-                            data_type: SchemaDataType::String,
-                            description: Some("The new value of the setting.".to_string()),
-                            nullable: Some(false),
-                            ..FieldSchema::string("new_value") // Base with defaults
-                        }),
-                    );
-                    Some(props)
-                },
-                required: Some(vec!["updated_setting".to_string(), "new_value".to_string()]),
-                ..FieldSchema::new("ConfigUpdatePayload", SchemaDataType::Object) // Base with defaults
-            }),
+            
         };
 
         // let service_arc_for_event = self.clone(); // Clone self for the event callback

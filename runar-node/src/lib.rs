@@ -17,7 +17,7 @@ pub use services::{
 };
 
 // Re-export the schema types from runar_common
-pub use runar_schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
+pub use runar_schemas::{ActionMetadata, ServiceMetadata};
 
 // Re-export the main types from the routing module
 pub use routing::TopicPath;
