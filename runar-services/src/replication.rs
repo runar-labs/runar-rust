@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, atomic::{AtomicI64, Ordering}};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use uuid::Uuid;
+use std::collections::HashMap;
 
 use crate::sqlite::{SqliteService, SqlQuery, Value};
 
@@ -372,11 +373,11 @@ impl ReplicationManager {
     }
     
     async fn is_event_processed(&self, event_id: &str) -> Result<bool> {
-        // Check if event is already in any event table
+        // Check if event is already processed in any event table
         for table in self.enabled_tables.iter() {
             let event_table_name = format!("{}{}", table, EVENT_TABLE_SUFFIX);
             let query = SqlQuery::new(&format!(
-                "SELECT COUNT(*) as count FROM {} WHERE id = ?",
+                "SELECT processed FROM {} WHERE id = ?",
                 event_table_name
             )).with_params(crate::sqlite::Params::new()
                 .with_value(Value::Text(event_id.to_string()))
@@ -390,11 +391,11 @@ impl ReplicationManager {
             }).await.map_err(|e| anyhow!("Failed to check event processing: {e}"))?;
             
             if let Some(row) = result.first() {
-                let count = row.get("count").map(|v| match v {
-                    Value::Integer(i) => *i,
-                    _ => 0,
-                }).unwrap_or(0);
-                if count > 0 {
+                let processed = row.get("processed").map(|v| match v {
+                    Value::Boolean(b) => *b,
+                    _ => false,
+                }).unwrap_or(false);
+                if processed {
                     return Ok(true);
                 }
             }
@@ -409,21 +410,122 @@ impl ReplicationManager {
             event.id, event.table_name, event.operation_type
         ));
         
-        // Parse the event data and apply it to the database
-        // This is a simplified implementation - in practice, you'd need to parse the SQL
-        // and apply it properly
-        self.logger.debug(format!("Event data: {}", event.data));
+        // Parse the event data back into ArcValue
+        let event_data: ArcValue = serde_json::from_str(&event.data)
+            .map_err(|e| anyhow!("Failed to parse event data: {e}"))?;
         
-        // TODO: Implement actual database application logic
-        // For now, just log that we would apply it
-        self.logger.debug("Database application not yet implemented - event logged only");
+        self.logger.debug(format!("Parsed event data: {:?}", event_data));
+        
+        // Extract the SQL query from the event data
+        // The event data should contain the original SqlQuery that was executed
+        let sql_query = match event_data.as_type::<crate::sqlite::SqlQuery>() {
+            Ok(query) => query,
+            Err(_) => {
+                // If direct parsing fails, try to extract from HashMap format
+                match event_data.as_type::<HashMap<String, ArcValue>>() {
+                    Ok(data_map) => {
+                        // Extract statement and params from the HashMap
+                        let statement = match data_map.get("statement")
+                            .and_then(|v| v.as_type::<String>().ok()) {
+                            Some(stmt) => stmt,
+                            None => return Err(anyhow!("No statement found in event data")),
+                        };
+                        
+                        let params = data_map.get("params")
+                            .and_then(|v| v.as_type::<crate::sqlite::Params>().ok())
+                            .unwrap_or_else(|| {
+                                // Try to extract params from the values array
+                                if let Some(params_arc) = data_map.get("params") {
+                                    if let Ok(params_map) = params_arc.as_type::<HashMap<String, ArcValue>>() {
+                                        if let Some(values_arc) = params_map.get("values") {
+                                            if let Ok(values) = values_arc.as_type::<Vec<ArcValue>>() {
+                                                let mut params = crate::sqlite::Params::new();
+                                                for value in values {
+                                                    // Each value is a Map containing the actual data
+                                                    if let Ok(value_map) = value.as_type::<HashMap<String, ArcValue>>() {
+                                                        // Extract the actual value from the map
+                                                        if let Some((key, arc_val)) = value_map.iter().next() {
+                                                            match key.as_str() {
+                                                                "Integer" => {
+                                                                    if let Ok(int_val) = arc_val.as_type::<i64>() {
+                                                                        params = params.with_value(crate::sqlite::Value::Integer(int_val));
+                                                                    }
+                                                                }
+                                                                "Text" => {
+                                                                    if let Ok(text_val) = arc_val.as_type::<String>() {
+                                                                        params = params.with_value(crate::sqlite::Value::Text(text_val));
+                                                                    }
+                                                                }
+                                                                "Boolean" => {
+                                                                    if let Ok(bool_val) = arc_val.as_type::<bool>() {
+                                                                        params = params.with_value(crate::sqlite::Value::Boolean(bool_val));
+                                                                    }
+                                                                }
+                                                                _ => {
+                                                                    // Unknown value type, skip
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                return params;
+                                            }
+                                        }
+                                    }
+                                }
+                                crate::sqlite::Params::new()
+                            });
+                        
+                        crate::sqlite::SqlQuery::new(&statement).with_params(params)
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Invalid event data format: {}", e));
+                    }
+                }
+            }
+        };
+        
+        self.logger.debug(format!("Executing SQL query: {}", sql_query.statement));
+        
+        // Execute the SQL query against the database
+        let result = self.sqlite_service.send_command(|reply_tx| {
+            crate::sqlite::SqliteWorkerCommand::Execute {
+                query: sql_query,
+                reply_to: reply_tx,
+            }
+        }).await.map_err(|e| anyhow!("Failed to execute replicated SQL query: {}", e))?;
+        
+        self.logger.debug(format!("SQL query executed successfully: {:?}", result));
         
         Ok(())
     }
     
     async fn mark_event_processed(&self, event_id: &str) -> Result<()> {
-        // Mark the event as processed in the appropriate event table
-        // This is already handled in store_event for local events
+        // Find which event table contains this event and mark it as processed
+        for table in self.enabled_tables.iter() {
+            let event_table_name = format!("{}{}", table, EVENT_TABLE_SUFFIX);
+            let query = SqlQuery::new(&format!(
+                "UPDATE {} SET processed = TRUE WHERE id = ?",
+                event_table_name
+            )).with_params(crate::sqlite::Params::new()
+                .with_value(Value::Text(event_id.to_string()))
+            );
+            
+            let result = self.sqlite_service.send_command(|reply_tx| {
+                crate::sqlite::SqliteWorkerCommand::Execute {
+                    query,
+                    reply_to: reply_tx,
+                }
+            }).await.map_err(|e| anyhow!("Failed to mark event as processed: {e}"))?;
+            
+            // If we updated a row, we found the event
+            if result > 0 {
+                self.logger.debug(format!("Marked event {} as processed in {}", event_id, event_table_name));
+                return Ok(());
+            }
+        }
+        
+        self.logger.warn(format!("Event {} not found in any event table", event_id));
         Ok(())
     }
     
