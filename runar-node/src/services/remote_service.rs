@@ -17,7 +17,7 @@ use crate::services::abstract_service::AbstractService;
 use crate::services::service_registry::EventHandler;
 use crate::services::{ActionHandler,   LifecycleContext};
 use runar_common::logging::Logger;
-use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
+use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata, SubscriptionMetadata};
 
 // No direct key-store or label resolver – encryption handled by transport layer
 
@@ -39,9 +39,7 @@ pub struct RemoteService {
 
     /// Service capabilities
     actions: Arc<RwLock<HashMap<String, ActionMetadata>>>,
-
-    subscriptions: Arc<RwLock<HashMap<String, SubscriptionMetadata>>>,
-
+ 
     /// Logger instance
     logger: Arc<Logger>,
 
@@ -68,7 +66,7 @@ pub struct RemoteServiceDependencies {
 
 /// Configuration for creating multiple RemoteService instances from capabilities.
 pub struct CreateRemoteServicesConfig {
-    pub capabilities: Vec<ServiceMetadata>,
+    pub services: Vec<ServiceMetadata>,
     pub peer_node_id: String, // ID of the remote peer hosting the services
     pub request_timeout_ms: u64,
 }
@@ -86,7 +84,6 @@ impl RemoteService {
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
             actions: Arc::new(RwLock::new(HashMap::new())),
-            subscriptions: Arc::new(RwLock::new(HashMap::new())),
             logger: dependencies.logger,
             request_timeout_ms: config.request_timeout_ms,
         }
@@ -103,7 +100,7 @@ impl RemoteService {
     ) -> Result<Vec<Arc<RemoteService>>> {
         dependencies.logger.info(format!(
             "Creating RemoteServices from {} service metadata entries",
-            config.capabilities.len()
+            config.services.len()
         ));
 
         // The transport is guaranteed to be available via the dependency injection contract.
@@ -111,7 +108,7 @@ impl RemoteService {
         // Create remote services for each service metadata
         let mut remote_services = Vec::new();
 
-        for service_metadata in config.capabilities {
+        for service_metadata in config.services {
             // Create a topic path using the service path (not the name)
             let service_path = match TopicPath::new(
                 &service_metadata.service_path,
@@ -153,9 +150,9 @@ impl RemoteService {
                 service.add_action(action.name.clone(), action).await?;
             }
             // Add subscriptions to the service
-            for subscription in service_metadata.subscriptions {
-                service.add_subscription(subscription.path.clone(), subscription).await?;
-            }
+            // for subscription in service_metadata.subscriptions {
+            //     service.add_subscription(subscription.path.clone(), subscription).await?;
+            // }
             // Add service to the result list
             remote_services.push(service);
         }
@@ -182,13 +179,7 @@ impl RemoteService {
         self.actions.write().await.insert(action_name, metadata);
         Ok(())
     }
-
-    /// Add a subscription to this remote service
-    pub async fn add_subscription(&self, subscription_path: String, metadata: SubscriptionMetadata) -> Result<()> {
-        self.subscriptions.write().await.insert(subscription_path, metadata);
-        Ok(())
-    }
-
+ 
     /// Create a handler for a remote event
     pub fn create_event_handler(&self, event_path: String) -> EventHandler {
         let service = self.clone();
@@ -334,22 +325,7 @@ impl RemoteService {
                 ));
             }
         }
-
-        let subscriptions = self.subscriptions.read().await;
-        for (path, _metadata) in subscriptions.iter() {
-            if let Ok(event_topic_path) = self.service_topic.new_event_topic(&path) {
-                let handler = self.create_event_handler(path.clone());
-                context
-                    .register_remote_event_handler(&event_topic_path, handler)
-                .await?;
-            } else {
-                self.logger.warn(format!(
-                    "Failed to create topic path for event: {}/{path}",
-                    self.service_topic
-                ));
-            }
-        }
-
+ 
         Ok(())
     }
 

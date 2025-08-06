@@ -132,26 +132,26 @@ impl LifecycleContext {
         self.logger.error(message);
     }
 
-    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn remote_request<P>(&self, topic: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let path_string = path.into();
-        let full_path = if path_string.contains(':') {
-            path_string
-        } else if path_string.contains('/') {
-            format!("{0}:{1}", self.network_id, path_string)
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains(self.service_path.as_str()) {
+            format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
                 "{0}:{1}/{2}",
-                self.network_id, self.service_path, path_string
+                self.network_id, self.service_path, topic_string
             )
         };
 
         self.logger
-            .debug(format!("Making request to processed path: {full_path}"));
+            .debug(format!("Making request to processed path: {full_topic}"));
 
-        self.node_delegate.remote_request::<P>(full_path, payload).await
+        self.node_delegate.remote_request::<P>(full_topic, payload).await
     }
 
     /// Make a service request from the lifecycle context.
@@ -163,26 +163,26 @@ impl LifecycleContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (current network ID added)
     /// - Simple action: "action" (current network ID and service path added - calls own service)
-    pub async fn request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, topic: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let path_string = path.into();
-        let full_path = if path_string.contains(':') {
-            path_string
-        } else if path_string.contains('/') {
-            format!("{0}:{1}", self.network_id, path_string)
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains(self.service_path.as_str()) {
+            format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
                 "{0}:{1}/{2}",
-                self.network_id, self.service_path, path_string
+                self.network_id, self.service_path, topic_string
             )
         };
 
         self.logger.debug(format!(
-            "LifecycleContext making request to processed path: {full_path}"
+            "LifecycleContext making request to processed path: {full_topic}"
         ));
-        self.node_delegate.request::<P>(full_path, payload).await
+        self.node_delegate.request::<P>(full_topic, payload).await
     }
 
     /// Publish an event from the lifecycle context.
@@ -197,7 +197,7 @@ impl LifecycleContext {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
-        } else if topic_string.contains('/') {
+        } else if topic_string.contains(self.service_path.as_str()) {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
@@ -221,7 +221,18 @@ impl LifecycleContext {
     /// or Err with timeout message if no event occurs.
     pub async fn on(&self, topic: impl Into<String>, timeout: std::time::Duration) -> Result<Option<ArcValue>>
     {
-        self.node_delegate.on(topic, timeout).await
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains(self.service_path.as_str()) {
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+        self.node_delegate.on(full_topic, timeout).await
     }
 
     /// Register an action handler
@@ -321,9 +332,21 @@ impl LifecycleContext {
         callback: EventHandler,
         options: EventRegistrationOptions,
     ) -> Result<String> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains(self.service_path.as_str()) {
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+
         let delegate = &self.node_delegate;
         delegate
-            .subscribe_with_options(topic.into(), callback, options)
+            .subscribe_with_options(full_topic, callback, options)
             .await
     }
 
@@ -332,8 +355,20 @@ impl LifecycleContext {
         topic: impl Into<String>,
         callback: EventHandler,
     ) -> Result<String> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains(self.service_path.as_str()) {
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+
         let delegate = &self.node_delegate;
-        delegate.subscribe(topic.into(), callback).await
+        delegate.subscribe(full_topic, callback).await
     }
 }
 
@@ -805,7 +840,7 @@ pub trait RegistryDelegate: Send + Sync {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
-    ) -> HashMap<String, ServiceMetadata>;
+    ) -> Result<HashMap<String, ServiceMetadata>>;
 
     /// Get metadata for all actions under a specific service path
     ///

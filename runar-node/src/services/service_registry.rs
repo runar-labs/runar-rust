@@ -45,6 +45,12 @@ pub type EventHandler = Arc<
         + Sync,
 >;
 
+pub type RemoteEventHandler = Arc<
+    dyn Fn(Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Import Future trait for use in type definition
 use std::future::Future;
 
@@ -113,7 +119,9 @@ pub type LocalActionEntryValue = (ActionHandler, TopicPath, Option<ActionMetadat
 pub type LocalEventSubscribersVec = Vec<(String, EventHandler, SubscriptionMetadata)>;
 
 // Type alias for the Vec stored in remote_event_subscriptions PathTrie
-pub type RemoteEventSubscribersVec = Vec<(String, EventHandler, SubscriptionMetadata)>;
+pub type RemoteEventSubscribersVec = Vec<(String, RemoteEventHandler, SubscriptionMetadata)>;
+
+pub const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
 
 /// Service registry for managing services and their handlers
 ///
@@ -493,7 +501,7 @@ impl ServiceRegistry {
     pub async fn register_remote_event_subscription(
         &self,
         topic_path: &TopicPath,
-        callback: EventHandler,
+        callback: RemoteEventHandler,
         _options: EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
@@ -563,7 +571,7 @@ impl ServiceRegistry {
     pub async fn get_remote_event_subscribers(
         &self,
         topic_path: &TopicPath,
-    ) -> Vec<(String, EventHandler, SubscriptionMetadata)> {
+    ) -> Vec<(String, RemoteEventHandler, SubscriptionMetadata)> {
         let subscriptions = self.remote_event_subscriptions.read().await;
         let matches = subscriptions.find_matches(topic_path);
 
@@ -858,6 +866,57 @@ impl ServiceRegistry {
         }
     }
 
+    async fn get_service_metadata(&self, topic_path: &TopicPath) -> Option<ServiceMetadata> {
+        // Find service in the local services trie
+        let services = self.local_services.read().await;
+        let matches = services.find_matches(topic_path);
+
+        if !matches.is_empty() {
+            let service_entry = &matches[0].content;
+            let service = service_entry.service.clone();
+            let search_path = format!("{service_path}/*", service_path = service.path());
+            let network_id_string = topic_path.network_id();
+            let service_topic_path =
+                TopicPath::new(search_path.as_str(), &network_id_string).unwrap();
+
+            // Get actions metadata for this service - create a wildcard path
+            let actions = self.get_actions_metadata(&service_topic_path).await;
+ 
+            // Create metadata using individual getter methods
+            return Some(ServiceMetadata {
+                network_id: network_id_string,
+                service_path: service.path().to_string(),
+                name: service.name().to_string(),
+                version: service.version().to_string(),
+                description: service.description().to_string(),
+                actions,
+                registration_time: service_entry.registration_time,
+                last_start_time: service_entry.last_start_time,
+            });
+        }
+
+        None
+    }
+
+    pub async fn get_all_subscriptions(&self, include_internal_services: bool) -> Result<Vec<SubscriptionMetadata>> {
+        let subscriptions = self.local_event_subscriptions.read().await;
+        let all_values = subscriptions.get_all_values();
+        
+        let mut result = Vec::new();
+        
+        for subscription_vec in all_values {
+            for (_, _, metadata) in subscription_vec {
+                // Filter out internal services if not included
+                if !include_internal_services && metadata.path.starts_with('$') {
+                    continue;
+                }
+                result.push(metadata);
+            }
+        }
+        
+        Ok(result)
+    }
+
     /// Get metadata for all services with an option to filter internal services
     ///
     /// INTENTION: Retrieve metadata for all registered services with the option
@@ -865,51 +924,35 @@ impl ServiceRegistry {
     pub async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
-    ) -> HashMap<String, ServiceMetadata> {
+    ) -> Result<HashMap<String, ServiceMetadata>> {
         let mut result = HashMap::new();
         let local_services = self.get_local_services().await;
 
         // Iterate through all services
         for (_, service_entry) in local_services {
             let service = &service_entry.service;
-            let path_str = service.path().to_string();
+            let path_str = service.path();
 
             // Skip internal services if not included
-            if !include_internal_services && path_str.starts_with("$") {
+            if !include_internal_services && INTERNAL_SERVICES.contains(&path_str) {
                 continue;
             }
 
             let search_path = format!("{path_str}/*");
-            // Use the network_id from the service_entry's topic_path, which was set by the Node during add_service
-            let network_id_string = service_entry.service_topic.network_id().to_string();
-            let service_topic_path =
-                TopicPath::new(search_path.as_str(), &network_id_string).unwrap();
-
-            // Get actions metadata for this service - create a wildcard path
-            let actions = self.get_actions_metadata(&service_topic_path).await;
-
-            // Get events metadata for this service - create a wildcard path
-            let events = self.get_subscriptions_metadata(&service_topic_path).await;
-
+            let search_topic = TopicPath::new(&search_path, &service_entry.service_topic.network_id().to_string())
+                .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
+            let service_metadata = self.get_service_metadata(&search_topic).await
+                .ok_or_else(|| anyhow!("Service metadata not found for topic: {}", search_topic))?;
+            
+             
             // Create metadata using individual getter methods from the service
             result.insert(
-                path_str,
-                ServiceMetadata {
-                    // Use the network_id from the service_entry's topic_path
-                    network_id: service_entry.service_topic.network_id().to_string(),
-                    service_path: service.path().to_string(),
-                    name: service.name().to_string(),
-                    version: service.version().to_string(),
-                    description: service.description().to_string(),
-                    actions,
-                    subscriptions: events,
-                    registration_time: service_entry.registration_time,
-                    last_start_time: service_entry.last_start_time,
-                },
+                path_str.to_string(),
+                service_metadata,
             );
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -934,46 +977,14 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
     /// INTENTION: Retrieve comprehensive metadata for a service, including its actions and events.
     /// This is useful for service discovery and introspection.
     async fn get_service_metadata(&self, topic_path: &TopicPath) -> Option<ServiceMetadata> {
-        // Find service in the local services trie
-        let services = self.local_services.read().await;
-        let matches = services.find_matches(topic_path);
-
-        if !matches.is_empty() {
-            let service_entry = &matches[0].content;
-            let service = service_entry.service.clone();
-            let search_path = format!("{service_path}/*", service_path = service.path());
-            let network_id_string = topic_path.network_id();
-            let service_topic_path =
-                TopicPath::new(search_path.as_str(), &network_id_string).unwrap();
-
-            // Get actions metadata for this service - create a wildcard path
-            let actions = self.get_actions_metadata(&service_topic_path).await;
-
-            // Get events metadata for this service - create a wildcard path
-            let subscriptions = self.get_subscriptions_metadata(&service_topic_path).await;
-
-            // Create metadata using individual getter methods
-            return Some(ServiceMetadata {
-                network_id: network_id_string,
-                service_path: service.path().to_string(),
-                name: service.name().to_string(),
-                version: service.version().to_string(),
-                description: service.description().to_string(),
-                actions,
-                subscriptions,
-                registration_time: service_entry.registration_time,
-                last_start_time: service_entry.last_start_time,
-            });
-        }
-
-        None
+        self.get_service_metadata(topic_path).await
     }
 
     /// Get metadata for all registered services with an option to filter internal services
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
-    ) -> HashMap<String, ServiceMetadata> {
+    ) -> Result<HashMap<String, ServiceMetadata>> {
         self.get_all_service_metadata(include_internal_services)
             .await
     }

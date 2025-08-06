@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-use runar_schemas::ServiceMetadata;
+use runar_schemas::{NodeMetadata, ServiceMetadata};
 
 pub mod memory_discovery;
 pub mod mock;
@@ -69,7 +69,7 @@ pub struct NodeInfo {
     /// The node's  network addressess (e.g., "IP:PORT") - ordered by preference
     pub addresses: Vec<String>,
     /// Node services representing the services provided by this node
-    pub services: Vec<ServiceMetadata>,
+    pub node_metadata: NodeMetadata,
     /// incremental version counter that change everytime the node changes (new services added, new event subscriptions, etc)
     /// when that happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
     pub version: i64,

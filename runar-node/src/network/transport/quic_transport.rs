@@ -1035,7 +1035,7 @@ impl NetworkTransport for QuicTransport {
             keystore: self.keystore.clone(),
             resolver: self.label_resolver.clone(),
             network_id,
-            profile_public_key,
+            profile_public_key: Some(profile_public_key.clone()),
         };
 
         // build message
@@ -1147,7 +1147,7 @@ impl NetworkTransport for QuicTransport {
                 context: None,
             }],
         }; 
-        
+
         let peers = self.state.peers.read().await;
         let peer = peers.get(peer_node_id).ok_or_else(|| {
             NetworkError::ConnectionError(format!("not connected to peer {peer_node_id}"))

@@ -48,6 +48,9 @@ pub struct PathTrie<T: Clone> {
 
     /// Network-specific tries - the top level trie is keyed by network_id
     networks: HashMap<String, PathTrie<T>>,
+
+    /// Total count of all values in this trie (cached for efficiency)
+    count: usize,
 }
 
 impl<T: Clone> Default for PathTrie<T> {
@@ -67,6 +70,7 @@ impl<T: Clone> PathTrie<T> {
             template_param_name: None,
             multi_wildcard: Vec::new(),
             networks: HashMap::new(),
+            count: 0,
         }
     }
 
@@ -430,30 +434,60 @@ impl<T: Clone> PathTrie<T> {
             && self.networks.is_empty()
     }
 
-    /// Get the count of handlers in this trie
+    /// Get the total number of handlers in the trie
     pub fn handler_count(&self) -> usize {
-        let mut count = self.content.len() + self.multi_wildcard.len();
-
-        // Count handlers in children
-        for child in self.children.values() {
-            count += child.handler_count();
-        }
-
-        // Count handlers in wildcard child
-        if let Some(child) = &self.wildcard_child {
-            count += child.handler_count();
-        }
-
-        // Count handlers in template child
-        if let Some(child) = &self.template_child {
-            count += child.handler_count();
-        }
-
-        // Count handlers in network-specific tries
+        let mut count = 0;
         for network_trie in self.networks.values() {
-            count += network_trie.handler_count();
+            count += network_trie.handler_count_internal();
         }
-
         count
+    }
+
+    /// Get all values from the trie
+    pub fn get_all_values(&self) -> Vec<T> {
+        let mut results = Vec::new();
+        for network_trie in self.networks.values() {
+            network_trie.collect_all_values_internal(&mut results);
+        }
+        results
+    }
+
+    /// Internal method to count handlers in this trie and its children
+    fn handler_count_internal(&self) -> usize {
+        let mut count = self.content.len() + self.multi_wildcard.len();
+        
+        for child in self.children.values() {
+            count += child.handler_count_internal();
+        }
+        
+        if let Some(wildcard) = &self.wildcard_child {
+            count += wildcard.handler_count_internal();
+        }
+        
+        if let Some(template) = &self.template_child {
+            count += template.handler_count_internal();
+        }
+        
+        count
+    }
+
+    /// Internal method to collect all values from this trie and its children
+    fn collect_all_values_internal(&self, results: &mut Vec<T>) {
+        // Add content from this node
+        results.extend(self.content.clone());
+        results.extend(self.multi_wildcard.clone());
+        
+        // Recursively collect from children
+        for child in self.children.values() {
+            child.collect_all_values_internal(results);
+        }
+        
+        if let Some(wildcard) = &self.wildcard_child {
+            wildcard.collect_all_values_internal(results);
+        }
+        
+        if let Some(template) = &self.template_child {
+            template.collect_all_values_internal(results);
+        }
     }
 }

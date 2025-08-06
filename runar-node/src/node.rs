@@ -10,7 +10,7 @@ use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
  
-use runar_schemas::{ActionMetadata, ServiceMetadata};
+use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
 use runar_serializer::{ArcValue, LabelKeyInfo};
@@ -44,7 +44,7 @@ use crate::services::registry_service::RegistryService;
 use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
-use crate::services::service_registry::{EventHandler, ServiceEntry, ServiceRegistry};
+use crate::services::service_registry::{EventHandler, ServiceEntry, ServiceRegistry, INTERNAL_SERVICES};
 use crate::services::NodeDelegate;
 use crate::services::{
     ActionHandler,   EventRegistrationOptions,
@@ -52,6 +52,8 @@ use crate::services::{
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
+
+use uuid::Uuid;
 
 /// Node Configuration
 ///
@@ -146,7 +148,7 @@ impl std::fmt::Display for NodeConfig {
     }
 }
 
-const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
+
 
 /// The Node is the main entry point for the application
 ///
@@ -1491,11 +1493,17 @@ impl Node {
 
         // Broadcast to remote nodes if requested and network is available
         if options.broadcast && self.supports_networking {
-            if let Some(_transport) = &*self.network_transport.read().await {
-                //TODO
-                // Log message since we can't implement send yet
-                self.logger
-                    .debug(format!("Would broadcast event {topic_string} to network"));
+            let remote_subscribers = self
+                .service_registry
+                .get_remote_event_subscribers(&topic_path)
+                .await;
+            for (_subscription_id, callback, _options) in remote_subscribers {
+                // Execute the callback with correct arguments
+                if let Err(e) = callback( data.clone()).await {
+                    self.logger.error(format!(
+                        "Error in local event handler for {topic_string}: {e}"
+                    ));
+                }
             }
         }
 
@@ -1520,7 +1528,7 @@ impl Node {
             //check if node info is older then the stored peer
             if new_peer.version > existing_peer.version {
                 self.logger.debug(format!("Node {new_peer_node_id} has new version {new_peer_version}, removing and adding again", new_peer_version = new_peer.version));
-                self.remove_peer_services(existing_peer).await?;
+                self.remove_peer_capabilities(existing_peer).await?;
                 //remove and add again
                 known_peers.remove(&new_peer_node_id);
                 known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
@@ -1539,12 +1547,12 @@ impl Node {
         Ok(Vec::new())
     }
 
-    async fn remove_peer_services(
+    async fn remove_peer_capabilities(
         &self,
         existing_peer: &NodeInfo,
     ) -> Result<Vec<Arc<RemoteService>>> {
         //remove all the services
-        let services = &existing_peer.services;
+        let services = &existing_peer.node_metadata.services;
         for service_to_remove in services {
             let service_path = TopicPath::new(
                 &service_to_remove.service_path,
@@ -1555,19 +1563,29 @@ impl Node {
                 .remove_remote_service(&service_path)
                 .await?;
         }
+        //remove subscriptions also
+        let subscriptions = &existing_peer.node_metadata.subscriptions;
+        for subscription_to_remove in subscriptions {
+            let subscription_path = TopicPath::from_full_path(&subscription_to_remove.path)
+                .map_err(|e| anyhow!("Failed to create TopicPath for remote service - input: {path} error: {e}", path = subscription_to_remove.path))?;
+            self.service_registry
+                .remove_remote_event_handler(&subscription_path)
+                .await?;
+        }
         Ok(Vec::new())
     }
 
     async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
-        let capabilities = &node_info.services;
+        let capabilities = &node_info.node_metadata;
         self.logger.info(format!(
-            "Processing {count} capabilities from node {peer_node_id}",
-            count = capabilities.len(),
+            "Processing {services_count} services and {subscriptions_count} subscriptions from node {peer_node_id}",
+            services_count = capabilities.services.len(),
+            subscriptions_count = capabilities.subscriptions.len(),
             peer_node_id = compact_id(&node_info.node_public_key)
         ));
 
         // Check if capabilities is empty
-        if capabilities.is_empty() {
+        if capabilities.services.is_empty() && capabilities.subscriptions.is_empty() {
             self.logger.info("Received empty capabilities list.");
             return Ok(Vec::new()); // Nothing to process
         }
@@ -1578,7 +1596,7 @@ impl Node {
         let peer_node_id = compact_id(&node_info.node_public_key);
         // Create RemoteService instances directly
         let rs_config = CreateRemoteServicesConfig {
-            capabilities: capabilities.clone(),
+            services: capabilities.services.clone(),
             peer_node_id: peer_node_id.clone(),
             request_timeout_ms: self.config.request_timeout_ms,
         };
@@ -1590,7 +1608,7 @@ impl Node {
             .ok_or_else(|| anyhow!("Network transport not available"))?;
 
         let rs_dependencies = RemoteServiceDependencies {
-            network_transport: transport_arc,
+            network_transport: transport_arc.clone(),
             local_node_id: local_peer_id,
             // pending_requests: self.pending_requests.clone(),
             logger: self.logger.clone(),
@@ -1647,9 +1665,66 @@ impl Node {
             self.service_registry.update_remote_service_state(&service_topic_path, ServiceState::Running).await?;
         }
 
+        //handle remote node subscriptions
+        for subscription in capabilities.subscriptions.clone() {
+            let path = subscription.path;
+            let topic_path = TopicPath::from_full_path(&path).map_err(|e| {
+                anyhow!("Failed to create TopicPath for remote service - input: {path} error: {e}")
+            })?;
+            let topic_path = Arc::new(topic_path);
+            
+            // Capture variables from outer scope
+            let peer_node_id = peer_node_id.clone();
+            let network_transport = transport_arc.clone();
+            let logger = self.logger.clone();
+            
+            let topic_path_clone = topic_path.clone();
+
+            logger.debug(format!(
+                "🚀 [RemoteEvent] registering remote event - Event: {topic_path_clone}, Target: {peer_node_id}"
+            ));
+
+            // Create event handler that sends events to remote node
+            let event_handler = Arc::new(move |event_data: Option<ArcValue>| {
+                let path_clone = path.clone();
+                let peer_node_id = peer_node_id.clone();
+                let network_transport = network_transport.clone();
+                let logger = logger.clone();
+                let topic_path = topic_path_clone.clone();
+                Box::pin(async move {
+                    logger.debug(format!(
+                        "🚀 [RemoteEvent] Sending remote event - Event: {path_clone}, Target: {peer_node_id}"
+                    ));
+ 
+                    // Send the event to the remote node
+                    match network_transport
+                        .publish(topic_path.as_ref(), event_data, &peer_node_id)
+                        .await
+                    {
+                        Ok(_) => {
+                            logger.info(format!(
+                                "✅ [RemoteEvent] Event sent successfully - Event: {path_clone}, Target: {peer_node_id}"
+                            ));
+                            Ok(())
+                        }
+                        Err(e) => {
+                            logger.error(format!(
+                                "❌ [RemoteEvent] Failed to send event - Event: {path_clone}, Target: {peer_node_id}, Error: {e}"
+                            ));
+                            Err(anyhow::anyhow!("Failed to send event: {e}"))
+                        }
+                    }
+                }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
+            });
+            
+            self.service_registry.register_remote_event_subscription(topic_path.as_ref(), event_handler, EventRegistrationOptions::default()).await?;
+        }
+
         self.logger.info(format!(
-            "Successfully processed {count} remote services from node {peer_node_id}",
-            count = remote_services.len(),
+            "Successfully processed {services_count} remote services and {subscriptions_count} remote subscriptions from node {peer_node_id}",
+            services_count = remote_services.len(),
+            subscriptions_count = capabilities.subscriptions.len(),
+            peer_node_id = compact_id(&node_info.node_public_key)
         ));
 
         Ok(remote_services)
@@ -1713,40 +1788,20 @@ impl Node {
     /// INTENTION: Gather capability information from all local services.
     /// This includes service metadata and all registered actions.
     ///
-    pub async fn collect_local_service_capabilities(&self) -> Result<Vec<ServiceMetadata>> {
-        // Get all local services
-        let service_paths: HashMap<TopicPath, Arc<ServiceEntry>> =
-            self.service_registry.get_local_services().await;
-        if service_paths.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Build capability information for each service
-        let mut services = Vec::new();
-
-        for (service_path, service_entry) in service_paths {
-            let service = &service_entry.service;
-            // Skip internals services:
-            if INTERNAL_SERVICES.contains(&service.path()) {
-                continue;
-            }
-
-            // Get the service actions from registry
-            if let Some(meta) = self
-                .service_registry
-                .get_service_metadata(&service_path)
-                .await
-            {
-                services.push(meta);
-            }
-        }
+    pub async fn collect_local_service_capabilities(&self) -> Result<NodeMetadata> {
+        let services_map = self.service_registry.get_all_service_metadata(false).await?;
+        let services: Vec<ServiceMetadata> = services_map.values().cloned().collect();
+        let subscriptions = self.service_registry.get_all_subscriptions(false).await?;
 
         // Log all capabilities collected
         self.logger.info(format!(
             "Collected {count} services metadata",
             count = services.len()
         ));
-        Ok(services)
+        Ok(NodeMetadata {
+            services,
+            subscriptions,
+        })
     }
 
     /// Get the node's public network address
@@ -1798,12 +1853,12 @@ impl Node {
             }
         }
 
-        let services = self.collect_local_service_capabilities().await?;
+        let node_metadata = self.collect_local_service_capabilities().await?;
         let node_info = NodeInfo {
             node_public_key: self.node_public_key.clone(),
             network_ids: self.network_ids.clone(),
             addresses: vec![address],
-            services,
+            node_metadata: node_metadata,
             version: self.registry_version.load(Ordering::SeqCst),
         };
 
@@ -2025,7 +2080,7 @@ impl RegistryDelegate for Node {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
-    ) -> HashMap<String, ServiceMetadata> {
+    ) -> Result<HashMap<String, ServiceMetadata>> {
         self.service_registry
             .get_all_service_metadata(include_internal_services)
             .await

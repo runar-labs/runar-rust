@@ -10,7 +10,7 @@ use runar_node::network::discovery::{
     DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo,
 };
 use runar_node::{ActionMetadata, ServiceMetadata};
-use runar_schemas::SubscriptionMetadata;
+use runar_schemas::{NodeMetadata, SubscriptionMetadata};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -38,32 +38,32 @@ async fn create_test_discovery(
         node_public_key: node_public_key.to_vec(),
         network_ids: vec![network_id.to_string()],
         addresses: vec!["127.0.0.1:8000".to_string()],
-        services: vec![ServiceMetadata {
-            name: "test-service".to_string(),
-            service_path: "service".to_string(),
-            network_id: "test-network".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test service for unit tests".to_string(),
-            registration_time: SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            last_start_time: Some(
-                SystemTime::now()
+        node_metadata: NodeMetadata {
+            services: vec![ServiceMetadata {
+                name: "test-service".to_string(),
+                service_path: "service".to_string(),
+                network_id: "test-network".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Test service for unit tests".to_string(),
+                registration_time: SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_secs(),
-            ),
-            actions: vec![ActionMetadata {
-                name: "request".to_string(),
-                description: "Test request".to_string(),
-                input_schema: None,
-                output_schema: None,
+                last_start_time: Some(
+                    SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                ),
+                actions: vec![ActionMetadata {
+                    name: "request".to_string(),
+                    description: "Test request".to_string(),
+                    input_schema: None,
+                    output_schema: None,
+                }],
             }],
-            subscriptions: vec![SubscriptionMetadata {
-                path: "event".to_string(),
-            }],
-        }],
+            subscriptions: vec![],
+        },
         version: 0,
     };
 

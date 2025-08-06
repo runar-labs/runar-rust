@@ -2,10 +2,10 @@ use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::network::transport::{
-    MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
+    MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
     MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 };
-use runar_schemas::SubscriptionMetadata;
+use runar_schemas::{NodeMetadata, SubscriptionMetadata};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -326,32 +326,34 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         node_public_key: node1_public_key_bytes.clone(),
         network_ids: vec!["test".to_string()],
         addresses: vec!["127.0.0.1:50069".to_string()],
-        services: vec![ServiceMetadata {
-            network_id: "test".to_string(),
-            service_path: "api1".to_string(),
-            name: "api1".to_string(),
-            version: "1.0.0".to_string(),
-            description: "API 1".to_string(),
-            actions: vec![
-                ActionMetadata {
-                    name: "get".to_string(),
-                    description: "GET operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-                ActionMetadata {
-                    name: "post".to_string(),
-                    description: "POST operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-            ],
+        node_metadata: NodeMetadata {
+            services: vec![ServiceMetadata {
+                network_id: "test".to_string(),
+                service_path: "api1".to_string(),
+                name: "api1".to_string(),
+                version: "1.0.0".to_string(),
+                description: "API 1".to_string(),
+                actions: vec![
+                    ActionMetadata {
+                        name: "get".to_string(),
+                        description: "GET operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                    ActionMetadata {
+                        name: "post".to_string(),
+                        description: "POST operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                ],
+                registration_time: 0,
+                last_start_time: None,
+            }],
             subscriptions: vec![SubscriptionMetadata {
                 path: "data_processed".to_string(),
             }],
-            registration_time: 0,
-            last_start_time: None,
-        }],
+        },
         version: 1,
     };
 
@@ -359,32 +361,34 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         node_public_key: node2_public_key_bytes.clone(),
         network_ids: vec!["test".to_string()],
         addresses: vec!["127.0.0.1:50044".to_string()],
-        services: vec![ServiceMetadata {
-            network_id: "test".to_string(),
-            service_path: "storage1".to_string(),
-            name: "storage1".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Storage 1".to_string(),
-            actions: vec![
-                ActionMetadata {
-                    name: "store".to_string(),
-                    description: "Store operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-                ActionMetadata {
-                    name: "retrieve".to_string(),
-                    description: "Retrieve operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-            ],
+        node_metadata: NodeMetadata {
+            services: vec![ServiceMetadata {
+                network_id: "test".to_string(),
+                service_path: "storage1".to_string(),
+                name: "storage1".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Storage 1".to_string(),
+                actions: vec![
+                    ActionMetadata {
+                        name: "store".to_string(),
+                        description: "Store operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                    ActionMetadata {
+                        name: "retrieve".to_string(),
+                        description: "Retrieve operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                ],
+                registration_time: 0,
+                last_start_time: None,
+            }],
             subscriptions: vec![SubscriptionMetadata {
                 path: "storage_updated".to_string(),
             }],
-            registration_time: 0,
-            last_start_time: None,
-        }],
+        },
         version: 1,
     };
 
@@ -585,19 +589,9 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     logger.info("📡 Testing event publishing...");
 
     let event_data = ArcValue::new_primitive("event_data".to_string());
-    let event_message = NetworkMessage {
-        source_node_id: compact_id(&sender_info.node_public_key),
-        destination_node_id: compact_id(&receiver_info.node_public_key),
-        message_type: MESSAGE_TYPE_EVENT,
-        payloads: vec![NetworkMessagePayloadItem {
-            path: "test:api1/data_processed".to_string(),
-            value_bytes: event_data.serialize(None)?,
-            correlation_id: format!("event-{}", uuid::Uuid::new_v4()),
-            context: None,
-        }],
-    };
-
-    sender_transport.publish(event_message).await?;
+ 
+    let topic_path = TopicPath::new("test:api1/data_processed", "test")?;
+    sender_transport.publish(&topic_path, Some(event_data), &compact_id(&receiver_info.node_public_key)).await?;
 
     // Allow message to be processed
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -616,43 +610,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     drop(event_msgs);
 
     logger.info("Event publishing working correctly");
-
-    // ==================================================
-    // STEP 13: Test Announcement Messages
-    // ==================================================
-
-    logger.info("Testing announcement messages...");
-
-    let announcement_message = NetworkMessage {
-        source_node_id: compact_id(&sender_info.node_public_key),
-        destination_node_id: compact_id(&receiver_info.node_public_key),
-        message_type: MESSAGE_TYPE_ANNOUNCEMENT,
-        payloads: vec![NetworkMessagePayloadItem {
-            path: "".to_string(),
-            value_bytes: "Test announcement data".as_bytes().to_vec(),
-            correlation_id: "announcement_test".to_string(),
-            context: None,
-        }],
-    };
-
-    sender_transport.publish(announcement_message).await?;
-
-    // Allow message to be processed
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Check that announcement was received
-    let announcement_msgs = receiver_msgs.lock().await;
-    let announcement_received = announcement_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
-    assert!(
-        announcement_received,
-        "Announcement message should be received"
-    );
-    drop(announcement_msgs);
-
-    logger.info("Announcement messages working correctly");
-
+ 
     // ==================================================
     // STEP 14: Comprehensive Analysis
     // ==================================================
@@ -742,12 +700,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         || node2_msgs
             .iter()
             .any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
-    let has_announcement = node1_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT)
-        || node2_msgs
-            .iter()
-            .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
+     
 
     if has_handshake {
         logger.info("Handshake messages processed successfully");
@@ -758,10 +711,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     if has_event {
         logger.info("Event messages processed successfully");
     }
-    if has_announcement {
-        logger.info("Announcement messages processed successfully");
-    }
-
+    
     // Clean up
     logger.info("\nCleaning up...");
     transport1.stop().await?;
@@ -857,11 +807,10 @@ async fn test_transport_message_header_bounds_checking(
     // that the CBOR serialization works correctly, which is the core of the message format
 
     // Test 5: Verify message type constants are properly defined
-    assert_eq!(MESSAGE_TYPE_HANDSHAKE, 4);
-    assert_eq!(MESSAGE_TYPE_REQUEST, 5);
-    assert_eq!(MESSAGE_TYPE_RESPONSE, 6);
-    assert_eq!(MESSAGE_TYPE_EVENT, 7);
-    assert_eq!(MESSAGE_TYPE_ANNOUNCEMENT, 3);
+    assert_eq!(MESSAGE_TYPE_HANDSHAKE, 3);
+    assert_eq!(MESSAGE_TYPE_REQUEST, 4);
+    assert_eq!(MESSAGE_TYPE_RESPONSE, 5);
+    assert_eq!(MESSAGE_TYPE_EVENT, 6); 
 
     // Test 6: Verify message structure validation
     let empty_msg = NetworkMessage {

@@ -205,7 +205,7 @@ impl RegistryService {
         ctx.logger.debug("Listing all services");
 
         // Get all service metadata directly
-        let service_metadata = self.registry_delegate.get_all_service_metadata(true).await;
+        let service_metadata = self.registry_delegate.get_all_service_metadata(true).await?;
 
         // Convert the HashMap of ServiceMetadata to a Vec
         let metadata_vec: Vec<ArcValue> = service_metadata

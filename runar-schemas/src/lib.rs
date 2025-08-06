@@ -22,6 +22,12 @@ pub struct SubscriptionMetadata {
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
+pub struct NodeMetadata {
+    pub services: Vec<ServiceMetadata>,
+    pub subscriptions: Vec<SubscriptionMetadata>,
+}
+
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
 pub struct ServiceMetadata {
     pub network_id: String,
     pub service_path: String,
@@ -29,7 +35,7 @@ pub struct ServiceMetadata {
     pub version: String,
     pub description: String,
     pub actions: Vec<ActionMetadata>,
-    pub subscriptions: Vec<SubscriptionMetadata>,
+    // pub subscriptions: Vec<SubscriptionMetadata>,
     pub registration_time: u64,
     pub last_start_time: Option<u64>,
 }
@@ -271,14 +277,14 @@ mod tests {
                     output_schema: Some(FieldSchema::double("result")),
                 },
             ],
-            subscriptions: vec![
-                SubscriptionMetadata {
-                    path: "calculation.completed".to_string(), 
-                },
-                SubscriptionMetadata {
-                    path: "error.occurred".to_string(),
-                },
-            ],
+            // subscriptions: vec![
+            //     SubscriptionMetadata {
+            //         path: "calculation.completed".to_string(), 
+            //     },
+            //     SubscriptionMetadata {
+            //         path: "error.occurred".to_string(),
+            //     },
+            // ],
             registration_time: 1640995200, // 2022-01-01 00:00:00 UTC
             last_start_time: Some(1640995260), // 2022-01-01 00:01:00 UTC
         };
@@ -317,9 +323,9 @@ mod tests {
         assert_eq!(extracted_metadata.actions[2].name, "calculate");
 
         // Verify events
-        assert_eq!(extracted_metadata.subscriptions.len(), 2);
-        assert_eq!(extracted_metadata.subscriptions[0].path, "calculation.completed");
-        assert_eq!(extracted_metadata.subscriptions[1].path, "error.occurred");
+        // assert_eq!(extracted_metadata.subscriptions.len(), 2);
+        // assert_eq!(extracted_metadata.subscriptions[0].path, "calculation.completed");
+        // assert_eq!(extracted_metadata.subscriptions[1].path, "error.occurred");
 
         // Verify that input schemas are preserved
         assert!(extracted_metadata.actions[0].input_schema.is_some());
@@ -336,7 +342,7 @@ mod tests {
         println!("   - Network ID: {}", extracted_metadata.network_id);
         println!("   - Service Path: {}", extracted_metadata.service_path);
         println!("   - Actions: {}", extracted_metadata.actions.len());
-        println!("   - Events: {}", extracted_metadata.subscriptions.len());
+        // println!("   - Events: {}", extracted_metadata.subscriptions.len());
 
         Ok(())
     }
@@ -616,8 +622,8 @@ mod tests {
         assert!(obj_instance.actions[0].output_schema.is_some());
 
         // Verify events
-        assert_eq!(obj_instance.subscriptions.len(), 1);
-        assert_eq!(obj_instance.subscriptions[0].path, "user.created");
+        // assert_eq!(obj_instance.subscriptions.len(), 1);
+        // assert_eq!(obj_instance.subscriptions[0].path, "user.created");
  
         println!("   - Successfully converted JSON to typed ServiceMetadata");
         println!("   - All fields match the input JSON structure");

@@ -73,6 +73,10 @@ async fn test_remote_action_call() -> Result<()> {
     // Test 1: Call math1/add service (on node1) from node2
     logger.debug("📤 Testing remote action call from node2 to node1 (math1/add)...");
 
+
+    //math/added will be fired in the node 2 and we shuold be able to receive it in the node 1
+    let on_added_future = node1.on(format!("math1/math/added"), Duration::from_secs(3));
+
     let response_av = node2
         .request("math1/add", Some(params! { "a" => 5.0, "b" => 3.0 }))
         .await?
@@ -83,6 +87,15 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug(format!(
         "✅ Secure add operation succeeded: 5 + 3 = {response}"
     ));
+
+
+    let on_added_payload = tokio::join!(on_added_future).0.unwrap();
+    assert_eq!(on_added_payload.is_some(), true );
+    let on_added_payload = on_added_payload.unwrap();
+    let on_added_payload = on_added_payload.as_type_ref::<f64>()?;
+    assert_eq!(*on_added_payload, 8.0);
+
+    logger.debug("✅ math/added event received");
 
     // Test 2: Call math2/multiply service (on node2) from node1
     logger.debug("📤 Testing remote action call from node1 to node2 (math2/multiply)...");

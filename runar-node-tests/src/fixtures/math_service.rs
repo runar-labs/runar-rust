@@ -10,6 +10,7 @@
 use anyhow::{anyhow, Result};
 use runar_node::services::{
     abstract_service::AbstractService, request_context::RequestContext, EventRegistrationOptions,
+    EventContext,
 };
 use runar_node::LifecycleContext;
 use runar_schemas::{FieldSchema, SchemaDataType};
@@ -374,33 +375,11 @@ impl AbstractService for MathService {
                 }),
             )
             .await?;
-
-        // Subscribe to an event with specific metadata
-        let event_options = EventRegistrationOptions {
-            
-        };
-
-        // let service_arc_for_event = self.clone(); // Clone self for the event callback
-        context
-            .subscribe_with_options(
-                "config/updated", // Event name
-                Box::new(move |event_ctx, payload| {
-                    Box::pin(async move {
-                        event_ctx.info(format!(
-                            "MathService received 'config/updated' event with payload: {payload:?}"
-                        ));
-                        // In a real scenario, _service_clone could be used to update internal state
-                        Ok(())
-                    })
-                }),
-                event_options,
-            )
-            .await?;
-
+ 
         context
             .subscribe(
                 "math/added",
-                Box::new(move |ctx, value| {
+                Arc::new(move |ctx, value| {
                     // Create a boxed future that returns Result<(), anyhow::Error>
                     Box::pin(async move {
                         ctx.info(format!("MathService received math/added event: {value:?}"));

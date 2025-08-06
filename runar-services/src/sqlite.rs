@@ -903,7 +903,7 @@ impl AbstractService for SqliteService {
                 // Create a single handler for all operation types
                 let event_handler = {
                     let replication_manager_clone = replication_manager.clone(); // Just clone the Arc
-                    Box::new(move |ctx: Arc<EventContext>, event: Option<ArcValue>| {
+                    Arc::new(move |ctx: Arc<EventContext>, event: Option<ArcValue>| {
                         let replication_manager_clone = replication_manager_clone.clone(); // Just clone the Arc
                         Box::pin(async move {
                             ctx.info("🎯 Event handler triggered");

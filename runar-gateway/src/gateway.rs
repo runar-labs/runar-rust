@@ -203,7 +203,7 @@ impl AbstractService for GatwayService {
         context
             .subscribe(
                 "$registry/services/*/state/running",
-                Box::new(
+                Arc::new(
                     move |event_ctx: Arc<EventContext>, value: Option<ArcValue>| {
                         let service_name_clone = service_name.clone();
                         Box::pin(async move {
