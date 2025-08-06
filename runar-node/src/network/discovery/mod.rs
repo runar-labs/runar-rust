@@ -100,4 +100,7 @@ pub trait NodeDiscovery: Send + Sync {
 
     /// Shutdown the discovery mechanism
     async fn shutdown(&self) -> Result<()>;
+
+    /// Update the local node information (called when node capabilities change)
+    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()>;
 }

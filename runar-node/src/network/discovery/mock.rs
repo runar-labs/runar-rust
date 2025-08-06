@@ -87,4 +87,9 @@ impl NodeDiscovery for MockNodeDiscovery {
         self.nodes.write().unwrap().clear();
         Ok(())
     }
+
+    async fn update_local_node_info(&self, _new_node_info: NodeInfo) -> Result<()> {
+        // Mock implementation - no action needed
+        Ok(())
+    }
 }

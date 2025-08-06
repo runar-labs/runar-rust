@@ -166,6 +166,9 @@ pub struct ServiceRegistry {
     /// Remote service lifecycle states
     remote_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
 
+    /// Mapping of peer node IDs to subscription IDs registered on their behalf
+    remote_peer_subscriptions: Arc<RwLock<HashMap<String, Vec<String>>>>,
+
     /// Logger instance
     logger: Arc<Logger>,
 }
@@ -186,6 +189,7 @@ impl Clone for ServiceRegistry {
             remote_services: self.remote_services.clone(),
             local_service_states: self.local_service_states.clone(),
             remote_service_states: self.remote_service_states.clone(),
+            remote_peer_subscriptions: self.remote_peer_subscriptions.clone(),
             logger: self.logger.clone(),
         }
     }
@@ -215,6 +219,7 @@ impl ServiceRegistry {
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
             local_service_states: Arc::new(RwLock::new(HashMap::new())),
             remote_service_states: Arc::new(RwLock::new(HashMap::new())),
+            remote_peer_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             logger,
         }
     }
@@ -812,6 +817,16 @@ impl ServiceRegistry {
     ///
     /// INTENTION: Remove a specific subscription by ID from the remote event subscriptions,
     /// providing a simpler API that doesn't require the original topic.
+    pub async fn add_remote_peer_subscriptions(&self, peer_id: &str, sub_ids: Vec<String>) {
+        let mut guard = self.remote_peer_subscriptions.write().await;
+        guard.insert(peer_id.to_string(), sub_ids);
+    }
+
+    pub async fn remove_remote_peer_subscriptions(&self, peer_id: &str) -> Vec<String> {
+        let mut guard = self.remote_peer_subscriptions.write().await;
+        guard.remove(peer_id).unwrap_or_default()
+    }
+
     pub async fn unsubscribe_remote(&self, subscription_id: &str) -> Result<()> {
         self.logger.debug(format!(
             "Attempting to unsubscribe remote subscription ID: {subscription_id}"

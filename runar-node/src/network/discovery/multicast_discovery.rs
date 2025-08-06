@@ -291,28 +291,40 @@ impl MulticastDiscovery {
     fn start_announce_task(
         &self,
         tx: Sender<MulticastMessage>,
-        info: NodeInfo,
         interval: Duration,
     ) -> JoinHandle<()> {
         let logger = self.logger.clone();
+        let local_node = Arc::clone(&self.local_node);
 
         tokio::spawn(async move {
             let mut ticker = time::interval(interval);
 
-            let peer_info = PeerInfo::new(info.node_public_key, info.addresses.clone());
-
             loop {
                 ticker.tick().await;
 
+                // Get fresh NodeInfo for each announcement
+                let local_node_guard = local_node.read().await;
+                let local_info = match local_node_guard.as_ref() {
+                    Some(info) => info.clone(),
+                    None => {
+                        logger.error("No local node information available for announcement".to_string());
+                        continue;
+                    }
+                };
+                drop(local_node_guard);
+
+                let peer_info = PeerInfo::new(local_info.node_public_key.clone(), local_info.addresses.clone());
+
                 // Send announcement
                 logger.debug(format!(
-                    "Sending announcement for node {peer_node_id}",
-                    peer_node_id = compact_id(&peer_info.public_key)
+                    "📡 [multicast] Sending announcement for node {peer_node_id} with version {version}",
+                    peer_node_id = compact_id(&peer_info.public_key),
+                    version = local_info.version
                 ));
 
                 if tx
                     .send(MulticastMessage {
-                        announce: Some(peer_info.clone()),
+                        announce: Some(peer_info),
                         goodbye: None,
                     })
                     .await
@@ -595,7 +607,7 @@ impl NodeDiscovery for MulticastDiscovery {
         .await
         .map_err(|e| anyhow!("Failed to send initial announcement: {e}"))?;
 
-        let task = self.start_announce_task(tx.clone(), local_info.clone(), interval);
+        let task = self.start_announce_task(tx.clone(), interval);
         *self.announce_task.lock().await = Some(task);
 
         Ok(())
@@ -612,6 +624,15 @@ impl NodeDiscovery for MulticastDiscovery {
     async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()> {
         self.logger.debug("Adding discovery listener".to_string());
         self.listeners.write().await.push(listener);
+        Ok(())
+    }
+
+    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()> {
+        let mut local_node_guard = self.local_node.write().await;
+        *local_node_guard = Some(new_node_info);
+        drop(local_node_guard);
+        
+        self.logger.debug("Updated local node information for multicast discovery");
         Ok(())
     }
 

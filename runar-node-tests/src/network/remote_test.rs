@@ -54,7 +54,11 @@ async fn test_remote_action_call() -> Result<()> {
     let mut node1 = Node::new(node1_config).await?;
     node1.add_service(math_service1).await?;
 
+    
     node1.start().await?;
+
+    //math/added will be fired in the node 2 and we shuold be able to receive it in the node 1//math/added will be fired in the node 2 and we shuold be able to receive it in the node 1
+    let on_added_future = node1.on( "math1/math/added", Duration::from_secs(5));
 
     logger.debug("✅ Node 1 started");
 
@@ -73,10 +77,6 @@ async fn test_remote_action_call() -> Result<()> {
     // Test 1: Call math1/add service (on node1) from node2
     logger.debug("📤 Testing remote action call from node2 to node1 (math1/add)...");
 
-
-    //math/added will be fired in the node 2 and we shuold be able to receive it in the node 1
-    let on_added_future = node1.on(format!("math1/math/added"), Duration::from_secs(3));
-
     let response_av = node2
         .request("math1/add", Some(params! { "a" => 5.0, "b" => 3.0 }))
         .await?
@@ -89,7 +89,7 @@ async fn test_remote_action_call() -> Result<()> {
     ));
 
 
-    let on_added_payload = tokio::join!(on_added_future).0.unwrap();
+    let on_added_payload = on_added_future.await?;
     assert_eq!(on_added_payload.is_some(), true );
     let on_added_payload = on_added_payload.unwrap();
     let on_added_payload = on_added_payload.as_type_ref::<f64>()?;

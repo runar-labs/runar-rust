@@ -785,7 +785,7 @@ pub trait NodeDelegate: Send + Sync {
     ) -> Result<String>;
 
     /// Unsubscribe from a topic
-    async fn unsubscribe(&self, subscription_id: Option<&str>) -> Result<()>;
+    async fn unsubscribe(&self, subscription_id: &str) -> Result<()>;
 
     /// Register an action handler for a specific path
     ///

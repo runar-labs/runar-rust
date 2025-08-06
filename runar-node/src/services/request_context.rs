@@ -193,11 +193,24 @@ impl RequestContext {
             // Already has network ID, use as is
             topic_string
         } else if topic_string.contains('/') {
-            // Has service/topic but no network ID
-            format!(
-                "{network_id}:{topic_string}",
-                network_id = self.topic_path.network_id()
-            )
+            // Path contains a '/', could already include service path. Check first segment.
+            let first_seg = topic_string.split('/').next().unwrap_or("");
+            if first_seg == self.topic_path.service_path() {
+                // Already has service path, just prefix network id
+                format!(
+                    "{network_id}:{topic}",
+                    network_id = self.topic_path.network_id(),
+                    topic = topic_string,
+                )
+            } else {
+                // Treat as relative to this service – prepend service path and network
+                format!(
+                    "{network_id}:{service}/{topic}",
+                    network_id = self.topic_path.network_id(),
+                    service = self.topic_path.service_path(),
+                    topic = topic_string,
+                )
+            }
         } else {
             // Simple topic name - add service path and network ID
             format!(

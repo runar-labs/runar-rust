@@ -157,7 +157,7 @@ pub struct Node {
     /// Debounce state for notify_node_change.
     ///
     /// INTENTION: Ensures that rapid successive calls to notify_node_change only trigger a single
-    /// notification after a 5s debounce window. This prevents unnecessary network traffic and ensures
+    /// notification after a 2s debounce window. This prevents unnecessary network traffic and ensures
     /// only the latest node state is broadcast. Internal use only; not exposed outside Node.
     debounce_notify_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 
@@ -201,7 +201,7 @@ pub struct Node {
     /// Pending requests waiting for responses, keyed by correlation ID
     pub(crate) pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
 
-    label_resolver: Arc<dyn LabelResolver>,
+        label_resolver: Arc<dyn LabelResolver>,
 
     registry_version: Arc<AtomicI64>,
 
@@ -419,7 +419,7 @@ impl Node {
         if self.running.load(Ordering::SeqCst) {
             self.start_service(&service_topic, service_entry.as_ref()).await;
             self.registry_version.fetch_add(1, Ordering::SeqCst);
-            let _ = self.notify_node_change().await;
+            self.notify_node_change().await?;
         }
 
         Ok(())
@@ -489,17 +489,17 @@ impl Node {
         match tokio::time::timeout(timeout, rx.recv()).await {
             Ok(Some(event_data)) => {
                 // Event received, unsubscribe and return data
-                self.unsubscribe(Some(&subscription_id)).await?;
+                self.unsubscribe(&subscription_id).await?;
                 Ok(event_data)
             }
             Ok(None) => {
                 // Channel closed
-                self.unsubscribe(Some(&subscription_id)).await?;
+                self.unsubscribe(&subscription_id).await?;
                 Err(anyhow!("Channel closed while waiting for event on topic: {full_topic}"))
             }
             Err(_) => {
                 // Timeout
-                self.unsubscribe(Some(&subscription_id)).await?;
+                self.unsubscribe(&subscription_id).await?;
                 Err(anyhow!("Timeout waiting for event on topic: {full_topic}"))
             }
         }
@@ -575,8 +575,6 @@ impl Node {
 
         self.logger.info("Node started successfully");
         self.running.store(true, Ordering::SeqCst);
-
-        self.registry_version.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
@@ -1561,14 +1559,17 @@ impl Node {
                 .remove_remote_service(&service_path)
                 .await?;
         }
-        //remove subscriptions also
-        let subscriptions = &existing_peer.node_metadata.subscriptions;
-        for subscription_to_remove in subscriptions {
-            let subscription_path = TopicPath::from_full_path(&subscription_to_remove.path)
-                .map_err(|e| anyhow!("Failed to create TopicPath for remote service - input: {path} error: {e}", path = subscription_to_remove.path))?;
-            self.service_registry
-                .remove_remote_event_handler(&subscription_path)
-                .await?;
+        // Remove subscriptions associated with this peer only
+        let peer_node_id = compact_id(&existing_peer.node_public_key);
+        let subscription_ids = self
+            .service_registry
+            .remove_remote_peer_subscriptions(&peer_node_id)
+            .await;
+        for sub_id in subscription_ids {
+            if let Err(e) = self.service_registry.unsubscribe_remote(&sub_id).await {
+                self.logger.warn(format!(
+                    "Unable to remove remote subscription id {sub_id} for peer {peer_node_id}: {e}"));
+            }
         }
         Ok(Vec::new())
     }
@@ -1663,59 +1664,87 @@ impl Node {
             self.service_registry.update_remote_service_state(&service_topic_path, ServiceState::Running).await?;
         }
 
-        //handle remote node subscriptions
-        for subscription in capabilities.subscriptions.clone() {
-            let path = subscription.path;
-            let topic_path = TopicPath::from_full_path(&path).map_err(|e| {
-                anyhow!("Failed to create TopicPath for remote service - input: {path} error: {e}")
-            })?;
-            let topic_path = Arc::new(topic_path);
-            
-            // Capture variables from outer scope
-            let peer_node_id = peer_node_id.clone();
-            let network_transport = transport_arc.clone();
-            let logger = self.logger.clone();
-            
-            let topic_path_clone = topic_path.clone();
+        // Handle remote node subscriptions - only for services that exist locally
+        {
+            // Vector to store subscription IDs we register for this peer so we can remove them later
+            let mut peer_subscription_ids: Vec<String> = Vec::new();
 
-            logger.debug(format!(
-                "🚀 [RemoteEvent] registering remote event - Event: {topic_path_clone}, Target: {peer_node_id}"
-            ));
-
-            // Create event handler that sends events to remote node
-            let event_handler = Arc::new(move |event_data: Option<ArcValue>| {
-                let path_clone = path.clone();
-                let peer_node_id = peer_node_id.clone();
-                let network_transport = network_transport.clone();
-                let logger = logger.clone();
-                let topic_path = topic_path_clone.clone();
-                Box::pin(async move {
-                    logger.debug(format!(
-                        "🚀 [RemoteEvent] Sending remote event - Event: {path_clone}, Target: {peer_node_id}"
-                    ));
- 
-                    // Send the event to the remote node
-                    match network_transport
-                        .publish(topic_path.as_ref(), event_data, &peer_node_id)
-                        .await
-                    {
-                        Ok(_) => {
-                            logger.info(format!(
-                                "✅ [RemoteEvent] Event sent successfully - Event: {path_clone}, Target: {peer_node_id}"
-                            ));
-                            Ok(())
-                        }
-                        Err(e) => {
-                            logger.error(format!(
-                                "❌ [RemoteEvent] Failed to send event - Event: {path_clone}, Target: {peer_node_id}, Error: {e}"
-                            ));
-                            Err(anyhow::anyhow!("Failed to send event: {e}"))
-                        }
+            for subscription in capabilities.subscriptions.clone() {
+                let path = subscription.path.clone();
+                let topic_path = match TopicPath::from_full_path(&path) {
+                    Ok(tp) => tp,
+                    Err(e) => {
+                        self.logger.warn(format!("Failed to parse subscription path '{path}': {e}"));
+                        continue;
                     }
-                }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
-            });
-            
-            self.service_registry.register_remote_event_subscription(topic_path.as_ref(), event_handler, EventRegistrationOptions::default()).await?;
+                };
+
+                // Skip if our node does not participate in the requested network
+                if !self.network_ids.contains(&topic_path.network_id()) {
+                    self.logger.debug(format!("Ignoring remote subscription {path} - network id not supported"));
+                    continue;
+                }
+
+                // Determine if the referenced service exists locally (ignore patterns)
+                let service_topic = TopicPath::new_service(&topic_path.network_id(), &topic_path.service_path());
+                let has_service = self
+                    .service_registry
+                    .get_local_service_state(&service_topic)
+                    .await
+                    .is_some();
+
+                if !has_service && !topic_path.is_pattern() {
+                    self.logger.debug(format!("Ignoring remote subscription {path} - local service not found"));
+                    continue;
+                }
+
+                let topic_path_arc = Arc::new(topic_path.clone());
+                let peer_node_id_cloned = peer_node_id.clone();
+                let network_transport_cloned = transport_arc.clone();
+                let logger_cloned = self.logger.clone();
+                let topic_path_handler = topic_path_arc.clone();
+
+                // Create event handler forwarding events to remote peer
+                let event_handler = Arc::new(move |event_data: Option<ArcValue>| {
+                    let logger = logger_cloned.clone();
+                    let peer_node_id = peer_node_id_cloned.clone();
+                    let topic_path = topic_path_handler.clone();
+                    let network_transport = network_transport_cloned.clone();
+                    Box::pin(async move {
+                        logger.debug(format!(
+                            "🚀 [RemoteEvent] Sending remote event - Event: {topic_path}, Target: {peer_node_id}"));
+                        match network_transport.publish(topic_path.as_ref(), event_data, &peer_node_id).await {
+                            Ok(_) => {
+                                logger.info(format!(
+                                    "✅ [RemoteEvent] Event sent successfully - Event: {topic_path}, Target: {peer_node_id}"));
+                                Ok(())
+                            }
+                            Err(e) => {
+                                logger.error(format!(
+                                    "❌ [RemoteEvent] Failed to send event - Event: {topic_path}, Target: {peer_node_id}, Error: {e}"));
+                                Err(anyhow::anyhow!("Failed to send event: {e}"))
+                            }
+                        }
+                    }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
+                });
+
+                match self.service_registry.register_remote_event_subscription(topic_path_arc.as_ref(), event_handler, EventRegistrationOptions::default()).await {
+                    Ok(subscription_id) => {
+                        peer_subscription_ids.push(subscription_id);
+                    }
+                    Err(e) => {
+                        self.logger.warn(format!(
+                            "Failed to register remote subscription {path} for peer {peer_node_id}: {e}"));
+                    }
+                }
+            }
+
+            // Store the subscription IDs in the service registry for later cleanup
+            if !peer_subscription_ids.is_empty() {
+                self.service_registry
+                    .add_remote_peer_subscriptions(&peer_node_id, peer_subscription_ids)
+                    .await;
+            }
         }
 
         self.logger.info(format!(
@@ -1728,7 +1757,7 @@ impl Node {
         Ok(remote_services)
     }
 
-    //this function is debounced since it can be called in rapid suyccession.. it is debounced for 5 seconds..
+    //this function is debounced since it can be called in rapid suyccession.. it is debounced for 2 seconds..
     // it will then call the notify_node_change_impl  which will use the transposter to send a handshake message with the latest node info to all known peers.
     /// Debounced notification of node change.
     ///
@@ -1737,6 +1766,10 @@ impl Node {
     /// trigger the actual notification. After the debounce period, it delegates to notify_node_change_impl,
     /// which sends the latest node info to all known peers via the transport.
     pub async fn notify_node_change(&self) -> Result<()> {
+        self.logger.info(format!(
+            "notify_node_change called - it will be debounced for 2 seconds",
+        ));
+
         let debounce_task = self.debounce_notify_task.clone();
         let this = self.clone();
         // Cancel any existing debounce task
@@ -1771,6 +1804,15 @@ impl Node {
             "Notifying node change - version: {version}",
             version = local_node_info.version
         ));
+
+        // Update discovery providers with new node info
+        if let Some(discovery_providers) = self.network_discovery_providers.read().await.as_ref() {
+            for provider in discovery_providers {
+                if let Err(e) = provider.update_local_node_info(local_node_info.clone()).await {
+                    self.logger.warn(format!("Failed to update discovery provider: {e}"));
+                }
+            }
+        }
 
         let transport_guard = self.network_transport.read().await;
         if let Some(transport) = transport_guard.as_ref() {
@@ -1972,9 +2014,12 @@ impl NodeDelegate for Node {
                 network_id=self.network_id
             ))?;
  
+        let node_started = self.running.load(Ordering::SeqCst);
+
         self.logger.debug(format!(
-            "Node: subscribe_with_options called for topic_path '{topic_path}'",
-            topic_path=topic_path.as_str()
+            "Node: subscribe_with_options called for topic_path '{topic_path}' - node started: {node_started}",
+            topic_path=topic_path.as_str(),
+            node_started=node_started
         ));
 
         let subscription_id = self
@@ -1982,7 +2027,7 @@ impl NodeDelegate for Node {
             .register_local_event_subscription(&topic_path, callback, options)
             .await?;
 
-        if self.running.load(Ordering::SeqCst) {
+        if node_started {
             self.registry_version.fetch_add(1, Ordering::SeqCst);
             self.notify_node_change().await?;
         }
@@ -1990,34 +2035,33 @@ impl NodeDelegate for Node {
         Ok(subscription_id)
     }
 
-    async fn unsubscribe(&self, subscription_id: Option<&str>) -> Result<()> {
-        if let Some(id) = subscription_id {
-            self.logger
-                .debug(format!("Unsubscribing from with ID: {id}"));
-            // Directly forward to service registry's method
-            let registry = self.service_registry.clone();
-            match registry.unsubscribe_local(id).await {
-                Ok(_) => {
-                    self.logger.debug(format!(
-                        "Successfully unsubscribed locally from  with id {id}"
-                    ));
-                }
-                Err(e) => {
-                    self.logger.error(format!(
-                        "Failed to unsubscribe locally from  with id {id}: {e}"
-                    ));
-                    return Err(anyhow!("Failed to unsubscribe locally: {e}"));
-                }
+    async fn unsubscribe(&self, subscription_id:&str ) -> Result<()> {
+         
+        let node_started = self.running.load(Ordering::SeqCst);
+        self.logger
+            .debug(format!("Unsubscribing from with ID: {subscription_id} - node started: {node_started}"));
+        // Directly forward to service registry's method
+        let registry = self.service_registry.clone();
+        match registry.unsubscribe_local(subscription_id).await {
+            Ok(_) => {
+                self.logger.debug(format!(
+                    "Successfully unsubscribed locally from  with id {subscription_id}"
+                ));
             }
-            //if started... need to increment  -> registry_version
-            if self.running.load(Ordering::SeqCst) {
-                self.registry_version.fetch_add(1, Ordering::SeqCst);
-                self.notify_node_change().await?;
+            Err(e) => {
+                self.logger.error(format!(
+                    "Failed to unsubscribe locally from  with id {subscription_id}: {e}"
+                ));
+                return Err(anyhow!("Failed to unsubscribe locally: {e}"));
             }
-            Ok(())
-        } else {
-            Err(anyhow!("Subscription ID is required"))
         }
+        //if started... need to increment  -> registry_version
+        if node_started {
+            self.registry_version.fetch_add(1, Ordering::SeqCst);
+            self.notify_node_change().await?;
+        }
+        Ok(())
+        
     }
 
     /// Register an action handler for a specific path

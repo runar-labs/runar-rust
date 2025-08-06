@@ -262,4 +262,13 @@ impl NodeDiscovery for MemoryDiscovery {
 
         Ok(())
     }
+
+    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()> {
+        let mut local_node_guard = self.local_node.write().unwrap();
+        *local_node_guard = Some(new_node_info);
+        drop(local_node_guard);
+        
+        self.logger.debug("Updated local node information for memory discovery");
+        Ok(())
+    }
 }
