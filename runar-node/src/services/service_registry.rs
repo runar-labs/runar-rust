@@ -82,6 +82,13 @@ pub enum LocationType {
     Remote,
 }
 
+/// Unified subscriber type for event subscriptions – distinguishes local vs remote handlers
+#[derive(Clone)]
+pub enum SubscriberKind {
+    Local(EventHandler),
+    Remote(RemoteEventHandler),
+}
+
 #[derive(Clone)]
 pub struct ServiceEntry {
     /// The service instance
@@ -115,11 +122,12 @@ impl std::fmt::Debug for ServiceEntry {
 // Type alias for the value stored in local_action_handlers PathTrie
 pub type LocalActionEntryValue = (ActionHandler, TopicPath, Option<ActionMetadata>);
 
-// Type alias for the Vec stored in local_event_subscriptions PathTrie
-pub type LocalEventSubscribersVec = Vec<(String, EventHandler, SubscriptionMetadata)>;
+/// Tuple stored in the unified `event_subscriptions` trie
+pub type SubscriptionEntry = (String, SubscriberKind, SubscriptionMetadata);
 
-// Type alias for the Vec stored in remote_event_subscriptions PathTrie
-pub type RemoteEventSubscribersVec = Vec<(String, RemoteEventHandler, SubscriptionMetadata)>;
+// Wrapper stored at each trie leaf
+pub type SubscriptionVec = Vec<SubscriptionEntry>;
+
 
 pub const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
 
@@ -139,11 +147,8 @@ pub struct ServiceRegistry {
     /// Remote action handlers organized by path (using PathTrie instead of HashMap)
     remote_action_handlers: Arc<RwLock<PathTrie<Vec<ActionHandler>>>>,
 
-    /// Local event subscriptions (using PathTrie instead of WildcardSubscriptionRegistry)
-    local_event_subscriptions: Arc<RwLock<PathTrie<LocalEventSubscribersVec>>>,
-
-    /// Remote event subscriptions (using PathTrie instead of WildcardSubscriptionRegistry)
-    remote_event_subscriptions: Arc<RwLock<PathTrie<RemoteEventSubscribersVec>>>,
+    /// Unified event subscriptions – stores both local and remote subscribers in a single trie
+    event_subscriptions: Arc<RwLock<PathTrie<SubscriptionVec>>>,
 
     /// Map subscription IDs back to TopicPath for efficient unsubscription
     /// (Single HashMap for both local and remote subscriptions)
@@ -167,7 +172,7 @@ pub struct ServiceRegistry {
     remote_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
 
     /// Mapping of peer node IDs to subscription IDs registered on their behalf
-    remote_peer_subscriptions: Arc<RwLock<HashMap<String, Vec<String>>>>,
+    remote_peer_subscriptions: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
 
     /// Logger instance
     logger: Arc<Logger>,
@@ -178,8 +183,8 @@ impl Clone for ServiceRegistry {
         ServiceRegistry {
             local_action_handlers: self.local_action_handlers.clone(),
             remote_action_handlers: self.remote_action_handlers.clone(),
-            local_event_subscriptions: self.local_event_subscriptions.clone(),
-            remote_event_subscriptions: self.remote_event_subscriptions.clone(),
+            event_subscriptions: self.event_subscriptions.clone(),
+            
             subscription_id_to_topic_path: self.subscription_id_to_topic_path.clone(),
             subscription_id_to_service_topic_path: self
                 .subscription_id_to_service_topic_path
@@ -210,8 +215,7 @@ impl ServiceRegistry {
         Self {
             local_action_handlers: Arc::new(RwLock::new(PathTrie::new())),
             remote_action_handlers: Arc::new(RwLock::new(PathTrie::new())),
-            local_event_subscriptions: Arc::new(RwLock::new(PathTrie::new())),
-            remote_event_subscriptions: Arc::new(RwLock::new(PathTrie::new())),
+            event_subscriptions: Arc::new(RwLock::new(PathTrie::new())),
             subscription_id_to_topic_path: Arc::new(RwLock::new(HashMap::new())),
             subscription_id_to_service_topic_path: Arc::new(RwLock::new(HashMap::new())),
             local_services: Arc::new(RwLock::new(PathTrie::new())),
@@ -452,51 +456,36 @@ impl ServiceRegistry {
         _options: EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
-         
-        // Store in local event subscriptions using PathTrie
+
+        // Insert into unified event_subscriptions trie
         {
-            let mut subscriptions = self.local_event_subscriptions.write().await;
-            let matches = subscriptions.find_matches(topic_path);
-
-            if matches.is_empty() {
-                // No existing subscriptions for this topic
-                subscriptions.set_value(
-                    topic_path.clone(),
-                    vec![(subscription_id.clone(), callback.clone(), SubscriptionMetadata{
-                        path: topic_path.as_str().to_string(),
-                    })],
-                );
-            } else {
-                // Add to existing subscriptions
-                let mut updated_subscriptions = matches[0].content.clone();
-                updated_subscriptions.push((
-                    subscription_id.clone(),
-                    callback.clone(),
-                    SubscriptionMetadata{
-                        path: topic_path.as_str().to_string(),
-                    },
-                ));
-
-                // Replace the existing content with the updated list
-                subscriptions.set_value(topic_path.clone(), updated_subscriptions);
-            }
+            let mut trie = self.event_subscriptions.write().await;
+            let mut list = trie
+                .find_matches(topic_path)
+                .get(0)
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            list.push((
+                subscription_id.clone(),
+                SubscriberKind::Local(callback),
+                SubscriptionMetadata {
+                    path: topic_path.as_str().to_string(),
+                },
+            ));
+            trie.set_value(topic_path.clone(), list);
         }
 
-        // Store the mapping from ID to TopicPath in the combined HashMap
+        // Map subscription ID to topic path
         {
             let mut id_map = self.subscription_id_to_topic_path.write().await;
             id_map.insert(subscription_id.clone(), topic_path.clone());
         }
 
-        let service_topic =
-            TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
-
-        //store in subscription_id_to_service_topic_path
+        let service_topic = TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
         {
             let mut id_map = self.subscription_id_to_service_topic_path.write().await;
-            id_map.insert(subscription_id.clone(), service_topic.clone());
+            id_map.insert(subscription_id.clone(), service_topic);
         }
-
         Ok(subscription_id)
     }
 
@@ -510,33 +499,24 @@ impl ServiceRegistry {
         _options: EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
-         
-        // Store in remote event subscriptions using PathTrie
+
         {
-            let mut subscriptions = self.remote_event_subscriptions.write().await;
-            let matches = subscriptions.find_matches(topic_path);
-
-            if matches.is_empty() {
-                // No existing subscriptions for this topic
-                subscriptions.set_value(
-                    topic_path.clone(),
-                    vec![(subscription_id.clone(), callback.clone(), SubscriptionMetadata{
-                        path: topic_path.as_str().to_string(),
-                    })],
-                );
-            } else {
-                // Add to existing subscriptions
-                let mut updated_subscriptions = matches[0].content.clone();
-                updated_subscriptions.push((subscription_id.clone(), callback.clone(), SubscriptionMetadata{
+            let mut trie = self.event_subscriptions.write().await;
+            let mut list = trie
+                .find_matches(topic_path)
+                .get(0)
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            list.push((
+                subscription_id.clone(),
+                SubscriberKind::Remote(callback),
+                SubscriptionMetadata {
                     path: topic_path.as_str().to_string(),
-                }));
-
-                // Replace the existing content with the updated list
-                subscriptions.set_value(topic_path.clone(), updated_subscriptions);
-            }
+                },
+            ));
+            trie.set_value(topic_path.clone(), list);
         }
 
-        // Store the mapping from ID to TopicPath in the combined HashMap
         {
             let mut id_map = self.subscription_id_to_topic_path.write().await;
             id_map.insert(subscription_id.clone(), topic_path.clone());
@@ -547,25 +527,41 @@ impl ServiceRegistry {
 
 
     pub async fn remove_remote_event_subscription(&self, topic_path: &TopicPath) -> Result<()> {
-        let mut subscriptions = self.remote_event_subscriptions.write().await;
-        let matches = subscriptions.find_matches(topic_path);
-        
-        for match_item in matches {
-            for (subscription_id, _, _) in &match_item.content {
-                // Remove from subscription ID mappings
-                {
-                    let mut id_map = self.subscription_id_to_topic_path.write().await;
-                    id_map.remove(subscription_id);
-                }
-                {
-                    let mut service_id_map = self.subscription_id_to_service_topic_path.write().await;
-                    service_id_map.remove(subscription_id);
+        let mut trie = self.event_subscriptions.write().await;
+        let matches = trie.find_matches(topic_path);
+
+        let mut ids_to_remove = Vec::new();
+        for m in &matches {
+            for (id, kind, _) in &m.content {
+                if matches!(kind, SubscriberKind::Remote(_)) {
+                    ids_to_remove.push(id.clone());
                 }
             }
         }
-        
-        // Remove from the trie
-        subscriptions.remove_values(topic_path);
+
+        if ids_to_remove.is_empty() {
+            return Ok(());
+        }
+
+        // Rebuild vectors without the remote entries we want to remove
+        for m in matches {
+            let remaining: Vec<(String, SubscriberKind, SubscriptionMetadata)> = m
+                .content
+                .into_iter()
+                .filter(|(id, kind, _)| !(ids_to_remove.contains(id) && matches!(kind, SubscriberKind::Remote(_))))
+                .collect();
+            if remaining.is_empty() {
+                trie.remove_values(&topic_path);
+            } else {
+                trie.set_value(topic_path.clone(), remaining);
+            }
+        }
+
+        // Clean up maps
+        for id in ids_to_remove {
+            self.subscription_id_to_topic_path.write().await.remove(&id);
+            self.subscription_id_to_service_topic_path.write().await.remove(&id);
+        }
         Ok(())
     }
 
@@ -576,18 +572,19 @@ impl ServiceRegistry {
         &self,
         topic_path: &TopicPath,
     ) -> Vec<(String, EventHandler, SubscriptionMetadata)> {
-        let subscriptions = self.local_event_subscriptions.read().await;
-        let matches = subscriptions.find_matches(topic_path);
+        let trie = self.event_subscriptions.read().await;
+        let matches = trie.find_matches(topic_path);
 
         let mut result = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        
-        for match_item in matches {
-            // Each item in content is a (String, EventHandler, SubscriptionMetadata) tuple
-            for (subscription_id, callback, metadata) in match_item.content.clone() {
-                // Deduplicate by subscription ID to prevent the same subscription from appearing multiple times
-                if seen_ids.insert(subscription_id.clone()) {
-                    result.push((subscription_id, callback, metadata));
+        for m in matches {
+            for (id, kind, meta) in m.content.clone() {
+                if seen_ids.contains(&id) {
+                    continue;
+                }
+                if let SubscriberKind::Local(handler) = kind {
+                    seen_ids.insert(id.clone());
+                    result.push((id, handler, meta));
                 }
             }
         }
@@ -595,25 +592,23 @@ impl ServiceRegistry {
     }
 
     /// Get remote event subscribers
-    ///
-    /// INTENTION: Find all remote subscribers for a specific event topic.
     pub async fn get_remote_event_subscribers(
         &self,
         topic_path: &TopicPath,
     ) -> Vec<(String, RemoteEventHandler, SubscriptionMetadata)> {
-        let subscriptions = self.remote_event_subscriptions.read().await;
-        let matches = subscriptions.find_matches(topic_path);
+        let trie = self.event_subscriptions.read().await;
+        let matches = trie.find_matches(topic_path);
 
-        // Flatten all matches into a single vector
         let mut result = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        
-        for match_item in matches {
-            // Each item in content is already a (String, EventHandler, SubscriptionMetadata) tuple
-            for (subscription_id, callback, metadata) in match_item.content.clone() {
-                // Deduplicate by subscription ID to prevent the same subscription from appearing multiple times
-                if seen_ids.insert(subscription_id.clone()) {
-                    result.push((subscription_id, callback, metadata));
+        for m in matches {
+            for (id, kind, meta) in m.content.clone() {
+                if seen_ids.contains(&id) {
+                    continue;
+                }
+                if let SubscriberKind::Remote(handler) = kind {
+                    seen_ids.insert(id.clone());
+                    result.push((id, handler, meta));
                 }
             }
         }
@@ -683,8 +678,8 @@ impl ServiceRegistry {
     /// INTENTION: Retrieve metadata for all events registered under a service path.
     /// This is useful for service discovery and introspection.
     pub async fn get_subscriptions_metadata(&self, search_path: &TopicPath) -> Vec<SubscriptionMetadata> {
-        // Search in the events trie local_event_handlers
-        let events = self.local_event_subscriptions.read().await;
+        // Search unified subscriptions and filter local ones
+        let events = self.event_subscriptions.read().await;
         let matches = events.find_matches(search_path);
 
         // Collect all events that match the service path
@@ -754,28 +749,25 @@ impl ServiceRegistry {
                 topic_path.as_str(),
                 subscription_id
             ));
-            let mut subscriptions = self.local_event_subscriptions.write().await;
-
-            // Find current subscriptions for this topic
-            let matches = subscriptions.find_matches(&topic_path);
+            let mut trie = self.event_subscriptions.write().await;
+            let matches = trie.find_matches(&topic_path);
 
             if !matches.is_empty() {
-                // Get the first match (should be the only one for exact path)
-                let mut updated_subscriptions = Vec::new();
-
-                // Create a new list without the subscription we want to remove
-                for (id, callback, options) in matches[0].content.clone() {
-                    if id != subscription_id {
-                        updated_subscriptions.push((id, callback, options));
+                // Build new entry vectors without the subscription to remove
+                for m in matches {
+                    let filtered: Vec<_> = m
+                        .content
+                        .into_iter()
+                        .filter(|(id, kind, _)| {
+                            // keep every entry except the one with matching id & Local kind
+                            !(id == subscription_id && matches!(kind, SubscriberKind::Local(_)))
+                        })
+                        .collect();
+                    if filtered.is_empty() {
+                        trie.remove_values(&topic_path);
+                    } else {
+                        trie.set_value(topic_path.clone(), filtered);
                     }
-                }
-
-                // Replace the existing content with the updated list
-                if !updated_subscriptions.is_empty() {
-                    subscriptions.set_value(topic_path.clone(), updated_subscriptions);
-                } else {
-                    // If no subscriptions remain, remove the topic entirely
-                    subscriptions.remove_values(&topic_path);
                 }
 
                 // Remove from the ID map
@@ -817,14 +809,35 @@ impl ServiceRegistry {
     ///
     /// INTENTION: Remove a specific subscription by ID from the remote event subscriptions,
     /// providing a simpler API that doesn't require the original topic.
-    pub async fn add_remote_peer_subscriptions(&self, peer_id: &str, sub_ids: Vec<String>) {
+    /// Upsert a mapping peer -> path -> subscription_id
+    pub async fn upsert_remote_peer_subscription(&self, peer_id: &str, path: &TopicPath, sub_id: String) {
         let mut guard = self.remote_peer_subscriptions.write().await;
-        guard.insert(peer_id.to_string(), sub_ids);
+        guard
+            .entry(peer_id.to_string())
+            .or_default()
+            .insert(path.as_str().to_string(), sub_id);
     }
 
-    pub async fn remove_remote_peer_subscriptions(&self, peer_id: &str) -> Vec<String> {
+    /// Remove a single subscription mapping and return its id (if any)
+    pub async fn remove_remote_peer_subscription(&self, peer_id: &str, path: &TopicPath) -> Option<String> {
         let mut guard = self.remote_peer_subscriptions.write().await;
-        guard.remove(peer_id).unwrap_or_default()
+        guard.get_mut(peer_id).and_then(|m| m.remove(path.as_str()))
+    }
+
+    /// Return all (path, sub_id) pairs for a peer and clear them (used on peer disconnect)
+    pub async fn drain_remote_peer_subscriptions(&self, peer_id: &str) -> Vec<String> {
+        let mut guard = self.remote_peer_subscriptions.write().await;
+        guard.remove(peer_id)
+            .map(|m| m.into_values().collect())
+            .unwrap_or_default()
+    }
+
+    /// Return current set of paths for a peer
+    pub async fn remote_subscription_paths(&self, peer_id:&str) -> std::collections::HashSet<String> {
+        let guard = self.remote_peer_subscriptions.read().await;
+        guard.get(peer_id)
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub async fn unsubscribe_remote(&self, subscription_id: &str) -> Result<()> {
@@ -844,35 +857,30 @@ impl ServiceRegistry {
                 topic_path.as_str(),
                 subscription_id
             ));
-            let mut subscriptions = self.remote_event_subscriptions.write().await;
-
-            // Find current subscriptions for this topic
-            let matches = subscriptions.find_matches(&topic_path);
+            let mut trie = self.event_subscriptions.write().await;
+            let matches = trie.find_matches(&topic_path);
 
             if !matches.is_empty() {
-                // Get the first match (should be the only one for exact path)
-                let mut updated_subscriptions = Vec::new();
-
-                // Create a new list without the subscription we want to remove
-                for (id, callback, options) in matches[0].content.clone() {
-                    if id != subscription_id {
-                        updated_subscriptions.push((id, callback, options));
-                    }   
+                let mut removed_flag = false;
+                for m in matches {
+                    let filtered: Vec<_> = m
+                        .content
+                        .into_iter()
+                        .filter(|(id, kind, _)| {
+                            // keep entries except the matching Remote one
+                            !(id == subscription_id && matches!(kind, SubscriberKind::Remote(_)))
+                        })
+                        .collect();
+                    if filtered.is_empty() {
+                        trie.remove_values(&topic_path);
+                    } else {
+                        trie.set_value(topic_path.clone(), filtered);
+                    }
+                    removed_flag = true;
                 }
-
-                // Remove the old list and add the updated one
-                let removed = subscriptions.remove_handler(&topic_path, |_| true);
-
-                if !updated_subscriptions.is_empty() {
-                    // If we still have subscriptions for this topic, add them back
-                    subscriptions.set_value(topic_path.clone(), updated_subscriptions);
-                }
-
-                if removed {
-                    // Also remove from the ID map
+                if removed_flag {
                     {
-                        let mut id_map = self.subscription_id_to_topic_path.write().await;
-                        id_map.remove(subscription_id);
+                        self.subscription_id_to_topic_path.write().await.remove(subscription_id);
                     }
                     self.logger.debug(format!(
                         "Successfully unsubscribed from remote topic: {} with ID: {}",
@@ -881,7 +889,9 @@ impl ServiceRegistry {
                     ));
                     Ok(())
                 } else {
-                    let msg = format!("Subscription handler not found for remote topic path {topic_path} and ID {subscription_id}, although ID was mapped. Potential race condition?");
+                    let msg = format!(
+                        "Subscription handler not found for remote topic path {topic_path} and ID {subscription_id}, although ID was mapped. Potential race condition?"
+                    );
                     self.logger.warn(msg.clone());
                     Err(anyhow!(msg))
                 }
@@ -934,7 +944,7 @@ impl ServiceRegistry {
     }
 
     pub async fn get_all_subscriptions(&self, include_internal_services: bool) -> Result<Vec<SubscriptionMetadata>> {
-        let subscriptions = self.local_event_subscriptions.read().await;
+        let subscriptions = self.event_subscriptions.read().await;
         let all_values = subscriptions.get_all_values();
         
         let mut result = Vec::new();

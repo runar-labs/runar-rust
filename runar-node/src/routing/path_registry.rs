@@ -74,21 +74,18 @@ impl<T: Clone> PathTrie<T> {
         }
     }
 
-    /// Add a topic path and its handlers to the trie
+    /// Add a topic path and its handlers to the trie – replaces any existing list stored at that leaf
     pub fn set_values(&mut self, topic: TopicPath, content_list: Vec<T>) {
         let network_id = topic.network_id();
-
-        // Get or create network-specific trie
         let network_trie = self.networks.entry(network_id.to_string()).or_default();
-
-        // Add to the network-specific trie
         network_trie.set_values_internal(&topic.get_segments(), 0, content_list);
     }
 
-    /// Add a single handler for a topic path
+    /// Add a single handler for a topic path – replaces previous list with a single-element list
     pub fn set_value(&mut self, topic: TopicPath, content: T) {
         self.set_values(topic, vec![content]);
     }
+
 
     /// Add handlers for a vector of topic paths
     pub fn add_batch_values(&mut self, topics: Vec<TopicPath>, contents: Vec<T>) {

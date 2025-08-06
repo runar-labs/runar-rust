@@ -9,3 +9,4 @@ pub mod topic_path_wildcard_test;
 
 pub mod event_metadata_test;
 pub mod path_trie_test;
+pub mod diff_subscription_test;

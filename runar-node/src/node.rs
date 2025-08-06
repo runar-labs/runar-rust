@@ -17,8 +17,6 @@ use runar_serializer::{ArcValue, LabelKeyInfo};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::future::Future;
-use std::pin::Pin;
 use tokio::time::{sleep, Duration};
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -1523,14 +1521,13 @@ impl Node {
         if let Some(existing_peer) = known_peers.get(&new_peer_node_id) {
             //check if node info is older then the stored peer
             if new_peer.version > existing_peer.version {
-                self.logger.debug(format!("Node {new_peer_node_id} has new version {new_peer_version}, removing and adding again", new_peer_version = new_peer.version));
-                self.remove_peer_capabilities(existing_peer).await?;
-                //remove and add again
-                known_peers.remove(&new_peer_node_id);
+                self.logger.debug(format!("Node {new_peer_node_id} has new version {new_peer_version}, diffing capabilities", new_peer_version = new_peer.version));
+
+                self.update_peer_capabilities(existing_peer, &new_peer).await?;
+                // replace stored peer info
                 known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
-                let res = self.add_new_peer(new_peer).await;
                 self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/updated"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
-                return res;
+                return Ok(Vec::new());
             }
         } else {
             known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
@@ -1541,6 +1538,69 @@ impl Node {
         drop(known_peers);
 
         Ok(Vec::new())
+    }
+
+    async fn update_peer_capabilities(
+        &self,
+        old_peer: &NodeInfo,
+        new_peer: &NodeInfo,
+    ) -> Result<()> {
+        // Diff subscriptions
+        let peer_node_id = compact_id(&old_peer.node_public_key);
+        let old_set = self
+            .service_registry
+            .remote_subscription_paths(&peer_node_id)
+            .await;
+        let new_set: std::collections::HashSet<String> = new_peer
+            .node_metadata
+            .subscriptions
+            .iter()
+            .map(|s| s.path.clone())
+            .collect();
+
+        // Paths to add
+        for path in new_set.difference(&old_set) {
+            let topic_path = TopicPath::from_full_path(path).map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
+            let tp_arc = Arc::new(topic_path.clone());
+            // create remote handler same as add_new_peer logic (reuse closure building)
+            let transport_arc = self.network_transport.read().await.clone().ok_or_else(|| anyhow!("Network transport not available"))?;
+            let logger = self.logger.clone();
+            let peer_clone = peer_node_id.clone();
+            let tp_clone = tp_arc.clone();
+            let handler: RemoteEventHandler = Arc::new(move |data: Option<ArcValue>| {
+                let nt = transport_arc.clone();
+                let tp = tp_clone.clone();
+                let peer = peer_clone.clone();
+                let logger = logger.clone();
+                Box::pin(async move {
+                    nt.publish(tp.as_ref(), data, &peer)
+                        .await
+                        .map_err(|e| anyhow!(e))?;
+                    logger.debug(format!("Forwarded event {tp} to peer {peer}"));
+                    Ok(())
+                })
+            });
+            let sub_id = self
+                .service_registry
+                .register_remote_event_subscription(tp_arc.as_ref(), handler, EventRegistrationOptions::default())
+                .await?;
+            self.service_registry
+                .upsert_remote_peer_subscription(&peer_node_id, tp_arc.as_ref(), sub_id)
+                .await;
+        }
+
+        // Paths to remove
+        for path in old_set.difference(&new_set) {
+            let topic_path = TopicPath::from_full_path(path).unwrap();
+            if let Some(sub_id) = self
+                .service_registry
+                .remove_remote_peer_subscription(&peer_node_id, &topic_path)
+                .await
+            {
+                let _ = self.service_registry.unsubscribe_remote(&sub_id).await;
+            }
+        }
+        Ok(())
     }
 
     async fn remove_peer_capabilities(
@@ -1563,7 +1623,7 @@ impl Node {
         let peer_node_id = compact_id(&existing_peer.node_public_key);
         let subscription_ids = self
             .service_registry
-            .remove_remote_peer_subscriptions(&peer_node_id)
+            .drain_remote_peer_subscriptions(&peer_node_id)
             .await;
         for sub_id in subscription_ids {
             if let Err(e) = self.service_registry.unsubscribe_remote(&sub_id).await {
@@ -1667,7 +1727,7 @@ impl Node {
         // Handle remote node subscriptions - only for services that exist locally
         {
             // Vector to store subscription IDs we register for this peer so we can remove them later
-            let mut peer_subscription_ids: Vec<String> = Vec::new();
+            
 
             for subscription in capabilities.subscriptions.clone() {
                 let path = subscription.path.clone();
@@ -1686,17 +1746,6 @@ impl Node {
                 }
 
                 // Determine if the referenced service exists locally (ignore patterns)
-                let service_topic = TopicPath::new_service(&topic_path.network_id(), &topic_path.service_path());
-                let has_service = self
-                    .service_registry
-                    .get_local_service_state(&service_topic)
-                    .await
-                    .is_some();
-
-                if !has_service && !topic_path.is_pattern() {
-                    self.logger.debug(format!("Ignoring remote subscription {path} - local service not found"));
-                    continue;
-                }
 
                 let topic_path_arc = Arc::new(topic_path.clone());
                 let peer_node_id_cloned = peer_node_id.clone();
@@ -1705,32 +1754,28 @@ impl Node {
                 let topic_path_handler = topic_path_arc.clone();
 
                 // Create event handler forwarding events to remote peer
-                let event_handler = Arc::new(move |event_data: Option<ArcValue>| {
+                let event_handler: RemoteEventHandler = Arc::new(move |event_data: Option<ArcValue>| {
                     let logger = logger_cloned.clone();
                     let peer_node_id = peer_node_id_cloned.clone();
                     let topic_path = topic_path_handler.clone();
-                    let network_transport = network_transport_cloned.clone();
+                    let nt = network_transport_cloned.clone();
                     Box::pin(async move {
                         logger.debug(format!(
                             "🚀 [RemoteEvent] Sending remote event - Event: {topic_path}, Target: {peer_node_id}"));
-                        match network_transport.publish(topic_path.as_ref(), event_data, &peer_node_id).await {
-                            Ok(_) => {
-                                logger.info(format!(
-                                    "✅ [RemoteEvent] Event sent successfully - Event: {topic_path}, Target: {peer_node_id}"));
-                                Ok(())
-                            }
-                            Err(e) => {
-                                logger.error(format!(
-                                    "❌ [RemoteEvent] Failed to send event - Event: {topic_path}, Target: {peer_node_id}, Error: {e}"));
-                                Err(anyhow::anyhow!("Failed to send event: {e}"))
-                            }
-                        }
-                    }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
+                        nt.publish(topic_path.as_ref(), event_data, &peer_node_id)
+                            .await
+                            .map_err(|e| anyhow!(e))?;
+                        logger.debug(format!(
+                            "✅ [RemoteEvent] Event forwarded - Event: {topic_path}, Target: {peer_node_id}"));
+                        Ok(())
+                    })
                 });
 
                 match self.service_registry.register_remote_event_subscription(topic_path_arc.as_ref(), event_handler, EventRegistrationOptions::default()).await {
                     Ok(subscription_id) => {
-                        peer_subscription_ids.push(subscription_id);
+                        self.service_registry
+                            .upsert_remote_peer_subscription(&peer_node_id, topic_path_arc.as_ref(), subscription_id)
+                            .await;
                     }
                     Err(e) => {
                         self.logger.warn(format!(
@@ -1739,12 +1784,7 @@ impl Node {
                 }
             }
 
-            // Store the subscription IDs in the service registry for later cleanup
-            if !peer_subscription_ids.is_empty() {
-                self.service_registry
-                    .add_remote_peer_subscriptions(&peer_node_id, peer_subscription_ids)
-                    .await;
-            }
+
         }
 
         self.logger.info(format!(
