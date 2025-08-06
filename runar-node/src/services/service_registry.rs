@@ -249,7 +249,6 @@ impl ServiceRegistry {
         if services.is_empty() {
             return Err(anyhow!("Service not found for topic: {}", service_topic));
         }
-
         let registry_delegate = Arc::new(self.clone());
         for service in services {
             let context =
@@ -266,12 +265,13 @@ impl ServiceRegistry {
             }
         }
 
-        //this function will do the oposite of the register_remote_service function
+        // Remove the services from the registry
         self.remote_services
             .write()
             .await
             .remove_values(service_topic);
 
+        // Remove the service state
         self.remove_remote_service_state(service_topic).await?;
 
         Ok(())
@@ -540,6 +540,30 @@ impl ServiceRegistry {
         Ok(subscription_id)
     }
 
+
+    pub async fn remove_remote_event_subscription(&self, topic_path: &TopicPath) -> Result<()> {
+        let mut subscriptions = self.remote_event_subscriptions.write().await;
+        let matches = subscriptions.find_matches(topic_path);
+        
+        for match_item in matches {
+            for (subscription_id, _, _) in &match_item.content {
+                // Remove from subscription ID mappings
+                {
+                    let mut id_map = self.subscription_id_to_topic_path.write().await;
+                    id_map.remove(subscription_id);
+                }
+                {
+                    let mut service_id_map = self.subscription_id_to_service_topic_path.write().await;
+                    service_id_map.remove(subscription_id);
+                }
+            }
+        }
+        
+        // Remove from the trie
+        subscriptions.remove_values(topic_path);
+        Ok(())
+    }
+
     /// Get local event subscribers
     ///
     /// INTENTION: Find all local subscribers for a specific event topic.
@@ -632,10 +656,6 @@ impl ServiceRegistry {
         &self,
         service_topic: &TopicPath, 
     ) -> Result<()> {
-        self.logger.debug(format!(
-            "Removing remote service state for {}",
-            service_topic.clone(), 
-        ));
         let mut states = self.remote_service_states.write().await;
         states.remove(service_topic.as_str());
         Ok(())
@@ -1004,12 +1024,12 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
         self.remove_remote_action_handler(topic_path).await
     }
 
-    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: EventHandler) -> Result<()> {
-        self.register_remote_event_handler(topic_path, handler).await
+    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: RemoteEventHandler) -> Result<String> {
+        self.register_remote_event_subscription(topic_path, handler, EventRegistrationOptions::default()).await
     }
 
     async fn remove_remote_event_handler(&self, topic_path: &TopicPath) -> Result<()> {
-        self.remove_remote_event_handler(topic_path).await
+        self.remove_remote_event_subscription(topic_path).await
     }
 
     async fn update_local_service_state_if_valid(

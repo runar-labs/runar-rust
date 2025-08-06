@@ -111,7 +111,9 @@ impl<T: Clone> PathTrie<T> {
     fn remove_values_internal(&mut self, segments: &[String], index: usize) {
         if index >= segments.len() {
             // We've reached the end of the path, remove handlers here
+            let old_count = self.content.len();
             self.content.clear();
+            self.count -= old_count;
             return;
         }
 
@@ -120,17 +122,23 @@ impl<T: Clone> PathTrie<T> {
         if segment == "*" {
             // Single wildcard - remove from wildcard child
             if let Some(child) = &mut self.wildcard_child {
+                let old_count = child.count;
                 child.remove_values_internal(segments, index + 1);
+                self.count -= old_count - child.count;
             }
         } else if is_template_param(segment) {
             // Template parameter - remove from template child
             if let Some(child) = &mut self.template_child {
+                let old_count = child.count;
                 child.remove_values_internal(segments, index + 1);
+                self.count -= old_count - child.count;
             }
         } else {
             // Literal segment - remove from child
             if let Some(child) = self.children.get_mut(segment) {
+                let old_count = child.count;
                 child.remove_values_internal(segments, index + 1);
+                self.count -= old_count - child.count;
             }
         }
     }
@@ -139,7 +147,9 @@ impl<T: Clone> PathTrie<T> {
     fn set_values_internal(&mut self, segments: &[String], index: usize, handlers: Vec<T>) {
         if index >= segments.len() {
             // We've reached the end of the path, replace handlers here
+            let old_count = self.content.len();
             self.content.extend(handlers);
+            self.count += self.content.len() - old_count;
             return;
         }
 
@@ -147,7 +157,9 @@ impl<T: Clone> PathTrie<T> {
 
         if segment == ">" {
             // Multi-wildcard - adds handlers here and matches everything below
+            let old_count = self.multi_wildcard.len();
             self.multi_wildcard.extend(handlers);
+            self.count += self.multi_wildcard.len() - old_count;
         } else if segment == "*" {
             // Single wildcard - create/get wildcard child and continue
             if self.wildcard_child.is_none() {
@@ -155,7 +167,9 @@ impl<T: Clone> PathTrie<T> {
             }
 
             if let Some(child) = &mut self.wildcard_child {
+                let old_count = child.count;
                 child.set_values_internal(segments, index + 1, handlers);
+                self.count += child.count - old_count;
             }
         } else if is_template_param(segment) {
             // Template parameter - create/get template child and continue
@@ -166,13 +180,16 @@ impl<T: Clone> PathTrie<T> {
             }
 
             if let Some(child) = &mut self.template_child {
+                let old_count = child.count;
                 child.set_values_internal(segments, index + 1, handlers);
+                self.count += child.count - old_count;
             }
         } else {
             // Literal segment - create/get child and continue
             let child = self.children.entry(segment.clone()).or_default();
-
+            let old_count = child.count;
             child.set_values_internal(segments, index + 1, handlers);
+            self.count += child.count - old_count;
         }
     }
 
@@ -436,11 +453,7 @@ impl<T: Clone> PathTrie<T> {
 
     /// Get the total number of handlers in the trie
     pub fn handler_count(&self) -> usize {
-        let mut count = 0;
-        for network_trie in self.networks.values() {
-            count += network_trie.handler_count_internal();
-        }
-        count
+        self.count
     }
 
     /// Get all values from the trie
@@ -450,25 +463,6 @@ impl<T: Clone> PathTrie<T> {
             network_trie.collect_all_values_internal(&mut results);
         }
         results
-    }
-
-    /// Internal method to count handlers in this trie and its children
-    fn handler_count_internal(&self) -> usize {
-        let mut count = self.content.len() + self.multi_wildcard.len();
-        
-        for child in self.children.values() {
-            count += child.handler_count_internal();
-        }
-        
-        if let Some(wildcard) = &self.wildcard_child {
-            count += wildcard.handler_count_internal();
-        }
-        
-        if let Some(template) = &self.template_child {
-            count += template.handler_count_internal();
-        }
-        
-        count
     }
 
     /// Internal method to collect all values from this trie and its children

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-use runar_schemas::{NodeMetadata, ServiceMetadata};
+use runar_schemas::NodeMetadata;
 
 pub mod memory_discovery;
 pub mod mock;

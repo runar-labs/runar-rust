@@ -29,7 +29,7 @@ pub mod service_registry;
 // Import necessary components
 use crate::node::Node; // Added for concrete type Node
 use crate::routing::TopicPath;
-use crate::services::service_registry::EventHandler;
+use crate::services::service_registry::{EventHandler, RemoteEventHandler};
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
 use runar_schemas::{ActionMetadata, FieldSchema};
@@ -863,8 +863,8 @@ pub trait RegistryDelegate: Send + Sync {
     async fn register_remote_event_handler(
         &self,
         topic_path: &TopicPath,
-        handler: EventHandler,
-    ) -> Result<()>;
+        handler: RemoteEventHandler,
+    ) -> Result<String>;
 
     async fn remove_remote_event_handler(&self, topic_path: &TopicPath) -> Result<()>;
 
@@ -1000,39 +1000,7 @@ impl RemoteLifecycleContext {
             .register_remote_action_handler(topic_path, handler)
             .await
     }
-
-    pub async fn register_remote_event_handler(
-        &self,
-        topic_path: &TopicPath,
-        handler: EventHandler,
-    ) -> Result<()> {
-        // Get the registry delegate
-        let delegate = match &self.registry_delegate {
-            Some(d) => d,
-            None => return Err(anyhow!("No registry delegate available")),
-        };
-
-        // Call the delegate to register the remote event handler
-        delegate
-            .register_remote_event_handler(topic_path, handler)
-            .await
-    }
-
-    pub async fn remove_remote_event_handler(
-        &self,
-        topic_path: &TopicPath,
-    ) -> Result<()> {
-        // Get the registry delegate
-        let delegate = match &self.registry_delegate {
-            Some(d) => d,
-            None => return Err(anyhow!("No registry delegate available")),
-        };
-
-        // Call the delegate to remove the remote event handler
-        delegate
-            .remove_remote_event_handler(topic_path)
-            .await
-    }
+ 
 }
 
 /// Service handler function type

@@ -17,7 +17,7 @@ use crate::services::abstract_service::AbstractService;
 use crate::services::service_registry::EventHandler;
 use crate::services::{ActionHandler,   LifecycleContext};
 use runar_common::logging::Logger;
-use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata, SubscriptionMetadata};
+use runar_schemas::{ActionMetadata, ServiceMetadata};
 
 // No direct key-store or label resolver – encryption handled by transport layer
 
@@ -185,7 +185,7 @@ impl RemoteService {
         let service = self.clone();
 
         // Create a handler that forwards events to the remote service
-        Arc::new(move |event_context, event_data| {
+        Arc::new(move |_event_context, event_data| {
             let service_clone = service.clone();
             let event_path_clone = event_path.clone();
 

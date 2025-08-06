@@ -1033,3 +1033,60 @@ async fn test_get_local_services() {
         Err(_) => panic!("Test timed out after 10 seconds"),
     }
 }
+
+/// Test that verifies remove_remote_event_subscription properly cleans up all mappings
+///
+/// INTENTION: This test validates that the registry properly:
+/// - Removes subscriptions from the remote_event_subscriptions trie
+/// - Removes subscription IDs from subscription_id_to_topic_path mapping
+/// - Removes subscription IDs from subscription_id_to_service_topic_path mapping
+#[tokio::test]
+async fn test_remove_remote_event_subscription() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a service registry
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+
+        // Create a TopicPath for the test topic
+        let topic = TopicPath::new("test/event", "net1").expect("Valid topic path");
+
+        // Create a callback for remote events
+        let callback = Arc::new(
+            move |_data: Option<ArcValue>|
+                  -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
+                Box::pin(async move { Ok(()) })
+            },
+        );
+
+        // Register remote event subscription
+        let subscription_id = registry
+            .register_remote_event_subscription(&topic, callback, EventRegistrationOptions::default())
+            .await
+            .unwrap();
+
+        // Verify the subscription was registered
+        let handlers = registry.get_remote_event_subscribers(&topic).await;
+        assert_eq!(handlers.len(), 1, "Expected one handler to be registered");
+        assert_eq!(handlers[0].0, subscription_id, "Subscriber ID should match");
+
+        // Remove the remote event subscription
+        registry.remove_remote_event_subscription(&topic).await.unwrap();
+
+        // Verify the handler is removed from the trie
+        let handlers_after = registry.get_remote_event_subscribers(&topic).await;
+        assert_eq!(
+            handlers_after.len(),
+            0,
+            "Expected handler to be removed after unsubscribe"
+        );
+
+        // Verify that trying to unsubscribe again fails (indicating the ID was properly removed)
+        let unsubscribe_result = registry.unsubscribe_remote(&subscription_id).await;
+        assert!(unsubscribe_result.is_err(), "Should not be able to unsubscribe from already removed subscription");
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}

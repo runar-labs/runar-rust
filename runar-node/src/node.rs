@@ -44,7 +44,7 @@ use crate::services::registry_service::RegistryService;
 use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
-use crate::services::service_registry::{EventHandler, ServiceEntry, ServiceRegistry, INTERNAL_SERVICES};
+use crate::services::service_registry::{EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry, INTERNAL_SERVICES};
 use crate::services::NodeDelegate;
 use crate::services::{
     ActionHandler,   EventRegistrationOptions,
@@ -52,8 +52,6 @@ use crate::services::{
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
-
-use uuid::Uuid;
 
 /// Node Configuration
 ///
@@ -1858,7 +1856,7 @@ impl Node {
             node_public_key: self.node_public_key.clone(),
             network_ids: self.network_ids.clone(),
             addresses: vec![address],
-            node_metadata: node_metadata,
+            node_metadata,
             version: self.registry_version.load(Ordering::SeqCst),
         };
 
@@ -1981,7 +1979,7 @@ impl NodeDelegate for Node {
 
         let subscription_id = self
             .service_registry
-            .register_local_event_subscription(&topic_path, callback.into(), options)
+            .register_local_event_subscription(&topic_path, callback, options)
             .await?;
 
         if self.running.load(Ordering::SeqCst) {
@@ -2117,7 +2115,7 @@ impl RegistryDelegate for Node {
             .await
     }
 
-    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: EventHandler) -> Result<()> {
+    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: RemoteEventHandler) -> Result<String> {
         self.service_registry
             .register_remote_event_handler(topic_path, handler)
             .await
