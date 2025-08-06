@@ -375,7 +375,7 @@ impl ArcValue {
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
             let network_id = &ctx.network_id;
-            let profile_public_key: &Vec<u8> = &ctx.profile_public_key;
+            let profile_public_key  = &ctx.profile_public_key;
             let resolver = &ctx.resolver;
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
@@ -387,7 +387,7 @@ impl ArcValue {
             let data = ks.encrypt_with_envelope(
                 &bytes,
                 Some(network_id),
-                vec![profile_public_key.clone()],
+                vec![profile_public_key.as_ref().unwrap_or(&vec![]).clone()],
             )?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);

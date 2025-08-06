@@ -14,9 +14,10 @@ use uuid::Uuid;
 use crate::network::transport::{MessageContext, NetworkTransport};
 use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
-use crate::services::{ActionHandler, LifecycleContext};
+use crate::services::service_registry::EventHandler;
+use crate::services::{ActionHandler,   LifecycleContext};
 use runar_common::logging::Logger;
-use runar_schemas::{ActionMetadata, ServiceMetadata};
+use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
 
 // No direct key-store or label resolver – encryption handled by transport layer
 
@@ -38,6 +39,8 @@ pub struct RemoteService {
 
     /// Service capabilities
     actions: Arc<RwLock<HashMap<String, ActionMetadata>>>,
+
+    subscriptions: Arc<RwLock<HashMap<String, SubscriptionMetadata>>>,
 
     /// Logger instance
     logger: Arc<Logger>,
@@ -83,6 +86,7 @@ impl RemoteService {
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
             actions: Arc::new(RwLock::new(HashMap::new())),
+            subscriptions: Arc::new(RwLock::new(HashMap::new())),
             logger: dependencies.logger,
             request_timeout_ms: config.request_timeout_ms,
         }
@@ -148,6 +152,10 @@ impl RemoteService {
             for action in service_metadata.actions {
                 service.add_action(action.name.clone(), action).await?;
             }
+            // Add subscriptions to the service
+            for subscription in service_metadata.subscriptions {
+                service.add_subscription(subscription.path.clone(), subscription).await?;
+            }
             // Add service to the result list
             remote_services.push(service);
         }
@@ -173,6 +181,68 @@ impl RemoteService {
     pub async fn add_action(&self, action_name: String, metadata: ActionMetadata) -> Result<()> {
         self.actions.write().await.insert(action_name, metadata);
         Ok(())
+    }
+
+    /// Add a subscription to this remote service
+    pub async fn add_subscription(&self, subscription_path: String, metadata: SubscriptionMetadata) -> Result<()> {
+        self.subscriptions.write().await.insert(subscription_path, metadata);
+        Ok(())
+    }
+
+    /// Create a handler for a remote event
+    pub fn create_event_handler(&self, event_path: String) -> EventHandler {
+        let service = self.clone();
+
+        // Create a handler that forwards events to the remote service
+        Arc::new(move |event_context, event_data| {
+            let service_clone = service.clone();
+            let event_path_clone = event_path.clone();
+
+            Box::pin(async move {
+                // Generate a unique event ID
+                let event_id = Uuid::new_v4().to_string();
+
+                service_clone.logger.debug(format!(
+                    "🚀 [RemoteService] Starting remote event - Event: {event_path_clone}, Event ID: {event_id}, Target: {}",
+                    service_clone.peer_node_id
+                ));
+
+                // Create the event topic path
+                let event_topic_path = match service_clone.service_topic.new_event_topic(&event_path_clone) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        service_clone.logger.error(format!(
+                            "Failed to create event topic path for {event_path_clone}: {e}"
+                        ));
+                        return Err(anyhow::anyhow!("Invalid event topic path: {e}"));
+                    }
+                };
+
+                // Clone necessary fields
+                let peer_node_id = service_clone.peer_node_id.clone();
+                let network_transport = service_clone.network_transport.clone();
+                let logger = service_clone.logger.clone();
+
+                // Send the event to the remote node
+                match network_transport
+                    .publish(&event_topic_path, event_data, &peer_node_id)
+                    .await
+                {
+                    Ok(_) => {
+                        logger.info(format!(
+                            "✅ [RemoteService] Event published successfully - ID: {event_id}"
+                        ));
+                        Ok(())
+                    }
+                    Err(e) => {
+                        logger.error(format!(
+                            "❌ [RemoteService] Remote event failed {event_id}: {e}"
+                        ));
+                        Err(anyhow::anyhow!("Remote event error: {e}"))
+                    }
+                }
+            })
+        })
     }
 
     /// Create a handler for a remote action
@@ -260,6 +330,21 @@ impl RemoteService {
             } else {
                 self.logger.warn(format!(
                     "Failed to create topic path for action: {}/{action_name}",
+                    self.service_topic
+                ));
+            }
+        }
+
+        let subscriptions = self.subscriptions.read().await;
+        for (path, _metadata) in subscriptions.iter() {
+            if let Ok(event_topic_path) = self.service_topic.new_event_topic(&path) {
+                let handler = self.create_event_handler(path.clone());
+                context
+                    .register_remote_event_handler(&event_topic_path, handler)
+                .await?;
+            } else {
+                self.logger.warn(format!(
+                    "Failed to create topic path for event: {}/{path}",
                     self.service_topic
                 ));
             }

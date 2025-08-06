@@ -33,16 +33,7 @@ use runar_common::logging::Logger;
 use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
 use runar_serializer::ArcValue;
 
-/// Type definition for event callbacks
-///
-/// INTENTION: Define a type that can handle event notifications asynchronously.
-/// The callback takes an event context and payload and returns a future that
-/// resolves once the event has been processed.
-pub type EventCallback = Arc<
-    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-        + Send
-        + Sync,
->;
+ 
 
 /// Type definition for event handler
 ///
@@ -119,10 +110,10 @@ impl std::fmt::Debug for ServiceEntry {
 pub type LocalActionEntryValue = (ActionHandler, TopicPath, Option<ActionMetadata>);
 
 // Type alias for the Vec stored in local_event_subscriptions PathTrie
-pub type LocalEventSubscribersVec = Vec<(String, EventCallback, SubscriptionMetadata)>;
+pub type LocalEventSubscribersVec = Vec<(String, EventHandler, SubscriptionMetadata)>;
 
 // Type alias for the Vec stored in remote_event_subscriptions PathTrie
-pub type RemoteEventSubscribersVec = Vec<(String, EventCallback, SubscriptionMetadata)>;
+pub type RemoteEventSubscribersVec = Vec<(String, EventHandler, SubscriptionMetadata)>;
 
 /// Service registry for managing services and their handlers
 ///
@@ -444,7 +435,7 @@ impl ServiceRegistry {
     pub async fn register_local_event_subscription(
         &self,
         topic_path: &TopicPath,
-        callback: EventCallback,
+        callback: EventHandler,
         _options: EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
@@ -502,7 +493,7 @@ impl ServiceRegistry {
     pub async fn register_remote_event_subscription(
         &self,
         topic_path: &TopicPath,
-        callback: EventCallback,
+        callback: EventHandler,
         _options: EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
@@ -547,7 +538,7 @@ impl ServiceRegistry {
     pub async fn get_local_event_subscribers(
         &self,
         topic_path: &TopicPath,
-    ) -> Vec<(String, EventCallback, SubscriptionMetadata)> {
+    ) -> Vec<(String, EventHandler, SubscriptionMetadata)> {
         let subscriptions = self.local_event_subscriptions.read().await;
         let matches = subscriptions.find_matches(topic_path);
 
@@ -555,7 +546,7 @@ impl ServiceRegistry {
         let mut seen_ids = std::collections::HashSet::new();
         
         for match_item in matches {
-            // Each item in content is a (String, EventCallback, SubscriptionMetadata) tuple
+            // Each item in content is a (String, EventHandler, SubscriptionMetadata) tuple
             for (subscription_id, callback, metadata) in match_item.content.clone() {
                 // Deduplicate by subscription ID to prevent the same subscription from appearing multiple times
                 if seen_ids.insert(subscription_id.clone()) {
@@ -572,7 +563,7 @@ impl ServiceRegistry {
     pub async fn get_remote_event_subscribers(
         &self,
         topic_path: &TopicPath,
-    ) -> Vec<(String, EventCallback, SubscriptionMetadata)> {
+    ) -> Vec<(String, EventHandler, SubscriptionMetadata)> {
         let subscriptions = self.remote_event_subscriptions.read().await;
         let matches = subscriptions.find_matches(topic_path);
 
@@ -581,7 +572,7 @@ impl ServiceRegistry {
         let mut seen_ids = std::collections::HashSet::new();
         
         for match_item in matches {
-            // Each item in content is already a (String, EventCallback, SubscriptionMetadata) tuple
+            // Each item in content is already a (String, EventHandler, SubscriptionMetadata) tuple
             for (subscription_id, callback, metadata) in match_item.content.clone() {
                 // Deduplicate by subscription ID to prevent the same subscription from appearing multiple times
                 if seen_ids.insert(subscription_id.clone()) {
@@ -1000,6 +991,14 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
 
     async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()> {
         self.remove_remote_action_handler(topic_path).await
+    }
+
+    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: EventHandler) -> Result<()> {
+        self.register_remote_event_handler(topic_path, handler).await
+    }
+
+    async fn remove_remote_event_handler(&self, topic_path: &TopicPath) -> Result<()> {
+        self.remove_remote_event_handler(topic_path).await
     }
 
     async fn update_local_service_state_if_valid(

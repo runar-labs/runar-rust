@@ -29,6 +29,7 @@ pub mod service_registry;
 // Import necessary components
 use crate::node::Node; // Added for concrete type Node
 use crate::routing::TopicPath;
+use crate::services::service_registry::EventHandler;
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
 use runar_schemas::{ActionMetadata, FieldSchema};
@@ -64,12 +65,6 @@ pub type ActionRegistrar = Arc<
             ActionHandler,
             Option<ActionMetadata>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-        + Send
-        + Sync,
->;
-
-pub type EventCallback = Box<
-    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -323,7 +318,7 @@ impl LifecycleContext {
     pub async fn subscribe_with_options(
         &self,
         topic: impl Into<String>,
-        callback: EventCallback,
+        callback: EventHandler,
         options: EventRegistrationOptions,
     ) -> Result<String> {
         let delegate = &self.node_delegate;
@@ -335,7 +330,7 @@ impl LifecycleContext {
     pub async fn subscribe(
         &self,
         topic: impl Into<String>,
-        callback: EventCallback,
+        callback: EventHandler,
     ) -> Result<String> {
         let delegate = &self.node_delegate;
         delegate.subscribe(topic.into(), callback).await
@@ -743,28 +738,14 @@ pub trait NodeDelegate: Send + Sync {
     async fn subscribe(
         &self,
         topic: String,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValue>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
+        callback: EventHandler,
     ) -> Result<String>;
 
     /// Subscribe with options for more control
     async fn subscribe_with_options(
         &self,
         topic: String,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValue>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
+        callback: EventHandler,
         options: EventRegistrationOptions, // Changed from SubscriptionOptions
     ) -> Result<String>;
 
@@ -843,6 +824,14 @@ pub trait RegistryDelegate: Send + Sync {
     ) -> Result<()>;
 
     async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()>;
+
+    async fn register_remote_event_handler(
+        &self,
+        topic_path: &TopicPath,
+        handler: EventHandler,
+    ) -> Result<()>;
+
+    async fn remove_remote_event_handler(&self, topic_path: &TopicPath) -> Result<()>;
 
     /// Update service state only if the transition is valid
     ///
@@ -974,6 +963,39 @@ impl RemoteLifecycleContext {
         // Call the delegate to register the remote action handler
         delegate
             .register_remote_action_handler(topic_path, handler)
+            .await
+    }
+
+    pub async fn register_remote_event_handler(
+        &self,
+        topic_path: &TopicPath,
+        handler: EventHandler,
+    ) -> Result<()> {
+        // Get the registry delegate
+        let delegate = match &self.registry_delegate {
+            Some(d) => d,
+            None => return Err(anyhow!("No registry delegate available")),
+        };
+
+        // Call the delegate to register the remote event handler
+        delegate
+            .register_remote_event_handler(topic_path, handler)
+            .await
+    }
+
+    pub async fn remove_remote_event_handler(
+        &self,
+        topic_path: &TopicPath,
+    ) -> Result<()> {
+        // Get the registry delegate
+        let delegate = match &self.registry_delegate {
+            Some(d) => d,
+            None => return Err(anyhow!("No registry delegate available")),
+        };
+
+        // Call the delegate to remove the remote event handler
+        delegate
+            .remove_remote_event_handler(topic_path)
             .await
     }
 }

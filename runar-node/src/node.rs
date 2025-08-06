@@ -44,10 +44,10 @@ use crate::services::registry_service::RegistryService;
 use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
-use crate::services::service_registry::{ServiceEntry, ServiceRegistry};
+use crate::services::service_registry::{EventHandler, ServiceEntry, ServiceRegistry};
 use crate::services::NodeDelegate;
 use crate::services::{
-    ActionHandler, /* EventContext, NodeDelegate, */ EventCallback, EventRegistrationOptions,
+    ActionHandler,   EventRegistrationOptions,
     PublishOptions, RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
@@ -474,7 +474,7 @@ impl Node {
         // Create a subscription that will send the first event to our channel
         let subscription_id = self.subscribe_with_options(
             full_topic.clone(),
-            Box::new(move |_context, data| {
+            Arc::new(move |_context, data| {
                 let tx = tx.clone();
                 Box::pin(async move {
                     // Send the event data to our channel
@@ -1066,7 +1066,7 @@ impl Node {
                         keystore: self.keys_manager.clone(),
                         resolver: self.label_resolver.clone(),
                         network_id: network_id.clone(),
-                        profile_public_key: profile_public_key.clone(),
+                        profile_public_key: Some(profile_public_key.clone()),
                     };
 
                     // Serialize the response data
@@ -1098,7 +1098,7 @@ impl Node {
                         keystore: self.keys_manager.clone(),
                         resolver: self.label_resolver.clone(),
                         network_id: network_id.clone(),
-                        profile_public_key: profile_public_key.clone(),
+                        profile_public_key: Some(profile_public_key.clone()),
                     };
 
                     // Create a map for the error response
@@ -1896,14 +1896,7 @@ impl NodeDelegate for Node {
     async fn subscribe(
         &self,
         topic: String,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValue>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
+        callback: EventHandler,
     ) -> Result<String> {
         // For the basic subscribe, create default metadata.
         // The full topic path (including network_id) is handled by subscribe_with_options.
@@ -1915,7 +1908,7 @@ impl NodeDelegate for Node {
     async fn subscribe_with_options(
         &self,
         topic: String, // This is the service-relative path, e.g., "math_service/numbers"
-        callback: EventCallback, // Changed to use the type alias
+        callback: EventHandler, // Changed to use the type alias
         options: EventRegistrationOptions, // Changed from SubscriptionOptions
     ) -> Result<String> {
         // The `topic` parameter is the service-relative path (e.g., "service_name/event_name").
@@ -2066,6 +2059,18 @@ impl RegistryDelegate for Node {
         // Delegate to the service registry
         self.service_registry
             .remove_remote_action_handler(topic_path)
+            .await
+    }
+
+    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: EventHandler) -> Result<()> {
+        self.service_registry
+            .register_remote_event_handler(topic_path, handler)
+            .await
+    }
+
+    async fn remove_remote_event_handler(&self, topic_path: &TopicPath) -> Result<()> {
+        self.service_registry
+            .remove_remote_event_handler(topic_path)
             .await
     }
 

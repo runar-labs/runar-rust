@@ -1027,29 +1027,8 @@ impl NetworkTransport for QuicTransport {
             "🔍 [request] Starting request to peer: {peer_node_id}"
         ));
 
-        let peers = self.state.peers.read().await;
-        let peer = peers.get(peer_node_id).ok_or_else(|| {
-            self.logger
-                .error(format!("❌ [request] Not connected to peer {peer_node_id}"));
-            NetworkError::ConnectionError(format!("not connected to peer {peer_node_id}"))
-        })?;
-
-        self.logger
-            .info("🔍 [request] Opening bidirectional stream");
-        let (mut send, mut recv) = peer.connection.open_bi().await.map_err(|e| {
-            self.logger.error(format!(
-                "❌ [request] Failed to open bidirectional stream: {e}"
-            ));
-            NetworkError::TransportError(format!("open_bi failed: {e}"))
-        })?;
-
-        self.logger
-            .info("🔍 [request] Bidirectional stream opened successfully");
-
         let network_id = topic_path.network_id();
-
         let correlation_id = uuid::Uuid::new_v4().to_string();
-
         let profile_public_key = context.profile_public_key.clone();
 
         let serialization_context = SerializationContext {
@@ -1079,6 +1058,23 @@ impl NetworkTransport for QuicTransport {
             }],
         };
 
+        let peers = self.state.peers.read().await;
+        let peer = peers.get(peer_node_id).ok_or_else(|| {
+            self.logger
+                .error(format!("❌ [request] Not connected to peer {peer_node_id}"));
+            NetworkError::ConnectionError(format!("not connected to peer {peer_node_id}"))
+        })?;
+
+        self.logger
+            .info("🔍 [request] Opening bidirectional stream");
+        let (mut send, mut recv) = peer.connection.open_bi().await.map_err(|e| {
+            self.logger.error(format!(
+                "❌ [request] Failed to open bidirectional stream: {e}"
+            ));
+            NetworkError::TransportError(format!("open_bi failed: {e}"))
+        })?;
+ 
+       
         self.logger
             .info("🔍 [request] Writing request message to stream");
         self.write_message(&mut send, &msg).await?;
@@ -1104,7 +1100,7 @@ impl NetworkTransport for QuicTransport {
             "🔍 [request] Deserializing response payload of {} bytes",
             bytes.len()
         ));
-        let av = ArcValue::deserialize(bytes, Some(serialization_context.keystore.clone()))
+        let av = ArcValue::deserialize(bytes, Some(self.keystore.clone()))
             .map_err(|e| {
                 self.logger
                     .error(format!("❌ [request] Failed to deserialize response: {e}"));
@@ -1116,11 +1112,45 @@ impl NetworkTransport for QuicTransport {
         Ok(av)
     }
 
-    async fn publish(&self, message: NetworkMessage) -> Result<(), NetworkError> {
-        let peer_id = &message.destination_node_id;
+    async fn publish(
+        &self,
+        topic_path: &TopicPath,
+        params: Option<ArcValue>,
+        peer_node_id: &str,
+    ) -> Result<(), NetworkError> {
+
+        let network_id = topic_path.network_id();
+        let correlation_id = uuid::Uuid::new_v4().to_string();
+ 
+        let serialization_context = SerializationContext {
+            keystore: self.keystore.clone(),
+            resolver: self.label_resolver.clone(),
+            network_id,
+            profile_public_key: None,
+        };
+        // Create the NetworkMessage internally
+        let message = NetworkMessage {
+            source_node_id: compact_id(&self.local_node_info.node_public_key),
+            destination_node_id: peer_node_id.to_string(),
+            message_type: super::MESSAGE_TYPE_EVENT,
+            payloads: vec![super::NetworkMessagePayloadItem {
+                path: topic_path.to_string(),
+                value_bytes: if let Some(v) = params {
+                    v.serialize(Some(&serialization_context))
+                        .map_err(|e| NetworkError::MessageError(e.to_string()))?
+                } else {
+                    ArcValue::null()
+                        .serialize(Some(&serialization_context))
+                        .map_err(|e| NetworkError::MessageError(e.to_string()))?
+                },
+                correlation_id,
+                context: None,
+            }],
+        }; 
+        
         let peers = self.state.peers.read().await;
-        let peer = peers.get(peer_id).ok_or_else(|| {
-            NetworkError::ConnectionError(format!("not connected to peer {peer_id}"))
+        let peer = peers.get(peer_node_id).ok_or_else(|| {
+            NetworkError::ConnectionError(format!("not connected to peer {peer_node_id}"))
         })?;
 
         let mut send = peer
