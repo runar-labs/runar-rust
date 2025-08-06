@@ -577,6 +577,7 @@ impl ServiceRegistry {
 
         let mut result = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
+        
         for m in matches {
             for (id, kind, meta) in m.content.clone() {
                 if seen_ids.contains(&id) {
@@ -588,6 +589,7 @@ impl ServiceRegistry {
                 }
             }
         }
+        
         result
     }
 

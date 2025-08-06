@@ -155,7 +155,7 @@ pub struct Node {
     /// Debounce state for notify_node_change.
     ///
     /// INTENTION: Ensures that rapid successive calls to notify_node_change only trigger a single
-    /// notification after a 2s debounce window. This prevents unnecessary network traffic and ensures
+    /// notification after a 1s debounce window. This prevents unnecessary network traffic and ensures
     /// only the latest node state is broadcast. Internal use only; not exposed outside Node.
     debounce_notify_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 
@@ -1173,7 +1173,7 @@ impl Node {
             // Deserialize the payload data
             let payload_data = ArcValue::deserialize(
                 &payload_item.value_bytes,
-                None, // TODO: Pass keystore from transport layer
+                Some(self.keys_manager.clone()),
             )?;
 
             // Send the response (which is ArcValue) through the oneshot channel
@@ -1209,7 +1209,7 @@ impl Node {
         }
 
         self.logger
-            .debug(format!("Handling network event: {message:?}"));
+            .debug(format!("Handling network event message_type: {message_type}", message_type= message.message_type));
 
         // Process each payload separately
         for payload_item in &message.payloads {
@@ -1235,7 +1235,7 @@ impl Node {
             // Deserialize the payload data
             let payload = ArcValue::deserialize(
                 &payload_item.value_bytes,
-                None, // TODO: Pass keystore from transport layer
+                Some(self.keys_manager.clone()),
             )?;
 
             // Create proper event context
@@ -1469,6 +1469,7 @@ impl Node {
             .service_registry
             .get_local_event_subscribers(&topic_path)
             .await;
+        
         for (_subscription_id, callback, _options) in local_subscribers {
             // Create an event context for this subscriber
             let event_context = Arc::new(EventContext::new(
@@ -1495,7 +1496,7 @@ impl Node {
                 // Execute the callback with correct arguments
                 if let Err(e) = callback( data.clone()).await {
                     self.logger.error(format!(
-                        "Error in local event handler for {topic_string}: {e}"
+                        "Error in remote event handler for {topic_string}: {e}"
                     ));
                 }
             }
@@ -1545,21 +1546,114 @@ impl Node {
         old_peer: &NodeInfo,
         new_peer: &NodeInfo,
     ) -> Result<()> {
-        // Diff subscriptions
         let peer_node_id = compact_id(&old_peer.node_public_key);
-        let old_set = self
-            .service_registry
-            .remote_subscription_paths(&peer_node_id)
-            .await;
+        
+        // FIRST: Diff services
+        let old_services: std::collections::HashSet<String> = old_peer
+            .node_metadata
+            .services
+            .iter()
+            .map(|s| format!("{}:{}", s.network_id, s.service_path))
+            .collect();
+        let new_services: std::collections::HashSet<String> = new_peer
+            .node_metadata
+            .services
+            .iter()
+            .map(|s| format!("{}:{}", s.network_id, s.service_path))
+            .collect();
+            
+        // Services to add
+        for service_key in new_services.difference(&old_services) {
+            // Find the actual service metadata for this key
+            if let Some(service_metadata) = new_peer
+                .node_metadata
+                .services
+                .iter()
+                .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
+            {
+                self.logger.info(format!("Adding new remote service: {} from peer: {}", service_key, peer_node_id));
+                
+                // Create and register the new remote service (reuse logic from add_new_peer)
+                let transport_arc = self.network_transport.read().await.clone().ok_or_else(|| anyhow!("Network transport not available"))?;
+                let local_peer_id = self.node_id.clone();
+                
+                let rs_config = CreateRemoteServicesConfig {
+                    services: vec![service_metadata.clone()],
+                    peer_node_id: peer_node_id.clone(),
+                    request_timeout_ms: self.config.request_timeout_ms,
+                };
+                
+                let rs_dependencies = RemoteServiceDependencies {
+                    network_transport: transport_arc.clone(),
+                    local_node_id: local_peer_id,
+                    logger: self.logger.clone(),
+                };
+                
+                if let Ok(remote_services) = RemoteService::create_from_capabilities(rs_config, rs_dependencies).await {
+                    for service in remote_services {
+                        // Register the service instance with the registry
+                        if let Err(e) = self.service_registry.register_remote_service(service.clone()).await {
+                            self.logger.error(format!("Failed to register remote service '{}': {e}", service.path()));
+                            continue;
+                        }
+                        
+                        // Initialize the service - this triggers handler registration via the context
+                        let service_topic_path = TopicPath::new(&service.path(), &self.network_id).unwrap();
+                        let registry_delegate: Arc<dyn RegistryDelegate + Send + Sync> = Arc::new(self.clone());
+                        let context = RemoteLifecycleContext::new(&service_topic_path, self.logger.clone())
+                            .with_registry_delegate(registry_delegate);
+                        
+                        if let Err(e) = service.init(context).await {
+                            self.logger.error(format!("Failed to initialize remote service '{}': {e}", service.path()));
+                        }
+                        self.service_registry.update_remote_service_state(&service_topic_path, ServiceState::Running).await?;
+                    }
+                }
+            }
+        }
+        
+        // Services to remove  
+        for service_key in old_services.difference(&new_services) {
+            // Find the actual service metadata for this key
+            if let Some(service_metadata) = old_peer
+                .node_metadata
+                .services
+                .iter()
+                .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
+            {
+                self.logger.info(format!("Removing remote service: {} from peer: {}", service_key, peer_node_id));
+                let service_path = TopicPath::new(&service_metadata.service_path, &service_metadata.network_id).unwrap();
+                if let Err(e) = self.service_registry.remove_remote_service(&service_path).await {
+                    self.logger.warn(format!("Failed to remove remote service {}: {e}", service_key));
+                }
+            }
+        }
+        
+        // SECOND: Diff subscriptions
+        let old_set: std::collections::HashSet<String> = old_peer
+            .node_metadata
+            .subscriptions
+            .iter()
+            .map(|s| s.path.clone())
+            .collect();
         let new_set: std::collections::HashSet<String> = new_peer
             .node_metadata
             .subscriptions
             .iter()
             .map(|s| s.path.clone())
             .collect();
+            
+        self.logger.debug(format!(
+            "Subscription diffing for peer {}: old_set={:?}, new_set={:?}",
+            peer_node_id, old_set, new_set
+        ));
 
         // Paths to add
         for path in new_set.difference(&old_set) {
+            self.logger.info(format!(
+                "Adding new remote subscription: {} for peer: {}",
+                path, peer_node_id
+            ));
             let topic_path = TopicPath::from_full_path(path).map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
             let tp_arc = Arc::new(topic_path.clone());
             // create remote handler same as add_new_peer logic (reuse closure building)
@@ -1591,6 +1685,10 @@ impl Node {
 
         // Paths to remove
         for path in old_set.difference(&new_set) {
+            self.logger.info(format!(
+                "Removing remote subscription: {} for peer: {}",
+                path, peer_node_id
+            ));
             let topic_path = TopicPath::from_full_path(path).unwrap();
             if let Some(sub_id) = self
                 .service_registry
@@ -1797,7 +1895,7 @@ impl Node {
         Ok(remote_services)
     }
 
-    //this function is debounced since it can be called in rapid suyccession.. it is debounced for 2 seconds..
+    //this function is debounced since it can be called in rapid succession.. it is debounced for 1 second..
     // it will then call the notify_node_change_impl  which will use the transposter to send a handshake message with the latest node info to all known peers.
     /// Debounced notification of node change.
     ///
@@ -1807,7 +1905,7 @@ impl Node {
     /// which sends the latest node info to all known peers via the transport.
     pub async fn notify_node_change(&self) -> Result<()> {
         self.logger.info(format!(
-            "notify_node_change called - it will be debounced for 2 seconds",
+            "notify_node_change called - it will be debounced for 1 second",
         ));
 
         let debounce_task = self.debounce_notify_task.clone();
@@ -1821,7 +1919,7 @@ impl Node {
         }
         // Spawn a new debounce task
         let handle = tokio::spawn(async move {
-            sleep(Duration::from_secs(2)).await;
+            sleep(Duration::from_secs(1)).await;
             // Ignore errors from notify_node_change_impl; log if needed
             if let Err(e) = this.notify_node_change_impl().await {
                 this.logger.warn(format!(
