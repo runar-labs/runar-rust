@@ -89,6 +89,7 @@ async fn test_gateway_routes() -> Result<()> {
 
     // 5. Start Node
     node.start().await?;
+    node.wait_for_services_to_start().await?;
     logger.debug(
         "Node started, allowing time for GatwayService to initialize and Axum server to start...",
     );

@@ -109,6 +109,7 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
     // Start the node
     node.start().await?;
     println!("Node started with MathService");
+    node.wait_for_services_to_start().await?;
     
     // Call the math operation (which should publish math/added)
     let result = node.request("math1/add", Some(runar_macros_common::params! { "a" => 5.0, "b" => 3.0 })).await?;

@@ -10,7 +10,7 @@ use runar_node::network::discovery::{
     DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo,
 };
 use runar_node::{ActionMetadata, ServiceMetadata};
-use runar_schemas::{NodeMetadata, SubscriptionMetadata};
+use runar_schemas::NodeMetadata;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;

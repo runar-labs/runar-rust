@@ -139,7 +139,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let affected_rows: i64 = *insert_user_result.as_type_ref::<i64>().unwrap();
-    println!("   ✅ User inserted successfully. Affected rows: {}\n", affected_rows);
+    println!("   ✅ User inserted successfully. Affected rows: {affected_rows}\n");
 
     // Insert a post
     println!("2. Inserting a post...");
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let affected_rows: i64 = *insert_post_result.as_type_ref::<i64>().unwrap();
-    println!("   ✅ Post inserted successfully. Affected rows: {}\n", affected_rows);
+    println!("   ✅ Post inserted successfully. Affected rows: {affected_rows}\n");
 
     // Query users
     println!("3. Querying users...");
@@ -244,7 +244,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let affected_rows: i64 = *update_result.as_type_ref::<i64>().unwrap();
-    println!("   ✅ User updated successfully. Affected rows: {}\n", affected_rows);
+    println!("   ✅ User updated successfully. Affected rows: {affected_rows}\n");
 
     // Check that a new replication event was created
     let updated_users_events_result = node

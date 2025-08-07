@@ -40,6 +40,7 @@ async fn test_registry_service_list_services() {
 
         // Start the node to initialize services
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await.unwrap();
 
         // Use the request method to query the registry service
         let services_av: ArcValue = node
@@ -122,6 +123,7 @@ async fn test_registry_service_get_service_info() {
 
         // Start the services to check that we get the correct state
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await.unwrap();
 
         // // Debug log service states after starting
         // let states_after = node.get_all_service_states().await;
@@ -195,6 +197,7 @@ async fn test_registry_service_get_service_state() {
 
         // Start the service
         node.start().await?;
+        node.wait_for_services_to_start().await?;
 
         // Use the request method to query the registry service for the math service state (local)
         let state_av: ArcValue = node
@@ -250,6 +253,7 @@ async fn test_registry_service_missing_parameter() {
 
         // Start the node to ensure services are initialized
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Make an invalid request with missing service_path parameter
         // The registry service expects a path parameter in the URL, but we're using an invalid path
@@ -319,6 +323,7 @@ async fn test_registry_service_pause_service() {
 
         // Start the service
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Verify service is in Running state
         let state_av: ArcValue = node
@@ -381,6 +386,7 @@ async fn test_registry_service_resume_service() {
 
         // Start the service
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Pause the service first
         let _pause_response: ArcValue = node
@@ -448,6 +454,7 @@ async fn test_registry_service_request_to_paused_service() {
 
         // Start the service
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Pause the service
         let _pause_response: ArcValue = node
@@ -495,6 +502,7 @@ async fn test_registry_service_pause_nonexistent_service() {
 
         // Start the node (no services added)
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Try to pause a non-existent service
         let pause_result: Result<ArcValue> = node
@@ -533,6 +541,7 @@ async fn test_registry_service_resume_nonexistent_service() {
 
         // Start the node (no services added)
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Try to resume a non-existent service
         let resume_result: Result<ArcValue> = node
@@ -577,6 +586,7 @@ async fn test_registry_service_resume_running_service() {
 
         // Start the service (puts it in Running state)
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Try to resume a service that is already running
         let resume_result: Result<ArcValue> = node
@@ -621,6 +631,7 @@ async fn test_registry_service_pause_already_paused_service() {
 
         // Start the service
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Pause the service first
         let _pause_response: ArcValue = node
@@ -665,6 +676,7 @@ async fn test_registry_service_request_to_nonexistent_service() {
 
         // Start the node (no services added)
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await?;
 
         // Try to call a service action for a non-existent service
         let request_result: Result<ArcValue> = node

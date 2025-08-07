@@ -727,7 +727,6 @@ fn map_message_type_to_string(message_type: u32) -> String {
         MESSAGE_TYPE_REQUEST => "REQUEST".to_string(),
         MESSAGE_TYPE_RESPONSE => "RESPONSE".to_string(),
         MESSAGE_TYPE_EVENT => "EVENT".to_string(),
-        MESSAGE_TYPE_ANNOUNCEMENT => "ANNOUNCEMENT".to_string(),
         _ => "UNKNOWN".to_string(),
     }
 }

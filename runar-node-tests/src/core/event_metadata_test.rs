@@ -4,7 +4,7 @@
 // which services subscribe to which events and can retrieve that information.
 
 use anyhow::Result;
-use runar_schemas::SubscriptionMetadata;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

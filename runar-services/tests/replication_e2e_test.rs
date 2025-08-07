@@ -10,7 +10,7 @@ use runar_serializer::ArcValue;
 use runar_test_utils::{create_networked_node_test_config, create_test_environment};
 use serial_test::serial;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 
 
@@ -164,13 +164,13 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
         assert_eq!(affected_rows, 1, "Should insert 1 user");
-        logger.info(format!("   ✅ Inserted user: {}", username));
+        logger.info(format!("   ✅ Inserted user: {username}"));
     }
 
     // Insert posts
     for i in 1..=2 {
-        let title = format!("Post {}", i);
-        let content = format!("Content for post {}", i);
+        let title = format!("Post {i}");
+        let content = format!("Content for post {i}");
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
@@ -357,7 +357,8 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     logging_config.apply();
 
     // Create SQLite services
-    let sqlite_service1 = create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", false);
+    //node1 uses a file db becaue it will stop and start again and must retain its data
+    let sqlite_service1 = create_replicated_sqlite_service("sqlite_test", "users_db_test_2", "./node_1_db", true);
     let sqlite_service2 = create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", true);
 
     // Start Node 1 and add substantial data
@@ -592,6 +593,11 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     //lets add a third node to make sure it can sync with the other two
     let node3_config = configs[2].clone();
  
+    //stop node 1 - which was the first node to start
+    //so node3 will sync from node2
+    node1.stop().await?;
+    println!("✅ Node 1 stopped");
+ 
     // Create SQLite services
     let sqlite_service3 = create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", true);
     
@@ -618,11 +624,232 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         .as_type_ref::<i64>().unwrap();
     assert_eq!(user_count3, 12, "Node 3 should have 12 users after initial replication");
     
-    //TODO change records in the node3 and verify that same revords is being updated in node1 and node2
+    // Test UPDATE operations: Change records in Node 3 and verify they're updated in Node 1 and Node 2
+    println!("Testing UPDATE operations from Node 3...");
+    
+    // Update a user on Node 3
+    let result = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("UPDATE users SET email = 'updated_by_node3@example.com' WHERE username = 'sync_user2'")
+        )))
+        .await?;
+    let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
+    assert_eq!(affected_rows, 1, "Should update 1 user on Node 3");
+
+    // Wait for replication
+    sleep(Duration::from_secs(1)).await;
+ 
+    // Verify the update appears on Node 2
+    let update_result2 = node2
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT email FROM users WHERE username = 'sync_user2'")
+        )))
+        .await?;
+    let update_users2: Vec<ArcValue> = (*update_result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(update_users2.len(), 1, "Node 2 should have the updated user");
+    let email2 = update_users2[0].as_map_ref().expect("Should be a map")
+        .get("email").expect("Should have email").as_type::<String>().expect("email should be a string");
+    assert_eq!(email2, "updated_by_node3@example.com", "Email should be updated by Node 3");
+    println!("✅ UPDATE replication Node 3 → Node 2 successful");
+
+    // Test DELETE operations: Remove record on Node 2 and verify it's removed in Node 1 and Node 3
+    println!("Testing DELETE operations from Node 2...");
+    
+    // Delete a user on Node 2
+    let result = node2
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("DELETE FROM users WHERE username = 'sync_user5'")
+        )))
+        .await?;
+    let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
+    assert_eq!(affected_rows, 1, "Should delete 1 user on Node 2");
+
+    // Wait for replication
+    sleep(Duration::from_secs(1)).await;
+
+    // Verify the deletion appears on Node 3
+    let delete_result3 = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'sync_user5'")
+        )))
+        .await?;
+    let delete_users3: Vec<ArcValue> = (*delete_result3.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(delete_users3.len(), 0, "Node 3 should not have the deleted user");
+    println!("✅ DELETE replication Node 2 → Node 3 successful");
+
+    // Test complex scenario: Multiple operations from different nodes
+    println!("Testing complex scenario with multiple operations from different nodes...");
+    
+    //restart node 1 -  it uses a file db - so it can be restarted
+    node1.start().await?;
+    println!("✅ Node 1 started");
+    node1.wait_for_services_to_start().await?;
+    println!("✅ Node 1 all services started and synced");
+
+    //check that node 1 has the same data as node 2 and 3
+    //TODO verify here that all changes that happend since node1 stopped 
+    //are now present.. sicne node1 shuold have synced with the network on its restart
 
 
-    //TODO remove record on node2 and verify that same record is being removed in node1 and node3
+    
 
+    // Node 1: Add a new user
+    let timestamp = chrono::Utc::now().timestamp();
+    let result1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new(
+                "INSERT INTO users (username, email, created_at) VALUES ('complex_user1', 'complex1@example.com', ?)"
+            ).with_params(runar_services::sqlite::Params::new()
+                .with_value(runar_services::sqlite::Value::Integer(timestamp))
+            )
+        )))
+        .await?;
+    let affected_rows1: i64 = *result1.as_type_ref::<i64>().unwrap();
+    assert_eq!(affected_rows1, 1, "Should insert 1 user on Node 1");
+
+    // Node 2: Update a different user
+    let result2 = node2
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("UPDATE users SET email = 'complex_updated@example.com' WHERE username = 'sync_user3'")
+        )))
+        .await?;
+    let affected_rows2: i64 = *result2.as_type_ref::<i64>().unwrap();
+    assert_eq!(affected_rows2, 1, "Should update 1 user on Node 2");
+
+    // Node 3: Delete another user
+    let result3 = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("DELETE FROM users WHERE username = 'sync_user7'")
+        )))
+        .await?;
+    let affected_rows3: i64 = *result3.as_type_ref::<i64>().unwrap();
+    assert_eq!(affected_rows3, 1, "Should delete 1 user on Node 3");
+
+    // Wait for all replications to complete
+    sleep(Duration::from_secs(2)).await;
+
+    // Verify all nodes have consistent state
+    println!("Verifying all nodes have consistent state after complex operations...");
+    
+    // Check final counts on all nodes
+    let final_count1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    let count1: i64 = *final_count1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("count").unwrap()
+        .as_type_ref::<i64>().unwrap();
+
+    let final_count2 = node2
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    let count2: i64 = *final_count2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("count").unwrap()
+        .as_type_ref::<i64>().unwrap();
+
+    let final_count3 = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    let count3: i64 = *final_count3.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("count").unwrap()
+        .as_type_ref::<i64>().unwrap();
+
+    assert_eq!(count1, count2, "Node 1 and Node 2 should have the same user count");
+    assert_eq!(count2, count3, "Node 2 and Node 3 should have the same user count");
+    assert_eq!(count1, 11, "All nodes should have 11 users total (12 initial - 2 deleted + 1 added)");
+    println!("✅ All nodes have consistent state: {} users each", count1);
+
+    // Verify specific operations propagated correctly
+    // Check that complex_user1 exists on all nodes
+    let complex_user_check1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'complex_user1'")
+        )))
+        .await?;
+    let complex_users1: Vec<ArcValue> = (*complex_user_check1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(complex_users1.len(), 1, "Node 1 should have complex_user1");
+
+    let complex_user_check2 = node2
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'complex_user1'")
+        )))
+        .await?;
+    let complex_users2: Vec<ArcValue> = (*complex_user_check2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(complex_users2.len(), 1, "Node 2 should have complex_user1");
+
+    let complex_user_check3 = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'complex_user1'")
+        )))
+        .await?;
+    let complex_users3: Vec<ArcValue> = (*complex_user_check3.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(complex_users3.len(), 1, "Node 3 should have complex_user1");
+
+    // Check that sync_user3 was updated on all nodes
+    let update_check1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT email FROM users WHERE username = 'sync_user3'")
+        )))
+        .await?;
+    let update_email1 = update_check1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("email").unwrap().as_type_ref::<String>().unwrap();
+    assert_eq!(*update_email1, "complex_updated@example.com", "Node 1 should have updated email");
+
+    let update_check2 = node2
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT email FROM users WHERE username = 'sync_user3'")
+        )))
+        .await?;
+    let update_email2 = update_check2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("email").unwrap().as_type_ref::<String>().unwrap();
+    assert_eq!(*update_email2, "complex_updated@example.com", "Node 2 should have updated email");
+
+    let update_check3 = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT email FROM users WHERE username = 'sync_user3'")
+        )))
+        .await?;
+    let update_email3 = update_check3.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("email").unwrap().as_type_ref::<String>().unwrap();
+    assert_eq!(*update_email3, "complex_updated@example.com", "Node 3 should have updated email");
+
+    // Check that sync_user7 was deleted from all nodes
+    let delete_check1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'sync_user7'")
+        )))
+        .await?;
+    let delete_users1: Vec<ArcValue> = (*delete_check1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(delete_users1.len(), 0, "Node 1 should not have sync_user7");
+
+    let delete_check2 = node2
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'sync_user7'")
+        )))
+        .await?;
+    let delete_users2: Vec<ArcValue> = (*delete_check2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(delete_users2.len(), 0, "Node 2 should not have sync_user7");
+
+    let delete_check3 = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'sync_user7'")
+        )))
+        .await?;
+    let delete_users3: Vec<ArcValue> = (*delete_check3.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(delete_users3.len(), 0, "Node 3 should not have sync_user7");
+
+    println!("✅ Complex multi-node operations completed successfully");
     
     // Clean up
     node1.stop().await?;
@@ -1028,5 +1255,174 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     node1.stop().await?;
     node2.stop().await?;
     println!("✅ Test 4 completed successfully!");
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn test_high_volume_replication_with_pagination() -> Result<()> {
+    println!("🧪 Testing high-volume replication with pagination (400 records)...");
+    
+    
+    // Create Node 1 with 400 records
+    let configs = create_networked_node_test_config(2)?;
+    let node1_config = configs[0].clone();
+    
+    let mut node1 = Node::new(node1_config).await?;
+    
+    // Create SQLite service with replication for Node 1
+    let sqlite_service1 = create_replicated_sqlite_service("high_volume_sqlite", "high_volume_sqlite", ":memory:", false);
+    
+    // Start Node 1 and add some initial data
+    println!("Starting Node 1...");
+    node1.add_service(sqlite_service1).await?;
+    node1.start().await?;
+    println!("✅ Node 1 started");
+    node1.wait_for_services_to_start().await?;
+    println!("✅ Node 1 all services started");
+    
+    // Create 400 records on Node 1
+    println!("📝 Creating 400 records on Node 1...");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    
+    for i in 1..=1000 {
+        let username = format!("user{i:03}");
+        let email = format!("user{i:03}@example.com");
+        
+        let _ = node1
+            .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+                runar_services::sqlite::SqlQuery::new(
+                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{username}', '{email}', ?)")
+                ).with_params(runar_services::sqlite::Params::new()
+                    .with_value(runar_services::sqlite::Value::Integer(timestamp + i))
+                )
+            )))
+            .await?;
+        
+        if i % 50 == 0 {
+            println!("   Created {i}/400 records...");
+        }
+    }
+    
+    // Verify Node 1 has 400 records
+    let result = node1
+        .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    let count1: i64 = *result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("count").unwrap()
+        .as_type_ref::<i64>().unwrap();
+    assert_eq!(count1, 1000, "Node 1 should have 1000 users");
+    println!("✅ Node 1 has {count1} records");
+    
+    // Create Node 2 (empty, will sync from Node 1)
+    let node2_config = configs[1].clone();
+    
+    let mut node2 = Node::new(node2_config).await?;
+    
+    // Create SQLite service with replication for Node 2
+    let sqlite_service2 = create_replicated_sqlite_service("high_volume_sqlite", "high_volume_sqlite", ":memory:", true);
+    node2.add_service(sqlite_service2).await?;
+    // Now start Node 2 - it should sync during startup
+    println!("Starting Node 2 (should sync during startup)...");
+    node2.start().await?;
+    println!("✅ Node 2 started");
+    
+    // Wait for nodes to discover each other and exchange service information
+    println!("Waiting for nodes to discover each other...");
+    let _ = node2.on(format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()), Duration::from_secs(3)).await?;
+    println!("✅ Nodes discovered each other");
+
+    node2.wait_for_services_to_start().await?;
+    println!("✅ Node 2 all services started and synced");
+    
+    // Verify Node 2 has synced all 400 records
+    let result = node2
+        .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    let count2: i64 = *result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("count").unwrap()
+        .as_type_ref::<i64>().unwrap();
+    assert_eq!(count2, 1000, "Node 2 should have synced all 1000 users");
+    println!("✅ Node 2 synced {count2} records");
+    
+    // Verify specific records are present on Node 2
+    let result = node2
+        .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'user001'")
+        )))
+        .await?;
+    let rows: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert!(!rows.is_empty(), "Node 2 should have user001");
+    
+    let result = node2
+        .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'user200'")
+        )))
+        .await?;
+    let rows: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert!(!rows.is_empty(), "Node 2 should have user200");
+    
+    let result = node2
+        .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'user400'")
+        )))
+        .await?;
+    let rows: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert!(!rows.is_empty(), "Node 2 should have user400");
+    
+    println!("✅ Verified specific records (user001, user200, user400) are present on Node 2");
+    
+    // Test that both nodes have identical data
+    let result1 = node1
+        .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username, email, created_at FROM users ORDER BY username")
+        )))
+        .await?;
+    let rows1: Vec<ArcValue> = (*result1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    
+    let result2 = node2
+        .local_request("high_volume_sqlite/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username, email, created_at FROM users ORDER BY username")
+        )))
+        .await?;
+    let rows2: Vec<ArcValue> = (*result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    
+    assert_eq!(rows1.len(), rows2.len(), "Both nodes should have the same number of records");
+    assert_eq!(rows1.len(), 1000, "Both nodes should have exactly 1000 records");
+    
+    // Verify the first and last records match
+    if !rows1.is_empty() && !rows2.is_empty() {
+        let first_row1 = &rows1[0];
+        let first_row2 = &rows2[0];
+        let username1 = first_row1.as_map_ref().unwrap().get("username").unwrap().as_type_ref::<String>().unwrap();
+        let username2 = first_row2.as_map_ref().unwrap().get("username").unwrap().as_type_ref::<String>().unwrap();
+        assert_eq!(username1, username2, "First records should match");
+        
+        let last_row1 = &rows1[rows1.len() - 1];
+        let last_row2 = &rows2[rows2.len() - 1];
+        let username1_last = last_row1.as_map_ref().unwrap().get("username").unwrap().as_type_ref::<String>().unwrap();
+        let username2_last = last_row2.as_map_ref().unwrap().get("username").unwrap().as_type_ref::<String>().unwrap();
+        assert_eq!(username1_last, username2_last, "Last records should match");
+    }
+    
+    println!("✅ Verified both nodes have identical data");
+    
+    // Note: Real-time replication is tested in other tests and works correctly
+    // This test focuses on high-volume startup synchronization with pagination
+    println!("✅ High-volume replication with pagination working correctly");
+    
+    // Clean up
+    node1.stop().await?;
+    node2.stop().await?;
+    println!("✅ Test 5 completed successfully!");
     Ok(())
 }

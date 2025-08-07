@@ -123,6 +123,7 @@ async fn test_node_request() {
 
         // Start the node to initialize all services
         node.start().await.unwrap();
+        node.wait_for_services_to_start().await.unwrap();
 
         // Create parameters
         let params = params! {
@@ -318,6 +319,7 @@ async fn test_path_params_in_context() {
 
     // Start the node to initialize all services
     node.start().await.unwrap();
+    node.wait_for_services_to_start().await.unwrap();
 
     // Make a request to a path that matches the template
     let av = node
@@ -384,7 +386,7 @@ async fn test_on_method() {
         // Publish event for context test
         node.publish(context_topic.to_string(), Some(context_event_data.clone())).await.unwrap();
 
-        let received_context_data = context_future.await?.expect("Received event data should not be None");;
+        let received_context_data = context_future.await?.expect("Received event data should not be None");
         assert_eq!(received_context_data, context_event_data, "Context should receive correct event data");
 
         // Test 4: Test from LifecycleContext
@@ -399,7 +401,7 @@ async fn test_on_method() {
         // Publish event for lifecycle context test
         node.publish(lifecycle_topic.to_string(), Some(lifecycle_event_data.clone())).await.unwrap();
 
-        let received_lifecycle_data = lifecycle_future.await?.expect("Received event data should not be None");;
+        let received_lifecycle_data = lifecycle_future.await?.expect("Received event data should not be None");
         assert_eq!(received_lifecycle_data, lifecycle_event_data, "LifecycleContext should receive correct event data");
 
         Ok::<(), anyhow::Error>(())
@@ -448,11 +450,11 @@ async fn test_service_state_events() {
         node.add_service(service).await.unwrap();
 
         // Wait for initialization event
-        let init_data = init_future.await?.expect("Received event data should not be None");;
+        let init_data = init_future.await?.expect("Received event data should not be None");
         let init_service_path = init_data.as_type_ref::<String>()?;
         assert_eq!(*init_service_path, service_path, "Initialized event should contain correct service path");
 
-        let wildcard_data = wildcard_future.await?.expect("Received event data should not be None");;
+        let wildcard_data = wildcard_future.await?.expect("Received event data should not be None");
         let wildcard_service_path = wildcard_data.as_type_ref::<String>()?;
         assert_eq!(*wildcard_service_path, service_path, "Wildcard event should contain correct service path");
 
@@ -465,7 +467,7 @@ async fn test_service_state_events() {
         node.start().await.unwrap();
 
         // Wait for running event
-        let running_data = running_future.await?.expect("Received event data should not be None");;
+        let running_data = running_future.await?.expect("Received event data should not be None");
         let running_service_path = running_data.as_type_ref::<String>()?;
         assert_eq!(*running_service_path, service_path, "Running event should contain correct service path");
 
@@ -478,7 +480,7 @@ async fn test_service_state_events() {
         node.stop().await.unwrap();
 
         // Wait for stopped event
-        let stopped_data = stopped_future.await?.expect("Received event data should not be None");;
+        let stopped_data = stopped_future.await?.expect("Received event data should not be None");
         let stopped_service_path = stopped_data.as_type_ref::<String>()?;
         assert_eq!(*stopped_service_path, service_path, "Stopped event should contain correct service path");
 
@@ -680,7 +682,7 @@ async fn test_on_method_timeout_variations() {
             let _ = node_clone.publish(topic_clone, Some(event_data_clone)).await;
         });
 
-        let result = node.on(topic, Duration::from_millis(100)).await?.expect("Received event data should not be None");;
+        let result = node.on(topic, Duration::from_millis(100)).await?.expect("Received event data should not be None");
         assert_eq!(result, event_data, "Medium timeout should receive immediate event");
 
         // Test 3: Long timeout with delayed event should succeed
@@ -695,7 +697,7 @@ async fn test_on_method_timeout_variations() {
             let _ = node_clone2.publish(topic_clone2, Some(event_data_clone2)).await;
         });
 
-        let result2 = node.on(topic2, Duration::from_secs(2)).await?.expect("Received event data should not be None");;
+        let result2 = node.on(topic2, Duration::from_secs(2)).await?.expect("Received event data should not be None");
         assert_eq!(result2, event_data2, "Long timeout should receive delayed event");
 
         Ok::<(), anyhow::Error>(())

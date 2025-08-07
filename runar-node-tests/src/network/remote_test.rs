@@ -216,3 +216,167 @@ async fn test_remote_action_call() -> Result<()> {
 
     Ok(())
 }
+
+/// Test for node stop/restart/reconnection scenario
+///
+/// INTENTION: Test that a node can properly stop, restart, and reconnect to the network
+/// and resume remote service calls. This isolates the reconnection logic from replication.
+#[tokio::test]
+async fn test_node_stop_restart_reconnection() -> Result<()> {
+    // Configure logging to ensure test logs are displayed
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
+
+    // Set up logger
+    let logger = Arc::new(Logger::new_root(
+        Component::Custom("stop_restart_test"),
+        "",
+    ));
+
+    let configs =
+        create_networked_node_test_config(2).expect("Failed to create multiple node test configs");
+
+    let node1_config = configs[0].clone();
+    let node1_id = node1_config.node_id.clone();
+    let node2_config = configs[1].clone();
+    let node2_id = node2_config.node_id.clone();
+    
+    // Create math services with different paths using the fixture
+    let math_service1 = MathService::new("math1", "math1");
+    let math_service2 = MathService::new("math2", "math2");
+
+    logger.debug(format!("Node1 config: {node1_config}"));
+    logger.debug(format!("Node2 config: {node2_config}"));
+
+    // ==========================================
+    // STEP 1: Initial Setup - Both nodes start
+    // ==========================================
+    logger.info("🚀 Starting initial node setup...");
+
+    let mut node1 = Node::new(node1_config.clone()).await?;
+    node1.add_service(math_service1.clone()).await?;
+    node1.start().await?;
+    logger.debug("✅ Node 1 started");
+
+    let mut node2 = Node::new(node2_config).await?;
+    node2.add_service(math_service2).await?;
+    node2.start().await?;
+    logger.debug("✅ Node 2 started");
+
+    // Wait for nodes to discover each other
+    logger.debug("⏳ Waiting for nodes to discover each other...");
+    let peer_future2 = node2.on(format!("$registry/peer/{node1_id}/discovered"), Duration::from_secs(3));
+    let peer_future1 = node1.on(format!("$registry/peer/{node2_id}/discovered"), Duration::from_secs(3));
+    let _ = tokio::join!(peer_future2, peer_future1);
+    logger.debug("✅ Nodes discovered each other");
+
+    // ==========================================
+    // STEP 2: Test initial remote call
+    // ==========================================
+    logger.info("🧪 Testing initial remote call from node2 to node1...");
+    
+    let response_av = node2
+        .request("math1/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
+        .await?
+        .as_type_ref::<f64>()?;
+
+    let response = *response_av;
+    assert_eq!(response, 15.0);
+    logger.debug(format!("✅ Initial remote call succeeded: 10 + 5 = {response}"));
+
+    // ==========================================
+    // STEP 3: Stop Node 1
+    // ==========================================
+    logger.info("🛑 Stopping Node 1...");
+    node1.stop().await?;
+    logger.debug("✅ Node 1 stopped");
+
+    // Wait a moment for the stop to complete
+    sleep(Duration::from_millis(500)).await;
+
+    // ==========================================
+    // STEP 4: Verify Node 1 is unreachable
+    // ==========================================
+    logger.info("🧪 Verifying Node 1 is unreachable...");
+    
+    let remote_call_result = node2
+        .request("math1/add", Some(params! { "a" => 1.0, "b" => 1.0 }))
+        .await;
+    
+    assert!(remote_call_result.is_err(), "Node 1 should be unreachable after stop");
+    logger.debug("✅ Node 1 correctly unreachable after stop");
+
+    // ==========================================
+    // STEP 5: Restart Node 1
+    // ==========================================
+    logger.info("🔄 Restarting Node 1...");
+    
+    // Create a new config for the restarted node with a different port
+    let mut node1_restart_config = node1_config.clone();
+    if let Some(ref mut network_config) = node1_restart_config.network_config {
+        network_config.transport_options.bind_address = "0.0.0.0:0".parse().unwrap(); // Use any available port
+    }
+    
+    let mut node1_restarted = Node::new(node1_restart_config).await?;
+    node1_restarted.add_service(math_service1).await?;
+    node1_restarted.start().await?;
+    logger.debug("✅ Node 1 restarted");
+
+    // ==========================================
+    // STEP 6: Wait for reconnection
+    // ==========================================
+    logger.info("⏳ Waiting for Node 1 to reconnect to the network...");
+    
+    // Wait for Node 2 to discover the restarted Node 1
+    let _ = node2.on(format!("$registry/peer/{node1_id}/discovered"), Duration::from_secs(5)).await?;
+    logger.debug("✅ Node 2 discovered restarted Node 1");
+    
+    // Wait for Node 1 to discover Node 2
+    let _ = node1_restarted.on(format!("$registry/peer/{node2_id}/discovered"), Duration::from_secs(5)).await?;
+    logger.debug("✅ Restarted Node 1 discovered Node 2");
+
+    // Give additional time for connection establishment
+    sleep(Duration::from_secs(2)).await;
+    logger.debug("✅ Additional wait for connection establishment complete");
+
+    // ==========================================
+    // STEP 7: Test remote call after restart
+    // ==========================================
+    logger.info("🧪 Testing remote call after Node 1 restart...");
+    
+    let response_av = node2
+        .request("math1/add", Some(params! { "a" => 20.0, "b" => 10.0 }))
+        .await?
+        .as_type_ref::<f64>()?;
+
+    let response = *response_av;
+    assert_eq!(response, 30.0);
+    logger.debug(format!("✅ Remote call after restart succeeded: 20 + 10 = {response}"));
+
+    // ==========================================
+    // STEP 8: Test bidirectional communication
+    // ==========================================
+    logger.info("🧪 Testing bidirectional communication after restart...");
+    
+    // Test call from restarted Node 1 to Node 2
+    let response_av = node1_restarted
+        .request("math2/multiply", Some(params! { "a" => 6.0, "b" => 7.0 }))
+        .await?
+        .as_type_ref::<f64>()?;
+
+    let response = *response_av;
+    assert_eq!(response, 42.0);
+    logger.debug(format!("✅ Bidirectional call succeeded: 6 * 7 = {response}"));
+
+    // ==========================================
+    // STEP 9: Cleanup
+    // ==========================================
+    logger.info("🧹 Shutting down nodes...");
+    node2.stop().await?;
+    node1_restarted.stop().await?;
+
+    logger.info("✅ Both nodes stopped successfully");
+    logger.info("🎉 Node stop/restart/reconnection test completed successfully!");
+
+    Ok(())
+}

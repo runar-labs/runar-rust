@@ -9,13 +9,12 @@
 
 use anyhow::{anyhow, Result};
 use runar_node::services::{
-    abstract_service::AbstractService, request_context::RequestContext, EventRegistrationOptions,
-    EventContext,
+    abstract_service::AbstractService, request_context::RequestContext,
 };
 use runar_node::LifecycleContext;
-use runar_schemas::{FieldSchema, SchemaDataType};
+
 use runar_serializer::ArcValue;
-use std::collections::HashMap;
+
 use std::sync::{Arc, Mutex};
 
 /// A simple math service for testing
