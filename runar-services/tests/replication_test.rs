@@ -1,7 +1,7 @@
 use anyhow::Result;
 use runar_services::{
     replication::{ConflictResolutionStrategy, ReplicationConfig},
-    sqlite::{DataType, Schema, SqliteConfig, SqliteService, TableDefinition, ColumnDefinition, Params},
+    sqlite::{DataType, Schema, SqliteConfig, SqliteService, TableDefinition, ColumnDefinition},
 };
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
@@ -141,7 +141,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
     
     // Should return the local event we just created
     assert_eq!(replication_response.events.len(), 1, "Replication API should return the stored event");
-    assert_eq!(replication_response.has_more, false, "Should not have more events");
+    assert!(!replication_response.has_more, "Should not have more events");
 
     node.stop().await?;
     Ok(())

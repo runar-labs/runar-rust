@@ -102,7 +102,7 @@ fn create_replicated_sqlite_service(name: &str, path: &str, db_path: &str, start
         .with_replication(ReplicationConfig {
             enabled_tables: vec!["users".to_string(), "posts".to_string()],
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
-            startup_sync : startup_sync, // Enable startup sync for this test
+            startup_sync, // Enable startup sync for this test
             event_retention_days: 30,
         });
 
@@ -148,14 +148,14 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     
     // Insert users
     for i in 1..=3 {
-        let username = format!("user{}", i);
-        let email = format!("user{}@example.com", i);
+        let username = format!("user{i}");
+        let email = format!("user{i}@example.com");
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
             .local_request("users_db_test_1/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
-                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{}', '{}', ?)", username, email)
+                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{username}', '{email}', ?)")
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
@@ -349,7 +349,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     println!("=== Test 2: Service Availability During Sync ===");
 
     // Create two node configurations
-    let configs = create_networked_node_test_config(2)?;
+    let configs = create_networked_node_test_config(3)?;
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
 
@@ -589,9 +589,45 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     assert_eq!(final_count1, 12, "Both nodes should have 12 users total (10 initial + 2 post-sync)");
     println!("✅ Final verification: Both nodes have {} users", final_count1);
 
+    //lets add a third node to make sure it can sync with the other two
+    let node3_config = configs[2].clone();
+ 
+    // Create SQLite services
+    let sqlite_service3 = create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", true);
+    
+     
+    println!("Starting Node 3 and sync.");
+    let mut node3 = Node::new(node3_config).await?;
+    node3.add_service(sqlite_service3).await?;
+    node3.start().await?;
+    println!("✅ Node 3 started");
+    node3.wait_for_services_to_start().await?;
+
+    println!("✅ Node 3 service started and data sync completed");
+    
+    //check that contain all the data the the other nodes has
+    //check users
+    let users_result3 = node3
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    let user_count3: i64 = *users_result3.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("count").unwrap()
+        .as_type_ref::<i64>().unwrap();
+    assert_eq!(user_count3, 12, "Node 3 should have 12 users after initial replication");
+    
+    //TODO change records in the node3 and verify that same revords is being updated in node1 and node2
+
+
+    //TODO remove record on node2 and verify that same record is being removed in node1 and node3
+
+    
     // Clean up
     node1.stop().await?;
     node2.stop().await?;
+    node3.stop().await?;
     println!("✅ Test 2 completed successfully!");
     Ok(())
 }

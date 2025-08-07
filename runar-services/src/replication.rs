@@ -170,7 +170,7 @@ impl ReplicationManager {
                     Err(e) => {
                         // If no remote services are available, that's okay for startup
                         if e.to_string().contains("No handler found") || e.to_string().contains("No remote nodes") {
-                            context.info(format!("No remote services available for table '{}' - skipping sync", table));
+                            context.info(format!("No remote services available for table '{table}' - skipping sync"));
                             break;
                         } else {
                             return Err(e);
@@ -180,7 +180,7 @@ impl ReplicationManager {
             }
             
             if total_events > 0 {
-                context.info(format!("Completed sync for table '{}' - {} total events", table, total_events));
+                context.info(format!("Completed sync for table '{table}' - {total_events} total events"));
             }
         }
         
@@ -230,12 +230,11 @@ impl ReplicationManager {
     // Returns current state of a table for startup synchronization
     pub async fn get_table_state(&self, table_name: &str) -> Result<TableState> {
         // Query the event table to get latest timestamp
-        let event_table_name = format!("{}{}", table_name, EVENT_TABLE_SUFFIX);
+        let event_table_name = format!("{table_name}{EVENT_TABLE_SUFFIX}");
         
-        let query = SqlQuery::new(&format!(
-            "SELECT MAX(timestamp) as max_time FROM {}",
-            event_table_name
-        ));
+                  let query = SqlQuery::new(&format!(
+              "SELECT MAX(timestamp) as max_time FROM {event_table_name}"
+          ));
         
         let result = self.sqlite_service.send_command(|reply_tx| {
             crate::sqlite::SqliteWorkerCommand::Query {
@@ -254,7 +253,7 @@ impl ReplicationManager {
         };
         
         // Count records in the main table
-        let count_query = SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {}", table_name));
+        let count_query = SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {table_name}"));
         let count_result = self.sqlite_service.send_command(|reply_tx| {
             crate::sqlite::SqliteWorkerCommand::Query {
                 query: count_query,
@@ -311,8 +310,7 @@ impl ReplicationManager {
         let data_json_str = serde_json::to_string(&data_json)?;
 
         let query = SqlQuery::new(&format!(
-            "INSERT INTO {} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            event_table_name
+            "INSERT INTO {event_table_name} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )).with_params(crate::sqlite::Params::new()
             .with_value(Value::Text(event.id.clone()))
             .with_value(Value::Text(event.table_name.clone()))
@@ -331,7 +329,7 @@ impl ReplicationManager {
             }
         }).await.map_err(|e| anyhow!("Failed to store event: {e}"))?;
         
-        self.logger.debug(format!("Replication event stored in {}", event_table_name));
+        self.logger.debug(format!("Replication event stored in {event_table_name}"));
         Ok(())
     }
      
@@ -361,7 +359,7 @@ impl ReplicationManager {
             }
         }).await.map_err(|e| anyhow!("Failed to execute replicated SQL query: {}", e))?;
         
-        self.logger.debug(format!("SQL query executed successfully: {:?}", result));
+        self.logger.debug(format!("SQL query executed successfully: {result:?}"));
         
         Ok(())
     }
@@ -378,9 +376,9 @@ impl ReplicationManager {
         // Request from remote nodes with the same SQLite service
         // Use proper namespacing: <sqlite_service_path>/replication/get_table_events
         let service_path = self.sqlite_service.path();
-        let remote_path = format!("{}/{}", service_path, REPLICATION_GET_TABLE_EVENTS_ACTION);
+        let remote_path = format!("{service_path}/{REPLICATION_GET_TABLE_EVENTS_ACTION}");
         
-        context.debug(format!("Requesting events from remote nodes: {}", remote_path));
+        context.debug(format!("Requesting events from remote nodes: {remote_path}"));
         
         match context.remote_request(&remote_path, Some(ArcValue::new_struct(request))).await {
             Ok(response) => {
@@ -390,7 +388,7 @@ impl ReplicationManager {
             }
             Err(e) => {
                 // Handle case where no remote nodes have this service
-                context.info(format!("No remote nodes with service '{}' available: {}", service_path, e));
+                context.info(format!("No remote nodes with service '{service_path}' available: {e}"));
                 // Return empty response when no remote nodes are available
                 Ok(TableEventsResponse {
                     events: Vec::new(),
@@ -405,17 +403,16 @@ impl ReplicationManager {
 
     // Returns paginated events for a table (for startup sync)
     pub async fn get_table_events(&self, request: Arc<TableEventsRequest>) -> Result<TableEventsResponse> {
-        let event_table_name = format!("{}{}", request.table_name, EVENT_TABLE_SUFFIX);
+        let event_table_name = format!("{}{EVENT_TABLE_SUFFIX}", request.table_name);
         
         self.logger.debug(format!(
             "Querying events from {}: page={}, page_size={}, from_timestamp={}",
             event_table_name, request.page, request.page_size, request.from_timestamp
         ));
         
-        let query = SqlQuery::new(&format!(
-            "SELECT * FROM {} ORDER BY timestamp ASC LIMIT ? OFFSET ?",
-            event_table_name
-        )).with_params(crate::sqlite::Params::new()
+                  let query = SqlQuery::new(&format!(
+              "SELECT * FROM {event_table_name} ORDER BY timestamp ASC LIMIT ? OFFSET ?"
+          )).with_params(crate::sqlite::Params::new()
             .with_value(Value::Integer(request.page_size as i64))
             .with_value(Value::Integer((request.page * request.page_size) as i64))
         );
@@ -450,7 +447,7 @@ impl ReplicationManager {
                 },
                 data: match row.get("data") {
                     Some(Value::Text(s)) =>{ 
-                        let data_json = serde_json::from_str(&s).unwrap_or_default();
+                        let data_json = serde_json::from_str(s).unwrap_or_default();
                         let json_arc = ArcValue::new_json(data_json);
                         match json_arc.as_type::<crate::sqlite::SqlQuery>() {
                             Ok(sql_query) => ArcValue::new_struct(sql_query),
@@ -478,7 +475,7 @@ impl ReplicationManager {
         }).collect();
         
         // Check if there are more events
-        let total_query = SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {}", event_table_name));
+        let total_query = SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {event_table_name}"));
         let total_result = self.sqlite_service.send_command(|reply_tx| {
             crate::sqlite::SqliteWorkerCommand::Query {
                 query: total_query,
@@ -514,10 +511,10 @@ impl ReplicationManager {
     // Creates event tables for enabled tables
     pub async fn create_event_tables(&self, context: &LifecycleContext) -> Result<()> {
         for table in self.enabled_tables.iter() {
-            let event_table_name = format!("{}{}", table, EVENT_TABLE_SUFFIX);
+            let event_table_name = format!("{table}{EVENT_TABLE_SUFFIX}");
             
             let create_table_sql = format!(
-                "CREATE TABLE IF NOT EXISTS {} (
+                "CREATE TABLE IF NOT EXISTS {event_table_name} (
                     id TEXT PRIMARY KEY,
                     table_name TEXT NOT NULL,
                     operation_type TEXT NOT NULL,
@@ -526,8 +523,7 @@ impl ReplicationManager {
                     timestamp INTEGER NOT NULL,
                     source_node_id TEXT NOT NULL,
                     processed BOOLEAN DEFAULT FALSE
-                )",
-                event_table_name
+                )"
             );
             
             let query = SqlQuery::new(&create_table_sql);
@@ -540,8 +536,7 @@ impl ReplicationManager {
             
             // Create indexes
             let index1_sql = format!(
-                "CREATE INDEX IF NOT EXISTS idx_{}_events_timestamp ON {} (timestamp)",
-                table, event_table_name
+                "CREATE INDEX IF NOT EXISTS idx_{table}_events_timestamp ON {event_table_name} (timestamp)"
             );
             let index1_query = SqlQuery::new(&index1_sql);
             self.sqlite_service.send_command(|reply_tx| {
@@ -553,7 +548,7 @@ impl ReplicationManager {
             
 
             
-            context.info(format!("Created event table: {}", event_table_name));
+            context.info(format!("Created event table: {event_table_name}"));
         }
         
         Ok(())

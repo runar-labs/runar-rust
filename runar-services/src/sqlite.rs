@@ -278,7 +278,7 @@ fn execute_internal(
     params: &Params, // Changed: Now takes &Params
     logger: &Arc<Logger>,
 ) -> Result<usize, String> {
-    logger.debug(format!("Executing SQL: {}", sql));
+    logger.debug(format!("Executing SQL: {sql}"));
     
     let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> =
         params.values.iter().map(value_to_to_sql).collect(); // Changed: uses value_to_to_sql
@@ -676,8 +676,6 @@ impl SqliteService {
     }
 
     /// Manually trigger startup synchronization after network connections are established
-
-
     async fn apply_schema(&self, schema: Schema, context: &LifecycleContext) -> Result<()> {
         let schema_to_apply = schema; // Use the passed schema argument
         context.info(format!(
@@ -1075,21 +1073,18 @@ impl AbstractService for SqliteService {
 pub fn extract_table_name(sql: &str) -> Option<String> {
     let sql_upper = sql.trim_start().to_uppercase();
     
-    if sql_upper.starts_with("INSERT INTO ") {
+    if let Some(after_insert) = sql_upper.strip_prefix("INSERT INTO ") {
         // Extract table name after "INSERT INTO "
-        let after_insert = &sql_upper[12..];
         if let Some(space_pos) = after_insert.find(' ') {
             return Some(after_insert[..space_pos].to_lowercase());
         }
-    } else if sql_upper.starts_with("UPDATE ") {
+    } else if let Some(after_update) = sql_upper.strip_prefix("UPDATE ") {
         // Extract table name after "UPDATE "
-        let after_update = &sql_upper[7..];
         if let Some(space_pos) = after_update.find(' ') {
             return Some(after_update[..space_pos].to_lowercase());
         }
-    } else if sql_upper.starts_with("DELETE FROM ") {
+    } else if let Some(after_delete) = sql_upper.strip_prefix("DELETE FROM ") {
         // Extract table name after "DELETE FROM "
-        let after_delete = &sql_upper[12..];
         if let Some(space_pos) = after_delete.find(' ') {
             return Some(after_delete[..space_pos].to_lowercase());
         }

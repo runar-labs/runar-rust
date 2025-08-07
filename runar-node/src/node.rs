@@ -31,6 +31,8 @@ use crate::network::transport::{
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
+// Type alias for service tasks to reduce complexity
+type ServiceTask = (TopicPath, tokio::task::JoinHandle<()>);
 // Certificate and PrivateKey types are now imported via the cert_utils module
 use crate::config::LoggingConfig;
 use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
@@ -207,7 +209,7 @@ pub struct Node {
 
     keys_manager_mut: Arc<Mutex<NodeKeyManager>>,
 
-    service_tasks: Arc<RwLock<Vec<(TopicPath, tokio::task::JoinHandle<()>)>>>,
+    service_tasks: Arc<RwLock<Vec<ServiceTask>>>,
 }
 
 // Implementation for Node
@@ -1591,7 +1593,7 @@ impl Node {
                 .iter()
                 .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
             {
-                self.logger.info(format!("Adding new remote service: {} from peer: {}", service_key, peer_node_id));
+                self.logger.info(format!("Adding new remote service: {service_key} from peer: {peer_node_id}"));
                 
                 // Create and register the new remote service (reuse logic from add_new_peer)
                 let transport_arc = self.network_transport.read().await.clone().ok_or_else(|| anyhow!("Network transport not available"))?;
@@ -1618,7 +1620,7 @@ impl Node {
                         }
                         
                         // Initialize the service - this triggers handler registration via the context
-                        let service_topic_path = TopicPath::new(&service.path(), &self.network_id).unwrap();
+                        let service_topic_path = TopicPath::new(service.path(), &self.network_id).unwrap();
                         let registry_delegate: Arc<dyn RegistryDelegate + Send + Sync> = Arc::new(self.clone());
                         let context = RemoteLifecycleContext::new(&service_topic_path, self.logger.clone())
                             .with_registry_delegate(registry_delegate);
@@ -1641,10 +1643,10 @@ impl Node {
                 .iter()
                 .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
             {
-                self.logger.info(format!("Removing remote service: {} from peer: {}", service_key, peer_node_id));
+                self.logger.info(format!("Removing remote service: {service_key} from peer: {peer_node_id}"));
                 let service_path = TopicPath::new(&service_metadata.service_path, &service_metadata.network_id).unwrap();
                 if let Err(e) = self.service_registry.remove_remote_service(&service_path).await {
-                    self.logger.warn(format!("Failed to remove remote service {}: {e}", service_key));
+                    self.logger.warn(format!("Failed to remove remote service {service_key}: {e}"));
                 }
             }
         }
@@ -1664,15 +1666,13 @@ impl Node {
             .collect();
             
         self.logger.debug(format!(
-            "Subscription diffing for peer {}: old_set={:?}, new_set={:?}",
-            peer_node_id, old_set, new_set
+            "Subscription diffing for peer {peer_node_id}: old_set={old_set:?}, new_set={new_set:?}"
         ));
 
         // Paths to add
         for path in new_set.difference(&old_set) {
             self.logger.info(format!(
-                "Adding new remote subscription: {} for peer: {}",
-                path, peer_node_id
+                "Adding new remote subscription: {path} for peer: {peer_node_id}"
             ));
             let topic_path = TopicPath::from_full_path(path).map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
             let tp_arc = Arc::new(topic_path.clone());
@@ -1706,8 +1706,7 @@ impl Node {
         // Paths to remove
         for path in old_set.difference(&new_set) {
             self.logger.info(format!(
-                "Removing remote subscription: {} for peer: {}",
-                path, peer_node_id
+                "Removing remote subscription: {path} for peer: {peer_node_id}"
             ));
             let topic_path = TopicPath::from_full_path(path).unwrap();
             if let Some(sub_id) = self
@@ -1721,36 +1720,7 @@ impl Node {
         Ok(())
     }
 
-    async fn remove_peer_capabilities(
-        &self,
-        existing_peer: &NodeInfo,
-    ) -> Result<Vec<Arc<RemoteService>>> {
-        //remove all the services
-        let services = &existing_peer.node_metadata.services;
-        for service_to_remove in services {
-            let service_path = TopicPath::new(
-                &service_to_remove.service_path,
-                service_to_remove.network_id.as_str(),
-            )
-            .unwrap();
-            self.service_registry
-                .remove_remote_service(&service_path)
-                .await?;
-        }
-        // Remove subscriptions associated with this peer only
-        let peer_node_id = compact_id(&existing_peer.node_public_key);
-        let subscription_ids = self
-            .service_registry
-            .drain_remote_peer_subscriptions(&peer_node_id)
-            .await;
-        for sub_id in subscription_ids {
-            if let Err(e) = self.service_registry.unsubscribe_remote(&sub_id).await {
-                self.logger.warn(format!(
-                    "Unable to remove remote subscription id {sub_id} for peer {peer_node_id}: {e}"));
-            }
-        }
-        Ok(Vec::new())
-    }
+
 
     async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
         let capabilities = &node_info.node_metadata;
@@ -1924,9 +1894,7 @@ impl Node {
     /// trigger the actual notification. After the debounce period, it delegates to notify_node_change_impl,
     /// which sends the latest node info to all known peers via the transport.
     pub async fn notify_node_change(&self) -> Result<()> {
-        self.logger.info(format!(
-            "notify_node_change called - it will be debounced for 1 second",
-        ));
+        self.logger.info("notify_node_change called - it will be debounced for 1 second");
 
         let debounce_task = self.debounce_notify_task.clone();
         let this = self.clone();

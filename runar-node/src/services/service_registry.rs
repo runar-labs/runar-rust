@@ -462,7 +462,7 @@ impl ServiceRegistry {
             let mut trie = self.event_subscriptions.write().await;
             let mut list = trie
                 .find_matches(topic_path)
-                .get(0)
+                .first()
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
             list.push((
@@ -504,7 +504,7 @@ impl ServiceRegistry {
             let mut trie = self.event_subscriptions.write().await;
             let mut list = trie
                 .find_matches(topic_path)
-                .get(0)
+                .first()
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
             list.push((
@@ -551,7 +551,7 @@ impl ServiceRegistry {
                 .filter(|(id, kind, _)| !(ids_to_remove.contains(id) && matches!(kind, SubscriberKind::Remote(_))))
                 .collect();
             if remaining.is_empty() {
-                trie.remove_values(&topic_path);
+                trie.remove_values(topic_path);
             } else {
                 trie.set_value(topic_path.clone(), remaining);
             }
