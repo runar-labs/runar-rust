@@ -194,20 +194,7 @@ impl ReplicationManager {
         Ok(())
     }
     
-    // Handles SQLite operations and creates replication events
-    // pub async fn handle_sqlite_operation(&self, operation: &str, table: &str, data: &ArcValue) -> Result<()> {
-    //     // Create persistent event
-    //     let event = self.create_replication_event(operation, table, data).await?;
-        
-    //     // Store event in database (mark as processed since it's local)
-    //     self.store_event(&event, true).await?;
-        
-    //     // Broadcast event to network
-    //     // self.broadcast_event(&event).await?;
-        
-    //     Ok(())
-    // }
-
+ 
     // Handles incoming ephemeral events from SQLite operations
     pub async fn handle_sqlite_event(&self, event: SqliteEvent, is_local: bool) -> Result<()> {
         self.logger.debug(format!(
@@ -220,13 +207,11 @@ impl ReplicationManager {
             // Local event: just store for replication history, don't process
             let replication_event = self.create_replication_event(&event.operation, &event.table, event.data).await?;
             self.store_event(&replication_event, true).await?; // Mark as processed
-            // self.broadcast_event(&replication_event).await?;
             self.logger.debug("Local event stored and broadcasted");
         } else {
             self.logger.debug("Remote event: storing and processing");
             // Remote event: store and process
             let replication_event = self.create_replication_event(&event.operation, &event.table,  event.data).await?;
-            self.store_event(&replication_event, false).await?; // Mark as not processed
             self.process_replication_event(replication_event).await?;
             self.logger.debug("Remote event stored and processed");
         }
@@ -236,10 +221,7 @@ impl ReplicationManager {
     
     // Processes incoming replication events from other nodes
     pub async fn process_replication_event(&self, event: ReplicationEvent) -> Result<()> {
-        // Check if we've already processed this event
-        // if self.is_event_processed(&event.id).await? {
-        //     return Ok(());
-        // }
+         
         
 
         // Apply event to local database
