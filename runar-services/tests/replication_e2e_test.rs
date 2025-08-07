@@ -8,6 +8,7 @@ use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::ArcValue;
 use runar_test_utils::{create_networked_node_test_config, create_test_environment};
+use serial_test::serial;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -111,6 +112,7 @@ fn create_replicated_sqlite_service(name: &str, path: &str, db_path: &str, start
 /// Test 1: Basic replication between two nodes
 /// Node 1 creates data, Node 2 starts and syncs, then both can replicate live changes
 #[tokio::test]
+#[serial]
 async fn test_basic_replication_between_nodes() -> Result<()> {
     // Configure logging
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
@@ -342,6 +344,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 /// Test 2: Service availability during startup synchronization
 /// Node 1 has data, Node 2 starts and service is not available until sync completes
 #[tokio::test]
+#[serial]
 async fn test_full_replication_between_nodes() -> Result<()> {
     println!("=== Test 2: Service Availability During Sync ===");
 
@@ -596,6 +599,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 /// Test 3: Event table verification and event ordering
 /// Verify that event tables are created correctly and events are properly ordered
 #[tokio::test]
+#[serial]
 async fn test_event_tables_and_ordering() -> Result<()> {
     println!("=== Test 3: Event Tables and Ordering ===");
 
@@ -798,6 +802,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 /// Test 4: Mobile Simulator Integration Test
 /// Test replication using the MobileSimulator for proper key management and encryption
 #[tokio::test]
+#[serial]
 async fn test_mobile_simulator_replication() -> Result<()> {
     println!("=== Test 4: Mobile Simulator Replication Test ===");
 

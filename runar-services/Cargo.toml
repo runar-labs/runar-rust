@@ -34,4 +34,5 @@ runar_macros = { path = "../runar-macros" }
 runar-test-utils = { path = "../runar-test-utils" }
 serde_json = "1.0"
 runar_macros_common = { path = "../runar-macros-common" }
+serial_test = "2.0"
 # These are required for integration tests in tests/rusqlite_examples.rs
