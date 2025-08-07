@@ -206,6 +206,8 @@ pub struct Node {
     keys_manager: Arc<NodeKeyManager>,
 
     keys_manager_mut: Arc<Mutex<NodeKeyManager>>,
+
+    service_tasks: Arc<RwLock<Vec<(TopicPath, tokio::task::JoinHandle<()>)>>>,
 }
 
 // Implementation for Node
@@ -303,6 +305,7 @@ impl Node {
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager,
             keys_manager_mut,
+            service_tasks: Arc::new(RwLock::new(Vec::new())),
         };
 
         // Register the registry service
@@ -413,11 +416,8 @@ impl Node {
             .register_local_service(service_entry.clone())
             .await?;
 
-        //if started... need to increment  -> registry_version
         if self.running.load(Ordering::SeqCst) {
-            self.start_service(&service_topic, service_entry.as_ref()).await;
-            self.registry_version.fetch_add(1, Ordering::SeqCst);
-            self.notify_node_change().await?;
+            self.start_service(&service_topic, service_entry.as_ref(), true).await;
         }
 
         Ok(())
@@ -531,35 +531,7 @@ impl Node {
 
         // start internal services first
         for (service_topic, service_entry) in internal_services {
-            self.start_service(service_topic, service_entry).await;
-        }
-
-        // Start non-internal services in parallel to avoid blocking the loop
-        let mut service_tasks = Vec::new();
-        
-        for (service_topic, service_entry) in non_internal_services {
-            let node_clone = Arc::new(self.clone());
-            let service_topic_clone = service_topic.clone();
-            let service_entry_clone = service_entry.clone();
-            
-            let task = tokio::spawn(async move {
-                node_clone.start_service(&service_topic_clone, &service_entry_clone).await;
-            });
-            
-            service_tasks.push((service_topic.clone(), task));
-        }
-        
-        // Wait for all service start tasks to complete
-        for (service_topic, task) in service_tasks {
-            match task.await {
-                Ok(()) => {
-                    self.logger.info(format!("Service start task completed: {service_topic}"));
-                }
-                Err(e) => {
-                    self.logger.error(format!("Task panicked for service: {service_topic}, error: {e}"));
-                    // Continue with other services even if one panics
-                }
-            }
+            self.start_service(service_topic, service_entry, false).await;
         }
 
         // Start networking if enabled
@@ -574,10 +546,43 @@ impl Node {
         self.logger.info("Node started successfully");
         self.running.store(true, Ordering::SeqCst);
 
+        // Start non-internal services in parallel to avoid blocking the loop
+        let mut tasks_store = self.service_tasks.write().await;
+        let service_start_timeout = Duration::from_secs(30);//TODO MOVE THIS TO A CONFIG
+        for (service_topic, service_entry) in non_internal_services {
+            let node_clone = Arc::new(self.clone());
+            let service_topic_clone = service_topic.clone();
+            let service_entry_clone = service_entry.clone();
+            let task = tokio::spawn(async move {
+                node_clone.logger.info(format!("Starting separate thread to start service: {service_topic_clone}"));
+                
+                // Add timeout to the service start operation
+                match tokio::time::timeout(
+                    service_start_timeout, 
+                    node_clone.start_service(&service_topic_clone, &service_entry_clone, true)).await {
+                    Ok(_) => {
+                        node_clone.logger.info(format!("Service start completed: {service_topic_clone}"));
+                    }
+                    Err(_) => {
+                        node_clone.logger.error(format!("Service start timed out after 30 seconds: {service_topic_clone}"));
+                    }
+                } 
+            });
+            tasks_store.push((service_topic.clone(), task));
+        }
+         
         Ok(())
     }
 
-    async fn start_service(&self, service_topic: &TopicPath, service_entry: &ServiceEntry) {
+    pub async fn wait_for_services_to_start(&self) -> Result<()> {
+        let mut service_tasks = self.service_tasks.write().await;
+        for (_service_topic, task) in service_tasks.drain(..) {
+            task.await?;
+        }
+        Ok(())
+    }
+
+    async fn start_service(&self, service_topic: &TopicPath, service_entry: &ServiceEntry, update_node_version: bool) {
         self.logger
             .info(format!("Starting service: {service_topic}"));
 
@@ -620,6 +625,12 @@ impl Node {
         if let Err(publish_err) = self.publish_with_options(format!("$registry/services/{}/state/running", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await {
             self.logger.error(format!("Failed to publish running state: {publish_err}"));
         }
+        if update_node_version {
+            self.logger.info(format!("Notifying node change for service: {service_topic}"));
+            if let Err(notify_err) = self.notify_node_change().await {
+                self.logger.error(format!("Failed to notify node change: {notify_err}"));
+            }
+        }
     }
 
     /// Stop the Node and all registered services
@@ -639,6 +650,9 @@ impl Node {
         }
 
         self.running.store(false, Ordering::SeqCst);
+
+        //if services are still starting wait for them to finish any ongoing operation
+        self.wait_for_services_to_start().await?;
 
         // Get services directly and stop them
         let registry = Arc::clone(&self.service_registry);
@@ -1052,7 +1066,7 @@ impl Node {
                 .map(|c| c.profile_public_key.clone())
                 .context("No context found in payload")?;
 
-            match self.local_request(&topic_path, params_option).await {
+            match self.local_request(topic_path.as_str(), params_option).await {
                 Ok(response) => {
                     self.logger
                         .info("✅ [Node] Local request completed successfully");
@@ -1279,16 +1293,22 @@ impl Node {
 
     pub async fn local_request(
         &self,
-        topic_path: &TopicPath,
+        path: impl Into<String>,
         payload: Option<ArcValue>,
     ) -> Result<ArcValue> {
+        let path_string = path.into();
+        let topic_path = match TopicPath::new(&path_string, &self.network_id) {
+            Ok(tp) => tp,
+            Err(e) => return Err(anyhow!("Failed to parse topic path: {path_string} : {e}",)),
+        };
+
         self.logger
-            .debug(format!("Processing request: {topic_path}"));
+            .debug(format!("Processing local request: {topic_path}"));
 
         // First check for local handlers
         if let Some((handler, registration_path)) = self
             .service_registry
-            .get_local_action_handler(topic_path)
+            .get_local_action_handler(&topic_path)
             .await
         {
             self.logger
@@ -1296,7 +1316,7 @@ impl Node {
 
             // Create request context
             let mut context =
-                RequestContext::new(topic_path, Arc::new(self.clone()), self.logger.clone());
+                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
 
             // Extract parameters using the original registration path
             if let Ok(params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -1353,7 +1373,7 @@ impl Node {
                     Ok(response) => return Ok(response),
                     Err(_) => {
                         // Remote request failed - return state-specific error since we know local service exists but is not running
-                        return Err(anyhow!("Service is in {} state", state));
+                        return Err(anyhow!("Service is not Running - it is in {} state", state));
                     }
                 }
             }
@@ -1936,11 +1956,12 @@ impl Node {
     }
 
     pub async fn notify_node_change_impl(&self) -> Result<()> {
+        let previous_version = self.registry_version.fetch_add(1, Ordering::SeqCst);
         let local_node_info = self.get_local_node_info().await?;
-
         self.logger.info(format!(
-            "Notifying node change - version: {version}",
-            version = local_node_info.version
+            "Notifying node change - previous version: {previous_version}, new version: {new_version}",
+            previous_version = previous_version,
+            new_version = local_node_info.version
         ));
 
         // Update discovery providers with new node info
@@ -2166,7 +2187,6 @@ impl NodeDelegate for Node {
             .await?;
 
         if node_started {
-            self.registry_version.fetch_add(1, Ordering::SeqCst);
             self.notify_node_change().await?;
         }
 
@@ -2195,7 +2215,6 @@ impl NodeDelegate for Node {
         }
         //if started... need to increment  -> registry_version
         if node_started {
-            self.registry_version.fetch_add(1, Ordering::SeqCst);
             self.notify_node_change().await?;
         }
         Ok(())
@@ -2358,6 +2377,7 @@ impl Clone for Node {
             registry_version: self.registry_version.clone(),
             keys_manager: self.keys_manager.clone(),
             keys_manager_mut: self.keys_manager_mut.clone(),
+            service_tasks: self.service_tasks.clone(),
         }
     }
 }

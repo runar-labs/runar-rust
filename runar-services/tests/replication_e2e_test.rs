@@ -138,6 +138,8 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     logger.info("✅ Node 1 started");
+    node1.wait_for_services_to_start().await?;
+    logger.info("✅ Node 1 all services started");
     // Add some initial data to Node 1
     logger.info("Adding initial data to Node 1...");
     
@@ -148,7 +150,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
-            .request("users_db/execute_query", Some(ArcValue::new_struct(
+            .local_request("users_db/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
                     &format!("INSERT INTO users (username, email, created_at) VALUES ('{}', '{}', ?)", username, email)
                 ).with_params(runar_services::sqlite::Params::new()
@@ -169,7 +171,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
-            .request("users_db/execute_query", Some(ArcValue::new_struct(
+            .local_request("users_db/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
                     &format!("INSERT INTO posts (user_id, title, content, created_at) VALUES ({}, '{}', '{}', ?)", i, title, content)
                 ).with_params(runar_services::sqlite::Params::new()
@@ -184,7 +186,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     }
 
     // Verify data exists on Node 1
-    let users_result = node1.request("users_db/execute_query", Some(ArcValue::new_struct(
+    let users_result = node1.local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -195,7 +197,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     assert_eq!(user_count, 3, "Node 1 should have 3 users");
 
     let posts_result = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM posts")
         )))
         .await?;
@@ -223,7 +225,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     // Verify that Node 2 has the same data (replication worked)
     logger.info("Verifying replication to Node 2...");
     let users_result2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -234,7 +236,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     assert_eq!(user_count2, 3, "Node 2 should have 3 users after replication");
 
     let posts_result2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM posts")
         )))
         .await?;
@@ -250,7 +252,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     logger.info("Testing live replication from Node 2 to Node 1...");
     let timestamp = chrono::Utc::now().timestamp();
     let result = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new(
                 "INSERT INTO users (username, email, created_at) VALUES ('node2_user', 'node2@example.com', ?)"
             ).with_params(runar_services::sqlite::Params::new()
@@ -267,7 +269,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 
     // Verify the new user appears on Node 1
     let new_user_result = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'node2_user'")
         )))
         .await?;
@@ -279,7 +281,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     logger.info("Testing live replication from Node 1 to Node 2...");
     let timestamp = chrono::Utc::now().timestamp();
     let result = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new(
                 "INSERT INTO users (username, email, created_at) VALUES ('node1_user', 'node1@example.com', ?)"
             ).with_params(runar_services::sqlite::Params::new()
@@ -296,7 +298,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 
     // Verify the new user appears on Node 2
     let new_user_result2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'node1_user'")
         )))
         .await?;
@@ -306,7 +308,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 
     // Final verification: both nodes should have the same total count
     let final_users1 = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -316,7 +318,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         .as_type_ref::<i64>().unwrap();
 
     let final_users2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -339,7 +341,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 /// Test 2: Service availability during startup synchronization
 /// Node 1 has data, Node 2 starts and service is not available until sync completes
 #[tokio::test]
-async fn test_service_availability_during_sync() -> Result<()> {
+async fn test_full_replication_between_nodes() -> Result<()> {
     println!("=== Test 2: Service Availability During Sync ===");
 
     // Create two node configurations
@@ -347,12 +349,12 @@ async fn test_service_availability_during_sync() -> Result<()> {
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     // Create SQLite services
-    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", false);
-    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:", true);
+    let sqlite_service1 = create_replicated_sqlite_service("sqlite_test", "users_db", ":memory:", false);
+    let sqlite_service2 = create_replicated_sqlite_service("sqlite_test", "users_db", ":memory:", true);
 
     // Start Node 1 and add substantial data
     println!("Starting Node 1 and adding substantial data...");
@@ -360,6 +362,8 @@ async fn test_service_availability_during_sync() -> Result<()> {
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     println!("✅ Node 1 started");
+    node1.wait_for_services_to_start().await?;
+    println!("✅ Node 1 all services started");
 
     // Add 10 users and 5 posts to Node 1
     for i in 1..=10 {
@@ -368,7 +372,7 @@ async fn test_service_availability_during_sync() -> Result<()> {
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
-            .request("users_db/execute_query", Some(ArcValue::new_struct(
+            .local_request("users_db/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
                     &format!("INSERT INTO users (username, email, created_at) VALUES ('{}', '{}', ?)", username, email)
                 ).with_params(runar_services::sqlite::Params::new()
@@ -387,7 +391,7 @@ async fn test_service_availability_during_sync() -> Result<()> {
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
-            .request("users_db/execute_query", Some(ArcValue::new_struct(
+            .local_request("users_db/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
                     &format!("INSERT INTO posts (user_id, title, content, created_at) VALUES ({}, '{}', '{}', ?)", i, title, content)
                 ).with_params(runar_services::sqlite::Params::new()
@@ -404,7 +408,7 @@ async fn test_service_availability_during_sync() -> Result<()> {
 
     // Verify Node 1 data
     let users_result = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -429,14 +433,15 @@ async fn test_service_availability_during_sync() -> Result<()> {
     let _ = node1.on(format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()), Duration::from_secs(3)).await?;
     
     println!("✅ Nodes discovered each other");
-
-    // Wait a bit more for replication to complete
-    sleep(Duration::from_secs(3)).await;
-
+ 
+    node2.wait_for_services_to_start().await?;
+    let node2_start_sync_duration = start_time.elapsed();
+    println!("✅ Node 2 services started and sync completed in {:?}", node2_start_sync_duration); 
+    
     // Verify that Node 2 has the same data (replication worked)
     println!("Verifying replication to Node 2...");
     let users_result2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -447,7 +452,7 @@ async fn test_service_availability_during_sync() -> Result<()> {
     assert_eq!(user_count2, 10, "Node 2 should have 10 users after replication");
 
     let posts_result2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM posts")
         )))
         .await?;
@@ -459,10 +464,9 @@ async fn test_service_availability_during_sync() -> Result<()> {
 
     println!("✅ Node 2 has {} users and {} posts (sync successful)", user_count2, post_count2);
 
-    // Test that Node 2 service is now available and can handle requests
-    println!("Testing that Node 2 service is available after sync...");
+    println!("Check a specific record after sync...");
     let test_result = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'sync_user1'")
         )))
         .await?;
@@ -470,13 +474,34 @@ async fn test_service_availability_during_sync() -> Result<()> {
     assert_eq!(test_users.len(), 1, "Node 2 should be able to query data after sync");
     println!("✅ Node 2 service is available and working");
 
+    //check events table on node1
+    let events_result1 = node1
+    .local_request("users_db/execute_query", Some(ArcValue::new_struct(
+        runar_services::sqlite::SqlQuery::new("SELECT * FROM users_Events ORDER BY sequence_number")
+    )))
+    .await?;
+    let events1: Vec<ArcValue> = (*events_result1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(events1.len(), 10, "Node 1 should have 10 events on users_Events table");
+    println!("✅ Node 1 has 10 events on users_Events table");
+
+    //check events table on node2
+    let events_result2 = node2
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT * FROM users_Events ORDER BY sequence_number")
+        )))
+        .await?;
+    let events2: Vec<ArcValue> = (*events_result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(events2.len(), 10, "Node 2 should have 10 events on users_Events table");
+    println!("✅ Node 2 has 10 events on users_Events table");
+
+
     // Test bidirectional live replication after sync
     println!("Testing bidirectional live replication after sync...");
     
     // Add data to Node 2
     let timestamp = chrono::Utc::now().timestamp();
     let result = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new(
                 "INSERT INTO users (username, email, created_at) VALUES ('post_sync_user', 'post_sync@example.com', ?)"
             ).with_params(runar_services::sqlite::Params::new()
@@ -493,18 +518,24 @@ async fn test_service_availability_during_sync() -> Result<()> {
 
     // Verify it appears on Node 1
     let new_user_result = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'post_sync_user'")
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username, email FROM users WHERE username = 'post_sync_user'")
         )))
         .await?;
     let new_users: Vec<ArcValue> = (*new_user_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     assert_eq!(new_users.len(), 1, "Node 1 should have the new user from Node 2");
+    //assert whole record
+    let post_sync_user = new_users[0].as_map_ref().expect("Should be a map");
+    let username = post_sync_user.get("username").expect("Should have username").as_type::<String>().expect("username should be a string");
+    assert_eq!(username, "post_sync_user", "Username should be post_sync_user");
+    let email = post_sync_user.get("email").expect("Should have email").as_type::<String>().expect("email should be a string");
+    assert_eq!(email, "post_sync@example.com", "Email should be post_sync@example.com"); 
     println!("✅ Post-sync replication Node 2 → Node 1 successful");
 
     // Add data to Node 1
     let timestamp = chrono::Utc::now().timestamp();
     let result = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new(
                 "INSERT INTO users (username, email, created_at) VALUES ('post_sync_user2', 'post_sync2@example.com', ?)"
             ).with_params(runar_services::sqlite::Params::new()
@@ -521,7 +552,7 @@ async fn test_service_availability_during_sync() -> Result<()> {
 
     // Verify it appears on Node 2
     let new_user_result2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'post_sync_user2'")
         )))
         .await?;
@@ -531,7 +562,7 @@ async fn test_service_availability_during_sync() -> Result<()> {
 
     // Final verification
     let final_users1 = node1
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -541,7 +572,7 @@ async fn test_service_availability_during_sync() -> Result<()> {
         .as_type_ref::<i64>().unwrap();
 
     let final_users2 = node2
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
+        .local_request("users_db/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
         )))
         .await?;
@@ -576,8 +607,8 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     logging_config.apply();
 
     // Create SQLite services
-    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", false);
-    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:", true);
+    let sqlite_service1 = create_replicated_sqlite_service("sqlite_service", "users_db", ":memory:", false);
+    let sqlite_service2 = create_replicated_sqlite_service("sqlite_service", "users_db", ":memory:", true);
 
     // Start Node 1
     println!("Starting Node 1...");
@@ -585,6 +616,8 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     println!("✅ Node 1 started");
+    node1.wait_for_services_to_start().await?;
+    println!("✅ Node 1 all services started");
 
     // Verify event tables were created
     println!("Verifying event tables were created on Node 1...");
@@ -652,6 +685,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     node2.add_service(sqlite_service2).await?;
     node2.start().await?;
     println!("✅ Node 2 started");
+    
 
     // Wait for nodes to discover each other and sync
     println!("Waiting for nodes to discover each other...");
@@ -660,9 +694,9 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     
     println!("✅ Nodes discovered each other");
 
-    // Wait for replication
-    sleep(Duration::from_secs(3)).await;
-
+    node2.wait_for_services_to_start().await?;
+    println!("✅ Node 2 all services started");
+ 
     // Verify Node 2 has the same event tables
     println!("Verifying Node 2 has event tables...");
     let event_tables_result2 = node2
@@ -777,8 +811,8 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     let node2_config = simulator.create_node_config()?;
 
     // Create SQLite services with replication enabled
-    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", false);
-    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "sqlite", ":memory:", true);
+    let sqlite_service1 = create_replicated_sqlite_service("sqlite1", "users_db", ":memory:", false);
+    let sqlite_service2 = create_replicated_sqlite_service("sqlite2", "users_db", ":memory:", true);
 
     // Start Node 1
     println!("Starting Node 1...");
@@ -786,6 +820,8 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     println!("✅ Node 1 started with ID: {}", node1.node_id());
+    node1.wait_for_services_to_start().await?;
+    println!("✅ Node 1 all services started");
 
     // Add initial data to Node 1
     println!("Adding initial data to Node 1...");
@@ -948,117 +984,5 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     node1.stop().await?;
     node2.stop().await?;
     println!("✅ Test 4 completed successfully!");
-    Ok(())
-}
-
-/// Test 5: Single Node Replication Test
-/// Test replication events within a single node to verify the event system works
-#[tokio::test]
-async fn test_single_node_replication() -> Result<()> {
-    println!("=== Test 5: Single Node Replication Test ===");
-
-    // Set up logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
-    logging_config.apply();
-
-    // Create mobile simulation environment
-    println!("Creating mobile simulation environment...");
-    let (simulator, node_config) = create_test_environment()?;
-    simulator.print_summary();
-
-    // Create SQLite service with replication enabled
-    let sqlite_service = create_replicated_sqlite_service("sqlite1", "sqlite", ":memory:", true);
-
-    // Start Node
-    println!("Starting Node...");
-    let mut node = Node::new(node_config).await?;
-    node.add_service(sqlite_service).await?;
-    node.start().await?;
-    println!("✅ Node started with ID: {}", node.node_id());
-
-    // Add initial data to Node
-    println!("Adding initial data to Node...");
-    for i in 1..=3 {
-        let username = format!("single_user{}", i);
-        let email = format!("single_user{}@example.com", i);
-        let timestamp = chrono::Utc::now().timestamp();
-        
-        let result = node
-            .request("users_db/execute_query", Some(ArcValue::new_struct(
-                runar_services::sqlite::SqlQuery::new(
-                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{}', '{}', ?)", username, email)
-                ).with_params(runar_services::sqlite::Params::new()
-                    .with_value(runar_services::sqlite::Value::Integer(timestamp))
-                )
-            )))
-            .await?;
-        
-        let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
-        assert_eq!(affected_rows, 1, "Should insert 1 user");
-        println!("   ✅ Inserted user: {}", username);
-    }
-
-    // Verify Node has the data
-    let users_result = node
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
-        )))
-        .await?;
-    let user_count: i64 = *users_result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
-        .as_map_ref().unwrap()
-        .get("count").unwrap()
-        .as_type_ref::<i64>().unwrap();
-    assert_eq!(user_count, 3, "Node should have 3 users");
-    println!("✅ Node has {} users", user_count);
-
-    // Check that replication events were created
-    println!("Checking replication events...");
-    let events_result = node
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users_Events")
-        )))
-        .await?;
-    let event_count: i64 = *events_result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
-        .as_map_ref().unwrap()
-        .get("count").unwrap()
-        .as_type_ref::<i64>().unwrap();
-    assert_eq!(event_count, 3, "Should have 3 replication events");
-    println!("✅ Found {} replication events", event_count);
-
-    // Test live replication: Add more data and verify events are created
-    println!("Testing live replication...");
-    let timestamp = chrono::Utc::now().timestamp();
-    let result = node
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new(
-                "INSERT INTO users (username, email, created_at) VALUES ('single_live_user', 'single_live@example.com', ?)"
-            ).with_params(runar_services::sqlite::Params::new()
-                .with_value(runar_services::sqlite::Value::Integer(timestamp))
-            )
-        )))
-        .await?;
-    
-    let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
-    assert_eq!(affected_rows, 1, "Should insert 1 user");
-
-    // Wait a bit for event processing
-    sleep(Duration::from_millis(100)).await;
-
-    // Verify the new event was created
-    let new_events_result = node
-        .request("users_db/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users_Events")
-        )))
-        .await?;
-    let new_event_count: i64 = *new_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
-        .as_map_ref().unwrap()
-        .get("count").unwrap()
-        .as_type_ref::<i64>().unwrap();
-    assert_eq!(new_event_count, 4, "Should have 4 replication events after live insert");
-    println!("✅ Live replication successful - {} events total", new_event_count);
-
-    // Clean up
-    node.stop().await?;
-    println!("✅ Test 5 completed successfully!");
     Ok(())
 }

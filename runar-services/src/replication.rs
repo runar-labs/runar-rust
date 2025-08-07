@@ -79,7 +79,7 @@ pub struct TableEventsResponse {
 // Replication manager
 pub struct ReplicationManager {
     sqlite_service: Arc<SqliteService>,
-    config: ReplicationConfig,
+    // config: ReplicationConfig,
     enabled_tables: Arc<Vec<String>>,
     logger: Arc<Logger>,
     event_sequence_counter: Arc<AtomicI64>,
@@ -98,7 +98,7 @@ impl ReplicationManager {
         
         Self {
             sqlite_service,
-            config,
+            // config,
             enabled_tables,
             logger,
             event_sequence_counter,
@@ -132,14 +132,17 @@ impl ReplicationManager {
                 }
             } 
             Err(e) => {
-                context.info(format!("Service state request failed for {service_path}: {e}"));
+                context.error(format!("Service state request failed for {service_path}: {e}"));
                 return Err(e);
             }
         };
 
         // If service is not running, wait for it to become available
         if !service_running {
-            if context.on(format!("$registry/services/{service_path}/state/running"), Duration::from_secs(10)).await.is_ok() {
+            context.debug(format!("Service not running for: {service_path}"));
+            let on_running = context.on(format!("$registry/services/{service_path}/state/running"), Duration::from_secs(10)).await;
+            
+            if on_running.is_ok() {
                 context.info(format!("Service found in the network for: {service_path}"));
             } else {
                 context.info(format!("Service discovery timed out - No service found in the network for: {service_path}"));
@@ -192,18 +195,18 @@ impl ReplicationManager {
     }
     
     // Handles SQLite operations and creates replication events
-    pub async fn handle_sqlite_operation(&self, operation: &str, table: &str, data: &ArcValue) -> Result<()> {
-        // Create persistent event
-        let event = self.create_replication_event(operation, table, data).await?;
+    // pub async fn handle_sqlite_operation(&self, operation: &str, table: &str, data: &ArcValue) -> Result<()> {
+    //     // Create persistent event
+    //     let event = self.create_replication_event(operation, table, data).await?;
         
-        // Store event in database (mark as processed since it's local)
-        self.store_event(&event, true).await?;
+    //     // Store event in database (mark as processed since it's local)
+    //     self.store_event(&event, true).await?;
         
-        // Broadcast event to network
-        self.broadcast_event(&event).await?;
+    //     // Broadcast event to network
+    //     // self.broadcast_event(&event).await?;
         
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     // Handles incoming ephemeral events from SQLite operations
     pub async fn handle_sqlite_event(&self, event: SqliteEvent, is_local: bool) -> Result<()> {
@@ -217,7 +220,7 @@ impl ReplicationManager {
             // Local event: just store for replication history, don't process
             let replication_event = self.create_replication_event(&event.operation, &event.table, &event.data.as_ref().unwrap()).await?;
             self.store_event(&replication_event, true).await?; // Mark as processed
-            self.broadcast_event(&replication_event).await?;
+            // self.broadcast_event(&replication_event).await?;
             self.logger.debug("Local event stored and broadcasted");
         } else {
             self.logger.debug("Remote event: storing and processing");
@@ -365,12 +368,12 @@ impl ReplicationManager {
         Ok(())
     }
     
-    async fn broadcast_event(&self, event: &ReplicationEvent) -> Result<()> {
-        // This would use the Runar event system to broadcast the event
-        // For now, we'll just log it
-        self.logger.info(format!("Broadcasting replication event: {:?}", event));
-        Ok(())
-    }
+    // async fn broadcast_event(&self, event: &ReplicationEvent) -> Result<()> {
+    //     // This would use the Runar event system to broadcast the event
+    //     // For now, we'll just log it
+    //     self.logger.info(format!("Broadcasting replication event: {:?}", event));
+    //     Ok(())
+    // }
     
     async fn is_event_processed(&self, event_id: &str) -> Result<bool> {
         // Check if event is already processed in any event table
