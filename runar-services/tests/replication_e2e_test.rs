@@ -755,7 +755,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     let operation_types: Vec<String> = all_events.iter()
         .map(|event| {
             let event_map = event.as_map_ref().unwrap();
-            (*event_map.get("operation_type").unwrap().as_type_ref::<String>().unwrap()).clone()
+            (*event_map.get("operation_type").unwrap().as_type_ref::<String>().unwrap()).to_uppercase()
         })
         .collect();
     
@@ -777,7 +777,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     let operation_types2: Vec<String> = all_events2.iter()
         .map(|event| {
             let event_map = event.as_map_ref().unwrap();
-            (*event_map.get("operation_type").unwrap().as_type_ref::<String>().unwrap()).clone()
+            (*event_map.get("operation_type").unwrap().as_type_ref::<String>().unwrap()).to_uppercase()
         })
         .collect();
     

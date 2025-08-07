@@ -806,7 +806,7 @@ impl AbstractService for SqliteService {
                                         let event = crate::replication::SqliteEvent {
                                             operation: determine_operation_type(&trimmed_sql).to_lowercase(),
                                             table: table_name.clone(),
-                                            data: Some(query_arc_value.clone()),
+                                            data: query_arc_value.clone(),
                                             timestamp: SystemTime::now(),
                                         };
                                         

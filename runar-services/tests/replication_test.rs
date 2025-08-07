@@ -72,6 +72,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
 
     node.add_service(sqlite_service).await?;
     node.start().await?;
+    node.wait_for_services_to_start().await?;
 
     // Test that event tables were created
     let result = node
@@ -197,6 +198,7 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
 
     node.add_service(sqlite_service).await?;
     node.start().await?;
+    node.wait_for_services_to_start().await?;
 
     // Test inserting a record
     let insert_result = node
@@ -286,6 +288,8 @@ async fn test_replication_event_database_application() -> Result<()> {
     node.add_service(sqlite_service).await?;
     node.start().await?;
 
+    node.wait_for_services_to_start().await?;
+
     // Test that the database is empty initially
     let initial_result = node
         .request("test_sqlite_apply/execute_query", Some(ArcValue::new_struct(
@@ -310,21 +314,7 @@ async fn test_replication_event_database_application() -> Result<()> {
         0
     };
     assert_eq!(initial_count, 0, "Database should be empty initially");
-
-    // Create a replication event manually (simulating a remote event)
-    let replication_event = runar_services::replication::ReplicationEvent {
-        id: "test-event-1".to_string(),
-        table_name: "users".to_string(),
-        operation_type: "create".to_string(),
-        record_id: "test-record-1".to_string(),
-        data: serde_json::to_string(&ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("INSERT INTO users (name, email) VALUES ('Remote User', 'remote@example.com')")
-        ))?,
-        timestamp: 1754382137011,
-        source_node_id: "remote-node".to_string(),
-        sequence_number: 1,
-    };
-
+ 
     // Get the replication manager from the service
     // We need to access the replication manager to test the apply_event_to_database method
     // For now, let's test this by calling the replication API directly
@@ -377,10 +367,10 @@ async fn test_replication_event_database_application() -> Result<()> {
 
     let stored_events_rows: Vec<ArcValue> = (*stored_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     let stored_events_count = if let Some(first_row) = stored_events_rows.first() {
-        match first_row.as_type::<HashMap<String, runar_services::sqlite::Value>>() {
+        match first_row.as_type::<HashMap<String, ArcValue>>() {
             Ok(row) => {
-                if let Some(runar_services::sqlite::Value::Integer(count)) = row.get("count") {
-                    *count
+                if let Some(count) = row.get("count") {
+                    *count.as_type_ref::<i64>().unwrap()    
                 } else {
                     0
                 }
@@ -470,15 +460,17 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
     node.add_service(sqlite_service).await?;
     node.start().await?;
 
+    node.wait_for_services_to_start().await?;
+
     // Create a replication event manually (simulating a remote event)
     let replication_event = runar_services::replication::ReplicationEvent {
         id: "test-event-processed-1".to_string(),
         table_name: "users".to_string(),
         operation_type: "create".to_string(),
         record_id: "test-record-processed-1".to_string(),
-        data: serde_json::to_string(&ArcValue::new_struct(
+        data:ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("INSERT INTO users (name, email) VALUES ('Remote User Processed', 'remote-processed@example.com')")
-        ))?,
+        ),
         timestamp: 1754382137011,
         source_node_id: "remote-node-processed".to_string(),
         sequence_number: 1,
@@ -493,7 +485,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
                 .with_value(runar_services::sqlite::Value::Text(replication_event.table_name.clone()))
                 .with_value(runar_services::sqlite::Value::Text(replication_event.operation_type.clone()))
                 .with_value(runar_services::sqlite::Value::Text(replication_event.record_id.clone()))
-                .with_value(runar_services::sqlite::Value::Text(replication_event.data.clone()))
+                .with_value(runar_services::sqlite::Value::Text(serde_json::to_string(&replication_event.data.to_json().unwrap()).unwrap()))
                 .with_value(runar_services::sqlite::Value::Integer(replication_event.timestamp))
                 .with_value(runar_services::sqlite::Value::Text(replication_event.source_node_id.clone()))
                 .with_value(runar_services::sqlite::Value::Boolean(false)) // Mark as unprocessed

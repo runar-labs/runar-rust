@@ -35,7 +35,7 @@ pub enum ConflictResolutionStrategy {
 pub struct SqliteEvent {
     pub operation: String,  // "CREATE", "UPDATE", "DELETE"
     pub table: String,
-    pub data: Option<ArcValue>,  // Original SQL query data
+    pub data: ArcValue,  // Original SQL query data
     pub timestamp: SystemTime,
 }
 
@@ -45,7 +45,7 @@ pub struct ReplicationEvent {
     pub table_name: String,
     pub operation_type: String,
     pub record_id: String,
-    pub data: String,  // JSON serialized data
+    pub data: ArcValue,
     pub timestamp: i64,
     pub source_node_id: String,
     pub sequence_number: i64,
@@ -218,14 +218,14 @@ impl ReplicationManager {
         if is_local {
             self.logger.debug("Local event: storing for replication history, not processing");
             // Local event: just store for replication history, don't process
-            let replication_event = self.create_replication_event(&event.operation, &event.table, &event.data.as_ref().unwrap()).await?;
+            let replication_event = self.create_replication_event(&event.operation, &event.table, event.data).await?;
             self.store_event(&replication_event, true).await?; // Mark as processed
             // self.broadcast_event(&replication_event).await?;
             self.logger.debug("Local event stored and broadcasted");
         } else {
             self.logger.debug("Remote event: storing and processing");
             // Remote event: store and process
-            let replication_event = self.create_replication_event(&event.operation, &event.table, &event.data.as_ref().unwrap()).await?;
+            let replication_event = self.create_replication_event(&event.operation, &event.table,  event.data).await?;
             self.store_event(&replication_event, false).await?; // Mark as not processed
             self.process_replication_event(replication_event).await?;
             self.logger.debug("Remote event stored and processed");
@@ -237,15 +237,16 @@ impl ReplicationManager {
     // Processes incoming replication events from other nodes
     pub async fn process_replication_event(&self, event: ReplicationEvent) -> Result<()> {
         // Check if we've already processed this event
-        if self.is_event_processed(&event.id).await? {
-            return Ok(());
-        }
+        // if self.is_event_processed(&event.id).await? {
+        //     return Ok(());
+        // }
         
+
         // Apply event to local database
         self.apply_event_to_database(&event).await?;
         
-        // Mark event as processed
-        self.mark_event_processed(&event.id).await?;
+        //store event as processed
+        self.store_event(&event, true).await?;
         
         Ok(())
     }
@@ -312,7 +313,7 @@ impl ReplicationManager {
     }
 
     // Helper methods
-    async fn create_replication_event(&self, operation: &str, table: &str, data: &ArcValue) -> Result<ReplicationEvent> {
+    async fn create_replication_event(&self, operation: &str, table: &str, data: ArcValue) -> Result<ReplicationEvent> {
         let sequence = self.event_sequence_counter.fetch_add(1, Ordering::SeqCst);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -327,7 +328,7 @@ impl ReplicationManager {
             table_name: table.to_string(),
             operation_type: operation.to_string(),
             record_id,
-            data: serde_json::to_string(data)?,
+            data,
             timestamp,
             source_node_id: self.node_id.clone(),
             sequence_number: sequence,
@@ -342,6 +343,9 @@ impl ReplicationManager {
             event.id, event.table_name, event.operation_type, processed
         ));
         
+        let data_json = event.data.to_json()?;
+        let data_json_str = serde_json::to_string(&data_json)?;
+
         let query = SqlQuery::new(&format!(
             "INSERT INTO {} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed, sequence_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             event_table_name
@@ -350,7 +354,7 @@ impl ReplicationManager {
             .with_value(Value::Text(event.table_name.clone()))
             .with_value(Value::Text(event.operation_type.clone()))
             .with_value(Value::Text(event.record_id.clone()))
-            .with_value(Value::Text(event.data.clone()))
+            .with_value(Value::Text(data_json_str))
             .with_value(Value::Integer(event.timestamp))
             .with_value(Value::Text(event.source_node_id.clone()))
             .with_value(Value::Boolean(processed)) // Use the processed parameter
@@ -367,46 +371,7 @@ impl ReplicationManager {
         self.logger.debug(format!("Replication event stored in {}", event_table_name));
         Ok(())
     }
-    
-    // async fn broadcast_event(&self, event: &ReplicationEvent) -> Result<()> {
-    //     // This would use the Runar event system to broadcast the event
-    //     // For now, we'll just log it
-    //     self.logger.info(format!("Broadcasting replication event: {:?}", event));
-    //     Ok(())
-    // }
-    
-    async fn is_event_processed(&self, event_id: &str) -> Result<bool> {
-        // Check if event is already processed in any event table
-        for table in self.enabled_tables.iter() {
-            let event_table_name = format!("{}{}", table, EVENT_TABLE_SUFFIX);
-            let query = SqlQuery::new(&format!(
-                "SELECT processed FROM {} WHERE id = ?",
-                event_table_name
-            )).with_params(crate::sqlite::Params::new()
-                .with_value(Value::Text(event_id.to_string()))
-            );
-            
-            let result = self.sqlite_service.send_command(|reply_tx| {
-                crate::sqlite::SqliteWorkerCommand::Query {
-                    query,
-                    reply_to: reply_tx,
-                }
-            }).await.map_err(|e| anyhow!("Failed to check event processing: {e}"))?;
-            
-            if let Some(row) = result.first() {
-                let processed = row.get("processed").map(|v| match v {
-                    Value::Boolean(b) => *b,
-                    _ => false,
-                }).unwrap_or(false);
-                if processed {
-                    return Ok(true);
-                }
-            }
-        }
-        
-        Ok(false)
-    }
-    
+     
     async fn apply_event_to_database(&self, event: &ReplicationEvent) -> Result<()> {
         self.logger.debug(format!(
             "Applying replication event to database: id={}, table={}, operation={}",
@@ -414,79 +379,14 @@ impl ReplicationManager {
         ));
         
         // Parse the event data back into ArcValue
-        let event_data: ArcValue = serde_json::from_str(&event.data)
-            .map_err(|e| anyhow!("Failed to parse event data: {e}"))?;
+        // let event_data: ArcValue = serde_json::from_str(event.data)
+        //     .map_err(|e| anyhow!("Failed to parse event data: {e}"))?;
         
-        self.logger.debug(format!("Parsed event data: {:?}", event_data));
+        self.logger.debug(format!("Parsed event data: {:?}", event.data));
         
         // Extract the SQL query from the event data
         // The event data should contain the original SqlQuery that was executed
-        let sql_query = match event_data.as_type::<crate::sqlite::SqlQuery>() {
-            Ok(query) => query,
-            Err(_) => {
-                // If direct parsing fails, try to extract from HashMap format
-                match event_data.as_type::<HashMap<String, ArcValue>>() {
-                    Ok(data_map) => {
-                        // Extract statement and params from the HashMap
-                        let statement = match data_map.get("statement")
-                            .and_then(|v| v.as_type::<String>().ok()) {
-                            Some(stmt) => stmt,
-                            None => return Err(anyhow!("No statement found in event data")),
-                        };
-                        
-                        let params = data_map.get("params")
-                            .and_then(|v| v.as_type::<crate::sqlite::Params>().ok())
-                            .unwrap_or_else(|| {
-                                // Try to extract params from the values array
-                                if let Some(params_arc) = data_map.get("params") {
-                                    if let Ok(params_map) = params_arc.as_type::<HashMap<String, ArcValue>>() {
-                                        if let Some(values_arc) = params_map.get("values") {
-                                            if let Ok(values) = values_arc.as_type::<Vec<ArcValue>>() {
-                                                let mut params = crate::sqlite::Params::new();
-                                                for value in values {
-                                                    // Each value is a Map containing the actual data
-                                                    if let Ok(value_map) = value.as_type::<HashMap<String, ArcValue>>() {
-                                                        // Extract the actual value from the map
-                                                        if let Some((key, arc_val)) = value_map.iter().next() {
-                                                            match key.as_str() {
-                                                                "Integer" => {
-                                                                    if let Ok(int_val) = arc_val.as_type::<i64>() {
-                                                                        params = params.with_value(crate::sqlite::Value::Integer(int_val));
-                                                                    }
-                                                                }
-                                                                "Text" => {
-                                                                    if let Ok(text_val) = arc_val.as_type::<String>() {
-                                                                        params = params.with_value(crate::sqlite::Value::Text(text_val));
-                                                                    }
-                                                                }
-                                                                "Boolean" => {
-                                                                    if let Ok(bool_val) = arc_val.as_type::<bool>() {
-                                                                        params = params.with_value(crate::sqlite::Value::Boolean(bool_val));
-                                                                    }
-                                                                }
-                                                                _ => {
-                                                                    // Unknown value type, skip
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                return params;
-                                            }
-                                        }
-                                    }
-                                }
-                                crate::sqlite::Params::new()
-                            });
-                        
-                        crate::sqlite::SqlQuery::new(&statement).with_params(params)
-                    }
-                    Err(e) => {
-                        return Err(anyhow!("Invalid event data format: {}", e));
-                    }
-                }
-            }
-        };
+        let sql_query = event.data.as_type::<crate::sqlite::SqlQuery>()?;
         
         self.logger.debug(format!("Executing SQL query: {}", sql_query.statement));
         
@@ -502,36 +402,7 @@ impl ReplicationManager {
         
         Ok(())
     }
-    
-    async fn mark_event_processed(&self, event_id: &str) -> Result<()> {
-        // Find which event table contains this event and mark it as processed
-        for table in self.enabled_tables.iter() {
-            let event_table_name = format!("{}{}", table, EVENT_TABLE_SUFFIX);
-            let query = SqlQuery::new(&format!(
-                "UPDATE {} SET processed = TRUE WHERE id = ?",
-                event_table_name
-            )).with_params(crate::sqlite::Params::new()
-                .with_value(Value::Text(event_id.to_string()))
-            );
-            
-            let result = self.sqlite_service.send_command(|reply_tx| {
-                crate::sqlite::SqliteWorkerCommand::Execute {
-                    query,
-                    reply_to: reply_tx,
-                }
-            }).await.map_err(|e| anyhow!("Failed to mark event as processed: {e}"))?;
-            
-            // If we updated a row, we found the event
-            if result > 0 {
-                self.logger.debug(format!("Marked event {} as processed in {}", event_id, event_table_name));
-                return Ok(());
-            }
-        }
-        
-        self.logger.warn(format!("Event {} not found in any event table", event_id));
-        Ok(())
-    }
-    
+     
     // Requests paginated events from other nodes
     async fn request_table_events(&self, table: &str, page: u32, context: &LifecycleContext) -> Result<TableEventsResponse> {
         let request = TableEventsRequest {
@@ -615,8 +486,15 @@ impl ReplicationManager {
                     _ => "".to_string(),
                 },
                 data: match row.get("data") {
-                    Some(Value::Text(s)) => s.clone(),
-                    _ => "".to_string(),
+                    Some(Value::Text(s)) =>{ 
+                        let data_json = serde_json::from_str(&s).unwrap_or_default();
+                        let json_arc = ArcValue::new_json(data_json);
+                        match json_arc.as_type::<crate::sqlite::SqlQuery>() {
+                            Ok(sql_query) => ArcValue::new_struct(sql_query),
+                            Err(_) => json_arc,
+                        }
+                    },
+                    _ => ArcValue::null(),
                 },
                 timestamp: match row.get("timestamp") {
                     Some(Value::Integer(i)) => *i,
@@ -673,28 +551,7 @@ impl ReplicationManager {
             page_size: request.page_size,
         })
     }
-
-    async fn request_latest_state(&self, table: &str, context: &LifecycleContext) -> Result<TableState> {
-        // Request latest state from other nodes in the network
-        // For now, return a default state
-        Ok(TableState {
-            table_name: table.to_string(),
-            last_event_sequence: 0,
-            last_event_timestamp: 0,
-            record_count: 0,
-        })
-    }
-    
-    async fn get_local_table_state(&self, table: &str) -> Result<TableState> {
-        self.get_table_state(table).await
-    }
-    
-    async fn apply_missing_events(&self, table: &str, from_seq: i64, to_seq: i64, context: &LifecycleContext) -> Result<()> {
-        // Apply missing events from sequence from_seq to to_seq
-        context.info(format!("Applying missing events for table '{}' from {} to {}", table, from_seq, to_seq));
-        Ok(())
-    }
-    
+ 
     // Creates event tables for enabled tables
     pub async fn create_event_tables(&self, context: &LifecycleContext) -> Result<()> {
         for table in self.enabled_tables.iter() {
