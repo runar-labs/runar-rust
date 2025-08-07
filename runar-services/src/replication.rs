@@ -4,10 +4,9 @@ use runar_node::{services::LifecycleContext, ServiceState};
 use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, atomic::{AtomicI64, Ordering}};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use uuid::Uuid;
-use std::collections::HashMap;
 
 use crate::sqlite::{SqliteService, SqlQuery, Value};
 
@@ -48,13 +47,11 @@ pub struct ReplicationEvent {
     pub data: ArcValue,
     pub timestamp: i64,
     pub source_node_id: String,
-    pub sequence_number: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Plain)]
 pub struct TableState {
     pub table_name: String,
-    pub last_event_sequence: i64,
     pub last_event_timestamp: i64,
     pub record_count: i64,
 }
@@ -64,7 +61,7 @@ pub struct TableEventsRequest {
     pub table_name: String,
     pub page: u32,
     pub page_size: u32,
-    pub from_sequence: i64,
+    pub from_timestamp: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Plain)]
@@ -82,7 +79,6 @@ pub struct ReplicationManager {
     // config: ReplicationConfig,
     enabled_tables: Arc<Vec<String>>,
     logger: Arc<Logger>,
-    event_sequence_counter: Arc<AtomicI64>,
     node_id: String,
 }
 
@@ -94,14 +90,12 @@ impl ReplicationManager {
         node_id: String,
     ) -> Self {
         let enabled_tables = Arc::new(config.enabled_tables.clone());
-        let event_sequence_counter = Arc::new(AtomicI64::new(0));
         
         Self {
             sqlite_service,
             // config,
             enabled_tables,
             logger,
-            event_sequence_counter,
             node_id,
         }
     }
@@ -235,11 +229,11 @@ impl ReplicationManager {
     
     // Returns current state of a table for startup synchronization
     pub async fn get_table_state(&self, table_name: &str) -> Result<TableState> {
-        // Query the event table to get latest sequence number
+        // Query the event table to get latest timestamp
         let event_table_name = format!("{}{}", table_name, EVENT_TABLE_SUFFIX);
         
         let query = SqlQuery::new(&format!(
-            "SELECT MAX(sequence_number) as max_seq, MAX(timestamp) as max_time FROM {}",
+            "SELECT MAX(timestamp) as max_time FROM {}",
             event_table_name
         ));
         
@@ -249,15 +243,6 @@ impl ReplicationManager {
                 reply_to: reply_tx,
             }
         }).await.map_err(|e| anyhow!("Failed to query event table: {e}"))?;
-        
-        let max_seq = if let Some(row) = result.first() {
-            row.get("max_seq").map(|v| match v {
-                Value::Integer(i) => *i,
-                _ => 0,
-            }).unwrap_or(0)
-        } else {
-            0
-        };
         
         let max_time = if let Some(row) = result.first() {
             row.get("max_time").map(|v| match v {
@@ -288,7 +273,6 @@ impl ReplicationManager {
         
         Ok(TableState {
             table_name: table_name.to_string(),
-            last_event_sequence: max_seq,
             last_event_timestamp: max_time,
             record_count,
         })
@@ -296,7 +280,6 @@ impl ReplicationManager {
 
     // Helper methods
     async fn create_replication_event(&self, operation: &str, table: &str, data: ArcValue) -> Result<ReplicationEvent> {
-        let sequence = self.event_sequence_counter.fetch_add(1, Ordering::SeqCst);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -313,7 +296,6 @@ impl ReplicationManager {
             data,
             timestamp,
             source_node_id: self.node_id.clone(),
-            sequence_number: sequence,
         })
     }
     
@@ -329,7 +311,7 @@ impl ReplicationManager {
         let data_json_str = serde_json::to_string(&data_json)?;
 
         let query = SqlQuery::new(&format!(
-            "INSERT INTO {} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed, sequence_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO {} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             event_table_name
         )).with_params(crate::sqlite::Params::new()
             .with_value(Value::Text(event.id.clone()))
@@ -340,7 +322,6 @@ impl ReplicationManager {
             .with_value(Value::Integer(event.timestamp))
             .with_value(Value::Text(event.source_node_id.clone()))
             .with_value(Value::Boolean(processed)) // Use the processed parameter
-            .with_value(Value::Integer(event.sequence_number))
         );
         
         self.sqlite_service.send_command(|reply_tx| {
@@ -391,7 +372,7 @@ impl ReplicationManager {
             table_name: table.to_string(),
             page,
             page_size: 100,
-            from_sequence: 0, // Start from beginning for startup sync
+            from_timestamp: 0, // Start from beginning for startup sync
         };
         
         // Request from remote nodes with the same SQLite service
@@ -427,12 +408,12 @@ impl ReplicationManager {
         let event_table_name = format!("{}{}", request.table_name, EVENT_TABLE_SUFFIX);
         
         self.logger.debug(format!(
-            "Querying events from {}: page={}, page_size={}, from_sequence={}",
-            event_table_name, request.page, request.page_size, request.from_sequence
+            "Querying events from {}: page={}, page_size={}, from_timestamp={}",
+            event_table_name, request.page, request.page_size, request.from_timestamp
         ));
         
         let query = SqlQuery::new(&format!(
-            "SELECT * FROM {} ORDER BY sequence_number ASC LIMIT ? OFFSET ?",
+            "SELECT * FROM {} ORDER BY timestamp ASC LIMIT ? OFFSET ?",
             event_table_name
         )).with_params(crate::sqlite::Params::new()
             .with_value(Value::Integer(request.page_size as i64))
@@ -486,15 +467,11 @@ impl ReplicationManager {
                     Some(Value::Text(s)) => s.clone(),
                     _ => "".to_string(),
                 },
-                sequence_number: match row.get("sequence_number") {
-                    Some(Value::Integer(i)) => *i,
-                    _ => 0,
-                },
             };
             
             self.logger.debug(format!(
-                "Event: id={}, table={}, operation={}, source={}, seq={}",
-                event.id, event.table_name, event.operation_type, event.source_node_id, event.sequence_number
+                "Event: id={}, table={}, operation={}, source={}, timestamp={}",
+                event.id, event.table_name, event.operation_type, event.source_node_id, event.timestamp
             ));
             
             event
@@ -548,8 +525,7 @@ impl ReplicationManager {
                     data TEXT,
                     timestamp INTEGER NOT NULL,
                     source_node_id TEXT NOT NULL,
-                    processed BOOLEAN DEFAULT FALSE,
-                    sequence_number INTEGER NOT NULL
+                    processed BOOLEAN DEFAULT FALSE
                 )",
                 event_table_name
             );
@@ -575,17 +551,7 @@ impl ReplicationManager {
                 }
             }).await.map_err(|e| anyhow!("Failed to create timestamp index: {e}"))?;
             
-            let index2_sql = format!(
-                "CREATE INDEX IF NOT EXISTS idx_{}_events_sequence ON {} (sequence_number)",
-                table, event_table_name
-            );
-            let index2_query = SqlQuery::new(&index2_sql);
-            self.sqlite_service.send_command(|reply_tx| {
-                crate::sqlite::SqliteWorkerCommand::Execute {
-                    query: index2_query,
-                    reply_to: reply_tx,
-                }
-            }).await.map_err(|e| anyhow!("Failed to create sequence index: {e}"))?;
+
             
             context.info(format!("Created event table: {}", event_table_name));
         }

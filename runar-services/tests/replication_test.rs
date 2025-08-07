@@ -131,7 +131,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
                 table_name: "users".to_string(),
                 page: 0,
                 page_size: 10,
-                from_sequence: 0,
+                from_timestamp: 0,
             }
         )))
         .await?;
@@ -337,7 +337,7 @@ async fn test_replication_event_database_application() -> Result<()> {
                 table_name: "users".to_string(),
                 page: 0,
                 page_size: 10,
-                from_sequence: 0,
+                from_timestamp: 0,
             }
         )))
         .await?;
@@ -473,13 +473,12 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
         ),
         timestamp: 1754382137011,
         source_node_id: "remote-node-processed".to_string(),
-        sequence_number: 1,
     };
 
     // Store the event as unprocessed (simulating a remote event)
     let store_result = node
         .request("test_sqlite_mark_processed/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("INSERT INTO users_Events (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed, sequence_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            runar_services::sqlite::SqlQuery::new("INSERT INTO users_Events (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
             .with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Text(replication_event.id.clone()))
                 .with_value(runar_services::sqlite::Value::Text(replication_event.table_name.clone()))
@@ -489,7 +488,6 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
                 .with_value(runar_services::sqlite::Value::Integer(replication_event.timestamp))
                 .with_value(runar_services::sqlite::Value::Text(replication_event.source_node_id.clone()))
                 .with_value(runar_services::sqlite::Value::Boolean(false)) // Mark as unprocessed
-                .with_value(runar_services::sqlite::Value::Integer(replication_event.sequence_number))
             )
         )))
         .await?;
