@@ -1709,11 +1709,11 @@ impl NetworkTransport for QuicTransport {
         if let Some((attempts, until)) = self.state.dial_backoff.read().await.get(&peer_node_id).cloned() {
             if now < until {
                 let wait_ms = until.saturating_duration_since(now).as_millis();
-                self.logger.debug(format!("[connect_peer] Backing off dial to {peer_node_id} for {wait_ms}ms (attempts={attempts})"));
+                self.logger.debug(format!("⏳ [backoff] peer={peer_node_id} attempts={attempts} remaining_ms={wait_ms}"));
                 tokio::select! {
                     _ = tokio::time::sleep(until.saturating_duration_since(now)) => {},
                     _ = cancel_notify.notified() => {
-                        self.logger.debug(format!("[connect_peer] Dial to {peer_node_id} canceled during backoff"));
+                        self.logger.debug(format!("🚫 [dial-cancel] peer={peer_node_id} reason=inbound-connected"));
                         return Ok(());
                     }
                 }
@@ -1757,6 +1757,7 @@ impl NetworkTransport for QuicTransport {
                 let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
                 let delay = Duration::from_millis(base.saturating_add(jitter));
                 guard.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
+                self.logger.debug(format!("⏫ [backoff-incr] peer={peer_node_id} attempts={attempts} delay_ms={}", delay.as_millis()));
                 return Err(NetworkError::ConnectionError(format!(
                     "handshake failed: {err_str}"
                 )));

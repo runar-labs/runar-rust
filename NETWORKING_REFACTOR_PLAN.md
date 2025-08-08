@@ -157,6 +157,15 @@
    - Graceful shutdown of QUIC endpoints and short retry loop on UDP bind to tolerate fast restarts.
    - Persist peerbook data needed for smart dialing (last success/failure timestamps) if/when we add persistence.
 
+### Rust quality audit (to-do)
+- Transport and Discovery code review focused on Rust best practices:
+  - Minimize clones and allocations; prefer references where safe.
+  - Validate `Arc`/`Mutex`/`RwLock`/`Notify` usage; no `await` while holding locks; shorten lock scopes.
+  - Confirm Tokio task lifecycles: no leaked tasks, proper cancellation, no deadlocks; avoid holding resources across `await`.
+  - Ensure timeouts and robust error handling on all network awaits (accept, connect, open_bi, read/write).
+  - Revisit logging allocations; avoid excessive string building on hot paths.
+  - After tests are green, run `cargo clippy --all-targets --all-features -- -D warnings` and address findings.
+
 ### Acceptance Criteria
 - All existing network tests (updated for API) pass, including reconnection and multicast tests.
 - Deterministic nonce-based resolution of duplicate connections verified by new tests with no split-brain (both sides keep the same connection) and no flapping.
