@@ -303,6 +303,10 @@ pub struct Node {
 
 // Implementation for Node
 impl Node {
+    /// Public helper for tests: check if Node believes a peer is connected
+    pub async fn is_connected(&self, peer_id: &str) -> bool {
+        self.peer_directory.is_connected(peer_id).await
+    }
     async fn get_or_create_connect_mutex(
         &self,
         peer_id: &str,

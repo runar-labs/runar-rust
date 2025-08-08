@@ -1258,6 +1258,122 @@ async fn test_capability_version_bump_across_reconnect(
     Ok(())
 }
 
+// Anti-flap: repeated simultaneous dials should converge to one stable connection without oscillation
+#[tokio::test]
+async fn test_quic_anti_flap_under_race(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        panic!("test_quic_anti_flap_under_race timed out");
+    });
+
+    let logging_config = runar_node::config::LoggingConfig::new().with_default_level(runar_node::config::LogLevel::Debug);
+    logging_config.apply();
+    let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(runar_common::logging::Component::Custom("anti_flap_test"), ""));
+
+    // Keys/certs
+    let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
+    let _ = ca.initialize_user_root_key()?;
+    let mut km1 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let cert1 = ca.process_setup_token(&km1.generate_csr()?)?; km1.install_certificate(cert1)?;
+    let mut km2 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let cert2 = ca.process_setup_token(&km2.generate_csr()?)?; km2.install_certificate(cert2)?;
+    let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
+
+    let pk1 = km1.get_node_public_key();
+    let pk2 = km2.get_node_public_key();
+    let id1 = runar_common::compact_ids::compact_id(&pk1);
+    let id2 = runar_common::compact_ids::compact_id(&pk2);
+    let info1 = runar_node::network::discovery::NodeInfo { node_public_key: pk1.clone(), network_ids: vec!["test".into()], addresses: vec!["127.0.0.1:50181".into()], node_metadata: runar_schemas::NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
+    let info2 = runar_node::network::discovery::NodeInfo { node_public_key: pk2.clone(), network_ids: vec!["test".into()], addresses: vec!["127.0.0.1:50182".into()], node_metadata: runar_schemas::NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
+
+    // Handlers
+    let handler1: runar_node::network::transport::MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let handler2: runar_node::network::transport::MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way1: runar_node::network::transport::OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+    let one_way2: runar_node::network::transport::OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+    let resolver: std::sync::Arc<dyn runar_serializer::traits::LabelResolver> = std::sync::Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(runar_serializer::traits::KeyMappingConfig { label_mappings: std::collections::HashMap::new() }));
+
+    // Lifecycle counters
+    let ev1: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let ev2: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let cb1: runar_node::network::transport::ConnectionCallback = {
+        let ev = ev1.clone();
+        std::sync::Arc::new(move |peer: String, up: bool, _info: Option<runar_node::network::discovery::NodeInfo>| {
+            let ev = ev.clone();
+            Box::pin(async move { ev.lock().await.push((peer, up)); Ok(()) })
+        })
+    };
+    let cb2: runar_node::network::transport::ConnectionCallback = {
+        let ev = ev2.clone();
+        std::sync::Arc::new(move |peer: String, up: bool, _info: Option<runar_node::network::discovery::NodeInfo>| {
+            let ev = ev.clone();
+            Box::pin(async move { ev.lock().await.push((peer, up)); Ok(()) })
+        })
+    };
+
+    let t1 = std::sync::Arc::new(runar_node::network::transport::quic_transport::QuicTransport::new(
+        runar_node::network::transport::quic_transport::QuicTransportOptions::new()
+            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca_cert.clone()])
+            .with_local_node_info(info1.clone())
+            .with_bind_addr("127.0.0.1:50181".parse()?)
+            .with_message_handler(handler1)
+            .with_one_way_message_handler(one_way1)
+            .with_connection_callback(cb1)
+            .with_logger(logger.clone())
+            .with_keystore(std::sync::Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
+    let t2 = std::sync::Arc::new(runar_node::network::transport::quic_transport::QuicTransport::new(
+        runar_node::network::transport::quic_transport::QuicTransportOptions::new()
+            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca_cert])
+            .with_local_node_info(info2.clone())
+            .with_bind_addr("127.0.0.1:50182".parse()?)
+            .with_message_handler(handler2)
+            .with_one_way_message_handler(one_way2)
+            .with_connection_callback(cb2)
+            .with_logger(logger.clone())
+            .with_keystore(std::sync::Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
+
+    let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start()); sr1?; sr2?;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    // Repeated race rounds
+    let p1 = runar_node::network::discovery::multicast_discovery::PeerInfo::new(info1.node_public_key.clone(), info1.addresses.clone());
+    let p2 = runar_node::network::discovery::multicast_discovery::PeerInfo::new(info2.node_public_key.clone(), info2.addresses.clone());
+    for _ in 0..5 {
+        let (a, b) = tokio::join!(t1.clone().connect_peer(p2.clone()), t2.clone().connect_peer(p1.clone()));
+        let _ = (a, b);
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    }
+
+    // Allow final settling
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(t1.is_connected(id2.clone()).await && t2.is_connected(id1.clone()).await);
+
+    // Verify no flapping: exactly one Up per side, and no Down
+    let ev1 = ev1.lock().await.clone();
+    let ev2 = ev2.lock().await.clone();
+    let up1 = ev1.iter().filter(|(_, up)| *up).count();
+    let down1 = ev1.iter().filter(|(_, up)| !*up).count();
+    let up2 = ev2.iter().filter(|(_, up)| *up).count();
+    let down2 = ev2.iter().filter(|(_, up)| !*up).count();
+    assert_eq!(up1, 1, "t1 should see a single Up");
+    assert_eq!(down1, 0, "t1 should see no Down");
+    assert_eq!(up2, 1, "t2 should see a single Up");
+    assert_eq!(down2, 0, "t2 should see no Down");
+
+    t1.stop().await?; t2.stop().await?;
+    watchdog.abort(); let _ = watchdog.await;
+    Ok(())
+}
+
 /// Test that the transport properly handles message header bounds checking
 /// This verifies the robustness of the message framing protocol
 #[tokio::test]
