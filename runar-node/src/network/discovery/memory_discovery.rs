@@ -209,8 +209,8 @@ impl MemoryDiscovery {
             let addresses_len = node_info.addresses.len();
             let event_label = if is_new { "Discovered" } else { "Updated" };
             self.logger.debug(format!(
-                "📣 [discovery] provider=memory event={event_label} peer_id={node_key} addresses={addresses_len} debounced={debounced}",
-                debounced = if is_new { false } else { true }
+                "📣 [discovery] provider=memory event={event_label} peer_id={node_key} addresses={addresses_len} debounced={}",
+                !is_new
             ));
             let listeners_vec = {
                 let guard = self.listeners.read().unwrap();

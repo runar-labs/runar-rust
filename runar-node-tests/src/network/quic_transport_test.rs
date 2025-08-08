@@ -104,7 +104,7 @@ async fn test_dial_cancel_on_inbound_connect() -> Result<(), Box<dyn std::error:
     let p2 = PeerInfo { public_key: p2_pub, addresses: vec!["127.0.0.1:50152".to_string()] };
 
     // Start outbound dial from t1 to t2, and almost immediately accept inbound by dialing back t2->t1
-    let d1 = {
+    let _d1 = {
         let t1c = t1.clone();
         let p2c = p2.clone();
         tokio::spawn(async move { t1c.connect_peer(p2c).await })

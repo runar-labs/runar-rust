@@ -270,7 +270,7 @@ impl MulticastDiscovery {
                                     }
                                 }
                                 if !skip {
-                    Self::process_message(
+                                    Self::process_message(
                                         message,
                                         src,
                                         &discovered_nodes,
@@ -461,6 +461,7 @@ impl MulticastDiscovery {
     }
 
     /// Process a received multicast message
+    #[allow(clippy::too_many_arguments)]
     async fn process_message(
         message: MulticastMessage,
         src: SocketAddr,

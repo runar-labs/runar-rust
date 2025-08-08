@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use std::time::SystemTime;
 use tokio::sync::oneshot;
-use runar_node::{Node, NodeConfig};
+use runar_node::Node;
 use runar_test_utils::create_networked_node_test_config;
 
 #[tokio::test]
@@ -37,7 +37,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
 
     // Two nodes
     let node_a_pk: [u8; 32] = rand::random();
-    let node_a_id = compact_id(&node_a_pk);
+    let _node_a_id = compact_id(&node_a_pk);
     let node_b_pk: [u8; 32] = rand::random();
     let node_b_id = compact_id(&node_b_pk);
 
@@ -99,7 +99,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
     // Check that multiple announcements were coalesced (received at least 1 update/discovered)
     // but not an excessive number due to debounce
     let mut count = 0usize;
-    while let Ok(_) = tokio::time::timeout(Duration::from_millis(50), upd_count_rx.recv()).await {
+    while tokio::time::timeout(Duration::from_millis(50), upd_count_rx.recv()).await.is_ok() {
         count += 1;
         if count > 10 { break; }
     }
@@ -185,7 +185,7 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
     };
 
     let disc1 = MulticastDiscovery::new(mk_node_info(&node1_pk), options.clone(), logger.clone()).await?;
-    let mut disc2 = MulticastDiscovery::new(mk_node_info(&node2_pk), options.clone(), logger.clone()).await?;
+    let disc2 = MulticastDiscovery::new(mk_node_info(&node2_pk), options.clone(), logger.clone()).await?;
 
     // Subscribe on disc1 to watch disc2 events
     let (first_tx, first_rx) = oneshot::channel::<()>();
