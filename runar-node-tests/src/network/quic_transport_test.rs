@@ -1190,7 +1190,7 @@ async fn test_capability_version_bump_across_reconnect(
     let id1 = runar_common::compact_ids::compact_id(&pk1);
     let id2 = runar_common::compact_ids::compact_id(&pk2);
     let mut info1 = runar_node::network::discovery::NodeInfo { node_public_key: pk1.clone(), network_ids: vec!["test".into()], addresses: vec!["127.0.0.1:50171".into()], node_metadata: runar_schemas::NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
-    let mut info2 = runar_node::network::discovery::NodeInfo { node_public_key: pk2.clone(), network_ids: vec!["test".into()], addresses: vec!["127.0.0.1:50172".into()], node_metadata: runar_schemas::NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
+    let info2 = runar_node::network::discovery::NodeInfo { node_public_key: pk2.clone(), network_ids: vec!["test".into()], addresses: vec!["127.0.0.1:50172".into()], node_metadata: runar_schemas::NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
 
     // Handlers: respond ok, no-op one-way (distinct instances per transport)
     let handler1: runar_node::network::transport::MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));

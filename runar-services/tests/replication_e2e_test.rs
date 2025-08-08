@@ -201,7 +201,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         let result = node1
             .local_request("users_db_test_1/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
-                    &format!("INSERT INTO posts (user_id, title, content, created_at) VALUES ({}, '{}', '{}', ?)", i, title, content)
+                    &format!("INSERT INTO posts (user_id, title, content, created_at) VALUES ({i}, '{title}', '{content}', ?)")
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
@@ -210,7 +210,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
         assert_eq!(affected_rows, 1, "Should insert 1 post");
-        logger.info(format!("   ✅ Inserted post: {}", title));
+        logger.info(format!("   ✅ Inserted post: {title}"));
     }
 
     // Verify data exists on Node 1
@@ -235,7 +235,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         .as_type_ref::<i64>().unwrap();
     assert_eq!(post_count, 2, "Node 1 should have 2 posts");
 
-    logger.info(format!("✅ Node 1 has {} users and {} posts", user_count, post_count));
+    logger.info(format!("✅ Node 1 has {user_count} users and {post_count} posts"));
 
     // Now start Node 2 - it should sync during startup
     logger.info("Starting Node 2 (should sync during startup)...");
@@ -274,7 +274,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         .as_type_ref::<i64>().unwrap();
     assert_eq!(post_count2, 2, "Node 2 should have 2 posts after replication");
 
-    logger.info(format!("✅ Node 2 has {} users and {} posts (replication successful)", user_count2, post_count2));
+    logger.info(format!("✅ Node 2 has {user_count2} users and {post_count2} posts (replication successful)"));
 
     // Test live replication: Add data to Node 2 and verify it appears on Node 1
     logger.info("Testing live replication from Node 2 to Node 1...");
@@ -357,7 +357,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 
     assert_eq!(final_count1, final_count2, "Both nodes should have the same user count");
     assert_eq!(final_count1, 5, "Both nodes should have 5 users total");
-    println!("✅ Final verification: Both nodes have {} users", final_count1);
+    println!("✅ Final verification: Both nodes have {final_count1} users");
 
     // Clean up
     node1.stop().await?;
@@ -400,14 +400,14 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 
     // Add 10 users and 5 posts to Node 1
     for i in 1..=10 {
-        let username = format!("sync_user{}", i);
-        let email = format!("sync_user{}@example.com", i);
+        let username = format!("sync_user{i}");
+        let email = format!("sync_user{i}@example.com");
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
             .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
-                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{}', '{}', ?)", username, email)
+                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{username}', '{email}', ?)")
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
@@ -419,14 +419,14 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     }
 
     for i in 1..=5 {
-        let title = format!("Sync Post {}", i);
-        let content = format!("Content for sync post {}", i);
+        let title = format!("Sync Post {i}");
+        let content = format!("Content for sync post {i}");
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
             .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
-                    &format!("INSERT INTO posts (user_id, title, content, created_at) VALUES ({}, '{}', '{}', ?)", i, title, content)
+                    &format!("INSERT INTO posts (user_id, title, content, created_at) VALUES ({i}, '{title}', '{content}', ?)")
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
@@ -458,7 +458,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     node2.add_service(sqlite_service2).await?;
     node2.start().await?;
     let startup_duration = start_time.elapsed();
-    println!("✅ Node 2 started in {:?}", startup_duration);
+    println!("✅ Node 2 started in {startup_duration:?}");
 
     // Wait for nodes to discover each other
     println!("Waiting for nodes to discover each other...");
@@ -469,7 +469,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
  
     node2.wait_for_services_to_start().await?;
     let node2_start_sync_duration = start_time.elapsed();
-    println!("✅ Node 2 services started and sync completed in {:?}", node2_start_sync_duration); 
+    println!("✅ Node 2 services started and sync completed in {node2_start_sync_duration:?}"); 
     
     // Verify that Node 2 has the same data (replication worked)
     println!("Verifying replication to Node 2...");
@@ -495,7 +495,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         .as_type_ref::<i64>().unwrap();
     assert_eq!(post_count2, 5, "Node 2 should have 5 posts after replication");
 
-    println!("✅ Node 2 has {} users and {} posts (sync successful)", user_count2, post_count2);
+    println!("✅ Node 2 has {user_count2} users and {post_count2} posts (sync successful)");
 
     println!("Check a specific record after sync...");
     let test_result = node2
@@ -616,7 +616,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 
     assert_eq!(final_count1, final_count2, "Both nodes should have the same user count");
     assert_eq!(final_count1, 12, "Both nodes should have 12 users total (10 initial + 2 post-sync)");
-    println!("✅ Final verification: Both nodes have {} users", final_count1);
+    println!("✅ Final verification: Both nodes have {final_count1} users");
 
     //lets add a third node to make sure it can sync with the other two
     let node3_config = configs[2].clone();
@@ -744,7 +744,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         .get("count").unwrap()
         .as_type_ref::<i64>().unwrap();
     assert_eq!(restart_user_count1, 12, "Node 1 should have 12 users after syncing (it was stopped before the DELETE operation)");
-    println!("✅ Node 1 has correct user count after restart: {}", restart_user_count1);
+    println!("✅ Node 1 has correct user count after restart: {restart_user_count1}");
     
     // Verify that Node 1 received the UPDATE operation from Node 3 (sync_user2 email update)
     let update_check1 = node1
@@ -855,7 +855,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     assert_eq!(count1, count2, "Node 1 and Node 2 should have the same user count");
     assert_eq!(count2, count3, "Node 2 and Node 3 should have the same user count");
     assert_eq!(count1, 11, "All nodes should have 11 users total (12 initial - 2 deleted + 1 added)");
-    println!("✅ All nodes have consistent state: {} users each", count1);
+    println!("✅ All nodes have consistent state: {count1} users each");
 
     // Verify specific operations propagated correctly
     // Check that complex_user1 exists on all nodes
@@ -997,19 +997,19 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     
     assert!(table_names.contains(&"users_Events".to_string()), "Should have users_Events table");
     assert!(table_names.contains(&"posts_Events".to_string()), "Should have posts_Events table");
-    println!("✅ Event tables created: {:?}", table_names);
+    println!("✅ Event tables created: {table_names:?}");
 
     // Add some data to Node 1
     println!("Adding data to Node 1...");
     for i in 1..=3 {
-        let username = format!("event_user{}", i);
-        let email = format!("event_user{}@example.com", i);
+        let username = format!("event_user{i}");
+        let email = format!("event_user{i}@example.com");
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
             .local_request("users_db_test_3/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
-                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{}', '{}', ?)", username, email)
+                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{username}', '{email}', ?)")
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
@@ -1120,7 +1120,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         })
         .collect();
     
-    println!("Event types on Node 1: {:?}", operation_types);
+    println!("Event types on Node 1: {operation_types:?}");
     assert!(operation_types.contains(&"CREATE".to_string()), "Should have CREATE events");
     assert!(operation_types.contains(&"UPDATE".to_string()), "Should have UPDATE events");
     assert!(operation_types.contains(&"DELETE".to_string()), "Should have DELETE events");
@@ -1142,7 +1142,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         })
         .collect();
     
-    println!("Event types on Node 2: {:?}", operation_types2);
+    println!("Event types on Node 2: {operation_types2:?}");
     assert_eq!(operation_types, operation_types2, "Both nodes should have the same event types");
     println!("✅ All event types present on Node 2");
 
@@ -1188,14 +1188,14 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     // Add initial data to Node 1
     println!("Adding initial data to Node 1...");
     for i in 1..=5 {
-        let username = format!("mobile_user{}", i);
-        let email = format!("mobile_user{}@example.com", i);
+        let username = format!("mobile_user{i}");
+        let email = format!("mobile_user{i}@example.com");
         let timestamp = chrono::Utc::now().timestamp();
         
         let result = node1
             .local_request("users_db_test_4/execute_query", Some(ArcValue::new_struct(
                 runar_services::sqlite::SqlQuery::new(
-                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{}', '{}', ?)", username, email)
+                    &format!("INSERT INTO users (username, email, created_at) VALUES ('{username}', '{email}', ?)")
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
@@ -1204,7 +1204,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
         assert_eq!(affected_rows, 1, "Should insert 1 user");
-        println!("   ✅ Inserted user: {}", username);
+        println!("   ✅ Inserted user: {username}");
     }
 
     // Verify Node 1 has the data
@@ -1218,7 +1218,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         .get("count").unwrap()
         .as_type_ref::<i64>().unwrap();
     assert_eq!(user_count, 5, "Node 1 should have 5 users");
-    println!("✅ Node 1 has {} users", user_count);
+    println!("✅ Node 1 has {user_count} users");
 
     // Start Node 2 - it should sync during startup
     println!("Starting Node 2 (should sync during startup)...");
@@ -1249,7 +1249,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         .get("count").unwrap()
         .as_type_ref::<i64>().unwrap();
     assert_eq!(user_count2, 5, "Node 2 should have 5 users after replication");
-    println!("✅ Node 2 has {} users (replication successful)", user_count2);
+    println!("✅ Node 2 has {user_count2} users (replication successful)");
 
     // Test live replication: Add data to Node 2 and verify it appears on Node 1
     println!("Testing live replication from Node 2 to Node 1...");
@@ -1340,7 +1340,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 
     assert_eq!(final_count1, final_count2, "Both nodes should have the same user count");
     assert_eq!(final_count1, 7, "Both nodes should have 7 users total (5 initial + 2 live)");
-    println!("✅ Final verification: Both nodes have {} users", final_count1);
+    println!("✅ Final verification: Both nodes have {final_count1} users");
 
     // Clean up
     node1.stop().await?;
