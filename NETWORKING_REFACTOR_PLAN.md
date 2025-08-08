@@ -3,8 +3,11 @@
 ### Status Snapshot (current)
 - Core architecture in place: `PeerDirectory`, stateless Discovery, lifecycle callbacks, nonce/role-based duplicate-connection resolution.
 - Transport hardening: request path transient-retry; stop() clears `peers`/`connection_id_to_peer_id`/dial state; inbound/outbound handshake v2 (nonces); idempotent connect with placeholder; connection tasks cleanup with grace and down-debounce.
-- Tests: `quic_transport_test::test_transport_message_header_bounds_checking` passes. `quic_transport_test::test_quic_transport` under stabilization; moved to single-initiator and bounded waits.
-- Node reconnection test will resume once transport test is green.
+- Tests updated and green (with Debug logs + hard timeouts):
+  - `quic_transport_test::test_quic_transport` (handshake v2, unidir events, request retry, lifecycle)
+  - `quic_transport_test::test_quic_duplicate_resolution_simultaneous_dial` (nonce-based tie-break; single surviving connection)
+  - `quic_transport_test::test_quic_lifecycle_callbacks` (on_up/on_down correctness; reconnect)
+  - `remote_test::test_node_stop_restart_reconnection` (restart → rediscovery → reconnect; remote calls restored)
 
 ### Goals
 - Single source of truth for peers and capabilities in `Node`.
@@ -29,6 +32,34 @@
   - Trait emits events `DiscoveryEvent::{Discovered(PeerInfo), Updated(PeerInfo), Lost(peer_id)}`.
   - Providers do not cache or suppress; they simply surface network signals (e.g., multicast announces, TTL expirations).
   - No `remove_discovered_peer` API.
+
+#### Discovery Semantics
+- Announce & TTL
+  - Each announcement carries or assumes a provider default TTL. Providers refresh last-seen on announces.
+  - When `now > last_seen + ttl`, emit `Lost(peer_id)` once and clear last-seen for that peer.
+- Updated vs Discovered
+  - First observation → `Discovered(PeerInfo)`.
+  - Material changes (addresses/ports/version) → `Updated(PeerInfo)`; otherwise only refresh last-seen (subject to debounce).
+- Multi-address
+  - `PeerInfo.addresses: Vec<SocketAddr>` ordered by provider preference; Node/Transport may reorder based on success.
+- Debounce & Backpressure
+  - Per-peer debounce window (≈300–500ms) coalesces bursts into a single event.
+  - Providers avoid unbounded queues; coalesce redundant updates when backpressured.
+
+#### Provider Lifecycle & Sockets
+- Start/Stop MUST set socket options (multicast join, `reuse_addr`, optionally `reuse_port`), support dual-stack if available, and ensure clean shutdown (cancel tasks, close sockets, leave groups).
+- Fast restart: short bind-retry loop (up to 500ms with jitter) to tolerate TIME_WAIT/OS reuse delays.
+
+#### Node Orchestration Policy
+- On `Discovered/Updated`: perform idempotent `connect_peer(peer_info)` even if marked connected, to reconcile stale transport state. Guard with per-peer debounce + mutex to avoid storms.
+- On `Lost(peer_id)`: mark disconnected in `PeerDirectory` and cleanup remote services/subscriptions.
+
+#### Dial Integration
+- Transport enforces per-peer dial backoff with jitter. Discovery scheduling must respect it; rediscoveries during backoff should not bypass it.
+- If inbound reaches `Connected` while outbound in-flight, Transport cancels outbound deterministically; logs should attribute cancel to inbound-connected.
+
+#### Observability for Discovery
+- Structured fields: `provider`, `peer_id`, `event` (Discovered/Updated/Lost), `ttl`, `addresses`, `debounced`, `reason`, `coalesced_count`.
 
 - Transport:
   - Provides `ConnectionLifecycleCallback` with `on_up(peer_id)` and `on_down(peer_id, reason)`.
@@ -84,8 +115,9 @@
 
 2) Discovery: Stateless providers
    - Refactor `MulticastDiscovery` and `MemoryDiscovery` to remove peer caches and suppressions.
-   - Implement `subscribe(listener)` that emits `DiscoveryEvent`s on announce (Discovered/Updated) and TTL expiration (Lost).
+   - Implement `subscribe(listener)` that emits `DiscoveryEvent`s on announce (Discovered/Updated) and TTL expiration (Lost) with TTL tracking and per-peer debounce.
    - Update all call sites and tests to the new event API.
+   - Add provider lifecycle: socket options, clean shutdown, bind-retry on fast restarts.
 
 3) Transport: Deterministic handshake and lifecycle
   - Add tie-break handshake fields: `node_id`, `nonce` (secure random per-connection).
@@ -108,14 +140,16 @@
 6) Test suite updates (API changes only)
    - Update tests to new Discovery API while preserving intent and scenarios.
    - Add new tests:
-     - Simultaneous connect race → single surviving connection, `on_up` fires once on the winner only; loser closes cleanly. [partially covered; stabilizing]
-     - Reconnect after restart: discovery event → connect → handshake → remote handlers restored.
+     - Simultaneous connect race → single surviving connection, `on_up` fires once on the winner only; loser closes cleanly. [done]
+     - Reconnect after restart: discovery event → connect → handshake → remote handlers restored. [done]
      - Capability update versioning across reconnect.
-     - Dial backoff and cancelation: inbound arrives while outbound in-flight → outbound canceled deterministically.
-     - Duplicate connection scoring/hysteresis prevents flapping under repeated races.
+     - Dial backoff and cancelation: inbound arrives while outbound in-flight → outbound canceled deterministically. [pending]
+     - Duplicate connection scoring/hysteresis prevents flapping under repeated races. [pending]
+     - Discovery TTL expiration triggers `Lost` and Node cleans up. [pending]
+     - Discovery burst debounced to a single dial. [pending]
 
 7) Observability
-   - Structured logs for connection races, lifecycle transitions, and capability diffs.
+   - Structured logs for connection races, lifecycle transitions, capability diffs, and discovery events (Discovered/Updated/Lost with TTL/debounce fields).
    - Logs for backoff decisions, dial cancelations, and duplicate-resolution decisions (including both nonces and winner/loser ids).
    - Metrics (optional) for connects, disconnects, retries, duplicate resolutions. (metrics is out of scope for now.. focus on having proper logs so we can debug issues going forward.)
 
@@ -129,6 +163,7 @@
 - After disconnect and restart, remote services are re-registered and calls succeed.
 - Outbound dial backoff with jitter is observable and respected; inbound acceptance cancels redundant outbound in-flight dials.
 - Only one Active connection per peer at steady state; loser connection closes cleanly and lifecycle events fire exactly once per transition.
+ - Discovery: TTL-driven `Lost` events produced; bursts debounced; provider shutdown clean; tests assert Node cleanup on `Lost`.
 
 ### Migration Notes
 - This refactor is intentionally breaking. Update:
@@ -148,8 +183,9 @@
 - [x] Node: wire lifecycle callbacks to capability sync and cleanup.
 - [ ] Ensure `process_remote_capabilities` is idempotent and tracked in `PeerDirectory` (finalize version tracking/diffing).
 - [ ] Update all affected tests for new Discovery API (complete sweep).
-- [ ] Add tests: duplicate-resolution, backoff/cancelation, restart reconnection, capability versioning, anti-flap.
-- [x] Observability: structured logs for duplicate-resolution; [~] add dial backoff logs.
+- [x] Add tests: duplicate-resolution, restart reconnection.
+- [ ] Add tests: backoff/cancelation, capability versioning, anti-flap, discovery TTL/Lost, discovery debounce.
+- [x] Observability: structured logs for duplicate-resolution; [~] add dial backoff logs; [~] add discovery event logs.
 - [ ] Run full test suite; fix regressions.
 
 ### Recent Design Decisions (new)
@@ -163,9 +199,9 @@
 - Test approach: use single-initiator dial in transport test and bounded connectivity waits to avoid masking issues with simultaneous dials while we stabilize the race handling.
 
 ### Immediate Next Steps
-- Add precise logs around handshake/dup-resolution showing `(existing_id, existing nonces)` vs `(candidate_id, candidate nonces)` and winner.
-- Guard sending handshake response to only the surviving connection id in inbound path.
-- Stabilize `quic_transport_test::test_quic_transport`; then proceed to Node-level reconnection test.
+- Discovery providers: implement TTL tracking and `Lost` emission, per-peer debounce, and structured logging.
+- Update Node to keep idempotent `connect_peer` on `Discovered/Updated` (documented policy) with debounce guard.
+- Add tests for discovery TTL/Lost and burst debounce; add dial cancel on inbound test.
 
 ### Notes
 - Clippy/style fixes come last, after tests are green, per project rules.

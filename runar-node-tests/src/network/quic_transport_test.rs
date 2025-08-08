@@ -16,7 +16,7 @@ use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
     MessageHandler, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
-    OneWayMessageHandler,
+    OneWayMessageHandler, ConnectionCallback,
 };
 use runar_node::routing::TopicPath;
 use runar_node::{ActionMetadata, ServiceMetadata};
@@ -771,6 +771,262 @@ fn map_message_type_to_string(message_type: u32) -> String {
         MESSAGE_TYPE_EVENT => "EVENT".to_string(),
         _ => "UNKNOWN".to_string(),
     }
+}
+
+// Duplicate-resolution and simultaneous dial scenario
+#[tokio::test]
+async fn test_quic_duplicate_resolution_simultaneous_dial(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Watchdog to prevent indefinite hangs
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        panic!("test_quic_duplicate_resolution_simultaneous_dial timed out");
+    });
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("dup_test"), ""));
+
+    // Keys and certs
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
+    let cert_1 = mobile_ca.process_setup_token(&node_key_manager_1.generate_csr()?)?;
+    node_key_manager_1.install_certificate(cert_1)?;
+    let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
+    let cert_2 = mobile_ca.process_setup_token(&node_key_manager_2.generate_csr()?)?;
+    node_key_manager_2.install_certificate(cert_2)?;
+
+    let node1_cert_config = node_key_manager_1.get_quic_certificate_config()?;
+    let node2_cert_config = node_key_manager_2.get_quic_certificate_config()?;
+    let ca_certificate = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    // Node infos
+    let node1_pk = node_key_manager_1.get_node_public_key();
+    let node2_pk = node_key_manager_2.get_node_public_key();
+    let node1_id = compact_id(&node1_pk);
+    let node2_id = compact_id(&node2_pk);
+
+    let node1_info = NodeInfo { node_public_key: node1_pk.clone(), network_ids: vec!["test".to_string()], addresses: vec!["127.0.0.1:50111".to_string()], node_metadata: NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
+    let node2_info = NodeInfo { node_public_key: node2_pk.clone(), network_ids: vec!["test".to_string()], addresses: vec!["127.0.0.1:50112".to_string()], node_metadata: NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
+
+    // Minimal handlers
+    let logger1 = logger.clone();
+    let handler1: MessageHandler = Box::new(move |msg: NetworkMessage| {
+        let log = logger1.clone();
+        Box::pin(async move {
+            log.debug(format!("[dup_test.T1] received msg type={} from {}", msg.message_type, msg.source_node_id));
+            if msg.message_type == MESSAGE_TYPE_REQUEST {
+                let resp = NetworkMessage { source_node_id: msg.destination_node_id.clone(), destination_node_id: msg.source_node_id.clone(), message_type: MESSAGE_TYPE_RESPONSE, payloads: msg.payloads.clone() };
+                Ok(Some(resp))
+            } else { Ok(None) }
+        })
+    });
+    let one_way1: OneWayMessageHandler = Box::new(move |_msg: NetworkMessage| Box::pin(async { Ok(()) }));
+
+    let logger2 = logger.clone();
+    let handler2: MessageHandler = Box::new(move |msg: NetworkMessage| {
+        let log = logger2.clone();
+        Box::pin(async move {
+            log.debug(format!("[dup_test.T2] received msg type={} from {}", msg.message_type, msg.source_node_id));
+            if msg.message_type == MESSAGE_TYPE_REQUEST {
+                let resp = NetworkMessage { source_node_id: msg.destination_node_id.clone(), destination_node_id: msg.source_node_id.clone(), message_type: MESSAGE_TYPE_RESPONSE, payloads: msg.payloads.clone() };
+                Ok(Some(resp))
+            } else { Ok(None) }
+        })
+    });
+    let one_way2: OneWayMessageHandler = Box::new(move |_msg: NetworkMessage| Box::pin(async { Ok(()) }));
+
+    // Build transports
+    let empty_resolver: Arc<dyn LabelResolver> = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig { label_mappings: HashMap::new() }));
+    let t1_opts = QuicTransportOptions::new()
+        .with_certificates(node1_cert_config.certificate_chain)
+        .with_private_key(node1_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate.clone()])
+        .with_local_node_info(node1_info.clone())
+        .with_bind_addr("127.0.0.1:50111".parse::<SocketAddr>()?)
+        .with_message_handler(handler1)
+        .with_one_way_message_handler(one_way1)
+        .with_logger(logger.clone())
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(empty_resolver.clone());
+    let t2_opts = QuicTransportOptions::new()
+        .with_certificates(node2_cert_config.certificate_chain)
+        .with_private_key(node2_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate])
+        .with_local_node_info(node2_info.clone())
+        .with_bind_addr("127.0.0.1:50112".parse::<SocketAddr>()?)
+        .with_message_handler(handler2)
+        .with_one_way_message_handler(one_way2)
+        .with_logger(logger.clone())
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(empty_resolver.clone());
+
+    let t1 = Arc::new(QuicTransport::new(t1_opts)?);
+    let t2 = Arc::new(QuicTransport::new(t2_opts)?);
+
+    let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
+    sr1?; sr2?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Simultaneous dial
+    let p1 = PeerInfo::new(node1_info.node_public_key.clone(), node1_info.addresses.clone());
+    let p2 = PeerInfo::new(node2_info.node_public_key.clone(), node2_info.addresses.clone());
+    let (c12, c21) = tokio::join!(t1.clone().connect_peer(p2), t2.clone().connect_peer(p1));
+    c12?; c21?;
+
+    // Allow duplicate-resolution to settle
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if t1.is_connected(node2_id.clone()).await && t2.is_connected(node1_id.clone()).await { break; }
+        if tokio::time::Instant::now() >= deadline { break; }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert!(t1.is_connected(node2_id.clone()).await && t2.is_connected(node1_id.clone()).await, "both directions should be connected after simultaneous dial");
+
+    // Concurrent requests both directions to ensure stability
+    let path1 = TopicPath::new("test:echo/req", "test")?;
+    let payload = ArcValue::new_primitive("x".to_string());
+    let ctx1 = MessageContext { profile_public_key: node1_info.node_public_key.clone() };
+    let ctx2 = MessageContext { profile_public_key: node2_info.node_public_key.clone() };
+    let f1 = t1.request(&path1, Some(payload.clone()), &node2_id, ctx1);
+    let f2 = t2.request(&path1, Some(payload.clone()), &node1_id, ctx2);
+    let (r1, r2) = tokio::join!(f1, f2);
+    assert!(r1.is_ok() && r2.is_ok(), "bidirectional requests should succeed post-dup-resolution");
+
+    t1.stop().await?;
+    t2.stop().await?;
+    watchdog.abort();
+    let _ = watchdog.await;
+    Ok(())
+}
+
+// Lifecycle callbacks (on_up/on_down) scenario
+#[tokio::test]
+async fn test_quic_lifecycle_callbacks(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        panic!("test_quic_lifecycle_callbacks timed out");
+    });
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("lifecycle_test"), ""));
+
+    // Keys and certs
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km1 = NodeKeyManager::new(logger.clone())?;
+    let csr1 = km1.generate_csr()?;
+    let cert1 = mobile_ca.process_setup_token(&csr1)?;
+    km1.install_certificate(cert1)?;
+    let mut km2 = NodeKeyManager::new(logger.clone())?;
+    let csr2 = km2.generate_csr()?;
+    let cert2 = mobile_ca.process_setup_token(&csr2)?;
+    km2.install_certificate(cert2)?;
+    let n1 = km1.get_node_public_key();
+    let n2 = km2.get_node_public_key();
+    let id1 = compact_id(&n1);
+    let id2 = compact_id(&n2);
+    let ca = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    let info1 = NodeInfo { node_public_key: n1.clone(), network_ids: vec!["test".to_string()], addresses: vec!["127.0.0.1:50131".to_string()], node_metadata: NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
+    let info2 = NodeInfo { node_public_key: n2.clone(), network_ids: vec!["test".to_string()], addresses: vec!["127.0.0.1:50132".to_string()], node_metadata: NodeMetadata { services: vec![], subscriptions: vec![] }, version: 0 };
+
+    // Handlers no-op
+    let handler: MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+
+    // Capture lifecycle events
+    let events1: Arc<tokio::sync::Mutex<Vec<(String, bool)>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let events2: Arc<tokio::sync::Mutex<Vec<(String, bool)>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let cb1: ConnectionCallback = {
+        let ev = events1.clone();
+        Arc::new(move |peer: String, up: bool, _info: Option<NodeInfo>| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, up));
+                Ok(())
+            })
+        })
+    };
+    let cb2: ConnectionCallback = {
+        let ev = events2.clone();
+        Arc::new(move |peer: String, up: bool, _info: Option<NodeInfo>| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, up));
+                Ok(())
+            })
+        })
+    };
+
+    let resolver: Arc<dyn LabelResolver> = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig { label_mappings: HashMap::new() }));
+    let t1 = Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca.clone()])
+            .with_local_node_info(info1.clone())
+            .with_bind_addr("127.0.0.1:50131".parse::<SocketAddr>()?)
+            .with_message_handler(handler)
+            .with_one_way_message_handler(one_way)
+            .with_connection_callback(cb1)
+            .with_logger(logger.clone())
+            .with_keystore(Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?)
+        ;
+    let t2 = Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca])
+            .with_local_node_info(info2.clone())
+            .with_bind_addr("127.0.0.1:50132".parse::<SocketAddr>()?)
+            .with_message_handler(Box::new(|_m| Box::pin(async { Ok(None) })))
+            .with_one_way_message_handler(Box::new(|_m| Box::pin(async { Ok(()) })))
+            .with_connection_callback(cb2)
+            .with_logger(logger.clone())
+            .with_keystore(Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?)
+        ;
+
+    let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
+    sr1?; sr2?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Connect 1 -> 2
+    t1.clone().connect_peer(PeerInfo::new(info2.node_public_key.clone(), info2.addresses.clone())).await?;
+    // Wait for on_up
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let ev1 = events1.lock().await.clone();
+    let ev2 = events2.lock().await.clone();
+    assert!(ev1.iter().any(|(p, up)| p == &id2 && *up), "t1 should see on_up for t2");
+    assert!(ev2.iter().any(|(p, up)| p == &id1 && *up), "t2 should see on_up for t1 (inbound)");
+
+    // Stop t2, expect on_down at t1 after grace period
+    t2.stop().await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let ev1b = events1.lock().await.clone();
+    assert!(ev1b.iter().any(|(p, up)| p == &id2 && !*up), "t1 should see on_down for t2 after stop");
+
+    // Restart t2 and reconnect
+    t2.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    t1.clone().connect_peer(PeerInfo::new(info2.node_public_key.clone(), info2.addresses.clone())).await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let ev1c = events1.lock().await.clone();
+    assert!(ev1c.iter().filter(|(p, up)| p == &id2 && *up).count() >= 2, "t1 should see second on_up for t2 after restart");
+
+    t1.stop().await?;
+    t2.stop().await?;
+    watchdog.abort();
+    let _ = watchdog.await;
+    Ok(())
 }
 
 /// Test that the transport properly handles message header bounds checking

@@ -31,6 +31,8 @@ pub struct DiscoveryOptions {
     pub discovery_timeout: Duration,
     /// Time-to-live for discovered nodes (in seconds)
     pub node_ttl: Duration,
+    /// Per-peer debounce window to coalesce bursty events
+    pub debounce_window: Duration,
     /// Whether to use multicast for discovery (if supported)
     pub use_multicast: bool,
     /// Whether to limit discovery to the local network
@@ -45,6 +47,7 @@ impl Default for DiscoveryOptions {
             announce_interval: Duration::from_secs(60),
             discovery_timeout: Duration::from_secs(10),
             node_ttl: Duration::from_secs(300),
+            debounce_window: Duration::from_millis(400),
             use_multicast: true,
             local_network_only: true,
             multicast_group: DEFAULT_MULTICAST_ADDR.to_string(),

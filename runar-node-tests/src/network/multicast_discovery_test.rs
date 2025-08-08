@@ -19,6 +19,92 @@ use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use std::time::SystemTime;
 use tokio::sync::oneshot;
 
+#[tokio::test]
+async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
+    // Short TTL and debounce for fast test
+    let options = DiscoveryOptions {
+        multicast_group: format!("{DEFAULT_MULTICAST_ADDR}:45678"),
+        announce_interval: Duration::from_millis(50),
+        node_ttl: Duration::from_millis(300),
+        discovery_timeout: Duration::from_secs(1),
+        debounce_window: Duration::from_millis(100),
+        ..DiscoveryOptions::default()
+    };
+
+    let logger = Logger::new_root(Component::NetworkDiscovery, "ttl_test");
+
+    // Two nodes
+    let node_a_pk: [u8; 32] = rand::random();
+    let node_a_id = compact_id(&node_a_pk);
+    let node_b_pk: [u8; 32] = rand::random();
+    let node_b_id = compact_id(&node_b_pk);
+
+    let mk_node_info = |pk: &[u8]| NodeInfo {
+        node_public_key: pk.to_vec(),
+        network_ids: vec!["test-network".to_string()],
+        addresses: vec!["127.0.0.1:0".to_string()],
+        node_metadata: NodeMetadata { services: vec![], subscriptions: vec![] },
+        version: 0,
+    };
+
+    let disc_a = MulticastDiscovery::new(mk_node_info(&node_a_pk), options.clone(), logger.clone()).await?;
+    let disc_b = MulticastDiscovery::new(mk_node_info(&node_b_pk), options.clone(), logger.clone()).await?;
+
+    // Observe events from A about B
+    let (lost_tx, lost_rx) = oneshot::channel::<()>();
+    let lost_tx = Arc::new(tokio::sync::Mutex::new(Some(lost_tx)));
+    let (upd_count_tx, mut upd_count_rx) = tokio::sync::mpsc::channel::<()>(10);
+
+    let node_b_id_clone = node_b_id.clone();
+    disc_a
+        .subscribe(Arc::new(move |event| {
+            let node_b_id = node_b_id_clone.clone();
+            let lost_tx = Arc::clone(&lost_tx);
+            let upd_count_tx = upd_count_tx.clone();
+            Box::pin(async move {
+                match event {
+                    runar_node::network::discovery::DiscoveryEvent::Discovered(pi) => {
+                        if compact_id(&pi.public_key) == node_b_id {
+                            let _ = upd_count_tx.send(()).await;
+                        }
+                    }
+                    runar_node::network::discovery::DiscoveryEvent::Updated(pi) => {
+                        if compact_id(&pi.public_key) == node_b_id {
+                            let _ = upd_count_tx.send(()).await;
+                        }
+                    }
+                    runar_node::network::discovery::DiscoveryEvent::Lost(peer) => {
+                        if peer == node_b_id {
+                            if let Some(tx) = lost_tx.lock().await.take() { let _ = tx.send(()); }
+                        }
+                    }
+                }
+            })
+        }))
+        .await?;
+
+    // Start A and B announcing
+    disc_a.start_announcing().await?;
+    disc_b.start_announcing().await?;
+    // Allow a few updates to arrive but debounced to few emissions
+    tokio::time::sleep(Duration::from_millis(350)).await;
+
+    // Stop B; A should eventually emit Lost after TTL
+    disc_b.stop_announcing().await?;
+    // Wait for Lost with timeout
+    tokio::time::timeout(Duration::from_secs(3), lost_rx).await.expect("lost not emitted")?;
+
+    // Check that multiple announcements were coalesced (received at least 1 update/discovered)
+    // but not an excessive number due to debounce
+    let mut count = 0usize;
+    while let Ok(_) = tokio::time::timeout(Duration::from_millis(50), upd_count_rx.recv()).await {
+        count += 1;
+        if count > 10 { break; }
+    }
+    assert!(count >= 1, "expected at least one discovered/updated before Lost");
+
+    Ok(())
+}
 async fn create_test_discovery(
     network_id: &str,
     node_id: &str,

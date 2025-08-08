@@ -1091,6 +1091,8 @@ impl QuicTransport {
                         }],
                     };
 
+                    // Let upper layer process our handshake response (capabilities) as well
+                    // so both sides can register remote services. First, send it to peer:
                     self.write_message(&mut send, &response_msg).await?;
                     send.finish()
                         .map_err(|e| NetworkError::TransportError(e.to_string()))?;
@@ -1099,23 +1101,20 @@ impl QuicTransport {
                 }
                 // Notify connection up
                 if let Some(cb) = &self.connection_callback {
-                    let peer_node_id = compact_id(conn.remote_address().ip().to_string().as_bytes());
-                    // We already tracked the mapping earlier; use resolved id when possible
-                    let resolved_peer_id = {
-                        let connection_id = conn.stable_id();
-                        if let Some(pid) = self
-                            .state
-                            .connection_id_to_peer_id
-                            .read()
-                            .await
-                            .get(&connection_id)
-                        {
-                            pid.clone()
-                        } else {
-                            peer_node_id
-                        }
-                    };
-                    let _ = (cb)(resolved_peer_id, true, None).await;
+                    // Resolve peer id strictly from mapping, otherwise skip (avoid bogus IP-based ids)
+                    let connection_id = conn.stable_id();
+                    if let Some(resolved_peer_id) = self
+                        .state
+                        .connection_id_to_peer_id
+                        .read()
+                        .await
+                        .get(&connection_id)
+                        .cloned()
+                    {
+                        let _ = (cb)(resolved_peer_id, true, None).await;
+                    } else {
+                        self.logger.debug("[bi_accept_loop] Skipping on_up callback due to missing peer-id mapping");
+                    }
                 }
                 continue;
             }
@@ -1568,6 +1567,7 @@ impl NetworkTransport for QuicTransport {
                     if should_retry && attempt < max_attempts {
                         attempt = attempt.saturating_add(1);
                         tokio::time::sleep(Duration::from_millis(70)).await;
+                        // Let duplicate-resolution settle and retry
                         continue;
                     }
                     break Err(e);
