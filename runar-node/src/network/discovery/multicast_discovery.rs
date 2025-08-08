@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 // Internal imports
-use super::{DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
+use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 
 // Default multicast address and port
 const DEFAULT_MULTICAST_PORT: u16 = 45678;
@@ -261,7 +261,7 @@ impl MulticastDiscovery {
                                     }
                                 }
                                 if !skip {
-                                    Self::process_message(
+                    Self::process_message(
                                         message,
                                         src,
                                         &discovered_nodes,
@@ -463,28 +463,27 @@ impl MulticastDiscovery {
                 !nodes_read.contains_key(&peer_node_id)
             };
 
-            // Store the peer info
+            // Store the peer info (always refresh)
             {
                 let mut nodes_write = nodes.write().await;
                 nodes_write.insert(peer_node_id.clone(), peer_info.clone());
             }
 
-            // ONLY notify listeners if this is a new peer
-            if is_new_peer {
-                // Notify listeners
-                {
-                    let listeners_read = listeners.read().await;
-                    for listener in listeners_read.iter() {
-                        let fut = listener(peer_info.clone());
-                        fut.await;
-                    }
-                }
-                logger.debug(format!("Notified listeners about new peer: {peer_node_id}"));
+            // Notify listeners with stateless events
+            let event = if is_new_peer {
+                DiscoveryEvent::Discovered(peer_info.clone())
             } else {
-                logger.debug(format!("Skipping listener notification for existing peer: {peer_node_id}"));
+                DiscoveryEvent::Updated(peer_info.clone())
+            };
+            {
+                let listeners_read = listeners.read().await;
+                for listener in listeners_read.iter() {
+                    let fut = listener(event.clone());
+                    fut.await;
+                }
             }
 
-            // Only respond if this is a new peer we haven't seen before
+            // Respond if this is a new peer OR if an existing peer was previously evicted
             if is_new_peer {
                 // Build a discovery message with our own info
                 let local_info_msg = PeerInfo::new(
@@ -521,6 +520,13 @@ impl MulticastDiscovery {
             let key = identifier.to_string();
             let mut nodes_write = nodes.write().await;
             nodes_write.remove(&key);
+            // Notify listeners Lost
+            let event = DiscoveryEvent::Lost(key.clone());
+            let listeners_read = listeners.read().await;
+            for listener in listeners_read.iter() {
+                let fut = listener(event.clone());
+                fut.await;
+            }
         } else {
             // No message content
             logger.warn("Received multicast message with no content".to_string());
@@ -621,7 +627,7 @@ impl NodeDiscovery for MulticastDiscovery {
         Ok(())
     }
 
-    async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()> {
+    async fn subscribe(&self, listener: DiscoveryListener) -> Result<()> {
         self.logger.debug("Adding discovery listener".to_string());
         self.listeners.write().await.push(listener);
         Ok(())
@@ -648,4 +654,6 @@ impl NodeDiscovery for MulticastDiscovery {
 
         Ok(())
     }
+
+    // Stateless interface: no remove_discovered_peer
 }

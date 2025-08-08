@@ -25,7 +25,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
             let counter = counter1_clone.clone();
             Box::pin(async move {
                 *counter.lock().unwrap() += 1;
-                println!("Handler 1 called with data: {:?}", data);
+                println!("Handler 1 called with data: {data:?}");
                 Ok(())
             })
         }),
@@ -38,14 +38,14 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
             let counter = counter2_clone.clone();
             Box::pin(async move {
                 *counter.lock().unwrap() += 1;
-                println!("Handler 2 called with data: {:?}", data);
+                println!("Handler 2 called with data: {data:?}");
                 Ok(())
             })
         }),
     ).await?;
     
-    println!("Created subscription 1: {}", sub_id1);
-    println!("Created subscription 2: {}", sub_id2);
+    println!("Created subscription 1: {sub_id1}");
+    println!("Created subscription 2: {sub_id2}");
     
     // Start the node
     node.start().await?;
@@ -63,7 +63,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
     let count1 = *counter1.lock().unwrap();
     let count2 = *counter2.lock().unwrap();
     
-    println!("Counter 1: {}, Counter 2: {}", count1, count2);
+    println!("Counter 1: {count1}, Counter 2: {count2}");
     
     assert_eq!(count1, 1, "Handler 1 should have been called once");
     assert_eq!(count2, 1, "Handler 2 should have been called once");
@@ -97,14 +97,14 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
         Arc::new(move |_ctx, data| {
             let received = received_data_clone.clone();
             Box::pin(async move {
-                println!("External handler received: {:?}", data);
+                println!("External handler received: {data:?}");
                 *received.lock().unwrap() = data.clone();
                 Ok(())
             })
         }),
     ).await?;
     
-    println!("Created external subscription: {}", sub_id);
+    println!("Created external subscription: {sub_id}");
     
     // Start the node
     node.start().await?;
@@ -115,7 +115,7 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
     let result = node.request("math1/add", Some(runar_macros_common::params! { "a" => 5.0, "b" => 3.0 })).await?;
     let result_value = result.as_type_ref::<f64>()?;
     assert_eq!(*result_value, 8.0);
-    println!("Math operation completed: 5 + 3 = {}", result_value);
+    println!("Math operation completed: 5 + 3 = {result_value}");
     
     // Give handlers time to execute
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -127,7 +127,7 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
     if let Some(data) = received {
         let event_value = data.as_type_ref::<f64>()?;
         assert_eq!(*event_value, 8.0, "Event data should match the math result");
-        println!("✅ External subscription received correct data: {}", event_value);
+        println!("✅ External subscription received correct data: {event_value}");
     }
     
     // Clean up

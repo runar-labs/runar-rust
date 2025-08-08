@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use super::multicast_discovery::PeerInfo;
 // Internal imports
 // Import PeerInfo from the parent module where it's properly exposed
-use super::{DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
+use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
 use tokio::time;
@@ -77,7 +77,7 @@ impl MemoryDiscovery {
     fn start_announce_task(&self, info: NodeInfo, options: DiscoveryOptions) -> JoinHandle<()> {
         let interval = options.announce_interval;
         let node_info = info.clone();
-        let listeners: Arc<RwLock<Vec<DiscoveryListener>>> = Arc::clone(&self.listeners);
+        let _listeners: Arc<RwLock<Vec<DiscoveryListener>>> = Arc::clone(&self.listeners);
         let logger = self.logger.clone();
 
         tokio::spawn(async move {
@@ -86,25 +86,12 @@ impl MemoryDiscovery {
             loop {
                 ticker.tick().await;
 
-                let peer_info = PeerInfo {
-                    public_key: node_info.node_public_key.clone(),
-                    addresses: node_info.addresses.clone(),
-                };
-
+                // In memory discovery, periodic announce is a no-op. We notify listeners only
+                // on first-time discovery (see add_node_internal) or after explicit removal.
                 logger.debug(format!(
-                    "Announcing local node: {}",
+                    "Periodic announce for local node: {} (no listener notification)",
                     compact_id(&node_info.node_public_key)
                 ));
-
-                // Notify listeners (simulating network discovery update)
-                let listeners_vec = {
-                    let guard = listeners.read().unwrap();
-                    guard.clone() // clones the Arc for each listener
-                };
-                for listener in listeners_vec {
-                    let fut = listener(peer_info.clone());
-                    fut.await;
-                }
             }
         })
     }
@@ -140,6 +127,10 @@ impl MemoryDiscovery {
     /// Adds a node to the discovery registry.
     async fn add_node_internal(&self, node_info: NodeInfo) {
         let node_key = compact_id(&node_info.node_public_key);
+        let is_new = {
+            let nodes = self.nodes.read().unwrap();
+            !nodes.contains_key(&node_key)
+        };
         {
             let mut nodes = self.nodes.write().unwrap();
             nodes.insert(node_key.clone(), node_info.clone());
@@ -153,15 +144,18 @@ impl MemoryDiscovery {
             addresses: node_info.addresses.clone(),
         };
 
-        // Notify listeners
-        let listeners_vec = {
-            let guard = self.listeners.read().unwrap();
-            guard.clone()
-        };
-        drop(node_key); // ensure node_key is not used after this point
-        for listener in listeners_vec {
-            let fut = listener(peer_info.clone());
-            fut.await;
+        // Notify listeners only on first discovery. Updates to existing entries
+        // do not trigger notifications unless the entry was previously removed.
+        if is_new {
+            let listeners_vec = {
+                let guard = self.listeners.read().unwrap();
+                guard.clone()
+            };
+            drop(node_key); // ensure node_key is not used after this point
+            for listener in listeners_vec {
+                let fut = listener(DiscoveryEvent::Discovered(peer_info.clone()));
+                fut.await;
+            }
         }
     }
 }
@@ -224,20 +218,31 @@ impl NodeDiscovery for MemoryDiscovery {
             task.abort();
         }
 
-        // Remove our node from the registry
-        if let Some(info) = &*self.local_node.read().unwrap() {
-            let mut nodes_map = self.nodes.write().unwrap();
-            nodes_map.remove(&compact_id(&info.node_public_key));
-            self.logger.debug(format!(
-                "Removed local node {} from registry",
-                compact_id(&info.node_public_key)
-            ));
+        // Remove our node from the registry and notify Lost
+        let local_info_opt = { self.local_node.read().unwrap().clone() };
+        if let Some(info) = local_info_opt {
+            let key = compact_id(&info.node_public_key);
+            {
+                let mut nodes_map = self.nodes.write().unwrap();
+                nodes_map.remove(&key);
+            }
+            self.logger
+                .debug(format!("Removed local node {key} from registry (emitting Lost)"));
+
+            let listeners_vec = {
+                let guard = self.listeners.read().unwrap();
+                guard.clone()
+            };
+            for listener in listeners_vec {
+                let fut = listener(DiscoveryEvent::Lost(key.clone()));
+                fut.await;
+            }
         }
 
         Ok(())
     }
 
-    async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()> {
+    async fn subscribe(&self, listener: DiscoveryListener) -> Result<()> {
         self.logger.debug("Adding discovery listener".to_string());
         self.listeners.write().unwrap().push(listener);
         Ok(())
@@ -271,4 +276,6 @@ impl NodeDiscovery for MemoryDiscovery {
         self.logger.debug("Updated local node information for memory discovery");
         Ok(())
     }
+
+    // Stateless interface: no remove_discovered_peer
 }

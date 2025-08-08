@@ -5,9 +5,11 @@ use quinn::{ClientConfig, Endpoint, ServerConfig};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
+use tokio::sync::Notify;
+use serde::{Deserialize, Serialize};
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
 
@@ -19,7 +21,6 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 use rustls_pki_types::ServerName;
 
-#[derive(Default)]
 pub struct QuicTransportOptions {
     // Original QUIC/TLS options
     certificates: Option<Vec<CertificateDer<'static>>>,
@@ -33,6 +34,7 @@ pub struct QuicTransportOptions {
     bind_addr: Option<SocketAddr>,
     message_handler: Option<super::MessageHandler>,
     one_way_message_handler: Option<super::OneWayMessageHandler>,
+    connection_callback: Option<super::ConnectionCallback>,
     logger: Option<Arc<Logger>>,
     keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
     label_resolver: Option<Arc<dyn runar_serializer::traits::LabelResolver>>,
@@ -72,6 +74,14 @@ impl std::fmt::Debug for QuicTransportOptions {
                 },
             )
             .field(
+                "connection_callback",
+                &if self.connection_callback.is_some() {
+                    "Some(ConnectionCallback)"
+                } else {
+                    "None"
+                },
+            )
+            .field(
                 "logger",
                 &if self.logger.is_some() {
                     "Some(Logger)"
@@ -96,6 +106,28 @@ impl std::fmt::Debug for QuicTransportOptions {
                 },
             )
             .finish()
+    }
+}
+
+impl Default for QuicTransportOptions {
+    fn default() -> Self {
+        Self {
+            certificates: None,
+            private_key: None,
+            root_certificates: None,
+            // Provide sane non-zero defaults to avoid immediate handshake/idle timeouts
+            connection_idle_timeout: Duration::from_secs(30),
+            keep_alive_interval: Duration::from_secs(5),
+
+            local_node_info: None,
+            bind_addr: None,
+            message_handler: None,
+            one_way_message_handler: None,
+            connection_callback: None,
+            logger: None,
+            keystore: None,
+            label_resolver: None,
+        }
     }
 }
 
@@ -138,6 +170,11 @@ impl QuicTransportOptions {
 
     pub fn with_one_way_message_handler(mut self, handler: super::OneWayMessageHandler) -> Self {
         self.one_way_message_handler = Some(handler);
+        self
+    }
+
+    pub fn with_connection_callback(mut self, callback: super::ConnectionCallback) -> Self {
+        self.connection_callback = Some(callback);
         self
     }
 
@@ -192,6 +229,10 @@ impl QuicTransportOptions {
         self.one_way_message_handler.as_ref()
     }
 
+    pub fn connection_callback(&self) -> Option<&super::ConnectionCallback> {
+        self.connection_callback.as_ref()
+    }
+
     pub fn logger(&self) -> Option<&Arc<Logger>> {
         self.logger.as_ref()
     }
@@ -217,6 +258,7 @@ impl Clone for QuicTransportOptions {
             bind_addr: self.bind_addr,
             message_handler: None, // MessageHandler doesn't implement Clone
             one_way_message_handler: None, // OneWayMessageHandler doesn't implement Clone
+            connection_callback: self.connection_callback.clone(),
             logger: self.logger.clone(),
             keystore: self.keystore.clone(),
             label_resolver: self.label_resolver.clone(),
@@ -225,17 +267,34 @@ impl Clone for QuicTransportOptions {
 }
 
 /// Simple peer state used by the new transport.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PeerState {
     connection: Arc<quinn::Connection>,
+    connection_id: usize,
     node_info_version: i64,
+    initiator_peer_id: String,
+    initiator_nonce: u64,
+    responder_peer_id: String,
+    responder_nonce: u64,
 }
 
 impl PeerState {
-    fn new(connection: Arc<quinn::Connection>, node_info_version: i64) -> Self {
+    fn new(
+        connection: Arc<quinn::Connection>,
+        node_info_version: i64,
+        initiator_peer_id: String,
+        initiator_nonce: u64,
+        responder_peer_id: String,
+        responder_nonce: u64,
+    ) -> Self {
         Self {
-            connection,
+            connection: connection.clone(),
+            connection_id: connection.stable_id(),
             node_info_version,
+            initiator_peer_id,
+            initiator_nonce,
+            responder_peer_id,
+            responder_nonce,
         }
     }
 }
@@ -257,9 +316,24 @@ fn dns_safe_node_id(node_id: &str) -> String {
 struct SharedState {
     peers: PeerMap,
     connection_id_to_peer_id: ConnectionIdToPeerIdMap,
+    dial_backoff: Arc<RwLock<HashMap<String, (u32, Instant)>>>,
+    dial_cancel: Arc<RwLock<HashMap<String, Arc<Notify>>>>,
 }
 type PeerMap = Arc<RwLock<HashMap<String, PeerState>>>;
 type ConnectionIdToPeerIdMap = Arc<RwLock<HashMap<usize, String>>>;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+enum ConnectionRole {
+    Initiator,
+    Responder,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HandshakeData {
+    node_info: NodeInfo,
+    nonce: u64,
+    role: ConnectionRole,
+}
 
 /// Encode a `NetworkMessage` with a 4-byte BE length prefix.
 fn encode_message(msg: &NetworkMessage) -> Result<Vec<u8>, NetworkError> {
@@ -387,6 +461,7 @@ pub struct QuicTransport {
     // callback into Node layer
     message_handler: super::MessageHandler,
     one_way_message_handler: super::OneWayMessageHandler,
+    connection_callback: Option<super::ConnectionCallback>,
 
     // crypto helpers
     keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
@@ -402,6 +477,157 @@ pub struct QuicTransport {
 }
 
 impl QuicTransport {
+
+    fn generate_nonce() -> u64 {
+        rand::random::<u64>()
+    }
+
+    fn local_node_id(&self) -> String {
+        compact_id(&self.local_node_info.node_public_key)
+    }
+
+    fn decide_connection_winner(
+        &self,
+        existing: (&str, u64, &str, u64),
+        candidate: (&str, u64, &str, u64),
+    ) -> bool {
+        let existing_tuple = (existing.0, existing.1, existing.2, existing.3);
+        let candidate_tuple = (candidate.0, candidate.1, candidate.2, candidate.3);
+        candidate_tuple < existing_tuple
+    }
+
+    async fn replace_or_keep_connection(
+        &self,
+        peer_node_id: &str,
+        new_conn: Arc<quinn::Connection>,
+        initiator_peer_id: String,
+        initiator_nonce: u64,
+        responder_peer_id: String,
+        responder_nonce: u64,
+    ) -> bool {
+        let new_id = new_conn.stable_id();
+        self.logger.debug(format!(
+            "🔁 [dup] evaluate peer={peer_node_id} new_id={new_id} init=({initiator_peer_id},{initiator_nonce}) resp=({responder_peer_id},{responder_nonce})"
+        ));
+        // Cancel any pending outbound dial to this peer and reset backoff on successful inbound
+        {
+            let mut cancel = self.state.dial_cancel.write().await;
+            if let Some(n) = cancel.remove(peer_node_id) {
+                n.notify_waiters();
+            }
+        }
+        {
+            let mut backoff = self.state.dial_backoff.write().await;
+            backoff.remove(peer_node_id);
+        }
+        let mut peers = self.state.peers.write().await;
+        let existing_opt = peers.get(peer_node_id).cloned();
+        if let Some(existing) = existing_opt {
+            self.logger.debug(format!(
+                "🔁 [dup] existing for peer={peer_node_id} existing_id={} init=({},{}) resp=({},{})",
+                existing.connection_id,
+                existing.initiator_peer_id,
+                existing.initiator_nonce,
+                existing.responder_peer_id,
+                existing.responder_nonce
+            ));
+            // If existing entry is a placeholder (no dup-metadata), always replace with the real connection
+            if existing.initiator_nonce == 0 && existing.responder_nonce == 0 {
+                self.logger.debug(format!(
+                    "🔁 [dup] Replacing placeholder connection for peer {peer_node_id} with established connection"
+                ));
+                // If the placeholder refers to the same underlying connection, do NOT close it.
+                let existing_id = existing.connection_id;
+                let new_id = new_conn.stable_id();
+                let new_state = PeerState::new(
+                    new_conn,
+                    existing.node_info_version,
+                    initiator_peer_id,
+                    initiator_nonce,
+                    responder_peer_id,
+                    responder_nonce,
+                );
+                peers.insert(peer_node_id.to_string(), new_state);
+                // Update mapping for the connection id
+                self.state
+                    .connection_id_to_peer_id
+                    .write()
+                    .await
+                    .insert(new_id, peer_node_id.to_string());
+                // If the new connection differs from the placeholder's, close the old one
+                if new_id != existing_id {
+                    existing.connection.close(0u32.into(), b"duplicate-replaced");
+                }
+                return true;
+            }
+            let existing_key = (
+                existing.initiator_peer_id.as_str(),
+                existing.initiator_nonce,
+                existing.responder_peer_id.as_str(),
+                existing.responder_nonce,
+            );
+            let candidate_key = (
+                initiator_peer_id.as_str(),
+                initiator_nonce,
+                responder_peer_id.as_str(),
+                responder_nonce,
+            );
+            if self.decide_connection_winner(existing_key, candidate_key) {
+                self.logger.debug(format!(
+                    "🔁 [dup] Candidate connection wins for peer {peer_node_id}; closing existing"
+                ));
+                let new_state = PeerState::new(
+                    new_conn,
+                    existing.node_info_version,
+                    initiator_peer_id,
+                    initiator_nonce,
+                    responder_peer_id,
+                    responder_nonce,
+                );
+                let conn_id = new_state.connection_id;
+                peers.insert(
+                    peer_node_id.to_string(),
+                    new_state,
+                );
+                self.state
+                    .connection_id_to_peer_id
+                    .write()
+                    .await
+                    .insert(conn_id, peer_node_id.to_string());
+                // Close only if the old connection id differs
+                if existing.connection_id != conn_id {
+                    existing.connection.close(0u32.into(), b"duplicate-replaced");
+                }
+                true
+            } else {
+                self.logger.debug(format!(
+                    "🔁 [dup] Existing connection kept for peer {peer_node_id}; closing new"
+                ));
+                new_conn.close(0u32.into(), b"duplicate-loser");
+                false
+            }
+        } else {
+            let new_state = PeerState::new(
+                new_conn,
+                0,
+                initiator_peer_id,
+                initiator_nonce,
+                responder_peer_id,
+                responder_nonce,
+            );
+            let conn_id = new_state.connection_id;
+            peers.insert(
+                peer_node_id.to_string(),
+                new_state,
+            );
+            self.state
+                .connection_id_to_peer_id
+                .write()
+                .await
+                .insert(conn_id, peer_node_id.to_string());
+            true
+        }
+    }
     pub fn new(
         mut options: QuicTransportOptions,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -419,6 +645,7 @@ impl QuicTransport {
             .one_way_message_handler
             .take()
             .ok_or("one_way_message_handler is required")?;
+        let connection_callback = options.connection_callback.take();
         let logger = (options.logger.take().ok_or("logger is required")?)
             .with_component(runar_common::Component::Transporter);
         let keystore = options.keystore.take().ok_or("keystore is required")?;
@@ -441,6 +668,7 @@ impl QuicTransport {
             logger: Arc::new(logger),
             message_handler,
             one_way_message_handler,
+            connection_callback,
             keystore,
             label_resolver,
             state: Self::shared_state(),
@@ -480,10 +708,11 @@ impl QuicTransport {
         let transport_config = Arc::new(transport_config);
 
         // Create server configuration using Quinn 0.11.x API with custom transport config
-        let server_config = ServerConfig::with_single_cert(certs.clone(), key.clone_key())
+        let mut server_config = ServerConfig::with_single_cert(certs.clone(), key.clone_key())
             .map_err(|e| {
                 NetworkError::ConfigurationError(format!("Failed to create server config: {e}"))
             })?;
+        server_config.transport_config(transport_config.clone());
 
         let rustls_client_config = rustls::ClientConfig::builder()
             .dangerous()
@@ -510,24 +739,23 @@ impl QuicTransport {
         Ok((server_config, client_config))
     }
 
-    fn spawn_accept_loop(self: Arc<Self>, endpoint: Endpoint) -> tokio::task::JoinHandle<()> {
-        let endpoint = Arc::new(RwLock::new(Some(endpoint)));
+    fn spawn_accept_loop(self: Arc<Self>, _endpoint: Endpoint) -> tokio::task::JoinHandle<()> {
         let self_clone = self.clone();
         tokio::spawn(async move {
             loop {
-                let connecting = {
-                    let guard = endpoint.read().await;
-                    if let Some(ep) = guard.as_ref() {
-                        ep.accept().await
-                    } else {
-                        break;
-                    }
+                // If transport is no longer running, break the loop
+                if !*self_clone.running.read().await {
+                    break;
+                }
+                // Snapshot endpoint without holding the lock across await points
+                let endpoint_opt = { self_clone.endpoint.read().await.clone() };
+                let Some(endpoint) = endpoint_opt else {
+                    break;
                 };
-                if let Some(connecting) = connecting {
+                // Await on accept without holding the RwLock guard
+                if let Some(connecting) = endpoint.accept().await {
                     match connecting.await {
                         Ok(conn) => {
-                            // For inbound, we don't have peer_id yet; handshake will identify.
-                            // Spawn tasks anyway and let first bi-stream be handshake.
                             let task = self_clone
                                 .clone()
                                 .spawn_connection_tasks("inbound".to_string(), Arc::new(conn));
@@ -571,14 +799,70 @@ impl QuicTransport {
             } else {
                 peer_id
             };
-            // remove from peers on exit
-            self_clone
-                .state
-                .peers
-                .write()
-                .await
-                .remove(&resolved_peer_id);
-            self_clone.logger.debug(format!("connection tasks exited for peer_node_id: {resolved_peer_id} - local node_id: {local_node_id}", local_node_id=compact_id(&self_clone.local_node_info.node_public_key)));
+            // Remove from peers ONLY if this task belonged to the current active connection.
+            let connection_id = conn.stable_id();
+            let mut removed = false;
+            // Gracefully handle brief handover races by re-checking after a short delay
+            let should_remove = {
+                let peers_guard = self_clone.state.peers.read().await;
+                matches!(peers_guard.get(&resolved_peer_id), Some(current) if current.connection_id == connection_id)
+            };
+            if should_remove {
+                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                let mut peers_guard = self_clone.state.peers.write().await;
+                if let Some(current) = peers_guard.get(&resolved_peer_id) {
+                    if current.connection_id == connection_id {
+                        peers_guard.remove(&resolved_peer_id);
+                        removed = true;
+                    } else {
+                        self_clone.logger.debug(format!(
+                            "(post-grace) connection tasks for old conn_id={} exited; current conn_id={} remains for peer {}",
+                            connection_id, current.connection_id, resolved_peer_id
+                        ));
+                    }
+                }
+            } else {
+                self_clone.logger.debug(format!(
+                    "connection tasks for old conn_id={connection_id} exited; current active differs for peer {resolved_peer_id}"
+                ));
+            }
+            if removed {
+                // Reset backoff so that future dials are allowed promptly after a clean disconnect
+                self_clone
+                    .state
+                    .dial_backoff
+                    .write()
+                    .await
+                    .remove(&resolved_peer_id);
+                // Cancel any pending dial waits
+                if let Some(n) = self_clone
+                    .state
+                    .dial_cancel
+                    .write()
+                    .await
+                    .remove(&resolved_peer_id)
+                {
+                    n.notify_waiters();
+                }
+                self_clone.logger.debug(format!("connection tasks exited for peer_node_id: {resolved_peer_id} - local node_id: {local_node_id}", local_node_id=compact_id(&self_clone.local_node_info.node_public_key)));
+
+                // Grace period: avoid flapping during duplicate-connection resolution.
+                // Only emit on_down if the peer remains absent after a short delay.
+                if let Some(cb) = &self_clone.connection_callback {
+                    let cb = cb.clone();
+                    let self_check = self_clone.clone();
+                    let peer_for_check = resolved_peer_id.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                        let still_disconnected = !self_check.state.peers.read().await.contains_key(&peer_for_check);
+                        if still_disconnected {
+                            let _ = (cb)(peer_for_check.clone(), false, None).await;
+                        } else {
+                            self_check.logger.debug(format!("disconnect suppressed for {peer_for_check} due to new active connection"));
+                        }
+                    });
+                }
+            }
         })
     }
 
@@ -686,10 +970,13 @@ impl QuicTransport {
         needs_to_correlate_peer_id: bool,
     ) -> Result<(), NetworkError> {
         loop {
-            let (mut send, mut recv) = conn
-                .accept_bi()
-                .await
-                .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+            // Accept bidirectional streams; do not fail the whole loop on timeouts
+            let (mut send, mut recv) = match conn.accept_bi().await {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(NetworkError::TransportError(e.to_string()));
+                }
+            };
             let msg = self.read_message(&mut recv).await?;
 
             self.logger.debug(format!("🔍 [bi_accept_loop] Received message: type={type}, source={source}, dest={dest}", 
@@ -699,38 +986,69 @@ impl QuicTransport {
                 self.logger
                     .debug("🔍 [bi_accept_loop] Processing handshake message");
 
+                let mut response_nonce: u64 = 0;
+                let mut should_send_response = false;
                 if let Some(payload) = msg.payloads.first() {
+                    // Try new HandshakeData (with nonce/role); fall back to raw NodeInfo for compatibility
+                    let parsed: Result<HandshakeData, _> = serde_cbor::from_slice(&payload.value_bytes);
+                    if let Ok(hs) = parsed {
+                        let peer_node_id = msg.source_node_id.clone();
+                        let node_info = hs.node_info;
+                        let node_info_version = node_info.version;
+                        let remote_nonce = hs.nonce;
+                        let remote_role = hs.role;
+                        let local_role = ConnectionRole::Responder;
+                        let local_nonce = Self::generate_nonce();
+                        response_nonce = local_nonce;
+
+                        self.logger.debug(format!("🔍 [bi_accept_loop] HS v2 from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}"));
+                        let candidate_initiator = match (remote_role, local_role) {
+                            (ConnectionRole::Initiator, ConnectionRole::Responder) => (peer_node_id.clone(), remote_nonce, self.local_node_id(), local_nonce),
+                            (ConnectionRole::Responder, ConnectionRole::Responder) => (peer_node_id.clone(), remote_nonce, self.local_node_id(), local_nonce),
+                            (ConnectionRole::Initiator, ConnectionRole::Initiator) => (peer_node_id.clone(), remote_nonce, self.local_node_id(), local_nonce),
+                            (ConnectionRole::Responder, ConnectionRole::Initiator) => (self.local_node_id(), local_nonce, peer_node_id.clone(), remote_nonce),
+                        };
+                        self.logger.debug(format!(
+                            "🔍 [bi_accept_loop] candidate dup key init=({},{}) resp=({},{})",
+                            candidate_initiator.0, candidate_initiator.1, candidate_initiator.2, candidate_initiator.3
+                        ));
+                        let kept = self.replace_or_keep_connection(
+                            &peer_node_id,
+                            conn.clone(),
+                            candidate_initiator.0,
+                            candidate_initiator.1,
+                            candidate_initiator.2,
+                            candidate_initiator.3,
+                        ).await;
+                        if !kept {
+                            // New inbound lost; skip further processing for this connection
+                            continue;
+                        }
+                        should_send_response = true;
+                        let _ = (self.message_handler)(msg.clone()).await;
+                        if needs_to_correlate_peer_id {
+                            self.state.connection_id_to_peer_id.write().await.insert(conn.stable_id(), peer_node_id);
+                        }
+                    } else {
                     match serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes) {
                         Ok(node_info) => {
                             let peer_node_id = msg.source_node_id.clone();
                             let node_info_version = node_info.version;
 
                             self.logger.debug(format!("🔍 [bi_accept_loop] Handshake NodeInfo peer_node_id: {peer_node_id} node info version: {node_info_version}"));
-                            {
-                                //check if we already know about this peer
-                                let mut peers = self.state.peers.write().await;
-                                if let Some(peer) = peers.get(&peer_node_id) {
-                                    // Only update if the incoming version is strictly greater than the stored version
-                                    if node_info_version <= peer.node_info_version {
-                                        self.logger.debug(format!("🔍 [bi_accept_loop] Known peer_node_id: {peer_node_id} with version: {node_info_version} is not newer than stored version {stored_version} - no update needed - we will skip sending the handshake response", stored_version = peer.node_info_version));
-                                        //skip sending the handshake response - not a first time handshake
-                                        continue;
-                                    } else {
-                                        peers.insert(
-                                            peer_node_id.clone(),
-                                            PeerState::new(conn.clone(), node_info_version),
-                                        );
-                                    }
-                                } else {
-                                    self.logger.debug(format!(
-                                        "🔍 [bi_accept_loop] New peer peer_node_id: {peer_node_id}"
-                                    ));
-                                    peers.insert(
-                                        peer_node_id.clone(),
-                                        PeerState::new(conn.clone(), node_info_version),
-                                    );
-                                }
+                            // Legacy path: we don't have nonces/roles; treat this as inbound responder wins
+                            let kept = self.replace_or_keep_connection(
+                                &peer_node_id,
+                                conn.clone(),
+                                self.local_node_id(),
+                                0,
+                                peer_node_id.clone(),
+                                0,
+                            ).await;
+                            if !kept {
+                                continue;
                             }
+                            should_send_response = true;
                             let _ = (self.message_handler)(msg.clone()).await;
                             if needs_to_correlate_peer_id {
                                 self.state
@@ -745,33 +1063,60 @@ impl QuicTransport {
                                 "❌ [bi_accept_loop] Failed to parse NodeInfo: {e}"
                             ));
                         }
-                    }
+                    } }
                 }
 
-                // Send handshake response
-                self.logger
-                    .debug("🔍 [bi_accept_loop] Sending handshake response");
-                let response_msg = NetworkMessage {
-                    source_node_id: compact_id(&self.local_node_info.node_public_key),
-                    destination_node_id: msg.source_node_id,
-                    message_type: super::MESSAGE_TYPE_HANDSHAKE,
-                    payloads: vec![super::NetworkMessagePayloadItem {
-                        path: "handshake".to_string(),
-                        value_bytes: serde_cbor::to_vec(&self.local_node_info).unwrap_or_default(),
-                        correlation_id: msg
-                            .payloads
-                            .first()
-                            .map(|p| p.correlation_id.clone())
-                            .unwrap_or_default(),
-                        context: None,
-                    }],
-                };
+                // Send handshake response only if this connection is the surviving winner
+                if should_send_response {
+                    self.logger
+                        .debug("🔍 [bi_accept_loop] Sending handshake response");
+                    let response_hs = HandshakeData {
+                        node_info: self.local_node_info.clone(),
+                        nonce: response_nonce, // include responder nonce (0 for legacy), so both sides can compute tie-break keys
+                        role: ConnectionRole::Responder,
+                    };
+                    let response_msg = NetworkMessage {
+                        source_node_id: compact_id(&self.local_node_info.node_public_key),
+                        destination_node_id: msg.source_node_id,
+                        message_type: super::MESSAGE_TYPE_HANDSHAKE,
+                        payloads: vec![super::NetworkMessagePayloadItem {
+                            path: "handshake".to_string(),
+                            value_bytes: serde_cbor::to_vec(&response_hs).unwrap_or_default(),
+                            correlation_id: msg
+                                .payloads
+                                .first()
+                                .map(|p| p.correlation_id.clone())
+                                .unwrap_or_default(),
+                            context: None,
+                        }],
+                    };
 
-                self.write_message(&mut send, &response_msg).await?;
-                send.finish()
-                    .map_err(|e| NetworkError::TransportError(e.to_string()))?;
-                self.logger
-                    .debug("✅ [bi_accept_loop] Handshake response sent");
+                    self.write_message(&mut send, &response_msg).await?;
+                    send.finish()
+                        .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+                    self.logger
+                        .debug("✅ [bi_accept_loop] Handshake response sent");
+                }
+                // Notify connection up
+                if let Some(cb) = &self.connection_callback {
+                    let peer_node_id = compact_id(conn.remote_address().ip().to_string().as_bytes());
+                    // We already tracked the mapping earlier; use resolved id when possible
+                    let resolved_peer_id = {
+                        let connection_id = conn.stable_id();
+                        if let Some(pid) = self
+                            .state
+                            .connection_id_to_peer_id
+                            .read()
+                            .await
+                            .get(&connection_id)
+                        {
+                            pid.clone()
+                        } else {
+                            peer_node_id
+                        }
+                    };
+                    let _ = (cb)(resolved_peer_id, true, None).await;
+                }
                 continue;
             }
 
@@ -821,16 +1166,22 @@ impl QuicTransport {
         &self,
         peer_id: &str,
         conn: &quinn::Connection,
-    ) -> Result<(), NetworkError> {
+        local_nonce: u64,
+    ) -> Result<u64, NetworkError> {
         self.logger.debug(format!(
             "🔍 [handshake_outbound] Starting handshake with peer: {peer_id}"
         ));
 
         self.logger
-            .debug("🔍 [handshake_outbound] Serializing local NodeInfo");
-        let payload_bytes = serde_cbor::to_vec(&self.local_node_info).map_err(|e| {
+            .debug("🔍 [handshake_outbound] Serializing local HandshakeData");
+        let hs = HandshakeData {
+            node_info: self.local_node_info.clone(),
+            nonce: local_nonce,
+            role: ConnectionRole::Initiator,
+        };
+        let payload_bytes = serde_cbor::to_vec(&hs).map_err(|e| {
             self.logger.error(format!(
-                "❌ [handshake_outbound] Failed to serialize NodeInfo: {e}"
+                "❌ [handshake_outbound] Failed to serialize HandshakeData: {e}"
             ));
             NetworkError::MessageError(e.to_string())
         })?;
@@ -850,20 +1201,56 @@ impl QuicTransport {
         };
 
         self.logger
-            .debug("🔍 [handshake_outbound] Sending handshake message via request_inner");
+            .debug("🔍 [handshake_outbound] Opening bi stream for handshake (v2)");
+        // Open a fresh bi-directional stream for handshake
+        let (mut send, mut recv) = conn.open_bi().await.map_err(|e| {
+            self.logger.error(format!(
+                "❌ [handshake_outbound] Failed to open bi stream: {e}"
+            ));
+            NetworkError::TransportError(e.to_string())
+        })?;
 
-        // Send handshake and wait for response
-        let reply = self.request_inner(conn, &msg).await?;
+        self.logger
+            .debug("🔍 [handshake_outbound] Writing handshake message");
+        self.write_message(&mut send, &msg).await?;
+        send.finish().map_err(|e| {
+            self.logger.error(format!(
+                "❌ [handshake_outbound] Failed to finish send: {e}"
+            ));
+            NetworkError::TransportError(e.to_string())
+        })?;
+
+        self.logger
+            .debug("🔍 [handshake_outbound] Waiting for handshake response with timeout");
+        let reply = tokio::time::timeout(Duration::from_secs(2), self.read_message(&mut recv))
+            .await
+            .map_err(|_| NetworkError::TransportError("handshake response timeout".into()))??;
 
         self.logger
             .debug("🔍 [handshake_outbound] Received handshake response, processing...");
 
+        // Parse responder handshake (prefer v2), fall back to v1 NodeInfo
+        let mut responder_nonce: u64 = 0;
+        if let Some(payload) = reply.payloads.first() {
+            if let Ok(hs) = serde_cbor::from_slice::<HandshakeData>(&payload.value_bytes) {
+                responder_nonce = hs.nonce;
+            } else if let Ok(_node_info) = serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes) {
+                responder_nonce = 0;
+            }
+        }
+
         //send to node to handle handshake response and store peer node info
         let _ = (self.message_handler)(reply).await;
 
-        Ok(())
+        // Notify connection up
+        if let Some(cb) = &self.connection_callback {
+            let _ = (cb)(peer_id.to_string(), true, None).await;
+        }
+
+        Ok(responder_nonce)
     }
 
+    #[allow(dead_code)]
     async fn request_inner(
         &self,
         conn: &quinn::Connection,
@@ -921,6 +1308,8 @@ impl QuicTransport {
         SharedState {
             peers: Arc::new(RwLock::new(HashMap::new())),
             connection_id_to_peer_id: Arc::new(RwLock::new(HashMap::new())),
+            dial_backoff: Arc::new(RwLock::new(HashMap::new())),
+            dial_cancel: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -941,9 +1330,32 @@ impl NetworkTransport for QuicTransport {
         // Create Quinn server & client configs
         let (server_cfg, client_cfg) = self.build_quinn_configs()?;
 
-        let mut endpoint = Endpoint::server(server_cfg, self.bind_addr)
-            .map_err(|e| NetworkError::TransportError(format!("failed to create endpoint: {e}")))?;
-        endpoint.set_default_client_config(client_cfg);
+        // Bind endpoint with retry to tolerate fast restarts (port linger)
+        let mut attempt: u8 = 0;
+        let endpoint: Endpoint = loop {
+            match Endpoint::server(server_cfg.clone(), self.bind_addr) {
+                Ok(mut ep) => {
+                    ep.set_default_client_config(client_cfg.clone());
+                    break ep;
+                }
+                Err(e) => {
+                    let err_str = e.to_string();
+                    // Retry a few times on EADDRINUSE during fast restarts
+                    if err_str.contains("Address already in use") && attempt < 40 {
+                        self.logger.warn(format!(
+                            "[start] Bind failed with EADDRINUSE, retrying attempt {}...",
+                            attempt + 1
+                        ));
+                        attempt += 1;
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    return Err(NetworkError::TransportError(format!(
+                        "failed to create endpoint: {err_str}"
+                    )));
+                }
+            }
+        };
 
         // store endpoint
         {
@@ -980,17 +1392,35 @@ impl NetworkTransport for QuicTransport {
             ep.close(0u32.into(), b"shutdown");
         }
 
+        // Snapshot and clear peers under a write lock to avoid deadlocks
         self.logger.debug("Closing all connections");
-        let peers = self.state.peers.read().await;
-        for peer in peers.values() {
-            peer.connection.close(0u32.into(), b"shutdown");
+        let connections_to_close: Vec<quinn::Connection> = {
+            let mut peers_guard = self.state.peers.write().await;
+            let conns = peers_guard
+                .values()
+                .map(|p| p.connection.as_ref().clone())
+                .collect::<Vec<_>>();
+            peers_guard.clear();
+            conns
+        };
+        for conn in connections_to_close {
+            conn.close(0u32.into(), b"shutdown");
         }
 
+        // Clear in-memory maps
+        self.state
+            .connection_id_to_peer_id
+            .write()
+            .await
+            .clear();
+        self.state.dial_backoff.write().await.clear();
+        self.state.dial_cancel.write().await.clear();
+
+        // Abort background tasks without awaiting them to prevent potential deadlocks
         self.logger.debug("canceling all remaining tasks");
         let mut tasks = self.tasks.lock().await;
         while let Some(t) = tasks.pop() {
             t.abort();
-            let _ = t.await;
         }
         Ok(())
     }
@@ -1023,9 +1453,8 @@ impl NetworkTransport for QuicTransport {
         peer_node_id: &str,
         context: MessageContext,
     ) -> Result<ArcValue, NetworkError> {
-        self.logger.info(format!(
-            "🔍 [request] Starting request to peer: {peer_node_id}"
-        ));
+        self.logger
+            .info(format!("🔍 [request] Starting request to peer: {peer_node_id}"));
 
         let network_id = topic_path.network_id();
         let correlation_id = uuid::Uuid::new_v4().to_string();
@@ -1058,36 +1487,93 @@ impl NetworkTransport for QuicTransport {
             }],
         };
 
-        let peers = self.state.peers.read().await;
-        let peer = peers.get(peer_node_id).ok_or_else(|| {
+        // A few transparent retries to ride out duplicate-resolution or brief flips
+        let mut attempt: u8 = 0;
+        let max_attempts: u8 = 3;
+        let response_msg = loop {
+            // Read current peer entry; if missing once, wait briefly and retry once
+            let maybe_peer = {
+                let peers_read = self.state.peers.read().await;
+                peers_read.get(peer_node_id).cloned()
+            };
+            let peer = match maybe_peer {
+                Some(p) => p,
+                None => {
+                    if attempt < max_attempts {
+                        attempt = attempt.saturating_add(1);
+                        tokio::time::sleep(Duration::from_millis(80)).await;
+                        continue;
+                    }
+                    self.logger
+                        .error(format!("❌ [request] Not connected to peer {peer_node_id}"));
+                    break Err(NetworkError::ConnectionError(format!(
+                        "not connected to peer {peer_node_id}"
+                    )));
+                }
+            };
+            self.logger.info("🔍 [request] Opening bidirectional stream");
+            let open_res = peer.connection.open_bi().await;
+            let (mut send, mut recv) = match open_res {
+                Ok(v) => v,
+                Err(e) => {
+                    self.logger
+                        .error(format!("❌ [request] Failed to open bidirectional stream: {e}"));
+                    if attempt < max_attempts {
+                        attempt = attempt.saturating_add(1);
+                        tokio::time::sleep(Duration::from_millis(70)).await;
+                        continue;
+                    }
+                    break Err(NetworkError::TransportError(format!(
+                        "open_bi failed: {e}"
+                    )));
+                }
+            };
+
             self.logger
-                .error(format!("❌ [request] Not connected to peer {peer_node_id}"));
-            NetworkError::ConnectionError(format!("not connected to peer {peer_node_id}"))
-        })?;
+                .info("🔍 [request] Writing request message to stream");
+            if let Err(e) = self.write_message(&mut send, &msg).await {
+                self.logger
+                    .error(format!("❌ [request] Failed to write request: {e}"));
+                if attempt < max_attempts {
+                    attempt = attempt.saturating_add(1);
+                    tokio::time::sleep(Duration::from_millis(70)).await;
+                    continue;
+                }
+                break Err(e);
+            }
 
-        self.logger
-            .info("🔍 [request] Opening bidirectional stream");
-        let (mut send, mut recv) = peer.connection.open_bi().await.map_err(|e| {
-            self.logger.error(format!(
-                "❌ [request] Failed to open bidirectional stream: {e}"
-            ));
-            NetworkError::TransportError(format!("open_bi failed: {e}"))
-        })?;
- 
-       
-        self.logger
-            .info("🔍 [request] Writing request message to stream");
-        self.write_message(&mut send, &msg).await?;
+            self.logger.info("🔍 [request] Finishing send stream");
+            if let Err(e) = send.finish() {
+                self.logger
+                    .error(format!("❌ [request] Failed to finish send stream: {e}"));
+                if attempt < max_attempts {
+                    attempt = attempt.saturating_add(1);
+                    tokio::time::sleep(Duration::from_millis(70)).await;
+                    continue;
+                }
+                break Err(NetworkError::TransportError(format!(
+                    "finish send failed: {e}"
+                )));
+            }
 
-        self.logger.info("🔍 [request] Finishing send stream");
-        send.finish().map_err(|e| {
-            self.logger
-                .error(format!("❌ [request] Failed to finish send stream: {e}"));
-            NetworkError::TransportError(format!("finish send failed: {e}"))
-        })?;
-
-        self.logger.info("🔍 [request] Reading response message");
-        let response_msg = self.read_message(&mut recv).await?;
+            self.logger.info("🔍 [request] Reading response message");
+            match self.read_message(&mut recv).await {
+                Ok(resp) => break Ok(resp),
+                Err(e) => {
+                    let s = e.to_string();
+                    let should_retry = s.contains("connection lost")
+                        || s.contains("duplicate")
+                        || s.contains("aborted by peer")
+                        || s.contains("closed");
+                    if should_retry && attempt < max_attempts {
+                        attempt = attempt.saturating_add(1);
+                        tokio::time::sleep(Duration::from_millis(70)).await;
+                        continue;
+                    }
+                    break Err(e);
+                }
+            }
+        }?;
         self.logger.info(format!(
             "🔍 [request] Received response message: type={}, payloads={}",
             response_msg.message_type,
@@ -1165,15 +1651,6 @@ impl NetworkTransport for QuicTransport {
     }
 
     async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError> {
-        //check if transport is running
-        {
-            let running = self.running.read().await;
-            if !*running {
-                self.logger.error("❌ [connect_peer] Transport not running");
-                return Err(NetworkError::TransportError("transport not running".into()));
-            }
-        }
-
         let peer_node_id = compact_id(&discovery_msg.public_key);
         self.logger.debug(format!(
             "🔍 [connect_peer] Starting connection to peer: {peer_node_id}"
@@ -1191,10 +1668,13 @@ impl NetworkTransport for QuicTransport {
 
         let endpoint = {
             let guard = self.endpoint.read().await;
-            guard.as_ref().cloned().ok_or_else(|| {
-                self.logger.error("❌ [connect_peer] Endpoint not started");
-                NetworkError::TransportError("endpoint not started".into())
-            })?
+            match guard.as_ref().cloned() {
+                Some(ep) => ep,
+                None => {
+                    self.logger.debug("[connect_peer] Endpoint not started (transport stopping or stopped); coalescing to no-op");
+                    return Ok(());
+                }
+            }
         };
 
         if discovery_msg.addresses.is_empty() {
@@ -1216,6 +1696,30 @@ impl NetworkTransport for QuicTransport {
         let dns_safe_peer_id = dns_safe_node_id(&peer_node_id);
         self.logger.debug(format!("🔍 [connect_peer] Connecting to {peer_node_id} (DNS-safe: {dns_safe_peer_id}) at {addr}"));
 
+        // Per-peer cancel Notify (created if absent)
+        let cancel_notify = {
+            let mut map = self.state.dial_cancel.write().await;
+            map.entry(peer_node_id.clone())
+                .or_insert_with(|| Arc::new(Notify::new()))
+                .clone()
+        };
+
+        // Honor per-peer backoff
+        let now = Instant::now();
+        if let Some((attempts, until)) = self.state.dial_backoff.read().await.get(&peer_node_id).cloned() {
+            if now < until {
+                let wait_ms = until.saturating_duration_since(now).as_millis();
+                self.logger.debug(format!("[connect_peer] Backing off dial to {peer_node_id} for {wait_ms}ms (attempts={attempts})"));
+                tokio::select! {
+                    _ = tokio::time::sleep(until.saturating_duration_since(now)) => {},
+                    _ = cancel_notify.notified() => {
+                        self.logger.debug(format!("[connect_peer] Dial to {peer_node_id} canceled during backoff"));
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
         let connecting = endpoint.connect(addr, &dns_safe_peer_id).map_err(|e| {
             self.logger
                 .error(format!("❌ [connect_peer] Connect failed: {e}"));
@@ -1225,24 +1729,70 @@ impl NetworkTransport for QuicTransport {
         self.logger
             .debug("🔍 [connect_peer] Connection initiated, waiting for handshake...");
 
-        let conn = connecting.await.map_err(|e| {
-            self.logger
-                .error(format!("❌ [connect_peer] Handshake failed: {e}"));
-            NetworkError::ConnectionError(format!("handshake failed: {e}"))
-        })?;
+        let conn = match connecting.await {
+            Ok(c) => c,
+            Err(e) => {
+                let err_str = e.to_string();
+                self.logger
+                    .error(format!("❌ [connect_peer] Handshake failed: {err_str}"));
+                // If the server refused because a connection already exists (race), treat as OK if we have (or soon get) an inbound mapping
+                if err_str.contains("the server refused to accept a new connection") {
+                    // Soft wait for inbound to correlate
+                    let mut attempts = 0u8;
+                    while attempts < 5 {
+                        if self.state.peers.read().await.contains_key(&peer_node_id) {
+                            self.logger.debug(format!("[connect_peer] Detected existing inbound connection for {peer_node_id}; treating connect as success"));
+                            return Ok(());
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        attempts += 1;
+                    }
+                }
+                // Increase backoff for next time
+                // use local non-blocking random; avoid holding rng across await
+                let jitter: u64 = rand::random::<u64>() % 200;
+                let mut guard = self.state.dial_backoff.write().await;
+                let (mut attempts, _until) = guard.get(&peer_node_id).cloned().unwrap_or((0, now));
+                attempts = attempts.saturating_add(1);
+                let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
+                let delay = Duration::from_millis(base.saturating_add(jitter));
+                guard.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
+                return Err(NetworkError::ConnectionError(format!(
+                    "handshake failed: {err_str}"
+                )));
+            }
+        };
 
         self.logger
             .debug("[connect_peer] QUIC connection established successfully");
 
         // wrap connection in Arc for sharing
         let conn_arc = Arc::new(conn);
+        let local_nonce = Self::generate_nonce();
 
-        // store peer
+        // store peer if still not connected (idempotent connect)
         {
             let mut peers = self.state.peers.write().await;
-            peers.insert(peer_node_id.clone(), PeerState::new(conn_arc.clone(), 0));
-            self.logger
-                .debug("🔍 [connect_peer] Peer stored in peer map");
+            if !peers.contains_key(&peer_node_id) {
+                // Tentative insert with placeholder dup-metadata; real values will be set after handshake
+                peers.insert(
+                    peer_node_id.clone(),
+                    PeerState::new(
+                        conn_arc.clone(),
+                        0,
+                        self.local_node_id(),
+                        0,
+                        peer_node_id.clone(),
+                        0,
+                    ),
+                );
+                self.logger
+                    .debug("🔍 [connect_peer] Peer stored in peer map");
+            } else {
+                self.logger.debug(format!(
+                    "🔍 [connect_peer] Peer already present in map (race dedup): {peer_node_id}"
+                ));
+            }
         }
 
         // spawn stream accept loops for that connection
@@ -1256,18 +1806,72 @@ impl NetworkTransport for QuicTransport {
         // do handshake on a fresh bi stream
         self.logger
             .debug("🔍 [connect_peer] Starting application-level handshake...");
-        if let Err(e) = self.handshake_outbound(&peer_node_id, &conn_arc).await {
-            self.logger.error(format!(
-                "❌ [connect_peer] Application handshake failed: {e}"
-            ));
-            self.logger.error(format!("handshake failed: {e}"));
-            // cleanup
-            self.state.peers.write().await.remove(&peer_node_id);
-            return Err(e);
-        }
+        let responder_nonce = match self
+            .handshake_outbound(&peer_node_id, &conn_arc, local_nonce)
+            .await
+        {
+            Ok(nonce) => nonce,
+            Err(e) => {
+                self.logger.error(format!(
+                    "❌ [connect_peer] Application handshake failed: {e}"
+                ));
+                self.logger.error(format!("handshake failed: {e}"));
+                // If an inbound connection was established concurrently, accept that.
+                // Give it a brief window to appear (duplicate-resolution race).
+                let mut attempts = 0u8;
+                while attempts < 8 {
+                    if self.state.peers.read().await.contains_key(&peer_node_id) {
+                        self.logger.debug(format!("[connect_peer] Inbound connection detected after outbound handshake error for {peer_node_id}; keeping inbound"));
+                        return Ok(());
+                    }
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    attempts = attempts.saturating_add(1);
+                }
+                // If still absent, remove the tentative placeholder and back off
+                self.state.peers.write().await.remove(&peer_node_id);
+                let jitter: u64 = rand::random::<u64>() % 200;
+                let mut guard = self.state.dial_backoff.write().await;
+                let (mut attempts, _until) = guard
+                    .get(&peer_node_id)
+                    .cloned()
+                    .unwrap_or((0, now));
+                attempts = attempts.saturating_add(1);
+                let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
+                let delay = Duration::from_millis(base.saturating_add(jitter));
+                guard.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
+                return Err(e);
+            }
+        };
 
         self.logger
             .debug("[connect_peer] Application handshake completed successfully");
+        // Record final metadata for this connection without triggering duplicate closure here.
+        // Inbound side will perform duplicate-resolution if a simultaneous dial occurred.
+        {
+            let mut peers = self.state.peers.write().await;
+            let new_state = PeerState::new(
+                conn_arc.clone(),
+                0,
+                self.local_node_id(),
+                local_nonce,
+                peer_node_id.clone(),
+                responder_nonce,
+            );
+            let conn_id = new_state.connection_id;
+            peers.insert(peer_node_id.clone(), new_state);
+            self.state
+                .connection_id_to_peer_id
+                .write()
+                .await
+                .insert(conn_id, peer_node_id.clone());
+        }
+
+        // Reset backoff on success
+        self.state.dial_backoff.write().await.remove(&peer_node_id);
+        // Cancel any outstanding dial waiters (if any)
+        if let Some(n) = self.state.dial_cancel.write().await.remove(&peer_node_id) {
+            n.notify_waiters();
+        }
         Ok(())
     }
 

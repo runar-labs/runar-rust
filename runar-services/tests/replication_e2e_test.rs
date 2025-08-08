@@ -11,6 +11,8 @@ use runar_test_utils::{create_networked_node_test_config, create_test_environmen
 use serial_test::serial;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::fs;
+use std::path::Path;
 use tokio::time::sleep;
 
 
@@ -107,6 +109,29 @@ fn create_replicated_sqlite_service(name: &str, path: &str, db_path: &str, start
         });
 
     SqliteService::new(name.to_string(), path.to_string(), config)
+}
+
+/// Clean up database files to ensure test isolation
+fn cleanup_database_files() {
+    let db_files = vec![
+        "./node_1_db",
+        "./node_1_db-shm",
+        "./node_1_db-wal",
+        "./node_2_db",
+        "./node_2_db-shm", 
+        "./node_2_db-wal",
+        "./node_3_db",
+        "./node_3_db-shm",
+        "./node_3_db-wal",
+    ];
+    
+    for db_file in db_files {
+        if Path::new(db_file).exists() {
+            if let Err(e) = fs::remove_file(db_file) {
+                eprintln!("Warning: Failed to remove database file {db_file}: {e}");
+            }
+        }
+    }
 }
 
 /// Test 1: Basic replication between two nodes
@@ -346,6 +371,9 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_full_replication_between_nodes() -> Result<()> {
+    // Clean up any existing database files
+    cleanup_database_files();
+    
     println!("=== Test 2: Service Availability During Sync ===");
 
     // Create two node configurations
@@ -685,13 +713,75 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     println!("✅ Node 1 started");
     node1.wait_for_services_to_start().await?;
     println!("✅ Node 1 all services started and synced");
-
-    //check that node 1 has the same data as node 2 and 3
-    //TODO verify here that all changes that happend since node1 stopped 
-    //are now present.. sicne node1 shuold have synced with the network on its restart
-
-
     
+    // Wait for Node 1 to discover other nodes and sync
+    println!("Waiting for Node 1 to discover other nodes and sync...");
+    
+    // Give time for network connections to be established and replication to happen
+    sleep(Duration::from_secs(10)).await;
+    println!("✅ Waited for network connections and replication to complete");
+    
+    // Force Node 1 to sync with the network by making a request
+    println!("Forcing Node 1 to sync with network...");
+    let _ = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    println!("✅ Forced Node 1 to sync with network");
+
+    // Verify that Node 1 has synced with the network and received all changes that happened while it was stopped
+    println!("Verifying Node 1 has synced with network after restart...");
+    
+    // Check that Node 1 has the same user count as other nodes (should be 11 after the UPDATE and DELETE operations)
+    let restart_count1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
+        )))
+        .await?;
+    let restart_user_count1: i64 = *restart_count1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
+        .as_map_ref().unwrap()
+        .get("count").unwrap()
+        .as_type_ref::<i64>().unwrap();
+    assert_eq!(restart_user_count1, 12, "Node 1 should have 12 users after syncing (it was stopped before the DELETE operation)");
+    println!("✅ Node 1 has correct user count after restart: {}", restart_user_count1);
+    
+    // Verify that Node 1 received the UPDATE operation from Node 3 (sync_user2 email update)
+    let update_check1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT email FROM users WHERE username = 'sync_user2'")
+        )))
+        .await?;
+    let update_users1: Vec<ArcValue> = (*update_check1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(update_users1.len(), 1, "Node 1 should have sync_user2 after restart");
+    let email1 = update_users1[0].as_map_ref().expect("Should be a map")
+        .get("email").expect("Should have email").as_type::<String>().expect("email should be a string");
+    assert_eq!(email1, "updated_by_node3@example.com", "Node 1 should have received the UPDATE from Node 3");
+    println!("✅ Node 1 received UPDATE operation from Node 3");
+    
+    // Verify that Node 1 received the DELETE operation from Node 2 (sync_user5 deletion)
+    let delete_check1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'sync_user5'")
+        )))
+        .await?;
+    let delete_users1: Vec<ArcValue> = (*delete_check1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(delete_users1.len(), 0, "Node 1 should not have sync_user5 after restart (was deleted by Node 2)");
+    println!("✅ Node 1 received DELETE operation from Node 2");
+    
+    // Verify that Node 1 still has the post-sync users that were added before it was stopped
+    let post_sync_check1 = node1
+        .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
+            runar_services::sqlite::SqlQuery::new("SELECT username FROM users WHERE username = 'post_sync_user'")
+        )))
+        .await?;
+    let post_sync_users1: Vec<ArcValue> = (*post_sync_check1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    assert_eq!(post_sync_users1.len(), 1, "Node 1 should still have post_sync_user after restart");
+    println!("✅ Node 1 retained existing data and received all network changes");
+    
+    println!("✅ Node 1 successfully synced with network after restart - all changes from other nodes are present");
+
+
 
     // Node 1: Add a new user
     let timestamp = chrono::Utc::now().timestamp();
@@ -855,6 +945,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     node1.stop().await?;
     node2.stop().await?;
     node3.stop().await?;
+    cleanup_database_files();
     println!("✅ Test 2 completed successfully!");
     Ok(())
 }

@@ -18,6 +18,7 @@ use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use tokio::time::{sleep, Duration};
+use std::time::Instant;
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -52,6 +53,87 @@ use crate::services::{
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
+
+// PeerDirectory: single source of truth for known peers
+#[derive(Default)]
+pub struct PeerDirectory {
+    inner: RwLock<HashMap<String, PeerRecord>>, // peer_id -> record
+}
+
+#[derive(Clone)]
+pub struct PeerRecord {
+    pub connected: bool,
+    pub last_capabilities_version: i64,
+    pub node_info: Option<NodeInfo>,
+    pub last_seen_at: Instant,
+}
+
+impl PeerRecord {
+    fn new() -> Self {
+        Self {
+            connected: false,
+            last_capabilities_version: -1,
+            node_info: None,
+            last_seen_at: Instant::now(),
+        }
+    }
+}
+
+impl PeerDirectory {
+    pub fn new() -> Self {
+        Self {
+            inner: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub async fn is_connected(&self, peer_id: &str) -> bool {
+        self.inner
+            .read()
+            .await
+            .get(peer_id)
+            .map(|r| r.connected)
+            .unwrap_or(false)
+    }
+
+    pub async fn mark_connected(&self, peer_id: &str) {
+        let mut guard = self.inner.write().await;
+        let entry = guard.entry(peer_id.to_string()).or_insert_with(PeerRecord::new);
+        entry.connected = true;
+        entry.last_seen_at = Instant::now();
+    }
+
+    pub async fn mark_disconnected(&self, peer_id: &str) {
+        if let Some(rec) = self.inner.write().await.get_mut(peer_id) {
+            rec.connected = false;
+        }
+    }
+
+    pub async fn set_node_info(&self, peer_id: &str, info: NodeInfo) {
+        let mut guard = self.inner.write().await;
+        let entry = guard.entry(peer_id.to_string()).or_insert_with(PeerRecord::new);
+        entry.last_capabilities_version = info.version;
+        entry.node_info = Some(info);
+        entry.last_seen_at = Instant::now();
+    }
+
+    pub async fn get_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
+        self.inner
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|r| r.node_info.clone())
+    }
+
+    pub async fn take_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
+        let mut guard = self.inner.write().await;
+        if let Some(rec) = guard.get_mut(peer_id) {
+            let info = rec.node_info.clone();
+            rec.node_info = None;
+            return info;
+        }
+        None
+    }
+}
 
 /// Node Configuration
 ///
@@ -178,7 +260,14 @@ pub struct Node {
     /// The service registry for this node
     pub(crate) service_registry: Arc<ServiceRegistry>,
 
-    pub(crate) known_peers: Arc<RwLock<HashMap<String, NodeInfo>>>,
+    // Centralized peer directory (single source of truth)
+    pub(crate) peer_directory: Arc<PeerDirectory>,
+
+    // Per-peer connect guards to avoid concurrent connects
+    pub(crate) peer_connect_mutexes: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+
+    // Debounce repeated discovery events per peer
+    pub(crate) discovery_seen_times: Arc<RwLock<HashMap<String, Instant>>>,
 
     /// Logger instance
     pub(crate) logger: Arc<Logger>,
@@ -214,6 +303,24 @@ pub struct Node {
 
 // Implementation for Node
 impl Node {
+    async fn get_or_create_connect_mutex(
+        &self,
+        peer_id: &str,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        if let Some(m) = self
+            .peer_connect_mutexes
+            .read()
+            .await
+            .get(peer_id)
+            .cloned()
+        {
+            return m;
+        }
+        let mut w = self.peer_connect_mutexes.write().await;
+        w.entry(peer_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
     /// Create a new Node with the given configuration
     ///
     /// INTENTION: Initialize a new Node with the specified configuration, setting up
@@ -296,7 +403,9 @@ impl Node {
             config: Arc::new(config),
             logger: logger.clone(),
             service_registry,
-            known_peers: Arc::new(RwLock::new(HashMap::new())),
+            peer_directory: Arc::new(PeerDirectory::new()),
+            peer_connect_mutexes: Arc::new(RwLock::new(HashMap::new())),
+            discovery_seen_times: Arc::new(RwLock::new(HashMap::new())),
             running: AtomicBool::new(false),
             supports_networking: networking_enabled,
             network_transport: Arc::new(RwLock::new(None)),
@@ -773,14 +882,23 @@ impl Node {
                 let provider_type_clone = provider_type.clone();
 
                 discovery_provider
-                    .set_discovery_listener(Arc::new(move |peer_info| {
+                    .subscribe(Arc::new(move |event| {
                         let node_arc = node_arc.clone();
                         let provider_type_clone = provider_type_clone.clone();
                         Box::pin(async move {
-                            if let Err(e) = node_arc.handle_discovered_node(peer_info).await {
-                                node_arc.logger.error(format!(
-                        "Failed to handle node discovered by {provider_type_clone} provider: {e}"
-                    ));
+                            match event {
+                                crate::network::discovery::DiscoveryEvent::Discovered(peer_info)
+                                | crate::network::discovery::DiscoveryEvent::Updated(peer_info) => {
+                                    if let Err(e) = node_arc.handle_discovered_node(peer_info).await {
+                                        node_arc.logger.error(format!(
+                                            "Failed to handle node discovered by {provider_type_clone} provider: {e}"
+                                        ));
+                                    }
+                                }
+                                crate::network::discovery::DiscoveryEvent::Lost(peer_id) => {
+                                    // Treat as disconnect cleanup hint
+                                    let _ = node_arc.cleanup_disconnected_peer(&peer_id).await;
+                                }
                             }
                         })
                     }))
@@ -856,6 +974,21 @@ impl Node {
                         })
                     });
 
+                // Prepare separate Arc clones for each callback to avoid move issues
+                let self_arc_for_conn = Arc::new(self.clone());
+                let connection_callback: crate::network::transport::ConnectionCallback =
+                    Arc::new(move |peer_node_id: String, connected: bool, _info: Option<NodeInfo>| {
+                        let node = self_arc_for_conn.clone();
+                        Box::pin(async move {
+                            if connected {
+                                node.peer_directory.mark_connected(&peer_node_id).await;
+                            } else {
+                                node.cleanup_disconnected_peer(&peer_node_id).await?;
+                            }
+                            Ok(())
+                        })
+                    });
+
                 let cert_config = self
                     .keys_manager
                     .get_quic_certificate_config()
@@ -872,6 +1005,7 @@ impl Node {
                     .with_bind_addr(bind_addr)
                     .with_message_handler(message_handler)
                     .with_one_way_message_handler(one_way_message_handler)
+                    .with_connection_callback(connection_callback)
                     .with_logger(self.logger.clone())
                     .with_keystore(self.keys_manager.clone())
                     .with_label_resolver(self.label_resolver.clone());
@@ -915,11 +1049,9 @@ impl Node {
         }
     }
 
-    /// Handle discovered nodes and establish connections using lexicographic ordering
+    /// Handle discovered nodes and establish connections
     ///
-    /// INTENTION: Process discovered peer information and establish connections
-    /// following the rule that only the node with the lexicographically smaller
-    /// peer ID initiates the connection to prevent duplicate connections.
+    /// INTENTION: Process discovered peer information and establish connections.
     pub async fn handle_discovered_node(&self, peer_info: PeerInfo) -> Result<()> {
         if !self.supports_networking {
             return Ok(());
@@ -930,33 +1062,47 @@ impl Node {
         self.logger.info(format!(
             "Discovery listener found node: {discovered_peer_id}",
         ));
- 
-        // Check if we're already connected to this peer
-        let transport_guard = self.network_transport.read().await;
-        if let Some(transport) = transport_guard.as_ref() {
-            if transport.is_connected(discovered_peer_id.clone()).await {
-                self.logger.info(format!(
-                    "Already connected to node: {discovered_peer_id}, ignoring discovery event",
-                ));
-                return Ok(());
-            }
 
-            // Attempt to connect to the discovered peer
-            match transport.clone().connect_peer(peer_info).await {
-                Ok(()) => {
-                    self.logger
-                        .info(format!("Connected to node: {discovered_peer_id}"));
-                }
-                Err(e) => {
-                    self.logger.error(format!(
-                        "Failed to connect to discovered node {discovered_peer_id}: {e}",
-                    ));
-                    return Err(anyhow::anyhow!("Connection failed: {e}"));
-                }
-            }
-        } else {
+        // Always allow an idempotent connect attempt. Transport will no-op if already connected
+        // and will reconcile duplicates if races occur. This avoids stale state blocking reconnects.
+        if self.peer_directory.is_connected(&discovered_peer_id).await {
             self.logger
-                .warn("No network transport available for connection");
+                .debug(format!("Discovery event for already-connected peer: {discovered_peer_id}; proceeding with idempotent connect to reconcile state"));
+        }
+
+        // Debounce rapid duplicate announcements only when not connected is false (we already checked not connected),
+        // but still avoid spamming connects if multiple events arrive within a very short window.
+        {
+            let mut seen = self.discovery_seen_times.write().await;
+            if let Some(last) = seen.get(&discovered_peer_id).cloned() {
+                if last.elapsed() < Duration::from_millis(150) {
+                    self.logger.debug(format!("Debounced discovery for {discovered_peer_id}"));
+                    // Do not early-return; small delay then continue to connect to ensure reconnection after restart
+                    drop(seen);
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                } else {
+                    seen.insert(discovered_peer_id.clone(), Instant::now());
+                }
+            } else {
+                seen.insert(discovered_peer_id.clone(), Instant::now());
+            }
+        }
+
+        // Guard concurrent connects to same peer
+        let connect_mutex = self.get_or_create_connect_mutex(&discovered_peer_id).await;
+        let _guard = connect_mutex.lock().await;
+
+        // Proceed with idempotent connect regardless of current directory flag
+
+        // Attempt to connect to the discovered peer (transport is expected to be idempotent)
+        if let Some(transport) = self.network_transport.read().await.as_ref() {
+            transport
+                .clone()
+                .connect_peer(peer_info)
+                .await
+                .map_err(|e| anyhow!("Connection failed to {discovered_peer_id}: {e}"))?;
+        } else {
+            self.logger.warn("No network transport available for connection");
         }
 
         Ok(())
@@ -983,11 +1129,44 @@ impl Node {
         match message.message_type {
             MESSAGE_TYPE_HANDSHAKE => {
                 self.logger.debug("Received handshake message");
-                //save the peer node info
-                let peer_node_info =
-                    serde_cbor::from_slice::<NodeInfo>(&message.payloads[0].value_bytes).map_err(
-                        |e| anyhow!("Could not parse peer NodeInfo from handshake response: {e}"),
-                    )?;
+                // Try to parse either raw NodeInfo (v1) or HandshakeData { node_info, nonce, role } (v2)
+                let payload_bytes = &message.payloads[0].value_bytes;
+                let peer_node_info = match serde_cbor::from_slice::<NodeInfo>(payload_bytes) {
+                    Ok(v1_info) => v1_info,
+                    Err(_) => {
+                        // Fallback: parse as generic CBOR and extract `node_info`
+                        match serde_cbor::from_slice::<serde_cbor::Value>(payload_bytes) {
+                            Ok(serde_cbor::Value::Map(map)) => {
+                                // Find key "node_info"
+                                let mut maybe_node_info_bytes: Option<Vec<u8>> = None;
+                                for (k, v) in map {
+                                    if let serde_cbor::Value::Text(key) = k {
+                                        if key == "node_info" {
+                                            // Re-encode the inner value to bytes and parse as NodeInfo
+                                            if let Ok(inner_bytes) = serde_cbor::to_vec(&v) {
+                                                maybe_node_info_bytes = Some(inner_bytes);
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                                if let Some(inner) = maybe_node_info_bytes {
+                                    serde_cbor::from_slice::<NodeInfo>(&inner).map_err(|e| {
+                                        anyhow!("Could not parse node_info from HandshakeData: {e}")
+                                    })?
+                                } else {
+                                    return Err(anyhow!("Handshake payload missing node_info"));
+                                }
+                            }
+                            Ok(_) => return Err(anyhow!("Unexpected handshake payload format")),
+                            Err(e) => {
+                                return Err(anyhow!(
+                                    "Could not parse handshake payload as NodeInfo or HandshakeData: {e}"
+                                ))
+                            }
+                        }
+                    }
+                };
                 self.process_remote_capabilities(peer_node_info).await?;
                 Ok(None)
             }
@@ -1009,6 +1188,43 @@ impl Node {
                 Err(anyhow!("Unknown message type: {message_type}", message_type =  message.message_type))
             }
         }
+    }
+
+    /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
+    /// and forget the peer from known_peers and discovery caches.
+    async fn cleanup_disconnected_peer(&self, peer_node_id: &str) -> Result<()> {
+        self.logger.info(format!("Cleaning up disconnected peer: {peer_node_id}"));
+
+        // 1) Remove remote subscriptions registered for this peer
+        let sub_ids = self
+            .service_registry
+            .drain_remote_peer_subscriptions(peer_node_id)
+            .await;
+        for sub_id in sub_ids {
+            let _ = self.service_registry.unsubscribe_remote(&sub_id).await;
+        }
+
+        // 2) Remove remote services from this peer
+        if let Some(prev_info) = self.peer_directory.take_node_info(peer_node_id).await {
+            for service in prev_info.node_metadata.services {
+                let service_tp = crate::routing::TopicPath::new(&service.service_path, &service.network_id)
+                    .map_err(|e| anyhow!(e))?;
+                let _ = self.service_registry.remove_remote_service(&service_tp).await;
+            }
+        }
+
+        // 3) Mark as disconnected in the directory
+        self.peer_directory.mark_disconnected(peer_node_id).await;
+
+        // 4) Publish a local-only event indicating peer removal
+        self.publish_with_options(
+            format!("$registry/peer/{peer_node_id}/removed"),
+            Some(ArcValue::new_primitive(peer_node_id.to_string())),
+            PublishOptions::local_only(),
+        )
+        .await?;
+
+        Ok(())
     }
 
     /// Handle a network request
@@ -1539,26 +1755,25 @@ impl Node {
         self.logger.debug(format!(
             "Processing remote capabilities from node {new_peer_node_id}"
         ));
-        //check if we alrady know about this service..
-        let mut known_peers = self.known_peers.write().await;
-        if let Some(existing_peer) = known_peers.get(&new_peer_node_id) {
+        // Check existing info from directory
+        if let Some(existing_peer) = self.peer_directory.get_node_info(&new_peer_node_id).await {
             //check if node info is older then the stored peer
             if new_peer.version > existing_peer.version {
                 self.logger.debug(format!("Node {new_peer_node_id} has new version {new_peer_version}, diffing capabilities", new_peer_version = new_peer.version));
 
-                self.update_peer_capabilities(existing_peer, &new_peer).await?;
+                self.update_peer_capabilities(&existing_peer, &new_peer).await?;
                 // replace stored peer info
-                known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
+                self.peer_directory.set_node_info(&new_peer_node_id, new_peer.clone()).await;
                 self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/updated"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
                 return Ok(Vec::new());
             }
         } else {
-            known_peers.insert(new_peer_node_id.clone(), new_peer.clone());
+            self.peer_directory.set_node_info(&new_peer_node_id, new_peer.clone()).await;
+            self.peer_directory.mark_connected(&new_peer_node_id).await;
             let res = self.add_new_peer(new_peer).await;
             self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/discovered"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
             return res;
         }
-        drop(known_peers);
 
         Ok(Vec::new())
     }
@@ -2333,7 +2548,9 @@ impl Clone for Node {
             node_public_key: self.node_public_key.clone(),
             config: self.config.clone(),
             service_registry: self.service_registry.clone(),
-            known_peers: self.known_peers.clone(),
+            peer_directory: self.peer_directory.clone(),
+            peer_connect_mutexes: self.peer_connect_mutexes.clone(),
+            discovery_seen_times: self.discovery_seen_times.clone(),
             logger: self.logger.clone(),
             running: AtomicBool::new(self.running.load(Ordering::SeqCst)),
             supports_networking: self.supports_networking,

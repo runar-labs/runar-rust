@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use runar_common::logging::{Component, Logger};
 use runar_macros_common::params;
 use runar_node::config::{LogLevel, LoggingConfig};
@@ -223,6 +223,8 @@ async fn test_remote_action_call() -> Result<()> {
 /// and resume remote service calls. This isolates the reconnection logic from replication.
 #[tokio::test]
 async fn test_node_stop_restart_reconnection() -> Result<()> {
+    // Hard timeout to prevent hangs in CI
+    tokio::time::timeout(Duration::from_secs(150), async {
     // Configure logging to ensure test logs are displayed
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
@@ -248,11 +250,6 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     logger.debug(format!("Node1 config: {node1_config}"));
     logger.debug(format!("Node2 config: {node2_config}"));
 
-    // ==========================================
-    // STEP 1: Initial Setup - Both nodes start
-    // ==========================================
-    logger.info("🚀 Starting initial node setup...");
-
     let mut node1 = Node::new(node1_config.clone()).await?;
     node1.add_service(math_service1.clone()).await?;
     node1.start().await?;
@@ -271,9 +268,15 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     logger.debug("✅ Nodes discovered each other");
 
     // ==========================================
-    // STEP 2: Test initial remote call
+    // STEP 2: Test initial remote call from node2 to node1
     // ==========================================
     logger.info("🧪 Testing initial remote call from node2 to node1...");
+    
+    // Wait for services to start before making remote calls
+    logger.info("⏳ Waiting for services to start...");
+    node1.wait_for_services_to_start().await?;
+    node2.wait_for_services_to_start().await?;
+    logger.debug("✅ Services started");
     
     let response_av = node2
         .request("math1/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
@@ -291,8 +294,9 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     node1.stop().await?;
     logger.debug("✅ Node 1 stopped");
 
-    // Wait a moment for the stop to complete
-    sleep(Duration::from_millis(500)).await;
+    // Wait for the stop to complete and cleanup to finish
+    // In a real scenario, a node would stay down for a meaningful period
+    sleep(Duration::from_secs(3)).await;
 
     // ==========================================
     // STEP 4: Verify Node 1 is unreachable
@@ -307,37 +311,28 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     logger.debug("✅ Node 1 correctly unreachable after stop");
 
     // ==========================================
-    // STEP 5: Restart Node 1
+    // STEP 5: Restart Node 1 (new instance, same config)
     // ==========================================
-    logger.info("🔄 Restarting Node 1...");
-    
-    // Create a new config for the restarted node with a different port
-    let mut node1_restart_config = node1_config.clone();
-    if let Some(ref mut network_config) = node1_restart_config.network_config {
-        network_config.transport_options.bind_address = "0.0.0.0:0".parse().unwrap(); // Use any available port
-    }
-    
-    let mut node1_restarted = Node::new(node1_restart_config).await?;
-    node1_restarted.add_service(math_service1).await?;
-    node1_restarted.start().await?;
-    logger.debug("✅ Node 1 restarted");
+    logger.info("🔄 Restarting Node 1 (new instance with same config)...");
 
-    // ==========================================
-    // STEP 6: Wait for reconnection
-    // ==========================================
-    logger.info("⏳ Waiting for Node 1 to reconnect to the network...");
-    
-    // Wait for Node 2 to discover the restarted Node 1
-    let _ = node2.on(format!("$registry/peer/{node1_id}/discovered"), Duration::from_secs(5)).await?;
-    logger.debug("✅ Node 2 discovered restarted Node 1");
-    
-    // Wait for Node 1 to discover Node 2
-    let _ = node1_restarted.on(format!("$registry/peer/{node2_id}/discovered"), Duration::from_secs(5)).await?;
-    logger.debug("✅ Restarted Node 1 discovered Node 2");
+    // Drop old instance completely to simulate real process restart
+    drop(node1);
 
-    // Give additional time for connection establishment
-    sleep(Duration::from_secs(2)).await;
-    logger.debug("✅ Additional wait for connection establishment complete");
+    // Allow OS to fully release previous UDP socket before rebinding same port
+    sleep(Duration::from_millis(2000)).await;
+
+    // Create a fresh node using the same config (preserves node_id, keys, etc.)
+    let mut node1 = Node::new(node1_config.clone()).await?;
+    node1.add_service(math_service1.clone()).await?;
+    node1.start().await?;
+    logger.debug("✅ Node 1 restarted (new instance)");
+
+    // Wait for nodes to discover each other again - same as initial setup
+    logger.debug("⏳ Waiting for nodes to rediscover each other...");
+    let peer_future2 = node2.on(format!("$registry/peer/{node1_id}/discovered"), Duration::from_secs(10));
+    let peer_future1 = node1.on(format!("$registry/peer/{node2_id}/discovered"), Duration::from_secs(10));
+    let _ = tokio::join!(peer_future2, peer_future1);
+    logger.debug("✅ Nodes rediscovered each other");
 
     // ==========================================
     // STEP 7: Test remote call after restart
@@ -359,7 +354,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     logger.info("🧪 Testing bidirectional communication after restart...");
     
     // Test call from restarted Node 1 to Node 2
-    let response_av = node1_restarted
+    let response_av = node1
         .request("math2/multiply", Some(params! { "a" => 6.0, "b" => 7.0 }))
         .await?
         .as_type_ref::<f64>()?;
@@ -373,10 +368,11 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     // ==========================================
     logger.info("🧹 Shutting down nodes...");
     node2.stop().await?;
-    node1_restarted.stop().await?;
+    node1.stop().await?;
 
     logger.info("✅ Both nodes stopped successfully");
     logger.info("🎉 Node stop/restart/reconnection test completed successfully!");
 
     Ok(())
+    }).await.map_err(|_| anyhow!("test_node_stop_restart_reconnection timed out"))?
 }

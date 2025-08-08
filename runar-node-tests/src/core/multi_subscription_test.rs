@@ -52,8 +52,8 @@ async fn test_multiple_subscriptions_same_topic() -> Result<()> {
         EventRegistrationOptions::default()
     ).await?;
     
-    println!("Registered subscription 1: {}", sub_id1);
-    println!("Registered subscription 2: {}", sub_id2);
+    println!("Registered subscription 1: {sub_id1}");
+    println!("Registered subscription 2: {sub_id2}");
     
     // Get all subscribers - should be 2
     let subscribers = registry.get_local_event_subscribers(&topic_path).await;

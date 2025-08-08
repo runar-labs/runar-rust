@@ -59,7 +59,12 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
 /// 5. Certificate-based security
 #[tokio::test]
 async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    // Watchdog to prevent indefinite hangs
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        panic!("test_quic_transport timed out");
+    });
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("quic_test"), ""));
@@ -434,8 +439,12 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // ==================================================
 
     logger.debug("Starting transport services...");
-    transport1.clone().start().await?;
-    transport2.clone().start().await?;
+    // Start transports concurrently
+    let (r1, r2) = tokio::join!(transport1.clone().start(), transport2.clone().start());
+    r1?;
+    r2?;
+    // Small readiness wait to ensure endpoint is bound before connect
+    tokio::time::sleep(Duration::from_millis(150)).await;
 
     logger.debug("Started both transport services");
 
@@ -448,22 +457,27 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
 
     logger.debug("Connecting peers...");
 
-    // Test connection establishment
-    let peer_info_1 = PeerInfo::new(node1_public_key_bytes.clone(), node1_info.addresses.clone());
+    // Test connection establishment (single initiator)
     let peer_info_2 = PeerInfo::new(node2_public_key_bytes.clone(), node2_info.addresses.clone());
 
-    // Force both transports to connect to each other for bidirectional communication
-    logger.debug(" Establishing bidirectional connections...");
+    // Single initiator to avoid simultaneous dial races
+    logger.debug(" Establishing connection from Transport1 to Transport2...");
     transport1.clone().connect_peer(peer_info_2).await?;
-    transport2.clone().connect_peer(peer_info_1).await?;
 
     logger.debug("⏱️  Waiting for connections to establish...");
-    // Allow connections to establish
-    // tokio::time::sleep(Duration::from_millis(1000)).await;
-
-    // Verify connections
-    let t1_connected = transport1.is_connected(node2_id.clone()).await;
-    let t2_connected = transport2.is_connected(node1_id.clone()).await;
+    // Bounded wait loop to allow duplicate-resolution/handshake to settle
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let (t1_connected, t2_connected) = loop {
+        let t1 = transport1.is_connected(node2_id.clone()).await;
+        let t2 = transport2.is_connected(node1_id.clone()).await;
+        if t1 && t2 {
+            break (t1, t2);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break (t1, t2);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     logger.debug(format!(
         " Connection status: T1→T2={t1_connected}, T2→T1={t2_connected}"
     ));
@@ -539,6 +553,31 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // Determine which transport to use for sending (both should be connected now)
     let (sender_transport, sender_info, receiver_info) =
         (transport1.clone(), &node1_info, &node2_info);
+
+    // Reconfirm connectivity just before request; attempt idempotent reconnect if needed
+    if !sender_transport
+        .is_connected(compact_id(&receiver_info.node_public_key))
+        .await
+    {
+        let peer_info = PeerInfo::new(
+            receiver_info.node_public_key.clone(),
+            receiver_info.addresses.clone(),
+        );
+        let _ = sender_transport.clone().connect_peer(peer_info).await; // best-effort
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if sender_transport
+                .is_connected(compact_id(&receiver_info.node_public_key))
+                .await
+            {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 
     // Create a test request
     let test_data = ArcValue::new_primitive("test_value".to_string());
@@ -717,6 +756,9 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     transport1.stop().await?;
     transport2.stop().await?;
     logger.info("Transports stopped successfully!");
+    // Cancel watchdog on success
+    watchdog.abort();
+    let _ = watchdog.await;
 
     Ok(())
 }
@@ -736,6 +778,11 @@ fn map_message_type_to_string(message_type: u32) -> String {
 #[tokio::test]
 async fn test_transport_message_header_bounds_checking(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Watchdog to prevent indefinite hangs
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        panic!("test_transport_message_header_bounds_checking timed out");
+    });
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("bounds_test"), ""));
@@ -825,5 +872,8 @@ async fn test_transport_message_header_bounds_checking(
     assert_eq!(empty_decoded.payloads.len(), 0);
 
     logger.debug("Message header bounds checking test completed successfully");
+    // Cancel watchdog on success
+    watchdog.abort();
+    let _ = watchdog.await;
     Ok(())
 }

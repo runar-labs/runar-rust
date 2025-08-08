@@ -79,9 +79,18 @@ pub struct NodeInfo {
 use std::future::Future;
 use std::pin::Pin;
 
+/// Discovery events emitted by providers. Providers are event sources; Node decides behavior.
+#[derive(Clone, Debug)]
+pub enum DiscoveryEvent {
+    Discovered(PeerInfo),
+    Updated(PeerInfo),
+    Lost(String), // peer_id
+}
+
 /// Callback function type for discovery events (async)
-pub type DiscoveryListener =
-    Arc<dyn Fn(PeerInfo) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type DiscoveryListener = Arc<
+    dyn Fn(DiscoveryEvent) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
+>;
 
 /// Interface for node discovery mechanisms
 #[async_trait]
@@ -95,12 +104,14 @@ pub trait NodeDiscovery: Send + Sync {
     /// Stop announcing this node's presence
     async fn stop_announcing(&self) -> Result<()>;
 
-    /// Set a listener to be called when nodes are discovered or updated (async)
-    async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()>;
+    /// Subscribe a listener for discovery events
+    async fn subscribe(&self, listener: DiscoveryListener) -> Result<()>;
 
     /// Shutdown the discovery mechanism
     async fn shutdown(&self) -> Result<()>;
 
     /// Update the local node information (called when node capabilities change)
     async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()>;
+
+    // Stateless providers do not maintain authoritative peer caches.
 }

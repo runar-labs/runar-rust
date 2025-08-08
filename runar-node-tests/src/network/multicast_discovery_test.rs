@@ -102,23 +102,21 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
         // Set discovery listeners for both instances
         let node_2_id_clone = node_2_id.clone();
         discovery1
-            .set_discovery_listener(Arc::new(move |peer_info: PeerInfo| {
+            .subscribe(Arc::new(move |event| {
                 let tx = tx1.clone();
                 let done_tx_clone = Arc::clone(&done_tx1);
                 let node_2_id = node_2_id_clone.clone();
 
                 Box::pin(async move {
-                    // Only trigger for node2
-                    let peer_id = compact_id(&peer_info.public_key);
-                    if peer_id == node_2_id {
-                        // Send the peer info to our channel
-                        if let Err(e) = tx.send(peer_info).await {
-                            eprintln!("Channel send error: {e}");
-                        }
-
-                        // Signal that we've received a discovery
-                        if let Some(done_tx) = done_tx_clone.lock().await.take() {
-                            let _ = done_tx.send(());
+                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event {
+                        let peer_id = compact_id(&peer_info.public_key);
+                        if peer_id == node_2_id {
+                            if let Err(e) = tx.send(peer_info).await {
+                                eprintln!("Channel send error: {e}");
+                            }
+                            if let Some(done_tx) = done_tx_clone.lock().await.take() {
+                                let _ = done_tx.send(());
+                            }
                         }
                     }
                 })
@@ -127,23 +125,21 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
 
         let node_1_id_clone = node_1_id.clone();
         discovery2
-            .set_discovery_listener(Arc::new(move |peer_info: PeerInfo| {
+            .subscribe(Arc::new(move |event| {
                 let tx = tx2.clone();
                 let done_tx_clone = Arc::clone(&done_tx2);
                 let node_1_id = node_1_id_clone.clone();
 
                 Box::pin(async move {
-                    // Only trigger for node1
-                    let peer_id = compact_id(&peer_info.public_key);
-                    if peer_id == node_1_id {
-                        // Send the peer info to our channel
-                        if let Err(e) = tx.send(peer_info).await {
-                            eprintln!("Channel send error: {e}");
-                        }
-
-                        // Signal that we've received a discovery
-                        if let Some(done_tx) = done_tx_clone.lock().await.take() {
-                            let _ = done_tx.send(());
+                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event {
+                        let peer_id = compact_id(&peer_info.public_key);
+                        if peer_id == node_1_id {
+                            if let Err(e) = tx.send(peer_info).await {
+                                eprintln!("Channel send error: {e}");
+                            }
+                            if let Some(done_tx) = done_tx_clone.lock().await.take() {
+                                let _ = done_tx.send(());
+                            }
                         }
                     }
                 })
@@ -228,25 +224,21 @@ async fn test_no_duplicate_notifications() -> Result<()> {
     // Set discovery listener for discovery1 that counts notifications
     let node_2_id_clone = node_2_id.clone();
     discovery1
-        .set_discovery_listener(Arc::new(move |peer_info: PeerInfo| {
+        .subscribe(Arc::new(move |event| {
             let tx = tx.clone();
             let count = Arc::clone(&notification_count_clone);
             let node_2_id = node_2_id_clone.clone();
 
             Box::pin(async move {
-                // Only count for node2
-                let peer_id = compact_id(&peer_info.public_key);
-                if peer_id == node_2_id {
-                    // Increment counter
-                    {
+                if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event {
+                    let peer_id = compact_id(&peer_info.public_key);
+                    if peer_id == node_2_id {
                         let mut count_guard = count.lock().await;
                         *count_guard += 1;
                         println!("Received notification #{count_guard} for peer {peer_id}");
-                    }
-
-                    // Send the peer info to our channel
-                    if let Err(e) = tx.send(peer_info).await {
-                        eprintln!("Channel send error: {e}");
+                        if let Err(e) = tx.send(peer_info).await {
+                            eprintln!("Channel send error: {e}");
+                        }
                     }
                 }
             })
