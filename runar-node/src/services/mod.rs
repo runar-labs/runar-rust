@@ -139,9 +139,11 @@ impl LifecycleContext {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
-        } else if topic_string.contains(self.service_path.as_str()) {
+        } else if topic_string.contains('/') {
+            // Treat as service/action path
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
+            // Treat as action under current service
             format!(
                 "{0}:{1}/{2}",
                 self.network_id, self.service_path, topic_string
@@ -170,7 +172,7 @@ impl LifecycleContext {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
-        } else if topic_string.contains(self.service_path.as_str()) {
+        } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
@@ -197,7 +199,7 @@ impl LifecycleContext {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
-        } else if topic_string.contains(self.service_path.as_str()) {
+        } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
@@ -224,7 +226,7 @@ impl LifecycleContext {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
-        } else if topic_string.contains(self.service_path.as_str()) {
+        } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
@@ -335,7 +337,7 @@ impl LifecycleContext {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
-        } else if topic_string.contains(self.service_path.as_str()) {
+        } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
@@ -358,7 +360,7 @@ impl LifecycleContext {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
-        } else if topic_string.contains(self.service_path.as_str()) {
+        } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(

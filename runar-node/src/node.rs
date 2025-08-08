@@ -124,6 +124,14 @@ impl PeerDirectory {
             .and_then(|r| r.node_info.clone())
     }
 
+    /// Update only the last_seen timestamp for a peer, if present
+    pub async fn touch(&self, peer_id: &str) {
+        let mut guard = self.inner.write().await;
+        if let Some(rec) = guard.get_mut(peer_id) {
+            rec.last_seen_at = Instant::now();
+        }
+    }
+
     pub async fn take_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
         let mut guard = self.inner.write().await;
         if let Some(rec) = guard.get_mut(peer_id) {
@@ -1761,25 +1769,38 @@ impl Node {
         ));
         // Check existing info from directory
         if let Some(existing_peer) = self.peer_directory.get_node_info(&new_peer_node_id).await {
-            //check if node info is older then the stored peer
-            if new_peer.version > existing_peer.version {
-                self.logger.debug(format!("Node {new_peer_node_id} has new version {new_peer_version}, diffing capabilities", new_peer_version = new_peer.version));
-
-                self.update_peer_capabilities(&existing_peer, &new_peer).await?;
-                // replace stored peer info
-                self.peer_directory.set_node_info(&new_peer_node_id, new_peer.clone()).await;
-                self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/updated"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
+            // Idempotency: ignore if version is not newer, but refresh last_seen.
+            if new_peer.version <= existing_peer.version {
+                self.peer_directory.touch(&new_peer_node_id).await;
                 return Ok(Vec::new());
             }
+
+            self.logger.debug(format!(
+                "Node {new_peer_node_id} has new version {new_peer_version}, diffing capabilities",
+                new_peer_version = new_peer.version
+            ));
+
+            self.update_peer_capabilities(&existing_peer, &new_peer).await?;
+            // replace stored peer info
+            self.peer_directory
+                .set_node_info(&new_peer_node_id, new_peer.clone())
+                .await;
+            self
+                .publish_with_options(
+                    format!("$registry/peer/{new_peer_node_id}/updated"),
+                    Some(ArcValue::new_primitive(new_peer_node_id.clone())),
+                    PublishOptions::local_only(),
+                )
+                .await?;
+            Ok(Vec::new())
         } else {
             self.peer_directory.set_node_info(&new_peer_node_id, new_peer.clone()).await;
             self.peer_directory.mark_connected(&new_peer_node_id).await;
             let res = self.add_new_peer(new_peer).await;
             self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/discovered"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
-            return res;
+            res
         }
 
-        Ok(Vec::new())
     }
 
     async fn update_peer_capabilities(

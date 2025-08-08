@@ -169,10 +169,7 @@ impl MemoryDiscovery {
         self.logger
             .debug(format!("Added node to registry: {node_key}"));
 
-        let peer_info = PeerInfo {
-            public_key: node_info.node_public_key.clone(),
-            addresses: node_info.addresses.clone(),
-        };
+        let peer_info = PeerInfo::new(node_info.node_public_key.clone(), node_info.addresses.clone());
 
         // Notify listeners only on first discovery. Updates to existing entries
         // do not trigger notifications unless debounced window has elapsed.
@@ -212,10 +209,7 @@ impl MemoryDiscovery {
                 "📣 [discovery] provider=memory event={event_label} peer_id={node_key} addresses={addresses_len} debounced={}",
                 !is_new
             ));
-            let listeners_vec = {
-                let guard = self.listeners.read().unwrap();
-                guard.clone()
-            };
+            let listeners_vec = self.listeners.read().unwrap().clone();
             drop(node_key); // ensure node_key is not used after this point
             for listener in listeners_vec {
                 let fut = listener(if is_new {
