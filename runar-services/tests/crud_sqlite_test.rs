@@ -167,6 +167,7 @@ async fn setup_node_with_services() -> Result<Node> {
     node.add_service(crud_service).await?;
 
     node.start().await?;
+    node.wait_for_services_to_start().await?;
     Ok(node)
 }
 

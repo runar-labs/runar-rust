@@ -408,6 +408,10 @@ mod tests {
 
         // Start the node to initialize all services
         node.start().await.expect("Failed to start node");
+        node
+            .wait_for_services_to_start()
+            .await
+            .expect("Services did not reach Running state");
 
         TestContext {
             node,
