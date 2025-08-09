@@ -1305,6 +1305,86 @@ impl QuicTransport {
         Ok(responder_nonce)
     }
 
+    // Helper: wait for an active peer state with limited retries
+    async fn wait_for_active_peer(
+        &self,
+        peer_node_id: &str,
+        max_attempts: u8,
+    ) -> Result<PeerState, NetworkError> {
+        let mut attempt: u8 = 0;
+        loop {
+            let maybe_peer = {
+                let peers_read = self.state.peers.read().await;
+                peers_read.get(peer_node_id).cloned()
+            };
+            let peer = match maybe_peer {
+                Some(p) => p,
+                None => {
+                    if attempt < max_attempts {
+                        attempt = attempt.saturating_add(1);
+                        tokio::time::sleep(Duration::from_millis(80)).await;
+                        continue;
+                    }
+                    return Err(NetworkError::ConnectionError(format!(
+                        "not connected to peer {peer_node_id}"
+                    )));
+                }
+            };
+            if !*peer.activation_rx.borrow() {
+                let mut rx = peer.activation_rx.clone();
+                let _ = rx.changed().await;
+            }
+            return Ok(peer);
+        }
+    }
+
+    // Helper: open a bi-directional stream to an active peer with limited retries
+    async fn open_bi_active(
+        &self,
+        peer_node_id: &str,
+    ) -> Result<(quinn::SendStream, quinn::RecvStream), NetworkError> {
+        let mut attempt: u8 = 0;
+        let max_attempts: u8 = 3;
+        loop {
+            let peer = self.wait_for_active_peer(peer_node_id, max_attempts).await?;
+            match peer.connection.open_bi().await {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    if attempt < max_attempts {
+                        attempt = attempt.saturating_add(1);
+                        tokio::time::sleep(Duration::from_millis(70)).await;
+                        continue;
+                    }
+                    return Err(NetworkError::TransportError(format!(
+                        "open_bi failed: {e}"
+                    )));
+                }
+            }
+        }
+    }
+
+    // Helper: open a uni-directional stream to an active peer with limited retries
+    async fn open_uni_active(&self, peer_node_id: &str) -> Result<quinn::SendStream, NetworkError> {
+        let mut attempt: u8 = 0;
+        let max_attempts: u8 = 3;
+        loop {
+            let peer = self.wait_for_active_peer(peer_node_id, max_attempts).await?;
+            match peer.connection.open_uni().await {
+                Ok(s) => return Ok(s),
+                Err(e) => {
+                    if attempt < max_attempts {
+                        attempt = attempt.saturating_add(1);
+                        tokio::time::sleep(Duration::from_millis(70)).await;
+                        continue;
+                    }
+                    return Err(NetworkError::TransportError(format!(
+                        "open_uni failed: {e}"
+                    )));
+                }
+            }
+        }
+    }
+
     #[allow(dead_code)]
     async fn request_inner(
         &self,
@@ -1542,65 +1622,15 @@ impl NetworkTransport for QuicTransport {
             }],
         };
 
-        // A few transparent retries to ride out duplicate-resolution or brief flips
-        let mut attempt: u8 = 0;
-        let max_attempts: u8 = 3;
         let response_msg = loop {
-            // Read current peer entry; if missing once, wait briefly and retry once
-            let maybe_peer = {
-                let peers_read = self.state.peers.read().await;
-                peers_read.get(peer_node_id).cloned()
-            };
-            let peer = match maybe_peer {
-                Some(p) => p,
-                None => {
-                    if attempt < max_attempts {
-                        attempt = attempt.saturating_add(1);
-                        tokio::time::sleep(Duration::from_millis(80)).await;
-                        continue;
-                    }
-                    self.logger
-                        .error(format!("❌ [request] Not connected to peer {peer_node_id}"));
-                    break Err(NetworkError::ConnectionError(format!(
-                        "not connected to peer {peer_node_id}"
-                    )));
-                }
-            };
-            // Avoid generic sleeps: wait for activation only if not yet active
-            // If activation not yet signaled, wait using watch receiver (no busy wait)
-            if !*peer.activation_rx.borrow() {
-                let mut rx = peer.activation_rx.clone();
-                // Await a state change to true
-                let _ = rx.changed().await;
-            }
             self.logger.info("🔍 [request] Opening bidirectional stream");
-            let open_res = peer.connection.open_bi().await;
-            let (mut send, mut recv) = match open_res {
-                Ok(v) => v,
-                Err(e) => {
-                    self.logger
-                        .error(format!("❌ [request] Failed to open bidirectional stream: {e}"));
-                    if attempt < max_attempts {
-                        attempt = attempt.saturating_add(1);
-                        tokio::time::sleep(Duration::from_millis(70)).await;
-                        continue;
-                    }
-                    break Err(NetworkError::TransportError(format!(
-                        "open_bi failed: {e}"
-                    )));
-                }
-            };
+            let (mut send, mut recv) = self.open_bi_active(peer_node_id).await?;
 
             self.logger
                 .info("🔍 [request] Writing request message to stream");
             if let Err(e) = self.write_message(&mut send, &msg).await {
                 self.logger
                     .error(format!("❌ [request] Failed to write request: {e}"));
-                if attempt < max_attempts {
-                    attempt = attempt.saturating_add(1);
-                    tokio::time::sleep(Duration::from_millis(70)).await;
-                    continue;
-                }
                 break Err(e);
             }
 
@@ -1608,14 +1638,8 @@ impl NetworkTransport for QuicTransport {
             if let Err(e) = send.finish() {
                 self.logger
                     .error(format!("❌ [request] Failed to finish send stream: {e}"));
-                if attempt < max_attempts {
-                    attempt = attempt.saturating_add(1);
-                    tokio::time::sleep(Duration::from_millis(70)).await;
-                    continue;
-                }
-                break Err(NetworkError::TransportError(format!(
-                    "finish send failed: {e}"
-                )));
+                tokio::time::sleep(Duration::from_millis(70)).await;
+                continue;
             }
 
             self.logger.info("🔍 [request] Reading response message");
@@ -1627,10 +1651,8 @@ impl NetworkTransport for QuicTransport {
                         || s.contains("duplicate")
                         || s.contains("aborted by peer")
                         || s.contains("closed");
-                    if should_retry && attempt < max_attempts {
-                        attempt = attempt.saturating_add(1);
+                    if should_retry {
                         tokio::time::sleep(Duration::from_millis(70)).await;
-                        // Let duplicate-resolution settle and retry
                         continue;
                     }
                     break Err(e);
@@ -1697,16 +1719,7 @@ impl NetworkTransport for QuicTransport {
             }],
         }; 
 
-        let peers = self.state.peers.read().await;
-        let peer = peers.get(peer_node_id).ok_or_else(|| {
-            NetworkError::ConnectionError(format!("not connected to peer {peer_node_id}"))
-        })?;
-
-        let mut send = peer
-            .connection
-            .open_uni()
-            .await
-            .map_err(|e| NetworkError::TransportError(format!("open_uni failed: {e}")))?;
+        let mut send = self.open_uni_active(peer_node_id).await?;
         self.write_message(&mut send, &message).await?;
         send.finish()
             .map_err(|e| NetworkError::TransportError(format!("finish uni failed: {e}")))?;
@@ -1989,8 +2002,8 @@ impl NetworkTransport for QuicTransport {
         };
 
         // Send to each connected peer
-        for (peer_id, peer_state) in peers.iter() {
-            let mut send = peer_state.connection.open_uni().await.map_err(|e| {
+        for (peer_id, _peer_state) in peers.iter() {
+            let mut send = self.open_uni_active(peer_id).await.map_err(|e| {
                 NetworkError::TransportError(format!("Failed to open uni stream to {peer_id}: {e}"))
             })?;
 
