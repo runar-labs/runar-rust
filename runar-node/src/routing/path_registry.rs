@@ -86,7 +86,6 @@ impl<T: Clone> PathTrie<T> {
         self.set_values(topic, vec![content]);
     }
 
-
     /// Add handlers for a vector of topic paths
     pub fn add_batch_values(&mut self, topics: Vec<TopicPath>, contents: Vec<T>) {
         for topic in topics {
@@ -467,16 +466,16 @@ impl<T: Clone> PathTrie<T> {
         // Add content from this node
         results.extend(self.content.clone());
         results.extend(self.multi_wildcard.clone());
-        
+
         // Recursively collect from children
         for child in self.children.values() {
             child.collect_all_values_internal(results);
         }
-        
+
         if let Some(wildcard) = &self.wildcard_child {
             wildcard.collect_all_values_internal(results);
         }
-        
+
         if let Some(template) = &self.template_child {
             template.collect_all_values_internal(results);
         }

@@ -1,11 +1,11 @@
 use anyhow::Result;
-use runar_services::{
-    replication::{ConflictResolutionStrategy, ReplicationConfig},
-    sqlite::{DataType, Schema, SqliteConfig, SqliteService, TableDefinition, ColumnDefinition},
-};
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::ArcValue;
+use runar_services::{
+    replication::{ConflictResolutionStrategy, ReplicationConfig},
+    sqlite::{ColumnDefinition, DataType, Schema, SqliteConfig, SqliteService, TableDefinition},
+};
 use runar_test_utils::create_node_test_config;
 
 #[tokio::main]
@@ -97,7 +97,8 @@ async fn main() -> Result<()> {
         "replication_example.db".to_string(),
         schema,
         false, // No encryption for this example
-    ).with_replication(ReplicationConfig {
+    )
+    .with_replication(ReplicationConfig {
         enabled_tables: vec!["users".to_string(), "posts".to_string()],
         conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
         startup_sync: false, // Disable startup sync for this example
@@ -159,17 +160,28 @@ async fn main() -> Result<()> {
     // Query users
     println!("3. Querying users...");
     let users_result = node
-        .request("sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT * FROM users")
-        )))
+        .request(
+            "sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT * FROM users",
+            ))),
+        )
         .await?;
 
     let users: Vec<ArcValue> = (*users_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     println!("   ✅ Found {} users", users.len());
     for (i, user) in users.iter().enumerate() {
         let user_map = user.as_map_ref().unwrap();
-        let username = user_map.get("username").unwrap().as_type_ref::<String>().unwrap();
-        let email = user_map.get("email").unwrap().as_type_ref::<String>().unwrap();
+        let username = user_map
+            .get("username")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let email = user_map
+            .get("email")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
         println!("   User {}: {} ({})", i + 1, username, email);
     }
     println!();
@@ -177,17 +189,28 @@ async fn main() -> Result<()> {
     // Query posts
     println!("4. Querying posts...");
     let posts_result = node
-        .request("sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT * FROM posts")
-        )))
+        .request(
+            "sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT * FROM posts",
+            ))),
+        )
         .await?;
 
     let posts: Vec<ArcValue> = (*posts_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     println!("   ✅ Found {} posts", posts.len());
     for (i, post) in posts.iter().enumerate() {
         let post_map = post.as_map_ref().unwrap();
-        let title = post_map.get("title").unwrap().as_type_ref::<String>().unwrap();
-        let content = post_map.get("content").unwrap().as_type_ref::<String>().unwrap();
+        let title = post_map
+            .get("title")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let content = post_map
+            .get("content")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
         println!("   Post {}: '{}' - {}", i + 1, title, content);
     }
     println!();
@@ -202,14 +225,33 @@ async fn main() -> Result<()> {
         )))
         .await?;
 
-    let users_events: Vec<ArcValue> = (*users_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    let users_events: Vec<ArcValue> =
+        (*users_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     println!("5. Users replication events: {} events", users_events.len());
     for (i, event) in users_events.iter().enumerate() {
         let event_map = event.as_map_ref().unwrap();
-        let operation = event_map.get("operation_type").unwrap().as_type_ref::<String>().unwrap();
-        let record_id = event_map.get("record_id").unwrap().as_type_ref::<String>().unwrap();
-        let timestamp = event_map.get("timestamp").unwrap().as_type_ref::<i64>().unwrap();
-        println!("   Event {}: {} (record: {}, timestamp: {})", i + 1, operation, record_id, timestamp);
+        let operation = event_map
+            .get("operation_type")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let record_id = event_map
+            .get("record_id")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let timestamp = event_map
+            .get("timestamp")
+            .unwrap()
+            .as_type_ref::<i64>()
+            .unwrap();
+        println!(
+            "   Event {}: {} (record: {}, timestamp: {})",
+            i + 1,
+            operation,
+            record_id,
+            timestamp
+        );
     }
     println!();
 
@@ -220,14 +262,33 @@ async fn main() -> Result<()> {
         )))
         .await?;
 
-    let posts_events: Vec<ArcValue> = (*posts_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    let posts_events: Vec<ArcValue> =
+        (*posts_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     println!("6. Posts replication events: {} events", posts_events.len());
     for (i, event) in posts_events.iter().enumerate() {
         let event_map = event.as_map_ref().unwrap();
-        let operation = event_map.get("operation_type").unwrap().as_type_ref::<String>().unwrap();
-        let record_id = event_map.get("record_id").unwrap().as_type_ref::<String>().unwrap();
-        let timestamp = event_map.get("timestamp").unwrap().as_type_ref::<i64>().unwrap();
-        println!("   Event {}: {} (record: {}, timestamp: {})", i + 1, operation, record_id, timestamp);
+        let operation = event_map
+            .get("operation_type")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let record_id = event_map
+            .get("record_id")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let timestamp = event_map
+            .get("timestamp")
+            .unwrap()
+            .as_type_ref::<i64>()
+            .unwrap();
+        println!(
+            "   Event {}: {} (record: {}, timestamp: {})",
+            i + 1,
+            operation,
+            record_id,
+            timestamp
+        );
     }
     println!();
 
@@ -236,11 +297,12 @@ async fn main() -> Result<()> {
 
     println!("7. Updating user email...");
     let update_result = node
-        .request("sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new(
-                "UPDATE users SET email = 'john.doe@example.com' WHERE username = 'john_doe'"
-            )
-        )))
+        .request(
+            "sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "UPDATE users SET email = 'john.doe@example.com' WHERE username = 'john_doe'",
+            ))),
+        )
         .await?;
 
     let affected_rows: i64 = *update_result.as_type_ref::<i64>().unwrap();
@@ -253,14 +315,38 @@ async fn main() -> Result<()> {
         )))
         .await?;
 
-    let updated_users_events: Vec<ArcValue> = (*updated_users_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
-    println!("8. Updated users replication events: {} events", updated_users_events.len());
+    let updated_users_events: Vec<ArcValue> = (*updated_users_events_result
+        .as_type_ref::<Vec<ArcValue>>()
+        .unwrap())
+    .clone();
+    println!(
+        "8. Updated users replication events: {} events",
+        updated_users_events.len()
+    );
     for (i, event) in updated_users_events.iter().enumerate() {
         let event_map = event.as_map_ref().unwrap();
-        let operation = event_map.get("operation_type").unwrap().as_type_ref::<String>().unwrap();
-        let record_id = event_map.get("record_id").unwrap().as_type_ref::<String>().unwrap();
-        let timestamp = event_map.get("timestamp").unwrap().as_type_ref::<i64>().unwrap();
-        println!("   Event {}: {} (record: {}, timestamp: {})", i + 1, operation, record_id, timestamp);
+        let operation = event_map
+            .get("operation_type")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let record_id = event_map
+            .get("record_id")
+            .unwrap()
+            .as_type_ref::<String>()
+            .unwrap();
+        let timestamp = event_map
+            .get("timestamp")
+            .unwrap()
+            .as_type_ref::<i64>()
+            .unwrap();
+        println!(
+            "   Event {}: {} (record: {}, timestamp: {})",
+            i + 1,
+            operation,
+            record_id,
+            timestamp
+        );
     }
     println!();
 
@@ -269,4 +355,4 @@ async fn main() -> Result<()> {
     println!("✅ Example completed successfully!");
 
     Ok(())
-} 
+}

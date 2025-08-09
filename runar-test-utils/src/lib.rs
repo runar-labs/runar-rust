@@ -253,15 +253,18 @@ impl MobileSimulator {
 
         // Export the master key manager state and create a new instance with the same state
         let master_state = self.master.key_manager.export_state();
-        let mut master_key_manager = MobileKeyManager::from_state(master_state, self.master.logger.clone())?;
-        
+        let mut master_key_manager =
+            MobileKeyManager::from_state(master_state, self.master.logger.clone())?;
+
         // Use the existing network ID from the master
         let cert_message = master_key_manager.process_setup_token(&setup_token)?;
         node_key_manager.install_certificate(cert_message)?;
 
         // Install network key from master using the existing network ID
-        let network_key_message = master_key_manager
-            .create_network_key_message(&self.master.network_id, &node_key_manager.get_node_public_key())?;
+        let network_key_message = master_key_manager.create_network_key_message(
+            &self.master.network_id,
+            &node_key_manager.get_node_public_key(),
+        )?;
         node_key_manager.install_network_key(network_key_message)?;
 
         // Get the CA certificate to use as root certificate for validation
@@ -284,11 +287,14 @@ impl MobileSimulator {
             .with_private_key(node_cert_config.private_key)
             .with_root_certificates(vec![ca_certificate]);
 
-        let config = NodeConfig::new(node_key_manager.get_node_id(), self.master.network_id.clone())
-            .with_key_manager_state(key_state_bytes)
-            .with_network_config(
-                NetworkConfig::with_quic(transport_options).with_multicast_discovery(),
-            );
+        let config = NodeConfig::new(
+            node_key_manager.get_node_id(),
+            self.master.network_id.clone(),
+        )
+        .with_key_manager_state(key_state_bytes)
+        .with_network_config(
+            NetworkConfig::with_quic(transport_options).with_multicast_discovery(),
+        );
 
         self.logger.info(format!(
             "✅ Node configuration created for node: {} with network transport",
@@ -624,7 +630,7 @@ mod tests {
     async fn test_mobile_simulator_network_discovery() -> Result<()> {
         use std::time::Duration;
         init();
-        
+
         // Configure logging
         let logging_config = runar_node::config::LoggingConfig::new()
             .with_default_level(runar_node::config::LogLevel::Error);
@@ -637,11 +643,11 @@ mod tests {
 
         // Create mobile simulator
         let simulator = create_simple_mobile_simulation()?;
-        
+
         // Create two node configurations using the simulator
         let node1_config = simulator.create_node_config()?;
         let node2_config = simulator.create_node_config()?;
-        
+
         let node1_id = node1_config.node_id.clone();
         let node2_id = node2_config.node_id.clone();
 
@@ -656,22 +662,37 @@ mod tests {
         // Start nodes
         node1.start().await?;
         logger.info("✅ Node 1 started");
-        
+
         node2.start().await?;
         logger.info("✅ Node 2 started");
 
         // Wait for nodes to discover each other
         logger.info("⏳ Waiting for nodes to discover each other...");
-        let _ = node2.on(format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()), Duration::from_secs(3)).await?;
-        let _ = node1.on(format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()), Duration::from_secs(3)).await?;
-  
-        
+        let _ = node2
+            .on(
+                format!(
+                    "$registry/peer/{node1_id}/discovered",
+                    node1_id = node1.node_id()
+                ),
+                Duration::from_secs(3),
+            )
+            .await?;
+        let _ = node1
+            .on(
+                format!(
+                    "$registry/peer/{node2_id}/discovered",
+                    node2_id = node2.node_id()
+                ),
+                Duration::from_secs(3),
+            )
+            .await?;
+
         logger.info("✅ Nodes successfully discovered each other!");
 
         // Cleanup
         node2.stop().await?;
         node1.stop().await?;
-        
+
         logger.info("✅ Mobile simulator network discovery test completed successfully!");
 
         Ok(())

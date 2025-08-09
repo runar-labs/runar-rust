@@ -319,13 +319,18 @@ impl MulticastDiscovery {
                 let local_info = match local_node_guard.as_ref() {
                     Some(info) => info.clone(),
                     None => {
-                        logger.error("No local node information available for announcement".to_string());
+                        logger.error(
+                            "No local node information available for announcement".to_string(),
+                        );
                         continue;
                     }
                 };
                 drop(local_node_guard);
 
-                let peer_info = PeerInfo::new(local_info.node_public_key.clone(), local_info.addresses.clone());
+                let peer_info = PeerInfo::new(
+                    local_info.node_public_key.clone(),
+                    local_info.addresses.clone(),
+                );
 
                 // Send announcement
                 logger.debug(format!(
@@ -398,7 +403,9 @@ impl MulticastDiscovery {
         }
         let listeners_vec = { listeners.read().await.clone() };
         for key in stale_keys {
-            logger.debug(format!("📉 [discovery] TTL expired for {key}, emitting Lost"));
+            logger.debug(format!(
+                "📉 [discovery] TTL expired for {key}, emitting Lost"
+            ));
             nodes.write().await.remove(&key);
             last_seen.write().await.remove(&key);
             for listener in &listeners_vec {
@@ -718,8 +725,9 @@ impl NodeDiscovery for MulticastDiscovery {
         let mut local_node_guard = self.local_node.write().await;
         *local_node_guard = Some(new_node_info);
         drop(local_node_guard);
-        
-        self.logger.debug("Updated local node information for multicast discovery");
+
+        self.logger
+            .debug("Updated local node information for multicast discovery");
         Ok(())
     }
 

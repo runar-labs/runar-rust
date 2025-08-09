@@ -17,7 +17,6 @@ use tokio::time::timeout;
 // Import the test fixtures
 use crate::fixtures::math_service::MathService;
 
-
 /// Test that the Registry Service correctly lists all services
 ///
 /// INTENTION: This test validates that:
@@ -201,7 +200,10 @@ async fn test_registry_service_get_service_state() {
 
         // Use the request method to query the registry service for the math service state (local)
         let state_av: ArcValue = node
-            .request("$registry/services/math/state", Some(ArcValue::new_primitive(true)))
+            .request(
+                "$registry/services/math/state",
+                Some(ArcValue::new_primitive(true)),
+            )
             .await?;
         let response: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
         test_logger.debug(format!("Initial service state response: {response:?}"));
@@ -277,7 +279,10 @@ async fn test_registry_service_missing_parameter() {
 
         // Test with an invalid path format for service_path/state endpoint
         let state_response: Result<ArcValue> = node
-            .request("$registry/services//state", Some(ArcValue::new_primitive(true)))
+            .request(
+                "$registry/services//state",
+                Some(ArcValue::new_primitive(true)),
+            )
             .await;
 
         // The request should fail or return an error response
@@ -327,33 +332,55 @@ async fn test_registry_service_pause_service() {
 
         // Verify service is in Running state
         let state_av: ArcValue = node
-            .request("$registry/services/math/state", Some(ArcValue::new_primitive(true)))
+            .request(
+                "$registry/services/math/state",
+                Some(ArcValue::new_primitive(true)),
+            )
             .await
             .unwrap();
         let initial_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
-        assert_eq!(initial_state, ServiceState::Running, "Service should be in Running state");
+        assert_eq!(
+            initial_state,
+            ServiceState::Running,
+            "Service should be in Running state"
+        );
 
         // Pause the service
         let pause_response: ArcValue = node
             .request("$registry/services/math/pause", Option::<ArcValue>::None)
             .await
             .unwrap();
-        let paused_state: ServiceState = ServiceState::from_arc_value(pause_response.clone()).unwrap();
-        assert_eq!(paused_state, ServiceState::Paused, "Service should be paused");
+        let paused_state: ServiceState =
+            ServiceState::from_arc_value(pause_response.clone()).unwrap();
+        assert_eq!(
+            paused_state,
+            ServiceState::Paused,
+            "Service should be paused"
+        );
 
         // Verify service is now in Paused state
         let state_av: ArcValue = node
-            .request("$registry/services/math/state", Some(ArcValue::new_primitive(true)))
+            .request(
+                "$registry/services/math/state",
+                Some(ArcValue::new_primitive(true)),
+            )
             .await
             .unwrap();
         let current_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
-        assert_eq!(current_state, ServiceState::Paused, "Service should be in Paused state");
+        assert_eq!(
+            current_state,
+            ServiceState::Paused,
+            "Service should be in Paused state"
+        );
 
         // Try to pause again (should fail)
         let pause_again_result: Result<ArcValue> = node
             .request("$registry/services/math/pause", Option::<ArcValue>::None)
             .await;
-        assert!(pause_again_result.is_err(), "Pausing a paused service should fail");
+        assert!(
+            pause_again_result.is_err(),
+            "Pausing a paused service should fail"
+        );
 
         Ok::<(), anyhow::Error>(())
     })
@@ -396,33 +423,55 @@ async fn test_registry_service_resume_service() {
 
         // Verify service is in Paused state
         let state_av: ArcValue = node
-            .request("$registry/services/math/state", Some(ArcValue::new_primitive(true)))
+            .request(
+                "$registry/services/math/state",
+                Some(ArcValue::new_primitive(true)),
+            )
             .await
             .unwrap();
         let paused_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
-        assert_eq!(paused_state, ServiceState::Paused, "Service should be in Paused state");
+        assert_eq!(
+            paused_state,
+            ServiceState::Paused,
+            "Service should be in Paused state"
+        );
 
         // Resume the service
         let resume_response: ArcValue = node
             .request("$registry/services/math/resume", Option::<ArcValue>::None)
             .await
             .unwrap();
-        let resumed_state: ServiceState = ServiceState::from_arc_value(resume_response.clone()).unwrap();
-        assert_eq!(resumed_state, ServiceState::Running, "Service should be resumed");
+        let resumed_state: ServiceState =
+            ServiceState::from_arc_value(resume_response.clone()).unwrap();
+        assert_eq!(
+            resumed_state,
+            ServiceState::Running,
+            "Service should be resumed"
+        );
 
         // Verify service is now in Running state
         let state_av: ArcValue = node
-            .request("$registry/services/math/state", Some(ArcValue::new_primitive(true)))
+            .request(
+                "$registry/services/math/state",
+                Some(ArcValue::new_primitive(true)),
+            )
             .await
             .unwrap();
         let current_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
-        assert_eq!(current_state, ServiceState::Running, "Service should be in Running state");
+        assert_eq!(
+            current_state,
+            ServiceState::Running,
+            "Service should be in Running state"
+        );
 
         // Try to resume again (should fail)
         let resume_again_result: Result<ArcValue> = node
             .request("$registry/services/math/resume", Option::<ArcValue>::None)
             .await;
-        assert!(resume_again_result.is_err(), "Resuming a running service should fail");
+        assert!(
+            resume_again_result.is_err(),
+            "Resuming a running service should fail"
+        );
 
         Ok::<(), anyhow::Error>(())
     })
@@ -464,14 +513,20 @@ async fn test_registry_service_request_to_paused_service() {
 
         // Try to call a service action while it's paused
         let request_result: Result<ArcValue> = node
-            .request("math/add", Some(ArcValue::new_list(vec![
-                ArcValue::new_primitive(5i32),
-                ArcValue::new_primitive(3i32),
-            ])))
+            .request(
+                "math/add",
+                Some(ArcValue::new_list(vec![
+                    ArcValue::new_primitive(5i32),
+                    ArcValue::new_primitive(3i32),
+                ])),
+            )
             .await;
 
         // The request should fail with a state-related error
-        assert!(request_result.is_err(), "Request to paused service should fail");
+        assert!(
+            request_result.is_err(),
+            "Request to paused service should fail"
+        );
         let error_message = request_result.unwrap_err().to_string();
         assert!(
             error_message.contains("Paused"),
@@ -506,11 +561,17 @@ async fn test_registry_service_pause_nonexistent_service() {
 
         // Try to pause a non-existent service
         let pause_result: Result<ArcValue> = node
-            .request("$registry/services/nonexistent/pause", Option::<ArcValue>::None)
+            .request(
+                "$registry/services/nonexistent/pause",
+                Option::<ArcValue>::None,
+            )
             .await;
 
         // The request should fail with a service not found error
-        assert!(pause_result.is_err(), "Pausing non-existent service should fail");
+        assert!(
+            pause_result.is_err(),
+            "Pausing non-existent service should fail"
+        );
         let error_message = pause_result.unwrap_err().to_string();
         assert!(
             error_message.contains("not found"),
@@ -545,11 +606,17 @@ async fn test_registry_service_resume_nonexistent_service() {
 
         // Try to resume a non-existent service
         let resume_result: Result<ArcValue> = node
-            .request("$registry/services/nonexistent/resume", Option::<ArcValue>::None)
+            .request(
+                "$registry/services/nonexistent/resume",
+                Option::<ArcValue>::None,
+            )
             .await;
 
         // The request should fail with a service not found error
-        assert!(resume_result.is_err(), "Resuming non-existent service should fail");
+        assert!(
+            resume_result.is_err(),
+            "Resuming non-existent service should fail"
+        );
         let error_message = resume_result.unwrap_err().to_string();
         assert!(
             error_message.contains("not found"),
@@ -594,7 +661,10 @@ async fn test_registry_service_resume_running_service() {
             .await;
 
         // The request should fail with a state-related error
-        assert!(resume_result.is_err(), "Resuming a running service should fail");
+        assert!(
+            resume_result.is_err(),
+            "Resuming a running service should fail"
+        );
         let error_message = resume_result.unwrap_err().to_string();
         assert!(
             error_message.contains("Running"),
@@ -645,7 +715,10 @@ async fn test_registry_service_pause_already_paused_service() {
             .await;
 
         // The request should fail with a state-related error
-        assert!(pause_again_result.is_err(), "Pausing an already paused service should fail");
+        assert!(
+            pause_again_result.is_err(),
+            "Pausing an already paused service should fail"
+        );
         let error_message = pause_again_result.unwrap_err().to_string();
         assert!(
             error_message.contains("Paused"),
@@ -680,14 +753,20 @@ async fn test_registry_service_request_to_nonexistent_service() {
 
         // Try to call a service action for a non-existent service
         let request_result: Result<ArcValue> = node
-            .request("nonexistent/add", Some(ArcValue::new_list(vec![
-                ArcValue::new_primitive(5i32),
-                ArcValue::new_primitive(3i32),
-            ])))
+            .request(
+                "nonexistent/add",
+                Some(ArcValue::new_list(vec![
+                    ArcValue::new_primitive(5i32),
+                    ArcValue::new_primitive(3i32),
+                ])),
+            )
             .await;
 
         // The request should fail with a "No handler found" error
-        assert!(request_result.is_err(), "Request to non-existent service should fail");
+        assert!(
+            request_result.is_err(),
+            "Request to non-existent service should fail"
+        );
         let error_message = request_result.unwrap_err().to_string();
         assert!(
             error_message.contains("No handler found"),
@@ -702,6 +781,3 @@ async fn test_registry_service_request_to_nonexistent_service() {
         Err(_) => panic!("Test timed out after 10 seconds"),
     }
 }
-
-
-

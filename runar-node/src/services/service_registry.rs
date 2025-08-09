@@ -33,8 +33,6 @@ use runar_common::logging::Logger;
 use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
 use runar_serializer::ArcValue;
 
- 
-
 /// Type definition for event handler
 ///
 /// INTENTION: Provide a sharable type similar to ActionHandler that can be referenced
@@ -45,11 +43,8 @@ pub type EventHandler = Arc<
         + Sync,
 >;
 
-pub type RemoteEventHandler = Arc<
-    dyn Fn(Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-        + Send
-        + Sync,
->;
+pub type RemoteEventHandler =
+    Arc<dyn Fn(Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
 
 /// Import Future trait for use in type definition
 use std::future::Future;
@@ -128,7 +123,6 @@ pub type SubscriptionEntry = (String, SubscriberKind, SubscriptionMetadata);
 // Wrapper stored at each trie leaf
 pub type SubscriptionVec = Vec<SubscriptionEntry>;
 
-
 pub const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
 
 /// Service registry for managing services and their handlers
@@ -143,7 +137,7 @@ pub struct ServiceRegistry {
     /// Local action handlers organized by path (using PathTrie instead of HashMap)
     /// Store both the handler and the original registration topic path for parameter extraction
     local_action_handlers: Arc<RwLock<PathTrie<LocalActionEntryValue>>>,
-    
+
     /// Remote action handlers organized by path (using PathTrie instead of HashMap)
     remote_action_handlers: Arc<RwLock<PathTrie<Vec<ActionHandler>>>>,
 
@@ -167,7 +161,7 @@ pub struct ServiceRegistry {
 
     /// Local service lifecycle states
     local_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
-    
+
     /// Remote service lifecycle states
     remote_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
 
@@ -184,7 +178,7 @@ impl Clone for ServiceRegistry {
             local_action_handlers: self.local_action_handlers.clone(),
             remote_action_handlers: self.remote_action_handlers.clone(),
             event_subscriptions: self.event_subscriptions.clone(),
-            
+
             subscription_id_to_topic_path: self.subscription_id_to_topic_path.clone(),
             subscription_id_to_service_topic_path: self
                 .subscription_id_to_service_topic_path
@@ -481,7 +475,8 @@ impl ServiceRegistry {
             id_map.insert(subscription_id.clone(), topic_path.clone());
         }
 
-        let service_topic = TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
+        let service_topic =
+            TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
         {
             let mut id_map = self.subscription_id_to_service_topic_path.write().await;
             id_map.insert(subscription_id.clone(), service_topic);
@@ -525,7 +520,6 @@ impl ServiceRegistry {
         Ok(subscription_id)
     }
 
-
     pub async fn remove_remote_event_subscription(&self, topic_path: &TopicPath) -> Result<()> {
         let mut trie = self.event_subscriptions.write().await;
         let matches = trie.find_matches(topic_path);
@@ -548,7 +542,9 @@ impl ServiceRegistry {
             let remaining: Vec<(String, SubscriberKind, SubscriptionMetadata)> = m
                 .content
                 .into_iter()
-                .filter(|(id, kind, _)| !(ids_to_remove.contains(id) && matches!(kind, SubscriberKind::Remote(_))))
+                .filter(|(id, kind, _)| {
+                    !(ids_to_remove.contains(id) && matches!(kind, SubscriberKind::Remote(_)))
+                })
                 .collect();
             if remaining.is_empty() {
                 trie.remove_values(topic_path);
@@ -560,7 +556,10 @@ impl ServiceRegistry {
         // Clean up maps
         for id in ids_to_remove {
             self.subscription_id_to_topic_path.write().await.remove(&id);
-            self.subscription_id_to_service_topic_path.write().await.remove(&id);
+            self.subscription_id_to_service_topic_path
+                .write()
+                .await
+                .remove(&id);
         }
         Ok(())
     }
@@ -577,7 +576,7 @@ impl ServiceRegistry {
 
         let mut result = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        
+
         for m in matches {
             for (id, kind, meta) in m.content.clone() {
                 if seen_ids.contains(&id) {
@@ -589,7 +588,7 @@ impl ServiceRegistry {
                 }
             }
         }
-        
+
         result
     }
 
@@ -654,10 +653,7 @@ impl ServiceRegistry {
         Ok(())
     }
 
-    pub async fn remove_remote_service_state(
-        &self,
-        service_topic: &TopicPath, 
-    ) -> Result<()> {
+    pub async fn remove_remote_service_state(&self, service_topic: &TopicPath) -> Result<()> {
         let mut states = self.remote_service_states.write().await;
         states.remove(service_topic.as_str());
         Ok(())
@@ -674,12 +670,15 @@ impl ServiceRegistry {
         let map = self.remote_service_states.read().await;
         map.get(service_path.as_str()).copied()
     }
- 
+
     /// Get metadata for all events under a specific service path
     ///
     /// INTENTION: Retrieve metadata for all events registered under a service path.
     /// This is useful for service discovery and introspection.
-    pub async fn get_subscriptions_metadata(&self, search_path: &TopicPath) -> Vec<SubscriptionMetadata> {
+    pub async fn get_subscriptions_metadata(
+        &self,
+        search_path: &TopicPath,
+    ) -> Vec<SubscriptionMetadata> {
         // Search unified subscriptions and filter local ones
         let events = self.event_subscriptions.read().await;
         let matches = events.find_matches(search_path);
@@ -692,7 +691,7 @@ impl ServiceRegistry {
             let event_topic_list = &match_item.content;
 
             //iterate event_topic_list
-            for (_, _    , metadata) in event_topic_list {
+            for (_, _, metadata) in event_topic_list {
                 //TODO when EventRegistrationOptions is defined.. we need to pass that info here in the metadata to be sent to a remote node
                 result.push(metadata.clone());
             }
@@ -774,14 +773,14 @@ impl ServiceRegistry {
 
                 // Remove from the ID map
                 {
-                    let mut id_to_topic_path_map =
-                        self.subscription_id_to_topic_path.write().await;
+                    let mut id_to_topic_path_map = self.subscription_id_to_topic_path.write().await;
                     id_to_topic_path_map.remove(subscription_id);
                 }
 
                 // Remove from service topic path map
                 {
-                    let mut service_topic_map = self.subscription_id_to_service_topic_path.write().await;
+                    let mut service_topic_map =
+                        self.subscription_id_to_service_topic_path.write().await;
                     service_topic_map.remove(subscription_id);
                 }
 
@@ -812,7 +811,12 @@ impl ServiceRegistry {
     /// INTENTION: Remove a specific subscription by ID from the remote event subscriptions,
     /// providing a simpler API that doesn't require the original topic.
     /// Upsert a mapping peer -> path -> subscription_id
-    pub async fn upsert_remote_peer_subscription(&self, peer_id: &str, path: &TopicPath, sub_id: String) {
+    pub async fn upsert_remote_peer_subscription(
+        &self,
+        peer_id: &str,
+        path: &TopicPath,
+        sub_id: String,
+    ) {
         let mut guard = self.remote_peer_subscriptions.write().await;
         guard
             .entry(peer_id.to_string())
@@ -821,7 +825,11 @@ impl ServiceRegistry {
     }
 
     /// Remove a single subscription mapping and return its id (if any)
-    pub async fn remove_remote_peer_subscription(&self, peer_id: &str, path: &TopicPath) -> Option<String> {
+    pub async fn remove_remote_peer_subscription(
+        &self,
+        peer_id: &str,
+        path: &TopicPath,
+    ) -> Option<String> {
         let mut guard = self.remote_peer_subscriptions.write().await;
         guard.get_mut(peer_id).and_then(|m| m.remove(path.as_str()))
     }
@@ -829,15 +837,20 @@ impl ServiceRegistry {
     /// Return all (path, sub_id) pairs for a peer and clear them (used on peer disconnect)
     pub async fn drain_remote_peer_subscriptions(&self, peer_id: &str) -> Vec<String> {
         let mut guard = self.remote_peer_subscriptions.write().await;
-        guard.remove(peer_id)
+        guard
+            .remove(peer_id)
             .map(|m| m.into_values().collect())
             .unwrap_or_default()
     }
 
     /// Return current set of paths for a peer
-    pub async fn remote_subscription_paths(&self, peer_id:&str) -> std::collections::HashSet<String> {
+    pub async fn remote_subscription_paths(
+        &self,
+        peer_id: &str,
+    ) -> std::collections::HashSet<String> {
         let guard = self.remote_peer_subscriptions.read().await;
-        guard.get(peer_id)
+        guard
+            .get(peer_id)
             .map(|m| m.keys().cloned().collect())
             .unwrap_or_default()
     }
@@ -882,7 +895,10 @@ impl ServiceRegistry {
                 }
                 if removed_flag {
                     {
-                        self.subscription_id_to_topic_path.write().await.remove(subscription_id);
+                        self.subscription_id_to_topic_path
+                            .write()
+                            .await
+                            .remove(subscription_id);
                     }
                     self.logger.debug(format!(
                         "Successfully unsubscribed from remote topic: {} with ID: {}",
@@ -928,7 +944,7 @@ impl ServiceRegistry {
 
             // Get actions metadata for this service - create a wildcard path
             let actions = self.get_actions_metadata(&service_topic_path).await;
- 
+
             // Create metadata using individual getter methods
             return Some(ServiceMetadata {
                 network_id: network_id_string,
@@ -945,12 +961,15 @@ impl ServiceRegistry {
         None
     }
 
-    pub async fn get_all_subscriptions(&self, include_internal_services: bool) -> Result<Vec<SubscriptionMetadata>> {
+    pub async fn get_all_subscriptions(
+        &self,
+        include_internal_services: bool,
+    ) -> Result<Vec<SubscriptionMetadata>> {
         let subscriptions = self.event_subscriptions.read().await;
         let all_values = subscriptions.get_all_values();
-        
+
         let mut result = Vec::new();
-        
+
         for subscription_vec in all_values {
             for (_, _, metadata) in subscription_vec {
                 // Filter out internal services if not included
@@ -960,7 +979,7 @@ impl ServiceRegistry {
                 result.push(metadata);
             }
         }
-        
+
         Ok(result)
     }
 
@@ -986,17 +1005,18 @@ impl ServiceRegistry {
             }
 
             let search_path = format!("{path_str}/*");
-            let search_topic = TopicPath::new(&search_path, &service_entry.service_topic.network_id().to_string())
-                .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
-            let service_metadata = self.get_service_metadata(&search_topic).await
+            let search_topic = TopicPath::new(
+                &search_path,
+                &service_entry.service_topic.network_id().to_string(),
+            )
+            .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
+            let service_metadata = self
+                .get_service_metadata(&search_topic)
+                .await
                 .ok_or_else(|| anyhow!("Service metadata not found for topic: {}", search_topic))?;
-            
-             
+
             // Create metadata using individual getter methods from the service
-            result.insert(
-                path_str.to_string(),
-                service_metadata,
-            );
+            result.insert(path_str.to_string(), service_metadata);
         }
 
         Ok(result)
@@ -1051,8 +1071,17 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
         self.remove_remote_action_handler(topic_path).await
     }
 
-    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: RemoteEventHandler) -> Result<String> {
-        self.register_remote_event_subscription(topic_path, handler, EventRegistrationOptions::default()).await
+    async fn register_remote_event_handler(
+        &self,
+        topic_path: &TopicPath,
+        handler: RemoteEventHandler,
+    ) -> Result<String> {
+        self.register_remote_event_subscription(
+            topic_path,
+            handler,
+            EventRegistrationOptions::default(),
+        )
+        .await
     }
 
     async fn remove_remote_event_handler(&self, topic_path: &TopicPath) -> Result<()> {
@@ -1069,11 +1098,13 @@ impl crate::services::RegistryDelegate for ServiceRegistry {
         match (current_state, new_state) {
             (ServiceState::Running, ServiceState::Paused) => {
                 // Valid transition: Running -> Paused
-                self.update_local_service_state(service_path, new_state).await
+                self.update_local_service_state(service_path, new_state)
+                    .await
             }
             (ServiceState::Paused, ServiceState::Running) => {
                 // Valid transition: Paused -> Running
-                self.update_local_service_state(service_path, new_state).await
+                self.update_local_service_state(service_path, new_state)
+                    .await
             }
             _ => {
                 // Invalid transition

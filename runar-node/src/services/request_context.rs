@@ -226,7 +226,11 @@ impl RequestContext {
         self.node_delegate.publish(full_topic, data).await
     }
 
-    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn remote_request<P>(
+        &self,
+        path: impl Into<String>,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -255,7 +259,9 @@ impl RequestContext {
         self.logger
             .debug(format!("Making request to processed path: {full_path}"));
 
-        self.node_delegate.remote_request::<P>(full_path, payload).await
+        self.node_delegate
+            .remote_request::<P>(full_path, payload)
+            .await
     }
 
     /// Make a service request
@@ -307,8 +313,11 @@ impl RequestContext {
     ///
     /// Returns Ok(Option<ArcValue>) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    pub async fn on(&self, topic: impl Into<String>, timeout: std::time::Duration) -> Result<Option<ArcValue>>
-    {
+    pub async fn on(
+        &self,
+        topic: impl Into<String>,
+        timeout: std::time::Duration,
+    ) -> Result<Option<ArcValue>> {
         self.node_delegate.on(topic, timeout).await
     }
 }

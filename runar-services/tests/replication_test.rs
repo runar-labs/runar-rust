@@ -1,11 +1,11 @@
 use anyhow::Result;
-use runar_services::{
-    replication::{ConflictResolutionStrategy, ReplicationConfig},
-    sqlite::{DataType, Schema, SqliteConfig, SqliteService, TableDefinition, ColumnDefinition},
-};
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::ArcValue;
+use runar_services::{
+    replication::{ConflictResolutionStrategy, ReplicationConfig},
+    sqlite::{ColumnDefinition, DataType, Schema, SqliteConfig, SqliteService, TableDefinition},
+};
 use runar_test_utils::create_node_test_config;
 use std::collections::HashMap;
 
@@ -13,34 +13,32 @@ use std::collections::HashMap;
 async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
     // Create a test schema
     let schema = Schema {
-        tables: vec![
-            TableDefinition {
-                name: "users".to_string(),
-                columns: vec![
-                    ColumnDefinition {
-                        name: "id".to_string(),
-                        data_type: DataType::Integer,
-                        primary_key: true,
-                        autoincrement: true,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "email".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                ],
-            },
-        ],
+        tables: vec![TableDefinition {
+            name: "users".to_string(),
+            columns: vec![
+                ColumnDefinition {
+                    name: "id".to_string(),
+                    data_type: DataType::Integer,
+                    primary_key: true,
+                    autoincrement: true,
+                    not_null: true,
+                },
+                ColumnDefinition {
+                    name: "name".to_string(),
+                    data_type: DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: true,
+                },
+                ColumnDefinition {
+                    name: "email".to_string(),
+                    data_type: DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: true,
+                },
+            ],
+        }],
         indexes: vec![],
     };
 
@@ -49,7 +47,8 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
         ":memory:".to_string(), // Use in-memory database for testing
         schema,
         false, // No encryption for testing
-    ).with_replication(ReplicationConfig {
+    )
+    .with_replication(ReplicationConfig {
         enabled_tables: vec!["users".to_string()],
         conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
         startup_sync: true, // Enable startup sync to test the full replication lifecycle
@@ -76,9 +75,12 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
 
     // Test that event tables were created
     let result = node
-        .request("test_sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'")
-        )))
+        .request(
+            "test_sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'",
+            ))),
+        )
         .await?;
 
     let tables: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -86,9 +88,12 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
 
     // Test inserting a record
     let insert_result = node
-        .request("test_sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("INSERT INTO users (name, email) VALUES ('John Doe', 'john@example.com')")
-        )))
+        .request(
+            "test_sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "INSERT INTO users (name, email) VALUES ('John Doe', 'john@example.com')",
+            ))),
+        )
         .await?;
 
     let affected_rows: i64 = *insert_result.as_type_ref::<i64>().unwrap();
@@ -96,9 +101,12 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
 
     // Test that the record was inserted
     let select_result = node
-        .request("test_sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT * FROM users WHERE name = 'John Doe'")
-        )))
+        .request(
+            "test_sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT * FROM users WHERE name = 'John Doe'",
+            ))),
+        )
         .await?;
 
     let rows: Vec<ArcValue> = (*select_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -106,42 +114,72 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
 
     // Test that a replication event was created (local events are stored for replication history)
     let event_result = node
-        .request("test_sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT * FROM users_Events WHERE operation_type = 'create'")
-        )))
+        .request(
+            "test_sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT * FROM users_Events WHERE operation_type = 'create'",
+            ))),
+        )
         .await?;
 
     let events: Vec<ArcValue> = (*event_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
-    assert_eq!(events.len(), 1, "Should have 1 replication event stored for history");
+    assert_eq!(
+        events.len(),
+        1,
+        "Should have 1 replication event stored for history"
+    );
 
     // Test that the event is marked as processed (since it's a local event)
     let processed_event_result = node
-        .request("test_sqlite/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT * FROM users_Events WHERE processed = 1")
-        )))
+        .request(
+            "test_sqlite/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT * FROM users_Events WHERE processed = 1",
+            ))),
+        )
         .await?;
 
-    let processed_events: Vec<ArcValue> = (*processed_event_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
-    assert_eq!(processed_events.len(), 1, "Local event should be marked as processed");
+    let processed_events: Vec<ArcValue> = (*processed_event_result
+        .as_type_ref::<Vec<ArcValue>>()
+        .unwrap())
+    .clone();
+    assert_eq!(
+        processed_events.len(),
+        1,
+        "Local event should be marked as processed"
+    );
 
     // Test that the replication API endpoint is available (for when remote nodes connect)
     let replication_api_result = node
-        .request("test_sqlite/replication/get_table_events", Some(ArcValue::new_struct(
-            runar_services::replication::TableEventsRequest {
-                table_name: "users".to_string(),
-                page: 0,
-                page_size: 10,
-                from_timestamp: 0,
-            }
-        )))
+        .request(
+            "test_sqlite/replication/get_table_events",
+            Some(ArcValue::new_struct(
+                runar_services::replication::TableEventsRequest {
+                    table_name: "users".to_string(),
+                    page: 0,
+                    page_size: 10,
+                    from_timestamp: 0,
+                },
+            )),
+        )
         .await?;
 
-    let replication_response: runar_services::replication::TableEventsResponse = 
-        (*replication_api_result.as_type_ref::<runar_services::replication::TableEventsResponse>().unwrap()).clone();
-    
+    let replication_response: runar_services::replication::TableEventsResponse =
+        (*replication_api_result
+            .as_type_ref::<runar_services::replication::TableEventsResponse>()
+            .unwrap())
+        .clone();
+
     // Should return the local event we just created
-    assert_eq!(replication_response.events.len(), 1, "Replication API should return the stored event");
-    assert!(!replication_response.has_more, "Should not have more events");
+    assert_eq!(
+        replication_response.events.len(),
+        1,
+        "Replication API should return the stored event"
+    );
+    assert!(
+        !replication_response.has_more,
+        "Should not have more events"
+    );
 
     node.stop().await?;
     Ok(())
@@ -151,36 +189,30 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
 async fn test_sqlite_service_without_replication() -> Result<()> {
     // Create a test schema
     let schema = Schema {
-        tables: vec![
-            TableDefinition {
-                name: "users".to_string(),
-                columns: vec![
-                    ColumnDefinition {
-                        name: "id".to_string(),
-                        data_type: DataType::Integer,
-                        primary_key: true,
-                        autoincrement: true,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                ],
-            },
-        ],
+        tables: vec![TableDefinition {
+            name: "users".to_string(),
+            columns: vec![
+                ColumnDefinition {
+                    name: "id".to_string(),
+                    data_type: DataType::Integer,
+                    primary_key: true,
+                    autoincrement: true,
+                    not_null: true,
+                },
+                ColumnDefinition {
+                    name: "name".to_string(),
+                    data_type: DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: true,
+                },
+            ],
+        }],
         indexes: vec![],
     };
 
     // Create SQLite config without replication
-    let sqlite_config = SqliteConfig::new(
-        ":memory:".to_string(),
-        schema,
-        false,
-    ); // No replication config
+    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema, false); // No replication config
 
     // Create SQLite service
     let sqlite_service = SqliteService::new(
@@ -202,9 +234,12 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
 
     // Test inserting a record
     let insert_result = node
-        .request("test_sqlite_no_repl/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("INSERT INTO users (name) VALUES ('Jane Doe')")
-        )))
+        .request(
+            "test_sqlite_no_repl/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "INSERT INTO users (name) VALUES ('Jane Doe')",
+            ))),
+        )
         .await?;
 
     let affected_rows: i64 = *insert_result.as_type_ref::<i64>().unwrap();
@@ -212,13 +247,19 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
 
     // Test that event tables were NOT created (no replication)
     let result = node
-        .request("test_sqlite_no_repl/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'")
-        )))
+        .request(
+            "test_sqlite_no_repl/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'",
+            ))),
+        )
         .await?;
 
     let tables: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
-    assert!(tables.is_empty(), "Event table should NOT be created when replication is disabled");
+    assert!(
+        tables.is_empty(),
+        "Event table should NOT be created when replication is disabled"
+    );
 
     node.stop().await?;
     Ok(())
@@ -228,48 +269,44 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
 async fn test_replication_event_database_application() -> Result<()> {
     // Create a test schema
     let schema = Schema {
-        tables: vec![
-            TableDefinition {
-                name: "users".to_string(),
-                columns: vec![
-                    ColumnDefinition {
-                        name: "id".to_string(),
-                        data_type: DataType::Integer,
-                        primary_key: true,
-                        autoincrement: true,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "email".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                ],
-            },
-        ],
+        tables: vec![TableDefinition {
+            name: "users".to_string(),
+            columns: vec![
+                ColumnDefinition {
+                    name: "id".to_string(),
+                    data_type: DataType::Integer,
+                    primary_key: true,
+                    autoincrement: true,
+                    not_null: true,
+                },
+                ColumnDefinition {
+                    name: "name".to_string(),
+                    data_type: DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: true,
+                },
+                ColumnDefinition {
+                    name: "email".to_string(),
+                    data_type: DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: true,
+                },
+            ],
+        }],
         indexes: vec![],
     };
 
     // Create SQLite config with replication enabled
-    let sqlite_config = SqliteConfig::new(
-        ":memory:".to_string(),
-        schema,
-        false,
-    ).with_replication(ReplicationConfig {
-        enabled_tables: vec!["users".to_string()],
-        conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
-        startup_sync: false, // Disable startup sync for this test
-        event_retention_days: 30,
-    });
+    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema, false).with_replication(
+        ReplicationConfig {
+            enabled_tables: vec!["users".to_string()],
+            conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
+            startup_sync: false, // Disable startup sync for this test
+            event_retention_days: 30,
+        },
+    );
 
     // Create SQLite service
     let sqlite_service = SqliteService::new(
@@ -292,12 +329,16 @@ async fn test_replication_event_database_application() -> Result<()> {
 
     // Test that the database is empty initially
     let initial_result = node
-        .request("test_sqlite_apply/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users")
-        )))
+        .request(
+            "test_sqlite_apply/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT COUNT(*) as count FROM users",
+            ))),
+        )
         .await?;
 
-    let initial_rows: Vec<ArcValue> = (*initial_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    let initial_rows: Vec<ArcValue> =
+        (*initial_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     let initial_count = if let Some(first_row) = initial_rows.first() {
         // Extract the count value from the first row
         match first_row.as_type::<HashMap<String, runar_services::sqlite::Value>>() {
@@ -314,45 +355,62 @@ async fn test_replication_event_database_application() -> Result<()> {
         0
     };
     assert_eq!(initial_count, 0, "Database should be empty initially");
- 
+
     // Get the replication manager from the service
     // We need to access the replication manager to test the apply_event_to_database method
     // For now, let's test this by calling the replication API directly
-    
+
     // First, let's verify the event table exists
     let event_table_result = node
-        .request("test_sqlite_apply/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'")
-        )))
+        .request(
+            "test_sqlite_apply/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'",
+            ))),
+        )
         .await?;
 
-    let event_tables: Vec<ArcValue> = (*event_table_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    let event_tables: Vec<ArcValue> =
+        (*event_table_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     assert!(!event_tables.is_empty(), "Event table should be created");
 
     // Now let's test the replication event processing by calling the replication API
     // This will test the get_table_events functionality
     let replication_api_result = node
-        .request("test_sqlite_apply/replication/get_table_events", Some(ArcValue::new_struct(
-            runar_services::replication::TableEventsRequest {
-                table_name: "users".to_string(),
-                page: 0,
-                page_size: 10,
-                from_timestamp: 0,
-            }
-        )))
+        .request(
+            "test_sqlite_apply/replication/get_table_events",
+            Some(ArcValue::new_struct(
+                runar_services::replication::TableEventsRequest {
+                    table_name: "users".to_string(),
+                    page: 0,
+                    page_size: 10,
+                    from_timestamp: 0,
+                },
+            )),
+        )
         .await?;
 
-    let replication_response: runar_services::replication::TableEventsResponse = 
-        (*replication_api_result.as_type_ref::<runar_services::replication::TableEventsResponse>().unwrap()).clone();
-    
+    let replication_response: runar_services::replication::TableEventsResponse =
+        (*replication_api_result
+            .as_type_ref::<runar_services::replication::TableEventsResponse>()
+            .unwrap())
+        .clone();
+
     // Should return empty since no events have been created yet
-    assert_eq!(replication_response.events.len(), 0, "Should have no events initially");
+    assert_eq!(
+        replication_response.events.len(),
+        0,
+        "Should have no events initially"
+    );
 
     // Now let's create a local event and verify it gets stored
     let insert_result = node
-        .request("test_sqlite_apply/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("INSERT INTO users (name, email) VALUES ('Local User', 'local@example.com')")
-        )))
+        .request(
+            "test_sqlite_apply/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "INSERT INTO users (name, email) VALUES ('Local User', 'local@example.com')",
+            ))),
+        )
         .await?;
 
     let affected_rows: i64 = *insert_result.as_type_ref::<i64>().unwrap();
@@ -360,17 +418,21 @@ async fn test_replication_event_database_application() -> Result<()> {
 
     // Verify the event was stored
     let stored_events_result = node
-        .request("test_sqlite_apply/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT COUNT(*) as count FROM users_Events")
-        )))
+        .request(
+            "test_sqlite_apply/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT COUNT(*) as count FROM users_Events",
+            ))),
+        )
         .await?;
 
-    let stored_events_rows: Vec<ArcValue> = (*stored_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    let stored_events_rows: Vec<ArcValue> =
+        (*stored_events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     let stored_events_count = if let Some(first_row) = stored_events_rows.first() {
         match first_row.as_type::<HashMap<String, ArcValue>>() {
             Ok(row) => {
                 if let Some(count) = row.get("count") {
-                    *count.as_type_ref::<i64>().unwrap()    
+                    *count.as_type_ref::<i64>().unwrap()
                 } else {
                     0
                 }
@@ -384,9 +446,12 @@ async fn test_replication_event_database_application() -> Result<()> {
 
     // Verify the user was actually inserted
     let user_result = node
-        .request("test_sqlite_apply/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT * FROM users WHERE name = 'Local User'")
-        )))
+        .request(
+            "test_sqlite_apply/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT * FROM users WHERE name = 'Local User'",
+            ))),
+        )
         .await?;
 
     let users: Vec<ArcValue> = (*user_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -400,48 +465,44 @@ async fn test_replication_event_database_application() -> Result<()> {
 async fn test_mark_event_processed_functionality() -> Result<()> {
     // Create a test schema
     let schema = Schema {
-        tables: vec![
-            TableDefinition {
-                name: "users".to_string(),
-                columns: vec![
-                    ColumnDefinition {
-                        name: "id".to_string(),
-                        data_type: DataType::Integer,
-                        primary_key: true,
-                        autoincrement: true,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "name".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                    ColumnDefinition {
-                        name: "email".to_string(),
-                        data_type: DataType::Text,
-                        primary_key: false,
-                        autoincrement: false,
-                        not_null: true,
-                    },
-                ],
-            },
-        ],
+        tables: vec![TableDefinition {
+            name: "users".to_string(),
+            columns: vec![
+                ColumnDefinition {
+                    name: "id".to_string(),
+                    data_type: DataType::Integer,
+                    primary_key: true,
+                    autoincrement: true,
+                    not_null: true,
+                },
+                ColumnDefinition {
+                    name: "name".to_string(),
+                    data_type: DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: true,
+                },
+                ColumnDefinition {
+                    name: "email".to_string(),
+                    data_type: DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: true,
+                },
+            ],
+        }],
         indexes: vec![],
     };
 
     // Create SQLite config with replication enabled
-    let sqlite_config = SqliteConfig::new(
-        ":memory:".to_string(),
-        schema,
-        false,
-    ).with_replication(ReplicationConfig {
-        enabled_tables: vec!["users".to_string()],
-        conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
-        startup_sync: false,
-        event_retention_days: 30,
-    });
+    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema, false).with_replication(
+        ReplicationConfig {
+            enabled_tables: vec!["users".to_string()],
+            conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
+            startup_sync: false,
+            event_retention_days: 30,
+        },
+    );
 
     // Create SQLite service
     let sqlite_service = SqliteService::new(
@@ -497,13 +558,17 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
 
     // Verify the event is stored as unprocessed
     let unprocessed_result = node
-        .request("test_sqlite_mark_processed/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'")
-        )))
+        .request(
+            "test_sqlite_mark_processed/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'",
+            ))),
+        )
         .await?;
 
-    let unprocessed_rows: Vec<ArcValue> = (*unprocessed_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
-    
+    let unprocessed_rows: Vec<ArcValue> =
+        (*unprocessed_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+
     let is_unprocessed = if let Some(first_row) = unprocessed_rows.first() {
         match first_row.as_type::<HashMap<String, ArcValue>>() {
             Ok(row) => {
@@ -524,13 +589,19 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
     } else {
         false
     };
-    assert!(is_unprocessed, "Event should be stored as unprocessed initially");
+    assert!(
+        is_unprocessed,
+        "Event should be stored as unprocessed initially"
+    );
 
     // Now mark the event as processed
     let mark_processed_result = node
-        .request("test_sqlite_mark_processed/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("UPDATE users_Events SET processed = TRUE WHERE id = 'test-event-processed-1'")
-        )))
+        .request(
+            "test_sqlite_mark_processed/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "UPDATE users_Events SET processed = TRUE WHERE id = 'test-event-processed-1'",
+            ))),
+        )
         .await?;
 
     let mark_affected_rows: i64 = *mark_processed_result.as_type_ref::<i64>().unwrap();
@@ -538,13 +609,17 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
 
     // Verify the event is now marked as processed
     let processed_result = node
-        .request("test_sqlite_mark_processed/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'")
-        )))
+        .request(
+            "test_sqlite_mark_processed/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'",
+            ))),
+        )
         .await?;
 
-    let processed_rows: Vec<ArcValue> = (*processed_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
-    
+    let processed_rows: Vec<ArcValue> =
+        (*processed_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+
     let is_processed = if let Some(first_row) = processed_rows.first() {
         match first_row.as_type::<HashMap<String, ArcValue>>() {
             Ok(row) => {
@@ -569,16 +644,22 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
 
     // Test duplicate event handling - try to process the same event again
     // This should be skipped because it's already marked as processed
-    
+
     // Simulate the process_replication_event logic
     // First check if it's already processed
     let check_processed_result = node
-        .request("test_sqlite_mark_processed/execute_query", Some(ArcValue::new_struct(
-            runar_services::sqlite::SqlQuery::new("SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'")
-        )))
+        .request(
+            "test_sqlite_mark_processed/execute_query",
+            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
+                "SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'",
+            ))),
+        )
         .await?;
 
-    let check_rows: Vec<ArcValue> = (*check_processed_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
+    let check_rows: Vec<ArcValue> = (*check_processed_result
+        .as_type_ref::<Vec<ArcValue>>()
+        .unwrap())
+    .clone();
     let already_processed = if let Some(first_row) = check_rows.first() {
         match first_row.as_type::<HashMap<String, ArcValue>>() {
             Ok(row) => {
@@ -598,8 +679,11 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
     } else {
         false
     };
-    
-    assert!(already_processed, "Event should be detected as already processed");
+
+    assert!(
+        already_processed,
+        "Event should be detected as already processed"
+    );
 
     node.stop().await?;
     Ok(())
@@ -628,18 +712,24 @@ fn test_extract_table_name() {
     );
 
     // Test SELECT (should return None)
-    assert_eq!(
-        extract_table_name("SELECT * FROM users"),
-        None
-    );
+    assert_eq!(extract_table_name("SELECT * FROM users"), None);
 }
 
 #[test]
 fn test_determine_operation_type() {
     use runar_services::sqlite::determine_operation_type;
 
-    assert_eq!(determine_operation_type("INSERT INTO users VALUES (?)"), "CREATE");
-    assert_eq!(determine_operation_type("UPDATE users SET name = ?"), "UPDATE");
-    assert_eq!(determine_operation_type("DELETE FROM users WHERE id = ?"), "DELETE");
+    assert_eq!(
+        determine_operation_type("INSERT INTO users VALUES (?)"),
+        "CREATE"
+    );
+    assert_eq!(
+        determine_operation_type("UPDATE users SET name = ?"),
+        "UPDATE"
+    );
+    assert_eq!(
+        determine_operation_type("DELETE FROM users WHERE id = ?"),
+        "DELETE"
+    );
     assert_eq!(determine_operation_type("SELECT * FROM users"), "OTHER");
-} 
+}

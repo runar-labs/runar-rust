@@ -132,7 +132,11 @@ impl LifecycleContext {
         self.logger.error(message);
     }
 
-    pub async fn remote_request<P>(&self, topic: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn remote_request<P>(
+        &self,
+        topic: impl Into<String>,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -153,7 +157,9 @@ impl LifecycleContext {
         self.logger
             .debug(format!("Making request to processed path: {full_topic}"));
 
-        self.node_delegate.remote_request::<P>(full_topic, payload).await
+        self.node_delegate
+            .remote_request::<P>(full_topic, payload)
+            .await
     }
 
     /// Make a service request from the lifecycle context.
@@ -213,7 +219,7 @@ impl LifecycleContext {
         ));
         self.node_delegate.publish(full_topic, data).await
     }
- 
+
     /// Wait for an event to occur with a timeout
     ///
     /// INTENTION: Allow services during their lifecycle to wait for specific events
@@ -221,8 +227,11 @@ impl LifecycleContext {
     ///
     /// Returns Ok(Option<ArcValue>) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    pub async fn on(&self, topic: impl Into<String>, timeout: std::time::Duration) -> Result<Option<ArcValue>>
-    {
+    pub async fn on(
+        &self,
+        topic: impl Into<String>,
+        timeout: std::time::Duration,
+    ) -> Result<Option<ArcValue>> {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
             topic_string
@@ -772,11 +781,7 @@ pub trait NodeDelegate: Send + Sync {
     async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()>;
 
     /// Subscribe to a topic
-    async fn subscribe(
-        &self,
-        topic: String,
-        callback: EventHandler,
-    ) -> Result<String>;
+    async fn subscribe(&self, topic: String, callback: EventHandler) -> Result<String>;
 
     /// Subscribe with options for more control
     async fn subscribe_with_options(
@@ -798,7 +803,7 @@ pub trait NodeDelegate: Send + Sync {
         handler: ActionHandler,
         metadata: Option<ActionMetadata>,
     ) -> Result<()>;
- 
+
     /// Wait for an event to occur with a timeout
     ///
     /// INTENTION: Allow services to wait for specific events to occur
@@ -806,7 +811,11 @@ pub trait NodeDelegate: Send + Sync {
     ///
     /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    async fn on(&self, topic: impl Into<String> + Send, timeout: std::time::Duration) -> Result<Option<ArcValue>>;
+    async fn on(
+        &self,
+        topic: impl Into<String> + Send,
+        timeout: std::time::Duration,
+    ) -> Result<Option<ArcValue>>;
 }
 
 /// Registry Delegate trait for keys service operations
@@ -1002,7 +1011,6 @@ impl RemoteLifecycleContext {
             .register_remote_action_handler(topic_path, handler)
             .await
     }
- 
 }
 
 /// Service handler function type

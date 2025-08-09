@@ -132,9 +132,7 @@ impl RegistryService {
                         let is_local = params
                             .map(|p| p.as_type::<bool>().unwrap_or(true))
                             .unwrap_or(true);
-                        inner_self
-                            .handle_service_state(is_local, ctx)
-                            .await
+                        inner_self.handle_service_state(is_local, ctx).await
                     })
                 }),
             )
@@ -205,7 +203,10 @@ impl RegistryService {
         ctx.logger.debug("Listing all services");
 
         // Get all service metadata directly
-        let service_metadata = self.registry_delegate.get_all_service_metadata(true).await?;
+        let service_metadata = self
+            .registry_delegate
+            .get_all_service_metadata(true)
+            .await?;
 
         // Convert the HashMap of ServiceMetadata to a Vec
         let metadata_vec: Vec<ArcValue> = service_metadata
@@ -273,16 +274,21 @@ impl RegistryService {
 
         // Get service state based on is_local parameter
         let service_state = if is_local {
-            self.registry_delegate.get_local_service_state(&service_topic).await
+            self.registry_delegate
+                .get_local_service_state(&service_topic)
+                .await
         } else {
-            self.registry_delegate.get_remote_service_state(&service_topic).await
+            self.registry_delegate
+                .get_remote_service_state(&service_topic)
+                .await
         };
 
         match service_state {
             Some(state) => Ok(ArcValue::new_struct(state)),
             None => {
-                ctx.logger
-                    .debug(format!("Service '{service_path}' not found (param is_local: {is_local})"));
+                ctx.logger.debug(format!(
+                    "Service '{service_path}' not found (param is_local: {is_local})"
+                ));
                 Ok(ArcValue::new_struct(ServiceState::Unknown))
             }
         }
@@ -304,15 +310,26 @@ impl RegistryService {
         let service_topic = TopicPath::new_service(&network_id_string, &service_path);
 
         // Validate that the service can be paused
-        self.registry_delegate.validate_pause_transition(&service_topic).await?;
+        self.registry_delegate
+            .validate_pause_transition(&service_topic)
+            .await?;
 
         // Get current state and update to Paused
-        if let Some(current_state) = self.registry_delegate.get_local_service_state(&service_topic).await {
+        if let Some(current_state) = self
+            .registry_delegate
+            .get_local_service_state(&service_topic)
+            .await
+        {
             self.registry_delegate
-                .update_local_service_state_if_valid(&service_topic, ServiceState::Paused, current_state)
+                .update_local_service_state_if_valid(
+                    &service_topic,
+                    ServiceState::Paused,
+                    current_state,
+                )
                 .await?;
 
-            ctx.logger.info(format!("Service '{service_path}' paused successfully"));
+            ctx.logger
+                .info(format!("Service '{service_path}' paused successfully"));
             Ok(ArcValue::new_struct(ServiceState::Paused))
         } else {
             ctx.logger
@@ -337,15 +354,26 @@ impl RegistryService {
         let service_topic = TopicPath::new_service(&network_id_string, &service_path);
 
         // Validate that the service can be resumed
-        self.registry_delegate.validate_resume_transition(&service_topic).await?;
+        self.registry_delegate
+            .validate_resume_transition(&service_topic)
+            .await?;
 
         // Get current state and update to Running
-        if let Some(current_state) = self.registry_delegate.get_local_service_state(&service_topic).await {
+        if let Some(current_state) = self
+            .registry_delegate
+            .get_local_service_state(&service_topic)
+            .await
+        {
             self.registry_delegate
-                .update_local_service_state_if_valid(&service_topic, ServiceState::Running, current_state)
+                .update_local_service_state_if_valid(
+                    &service_topic,
+                    ServiceState::Running,
+                    current_state,
+                )
                 .await?;
 
-            ctx.logger.info(format!("Service '{service_path}' resumed successfully"));
+            ctx.logger
+                .info(format!("Service '{service_path}' resumed successfully"));
             Ok(ArcValue::new_struct(ServiceState::Running))
         } else {
             ctx.logger

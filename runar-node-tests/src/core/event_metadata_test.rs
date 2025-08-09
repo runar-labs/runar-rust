@@ -14,7 +14,7 @@ use tokio::time::timeout;
 use runar_common::logging::{Component, Logger};
 use runar_node::routing::TopicPath;
 use runar_node::services::service_registry::ServiceRegistry;
-use runar_node::services::{EventContext, EventRegistrationOptions}; 
+use runar_node::services::{EventContext, EventRegistrationOptions};
 use runar_serializer::ArcValue;
 
 /// Test that verifies the get_events_metadata_by_subscriber method returns correct metadata for events
@@ -115,7 +115,10 @@ async fn test_get_subscription_metadata() {
         );
 
         // Verify the paths of the events in the metadata
-        let event_paths: Vec<String> = subscriptions_metadata.iter().map(|m| m.path.clone()).collect();
+        let event_paths: Vec<String> = subscriptions_metadata
+            .iter()
+            .map(|m| m.path.clone())
+            .collect();
         assert!(
             event_paths.contains(&temperature_event_path.as_str().to_string()),
             "Missing temperature event path"

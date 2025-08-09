@@ -316,20 +316,32 @@ mod service_registry_wildcard_tests {
         // Subscribe to a pattern with a single-level wildcard
         let pattern1 = TopicPath::new("main:services/*/state", "default").expect("Valid pattern");
         let _sub_id1 = registry
-            .register_local_event_subscription(&pattern1, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &pattern1,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Subscribe to a pattern with a multi-level wildcard
         let pattern2 = TopicPath::new("main:events/>", "default").expect("Valid pattern");
         let _sub_id2 = registry
-            .register_local_event_subscription(&pattern2, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &pattern2,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Subscribe to a specific path to compare
         let specific_path =
             TopicPath::new("main:services/math/add", "default").expect("Valid path");
         let _sub_id3 = registry
-            .register_local_event_subscription(&specific_path, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &specific_path,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Publish to various topics and check if they match
@@ -456,7 +468,11 @@ mod service_registry_wildcard_tests {
         // Subscribe to a pattern with a wildcard
         let pattern = TopicPath::new("main:services/*/state", "default").expect("Valid pattern");
         let sub_id = registry
-            .register_local_event_subscription(&pattern, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &pattern,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Publish to a matching topic
@@ -478,7 +494,7 @@ mod service_registry_wildcard_tests {
     #[tokio::test]
     async fn test_path_trie_wildcard_duplication() -> Result<()> {
         let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
-        
+
         // Create a callback
         let callback = Arc::new(move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
             Box::pin(async move { Ok(()) }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
@@ -486,29 +502,49 @@ mod service_registry_wildcard_tests {
 
         // Register two handlers to the same wildcard pattern
         let pattern = TopicPath::new("main:events/>", "default").expect("Valid pattern");
-        
+
         // Add first handler
         let sub_id1 = registry
-            .register_local_event_subscription(&pattern, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &pattern,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await?;
-        
+
         // Add second handler to the same pattern
         let sub_id2 = registry
-            .register_local_event_subscription(&pattern, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &pattern,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await?;
-        
+
         // Now test what happens when we search for a matching topic
-        let search_topic = TopicPath::new("main:events/user/updated", "default").expect("Valid path");
+        let search_topic =
+            TopicPath::new("main:events/user/updated", "default").expect("Valid path");
         let handlers = registry.get_local_event_subscribers(&search_topic).await;
-        
+
         // The issue: we should have exactly 2 handlers, but we're getting more
-        assert_eq!(handlers.len(), 2, "Should have exactly 2 handlers, found {}", handlers.len());
-        
+        assert_eq!(
+            handlers.len(),
+            2,
+            "Should have exactly 2 handlers, found {}",
+            handlers.len()
+        );
+
         // Verify we have the expected subscription IDs
         let handler_ids: Vec<String> = handlers.iter().map(|(id, _, _)| id.clone()).collect();
-        assert!(handler_ids.contains(&sub_id1), "First subscription ID not found");
-        assert!(handler_ids.contains(&sub_id2), "Second subscription ID not found");
-        
+        assert!(
+            handler_ids.contains(&sub_id1),
+            "First subscription ID not found"
+        );
+        assert!(
+            handler_ids.contains(&sub_id2),
+            "Second subscription ID not found"
+        );
+
         Ok(())
     }
 
@@ -544,10 +580,18 @@ mod service_registry_wildcard_tests {
         // Subscribe both callbacks to the same wildcard pattern
         let pattern = TopicPath::new("main:events/>", "default").expect("Valid pattern");
         let _sub_id1 = registry
-            .register_local_event_subscription(&pattern, callback1, EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &pattern,
+                callback1,
+                EventRegistrationOptions::default(),
+            )
             .await?;
         let _sub_id2 = registry
-            .register_local_event_subscription(&pattern, callback2, EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &pattern,
+                callback2,
+                EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Publish to a matching topic

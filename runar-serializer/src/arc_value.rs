@@ -375,7 +375,7 @@ impl ArcValue {
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
             let network_id = &ctx.network_id;
-            let profile_public_key  = &ctx.profile_public_key;
+            let profile_public_key = &ctx.profile_public_key;
             let resolver = &ctx.resolver;
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {

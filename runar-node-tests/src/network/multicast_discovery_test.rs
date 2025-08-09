@@ -16,10 +16,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
-use std::time::SystemTime;
-use tokio::sync::oneshot;
 use runar_node::Node;
 use runar_test_utils::create_networked_node_test_config;
+use std::time::SystemTime;
+use tokio::sync::oneshot;
 
 #[tokio::test]
 async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
@@ -45,12 +45,17 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
         node_public_key: pk.to_vec(),
         network_ids: vec!["test-network".to_string()],
         addresses: vec!["127.0.0.1:0".to_string()],
-        node_metadata: NodeMetadata { services: vec![], subscriptions: vec![] },
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
         version: 0,
     };
 
-    let disc_a = MulticastDiscovery::new(mk_node_info(&node_a_pk), options.clone(), logger.clone()).await?;
-    let disc_b = MulticastDiscovery::new(mk_node_info(&node_b_pk), options.clone(), logger.clone()).await?;
+    let disc_a =
+        MulticastDiscovery::new(mk_node_info(&node_a_pk), options.clone(), logger.clone()).await?;
+    let disc_b =
+        MulticastDiscovery::new(mk_node_info(&node_b_pk), options.clone(), logger.clone()).await?;
 
     // Observe events from A about B
     let (lost_tx, lost_rx) = oneshot::channel::<()>();
@@ -77,7 +82,9 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
                     }
                     runar_node::network::discovery::DiscoveryEvent::Lost(peer) => {
                         if peer == node_b_id {
-                            if let Some(tx) = lost_tx.lock().await.take() { let _ = tx.send(()); }
+                            if let Some(tx) = lost_tx.lock().await.take() {
+                                let _ = tx.send(());
+                            }
                         }
                     }
                 }
@@ -94,16 +101,26 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
     // Stop B; A should eventually emit Lost after TTL
     disc_b.stop_announcing().await?;
     // Wait for Lost with timeout
-    tokio::time::timeout(Duration::from_secs(3), lost_rx).await.expect("lost not emitted")?;
+    tokio::time::timeout(Duration::from_secs(3), lost_rx)
+        .await
+        .expect("lost not emitted")?;
 
     // Check that multiple announcements were coalesced (received at least 1 update/discovered)
     // but not an excessive number due to debounce
     let mut count = 0usize;
-    while tokio::time::timeout(Duration::from_millis(50), upd_count_rx.recv()).await.is_ok() {
+    while tokio::time::timeout(Duration::from_millis(50), upd_count_rx.recv())
+        .await
+        .is_ok()
+    {
         count += 1;
-        if count > 10 { break; }
+        if count > 10 {
+            break;
+        }
     }
-    assert!(count >= 1, "expected at least one discovered/updated before Lost");
+    assert!(
+        count >= 1,
+        "expected at least one discovered/updated before Lost"
+    );
 
     Ok(())
 }
@@ -119,8 +136,24 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     // Create two networked node configs (QUIC + multicast discovery)
     let mut configs = create_networked_node_test_config(2)?;
     // Short TTL and debounce for faster test
-    if let Some(net) = &mut configs[0].network_config { net.discovery_options = Some(DiscoveryOptions { announce_interval: Duration::from_millis(80), node_ttl: Duration::from_millis(400), discovery_timeout: Duration::from_secs(1), debounce_window: Duration::from_millis(120), ..DiscoveryOptions::default() }); }
-    if let Some(net) = &mut configs[1].network_config { net.discovery_options = Some(DiscoveryOptions { announce_interval: Duration::from_millis(80), node_ttl: Duration::from_millis(400), discovery_timeout: Duration::from_secs(1), debounce_window: Duration::from_millis(120), ..DiscoveryOptions::default() }); }
+    if let Some(net) = &mut configs[0].network_config {
+        net.discovery_options = Some(DiscoveryOptions {
+            announce_interval: Duration::from_millis(80),
+            node_ttl: Duration::from_millis(400),
+            discovery_timeout: Duration::from_secs(1),
+            debounce_window: Duration::from_millis(120),
+            ..DiscoveryOptions::default()
+        });
+    }
+    if let Some(net) = &mut configs[1].network_config {
+        net.discovery_options = Some(DiscoveryOptions {
+            announce_interval: Duration::from_millis(80),
+            node_ttl: Duration::from_millis(400),
+            discovery_timeout: Duration::from_secs(1),
+            debounce_window: Duration::from_millis(120),
+            ..DiscoveryOptions::default()
+        });
+    }
 
     // Start two nodes
     let mut node_a = Node::new(configs.remove(0)).await?;
@@ -134,7 +167,10 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     // Check both see each other connected at the Node level
     let id_a = node_a.node_id().to_string();
     let id_b = node_b.node_id().to_string();
-    assert!(node_a.is_connected(&id_b).await || node_b.is_connected(&id_a).await, "expected at least one side to be connected");
+    assert!(
+        node_a.is_connected(&id_b).await || node_b.is_connected(&id_a).await,
+        "expected at least one side to be connected"
+    );
 
     // Stop B's networking (simulate announcer stop and TTL expiry)
     node_b.stop().await?;
@@ -143,11 +179,15 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Node A should mark B as disconnected by now
-    assert!(!node_a.is_connected(&id_b).await, "Node A should have cleaned up disconnected peer B after Lost");
+    assert!(
+        !node_a.is_connected(&id_b).await,
+        "Node A should have cleaned up disconnected peer B after Lost"
+    );
 
     // Shutdown A
     node_a.stop().await?;
-    watchdog.abort(); let _ = watchdog.await;
+    watchdog.abort();
+    let _ = watchdog.await;
     Ok(())
 }
 
@@ -180,12 +220,17 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
         node_public_key: pk.to_vec(),
         network_ids: vec!["test-network".to_string()],
         addresses: vec!["127.0.0.1:0".to_string()],
-        node_metadata: NodeMetadata { services: vec![], subscriptions: vec![] },
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
         version: 0,
     };
 
-    let disc1 = MulticastDiscovery::new(mk_node_info(&node1_pk), options.clone(), logger.clone()).await?;
-    let disc2 = MulticastDiscovery::new(mk_node_info(&node2_pk), options.clone(), logger.clone()).await?;
+    let disc1 =
+        MulticastDiscovery::new(mk_node_info(&node1_pk), options.clone(), logger.clone()).await?;
+    let disc2 =
+        MulticastDiscovery::new(mk_node_info(&node2_pk), options.clone(), logger.clone()).await?;
 
     // Subscribe on disc1 to watch disc2 events
     let (first_tx, first_rx) = oneshot::channel::<()>();
@@ -207,13 +252,18 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
                     runar_node::network::discovery::DiscoveryEvent::Discovered(pi)
                     | runar_node::network::discovery::DiscoveryEvent::Updated(pi) => {
                         if compact_id(&pi.public_key) == node2_id {
-                            if let Some(tx) = first_tx.lock().await.take() { let _ = tx.send(()); }
-                            else if let Some(tx2) = second_tx.lock().await.take() { let _ = tx2.send(()); }
+                            if let Some(tx) = first_tx.lock().await.take() {
+                                let _ = tx.send(());
+                            } else if let Some(tx2) = second_tx.lock().await.take() {
+                                let _ = tx2.send(());
+                            }
                         }
                     }
                     runar_node::network::discovery::DiscoveryEvent::Lost(peer) => {
                         if peer == node2_id {
-                            if let Some(tx) = lost_tx.lock().await.take() { let _ = tx.send(()); }
+                            if let Some(tx) = lost_tx.lock().await.take() {
+                                let _ = tx.send(());
+                            }
                         }
                     }
                 }
@@ -227,23 +277,31 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
     disc2.start_announcing().await?;
 
     // Wait for initial discovery
-    tokio::time::timeout(Duration::from_secs(2), first_rx).await.expect("did not receive initial Discovered")?;
+    tokio::time::timeout(Duration::from_secs(2), first_rx)
+        .await
+        .expect("did not receive initial Discovered")?;
 
     // Stop disc2 announcing and wait for Lost
     disc2.stop_announcing().await?;
-    tokio::time::timeout(Duration::from_secs(3), lost_rx).await.expect("did not receive Lost after TTL")?;
+    tokio::time::timeout(Duration::from_secs(3), lost_rx)
+        .await
+        .expect("did not receive Lost after TTL")?;
 
     // Restart provider for node2 and start announcing again
-    let disc2b = MulticastDiscovery::new(mk_node_info(&node2_pk), options.clone(), logger.clone()).await?;
+    let disc2b =
+        MulticastDiscovery::new(mk_node_info(&node2_pk), options.clone(), logger.clone()).await?;
     disc2b.start_announcing().await?;
 
     // Expect a new Discovered after restart due to debounce window + fresh announcer
-    tokio::time::timeout(Duration::from_secs(3), second_rx).await.expect("did not receive Discovered after provider restart")?;
+    tokio::time::timeout(Duration::from_secs(3), second_rx)
+        .await
+        .expect("did not receive Discovered after provider restart")?;
 
     // Cleanup
     disc1.stop_announcing().await?;
     disc2b.stop_announcing().await?;
-    watchdog.abort(); let _ = watchdog.await;
+    watchdog.abort();
+    let _ = watchdog.await;
     Ok(())
 }
 async fn create_test_discovery(
@@ -335,14 +393,16 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                 let node_2_id = node_2_id_clone.clone();
 
                 Box::pin(async move {
-                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event {
-                    let peer_id = compact_id(&peer_info.public_key);
-                    if peer_id == node_2_id {
-                        if let Err(e) = tx.send(peer_info).await {
-                            eprintln!("Channel send error: {e}");
-                        }
-                        if let Some(done_tx) = done_tx_clone.lock().await.take() {
-                            let _ = done_tx.send(());
+                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) =
+                        event
+                    {
+                        let peer_id = compact_id(&peer_info.public_key);
+                        if peer_id == node_2_id {
+                            if let Err(e) = tx.send(peer_info).await {
+                                eprintln!("Channel send error: {e}");
+                            }
+                            if let Some(done_tx) = done_tx_clone.lock().await.take() {
+                                let _ = done_tx.send(());
                             }
                         }
                     }
@@ -358,14 +418,16 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                 let node_1_id = node_1_id_clone.clone();
 
                 Box::pin(async move {
-                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event {
-                    let peer_id = compact_id(&peer_info.public_key);
-                    if peer_id == node_1_id {
-                        if let Err(e) = tx.send(peer_info).await {
-                            eprintln!("Channel send error: {e}");
-                        }
-                        if let Some(done_tx) = done_tx_clone.lock().await.take() {
-                            let _ = done_tx.send(());
+                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) =
+                        event
+                    {
+                        let peer_id = compact_id(&peer_info.public_key);
+                        if peer_id == node_1_id {
+                            if let Err(e) = tx.send(peer_info).await {
+                                eprintln!("Channel send error: {e}");
+                            }
+                            if let Some(done_tx) = done_tx_clone.lock().await.take() {
+                                let _ = done_tx.send(());
                             }
                         }
                     }
@@ -436,10 +498,8 @@ async fn test_no_duplicate_notifications() -> Result<()> {
     let node_2_id = compact_id(&node_2_public_key);
 
     // Create two discovery instances
-    let discovery1 =
-        create_test_discovery("test-network", &node_1_id, &node_1_public_key).await?;
-    let discovery2 =
-        create_test_discovery("test-network", &node_2_id, &node_2_public_key).await?;
+    let discovery1 = create_test_discovery("test-network", &node_1_id, &node_1_public_key).await?;
+    let discovery2 = create_test_discovery("test-network", &node_2_id, &node_2_public_key).await?;
 
     // Create a counter to track how many times we receive notifications
     let notification_count = Arc::new(tokio::sync::Mutex::new(0));
@@ -457,14 +517,15 @@ async fn test_no_duplicate_notifications() -> Result<()> {
             let node_2_id = node_2_id_clone.clone();
 
             Box::pin(async move {
-                if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event {
-                let peer_id = compact_id(&peer_info.public_key);
-                if peer_id == node_2_id {
+                if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event
+                {
+                    let peer_id = compact_id(&peer_info.public_key);
+                    if peer_id == node_2_id {
                         let mut count_guard = count.lock().await;
                         *count_guard += 1;
                         println!("Received notification #{count_guard} for peer {peer_id}");
-                    if let Err(e) = tx.send(peer_info).await {
-                        eprintln!("Channel send error: {e}");
+                        if let Err(e) = tx.send(peer_info).await {
+                            eprintln!("Channel send error: {e}");
                         }
                     }
                 }
@@ -488,7 +549,10 @@ async fn test_no_duplicate_notifications() -> Result<()> {
     println!("Final notification count: {final_count}");
 
     // We should have received exactly 1 notification, not multiple
-    assert_eq!(final_count, 1, "Expected exactly 1 notification, got {final_count}");
+    assert_eq!(
+        final_count, 1,
+        "Expected exactly 1 notification, got {final_count}"
+    );
 
     // Verify we received the peer info
     if let Ok(peer_info) = rx.try_recv() {

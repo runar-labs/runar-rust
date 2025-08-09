@@ -15,7 +15,7 @@ use crate::network::transport::{MessageContext, NetworkTransport};
 use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
 use crate::services::service_registry::EventHandler;
-use crate::services::{ActionHandler,   LifecycleContext};
+use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 
@@ -39,7 +39,7 @@ pub struct RemoteService {
 
     /// Service capabilities
     actions: Arc<RwLock<HashMap<String, ActionMetadata>>>,
- 
+
     /// Logger instance
     logger: Arc<Logger>,
 
@@ -179,7 +179,7 @@ impl RemoteService {
         self.actions.write().await.insert(action_name, metadata);
         Ok(())
     }
- 
+
     /// Create a handler for a remote event
     pub fn create_event_handler(&self, event_path: String) -> EventHandler {
         let service = self.clone();
@@ -199,7 +199,10 @@ impl RemoteService {
                 ));
 
                 // Create the event topic path
-                let event_topic_path = match service_clone.service_topic.new_event_topic(&event_path_clone) {
+                let event_topic_path = match service_clone
+                    .service_topic
+                    .new_event_topic(&event_path_clone)
+                {
                     Ok(path) => path,
                     Err(e) => {
                         service_clone.logger.error(format!(
@@ -325,7 +328,7 @@ impl RemoteService {
                 ));
             }
         }
- 
+
         Ok(())
     }
 

@@ -91,9 +91,8 @@ pub enum DiscoveryEvent {
 }
 
 /// Callback function type for discovery events (async)
-pub type DiscoveryListener = Arc<
-    dyn Fn(DiscoveryEvent) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
->;
+pub type DiscoveryListener =
+    Arc<dyn Fn(DiscoveryEvent) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Interface for node discovery mechanisms
 #[async_trait]

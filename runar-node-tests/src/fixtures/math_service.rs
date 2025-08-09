@@ -8,9 +8,7 @@
 // Any changes to the service interface or semantics may break numerous tests across the codebase.
 
 use anyhow::{anyhow, Result};
-use runar_node::services::{
-    abstract_service::AbstractService, request_context::RequestContext,
-};
+use runar_node::services::{abstract_service::AbstractService, request_context::RequestContext};
 use runar_node::LifecycleContext;
 
 use runar_serializer::ArcValue;
@@ -374,7 +372,7 @@ impl AbstractService for MathService {
                 }),
             )
             .await?;
- 
+
         context
             .subscribe(
                 "math/added",

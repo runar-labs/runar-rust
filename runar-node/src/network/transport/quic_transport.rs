@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use quinn::{ClientConfig, Endpoint, ServerConfig};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tokio::sync::RwLock;
 use tokio::sync::Notify;
-use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
 
@@ -484,7 +484,6 @@ pub struct QuicTransport {
 }
 
 impl QuicTransport {
-
     fn generate_nonce() -> u64 {
         rand::random::<u64>()
     }
@@ -499,7 +498,12 @@ impl QuicTransport {
         existing: (&str, u64, &str, u64),
         candidate: (&str, u64, &str, u64),
     ) -> bool {
-        fn canonical_key<'a>(a_id: &'a str, a_nonce: u64, b_id: &'a str, b_nonce: u64) -> (std::cmp::Ordering, &'a str, u64, &'a str, u64) {
+        fn canonical_key<'a>(
+            a_id: &'a str,
+            a_nonce: u64,
+            b_id: &'a str,
+            b_nonce: u64,
+        ) -> (std::cmp::Ordering, &'a str, u64, &'a str, u64) {
             if a_id <= b_id {
                 (std::cmp::Ordering::Less, a_id, a_nonce, b_id, b_nonce)
             } else {
@@ -578,7 +582,9 @@ impl QuicTransport {
                 }
                 // If the new connection differs from the placeholder's, close the old one
                 if new_id != existing_id {
-                    existing.connection.close(0u32.into(), b"duplicate-replaced");
+                    existing
+                        .connection
+                        .close(0u32.into(), b"duplicate-replaced");
                 }
                 return true;
             }
@@ -639,7 +645,9 @@ impl QuicTransport {
                     .await
                     .insert(conn_id, peer_node_id.to_string());
                 if existing.connection_id != conn_id {
-                    existing.connection.close(0u32.into(), b"duplicate-replaced");
+                    existing
+                        .connection
+                        .close(0u32.into(), b"duplicate-replaced");
                 }
                 if let Some(state) = peers.get(peer_node_id) {
                     let _ = state.activation_tx.send(true);
@@ -662,10 +670,7 @@ impl QuicTransport {
                 responder_nonce,
             );
             let conn_id = new_state.connection_id;
-            peers.insert(
-                peer_node_id.to_string(),
-                new_state,
-            );
+            peers.insert(peer_node_id.to_string(), new_state);
             self.state
                 .connection_id_to_peer_id
                 .write()
@@ -903,7 +908,12 @@ impl QuicTransport {
                     let peer_for_check = resolved_peer_id.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                        let still_disconnected = !self_check.state.peers.read().await.contains_key(&peer_for_check);
+                        let still_disconnected = !self_check
+                            .state
+                            .peers
+                            .read()
+                            .await
+                            .contains_key(&peer_for_check);
                         if still_disconnected {
                             let _ = (cb)(peer_for_check.clone(), false, None).await;
                         } else {
@@ -1039,7 +1049,8 @@ impl QuicTransport {
                 let mut should_send_response = false;
                 if let Some(payload) = msg.payloads.first() {
                     // Try new HandshakeData (with nonce/role); fall back to raw NodeInfo for compatibility
-                    let parsed: Result<HandshakeData, _> = serde_cbor::from_slice(&payload.value_bytes);
+                    let parsed: Result<HandshakeData, _> =
+                        serde_cbor::from_slice(&payload.value_bytes);
                     if let Ok(hs) = parsed {
                         let peer_node_id = msg.source_node_id.clone();
                         let node_info = hs.node_info;
@@ -1052,23 +1063,48 @@ impl QuicTransport {
 
                         self.logger.debug(format!("🔍 [bi_accept_loop] HS v2 from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}"));
                         let candidate_initiator = match (remote_role, local_role) {
-                            (ConnectionRole::Initiator, ConnectionRole::Responder) => (peer_node_id.clone(), remote_nonce, self.local_node_id(), local_nonce),
-                            (ConnectionRole::Responder, ConnectionRole::Responder) => (peer_node_id.clone(), remote_nonce, self.local_node_id(), local_nonce),
-                            (ConnectionRole::Initiator, ConnectionRole::Initiator) => (peer_node_id.clone(), remote_nonce, self.local_node_id(), local_nonce),
-                            (ConnectionRole::Responder, ConnectionRole::Initiator) => (self.local_node_id(), local_nonce, peer_node_id.clone(), remote_nonce),
+                            (ConnectionRole::Initiator, ConnectionRole::Responder) => (
+                                peer_node_id.clone(),
+                                remote_nonce,
+                                self.local_node_id(),
+                                local_nonce,
+                            ),
+                            (ConnectionRole::Responder, ConnectionRole::Responder) => (
+                                peer_node_id.clone(),
+                                remote_nonce,
+                                self.local_node_id(),
+                                local_nonce,
+                            ),
+                            (ConnectionRole::Initiator, ConnectionRole::Initiator) => (
+                                peer_node_id.clone(),
+                                remote_nonce,
+                                self.local_node_id(),
+                                local_nonce,
+                            ),
+                            (ConnectionRole::Responder, ConnectionRole::Initiator) => (
+                                self.local_node_id(),
+                                local_nonce,
+                                peer_node_id.clone(),
+                                remote_nonce,
+                            ),
                         };
                         self.logger.debug(format!(
                             "🔍 [bi_accept_loop] candidate dup key init=({},{}) resp=({},{})",
-                            candidate_initiator.0, candidate_initiator.1, candidate_initiator.2, candidate_initiator.3
-                        ));
-                        let kept = self.replace_or_keep_connection(
-                            &peer_node_id,
-                            conn.clone(),
                             candidate_initiator.0,
                             candidate_initiator.1,
                             candidate_initiator.2,
-                            candidate_initiator.3,
-                        ).await;
+                            candidate_initiator.3
+                        ));
+                        let kept = self
+                            .replace_or_keep_connection(
+                                &peer_node_id,
+                                conn.clone(),
+                                candidate_initiator.0,
+                                candidate_initiator.1,
+                                candidate_initiator.2,
+                                candidate_initiator.3,
+                            )
+                            .await;
                         if !kept {
                             // New inbound lost; skip further processing for this connection
                             continue;
@@ -1080,46 +1116,55 @@ impl QuicTransport {
                         should_send_response = true;
                         let _ = (self.message_handler)(msg.clone()).await;
                         if needs_to_correlate_peer_id {
-                            self.state.connection_id_to_peer_id.write().await.insert(conn.stable_id(), peer_node_id);
+                            self.state
+                                .connection_id_to_peer_id
+                                .write()
+                                .await
+                                .insert(conn.stable_id(), peer_node_id);
                         }
                     } else {
-                    match serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes) {
-                        Ok(node_info) => {
-                            let peer_node_id = msg.source_node_id.clone();
-                            let node_info_version = node_info.version;
+                        match serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes) {
+                            Ok(node_info) => {
+                                let peer_node_id = msg.source_node_id.clone();
+                                let node_info_version = node_info.version;
 
-                            self.logger.debug(format!("🔍 [bi_accept_loop] Handshake NodeInfo peer_node_id: {peer_node_id} node info version: {node_info_version}"));
-                            // Legacy path: we don't have nonces/roles; treat this as inbound responder wins
-                            let kept = self.replace_or_keep_connection(
-                                &peer_node_id,
-                                conn.clone(),
-                                self.local_node_id(),
-                                0,
-                                peer_node_id.clone(),
-                                0,
-                            ).await;
-                            if !kept {
-                                continue;
+                                self.logger.debug(format!("🔍 [bi_accept_loop] Handshake NodeInfo peer_node_id: {peer_node_id} node info version: {node_info_version}"));
+                                // Legacy path: we don't have nonces/roles; treat this as inbound responder wins
+                                let kept = self
+                                    .replace_or_keep_connection(
+                                        &peer_node_id,
+                                        conn.clone(),
+                                        self.local_node_id(),
+                                        0,
+                                        peer_node_id.clone(),
+                                        0,
+                                    )
+                                    .await;
+                                if !kept {
+                                    continue;
+                                }
+                                if let Some(state) =
+                                    self.state.peers.read().await.get(&peer_node_id)
+                                {
+                                    let _ = state.activation_tx.send(true);
+                                }
+                                should_send_response = true;
+                                let _ = (self.message_handler)(msg.clone()).await;
+                                if needs_to_correlate_peer_id {
+                                    self.state
+                                        .connection_id_to_peer_id
+                                        .write()
+                                        .await
+                                        .insert(conn.stable_id(), peer_node_id);
+                                }
                             }
-                            if let Some(state) = self.state.peers.read().await.get(&peer_node_id) {
-                                let _ = state.activation_tx.send(true);
-                            }
-                            should_send_response = true;
-                            let _ = (self.message_handler)(msg.clone()).await;
-                            if needs_to_correlate_peer_id {
-                                self.state
-                                    .connection_id_to_peer_id
-                                    .write()
-                                    .await
-                                    .insert(conn.stable_id(), peer_node_id);
+                            Err(e) => {
+                                self.logger.error(format!(
+                                    "❌ [bi_accept_loop] Failed to parse NodeInfo: {e}"
+                                ));
                             }
                         }
-                        Err(e) => {
-                            self.logger.error(format!(
-                                "❌ [bi_accept_loop] Failed to parse NodeInfo: {e}"
-                            ));
-                        }
-                    } }
+                    }
                 }
 
                 // Send handshake response only if this connection is the surviving winner
@@ -1289,7 +1334,8 @@ impl QuicTransport {
         if let Some(payload) = reply.payloads.first() {
             if let Ok(hs) = serde_cbor::from_slice::<HandshakeData>(&payload.value_bytes) {
                 responder_nonce = hs.nonce;
-            } else if let Ok(_node_info) = serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes) {
+            } else if let Ok(_node_info) = serde_cbor::from_slice::<NodeInfo>(&payload.value_bytes)
+            {
                 responder_nonce = 0;
             }
         }
@@ -1346,7 +1392,9 @@ impl QuicTransport {
         let mut attempt: u8 = 0;
         let max_attempts: u8 = 3;
         loop {
-            let peer = self.wait_for_active_peer(peer_node_id, max_attempts).await?;
+            let peer = self
+                .wait_for_active_peer(peer_node_id, max_attempts)
+                .await?;
             match peer.connection.open_bi().await {
                 Ok(v) => return Ok(v),
                 Err(e) => {
@@ -1355,9 +1403,7 @@ impl QuicTransport {
                         tokio::time::sleep(Duration::from_millis(70)).await;
                         continue;
                     }
-                    return Err(NetworkError::TransportError(format!(
-                        "open_bi failed: {e}"
-                    )));
+                    return Err(NetworkError::TransportError(format!("open_bi failed: {e}")));
                 }
             }
         }
@@ -1368,7 +1414,9 @@ impl QuicTransport {
         let mut attempt: u8 = 0;
         let max_attempts: u8 = 3;
         loop {
-            let peer = self.wait_for_active_peer(peer_node_id, max_attempts).await?;
+            let peer = self
+                .wait_for_active_peer(peer_node_id, max_attempts)
+                .await?;
             match peer.connection.open_uni().await {
                 Ok(s) => return Ok(s),
                 Err(e) => {
@@ -1543,11 +1591,7 @@ impl NetworkTransport for QuicTransport {
         }
 
         // Clear in-memory maps
-        self.state
-            .connection_id_to_peer_id
-            .write()
-            .await
-            .clear();
+        self.state.connection_id_to_peer_id.write().await.clear();
         self.state.dial_backoff.write().await.clear();
         self.state.dial_cancel.write().await.clear();
 
@@ -1588,8 +1632,9 @@ impl NetworkTransport for QuicTransport {
         peer_node_id: &str,
         context: MessageContext,
     ) -> Result<ArcValue, NetworkError> {
-        self.logger
-            .info(format!("🔍 [request] Starting request to peer: {peer_node_id}"));
+        self.logger.info(format!(
+            "🔍 [request] Starting request to peer: {peer_node_id}"
+        ));
 
         let network_id = topic_path.network_id();
         let correlation_id = uuid::Uuid::new_v4().to_string();
@@ -1623,7 +1668,8 @@ impl NetworkTransport for QuicTransport {
         };
 
         let response_msg = loop {
-            self.logger.info("🔍 [request] Opening bidirectional stream");
+            self.logger
+                .info("🔍 [request] Opening bidirectional stream");
             let (mut send, mut recv) = self.open_bi_active(peer_node_id).await?;
 
             self.logger
@@ -1671,12 +1717,11 @@ impl NetworkTransport for QuicTransport {
             "🔍 [request] Deserializing response payload of {} bytes",
             bytes.len()
         ));
-        let av = ArcValue::deserialize(bytes, Some(self.keystore.clone()))
-            .map_err(|e| {
-                self.logger
-                    .error(format!("❌ [request] Failed to deserialize response: {e}"));
-                NetworkError::MessageError(format!("deserialize response: {e}"))
-            })?;
+        let av = ArcValue::deserialize(bytes, Some(self.keystore.clone())).map_err(|e| {
+            self.logger
+                .error(format!("❌ [request] Failed to deserialize response: {e}"));
+            NetworkError::MessageError(format!("deserialize response: {e}"))
+        })?;
 
         self.logger
             .info("✅ [request] Request completed successfully");
@@ -1689,10 +1734,9 @@ impl NetworkTransport for QuicTransport {
         params: Option<ArcValue>,
         peer_node_id: &str,
     ) -> Result<(), NetworkError> {
-
         let network_id = topic_path.network_id();
         let correlation_id = uuid::Uuid::new_v4().to_string();
- 
+
         let serialization_context = SerializationContext {
             keystore: self.keystore.clone(),
             resolver: self.label_resolver.clone(),
@@ -1717,7 +1761,7 @@ impl NetworkTransport for QuicTransport {
                 correlation_id,
                 context: None,
             }],
-        }; 
+        };
 
         let mut send = self.open_uni_active(peer_node_id).await?;
         self.write_message(&mut send, &message).await?;
@@ -1783,8 +1827,16 @@ impl NetworkTransport for QuicTransport {
                     return Ok(());
                 }
                 // If a cancel notify is signaled (due to inbound), break early
-                if let Some(n) = self.state.dial_cancel.read().await.get(&peer_node_id).cloned() {
-                    let notified = tokio::time::timeout(Duration::from_millis(50), n.notified()).await;
+                if let Some(n) = self
+                    .state
+                    .dial_cancel
+                    .read()
+                    .await
+                    .get(&peer_node_id)
+                    .cloned()
+                {
+                    let notified =
+                        tokio::time::timeout(Duration::from_millis(50), n.notified()).await;
                     if notified.is_ok() {
                         self.logger.debug(format!("[connect_peer] Prefer inbound; cancel signal received for {peer_node_id}"));
                         return Ok(());
@@ -1795,7 +1847,9 @@ impl NetworkTransport for QuicTransport {
                 attempts = attempts.saturating_add(1);
             }
             // Fall through to dial if inbound did not arrive in time
-            self.logger.debug(format!("[connect_peer] Prefer inbound but none arrived; proceeding to dial {peer_node_id}"));
+            self.logger.debug(format!(
+                "[connect_peer] Prefer inbound but none arrived; proceeding to dial {peer_node_id}"
+            ));
         }
         self.logger.debug(format!("🔍 [connect_peer] Connecting to {peer_node_id} (DNS-safe: {dns_safe_peer_id}) at {addr}"));
 
@@ -1809,10 +1863,19 @@ impl NetworkTransport for QuicTransport {
 
         // Honor per-peer backoff
         let now = Instant::now();
-        if let Some((attempts, until)) = self.state.dial_backoff.read().await.get(&peer_node_id).cloned() {
+        if let Some((attempts, until)) = self
+            .state
+            .dial_backoff
+            .read()
+            .await
+            .get(&peer_node_id)
+            .cloned()
+        {
             if now < until {
                 let wait_ms = until.saturating_duration_since(now).as_millis();
-                self.logger.debug(format!("⏳ [backoff] peer={peer_node_id} attempts={attempts} remaining_ms={wait_ms}"));
+                self.logger.debug(format!(
+                    "⏳ [backoff] peer={peer_node_id} attempts={attempts} remaining_ms={wait_ms}"
+                ));
                 tokio::select! {
                     _ = tokio::time::sleep(until.saturating_duration_since(now)) => {},
                     _ = cancel_notify.notified() => {
@@ -1860,7 +1923,10 @@ impl NetworkTransport for QuicTransport {
                 let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
                 let delay = Duration::from_millis(base.saturating_add(jitter));
                 guard.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
-                self.logger.debug(format!("⏫ [backoff-incr] peer={peer_node_id} attempts={attempts} delay_ms={}", delay.as_millis()));
+                self.logger.debug(format!(
+                    "⏫ [backoff-incr] peer={peer_node_id} attempts={attempts} delay_ms={}",
+                    delay.as_millis()
+                ));
                 return Err(NetworkError::ConnectionError(format!(
                     "handshake failed: {err_str}"
                 )));
@@ -1935,10 +2001,7 @@ impl NetworkTransport for QuicTransport {
                 self.state.peers.write().await.remove(&peer_node_id);
                 let jitter: u64 = rand::random::<u64>() % 200;
                 let mut guard = self.state.dial_backoff.write().await;
-                let (mut attempts, _until) = guard
-                    .get(&peer_node_id)
-                    .cloned()
-                    .unwrap_or((0, now));
+                let (mut attempts, _until) = guard.get(&peer_node_id).cloned().unwrap_or((0, now));
                 attempts = attempts.saturating_add(1);
                 let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
                 let delay = Duration::from_millis(base.saturating_add(jitter));
@@ -1971,6 +2034,14 @@ impl NetworkTransport for QuicTransport {
     }
 
     fn get_local_address(&self) -> String {
+        // Prefer the actual bound address from the live endpoint if available (non-blocking)
+        if let Ok(guard) = self.endpoint.try_read() {
+            if let Some(ep) = guard.as_ref() {
+                if let Ok(addr) = ep.local_addr() {
+                    return addr.to_string();
+                }
+            }
+        }
         self.bind_addr.to_string()
     }
 

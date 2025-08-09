@@ -81,7 +81,12 @@ impl EventContext {
     /// Create a new EventContext with the given topic path and logger
     ///
     /// This is the primary constructor that takes the minimum required parameters.
-    pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, is_local: bool, logger: Arc<Logger>) -> Self {
+    pub fn new(
+        topic_path: &TopicPath,
+        node_delegate: Arc<Node>,
+        is_local: bool,
+        logger: Arc<Logger>,
+    ) -> Self {
         // Add event path to logger if available from topic_path
         let event_path = topic_path.action_path();
         let event_logger = if !event_path.is_empty() {
@@ -143,7 +148,7 @@ impl EventContext {
     pub fn is_local(&self) -> bool {
         self.is_local
     }
- 
+
     /// Publish an event
     ///
     /// INTENTION: Allow event handlers to publish their own events.
@@ -182,7 +187,11 @@ impl EventContext {
         self.node_delegate.publish(full_topic, data).await
     }
 
-    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn remote_request<P>(
+        &self,
+        path: impl Into<String>,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -211,7 +220,9 @@ impl EventContext {
         self.logger
             .debug(format!("Making request to processed path: {full_path}"));
 
-        self.node_delegate.remote_request::<P>(full_path, payload).await
+        self.node_delegate
+            .remote_request::<P>(full_path, payload)
+            .await
     }
 
     /// Make a service request
@@ -263,8 +274,11 @@ impl EventContext {
     ///
     /// Returns Ok(Option<ArcValue>) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    pub async fn on(&self, topic: impl Into<String>, timeout: std::time::Duration) -> Result<Option<ArcValue>>
-    {
+    pub async fn on(
+        &self,
+        topic: impl Into<String>,
+        timeout: std::time::Duration,
+    ) -> Result<Option<ArcValue>> {
         self.node_delegate.on(topic, timeout).await
     }
 }

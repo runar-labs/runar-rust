@@ -79,7 +79,11 @@ async fn test_subscribe_and_unsubscribe() {
 
         // Subscribe to the topic using the correct method
         let subscription_id = registry
-            .register_local_event_subscription(&topic, callback, EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &topic,
+                callback,
+                EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -133,11 +137,19 @@ async fn test_wildcard_subscriptions() {
 
         // Subscribe to wildcard topics using the correct method
         let _id1 = registry
-            .register_local_event_subscription(&wildcard1, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &wildcard1,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
         let id2 = registry
-            .register_local_event_subscription(&wildcard2, callback.clone(), EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &wildcard2,
+                callback.clone(),
+                EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -475,11 +487,19 @@ async fn test_multiple_event_handlers() {
 
         // Subscribe handlers to topics using the correct method
         let id1 = registry
-            .register_local_event_subscription(&topic1, handler1, EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &topic1,
+                handler1,
+                EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
         let id2 = registry
-            .register_local_event_subscription(&topic2, handler2, EventRegistrationOptions::default())
+            .register_local_event_subscription(
+                &topic2,
+                handler2,
+                EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -1052,15 +1072,18 @@ async fn test_remove_remote_event_subscription() {
 
         // Create a callback for remote events
         let callback = Arc::new(
-            move |_data: Option<ArcValue>|
-                  -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
+            move |_data: Option<ArcValue>| -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
                 Box::pin(async move { Ok(()) })
             },
         );
 
         // Register remote event subscription
         let subscription_id = registry
-            .register_remote_event_subscription(&topic, callback, EventRegistrationOptions::default())
+            .register_remote_event_subscription(
+                &topic,
+                callback,
+                EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -1070,7 +1093,10 @@ async fn test_remove_remote_event_subscription() {
         assert_eq!(handlers[0].0, subscription_id, "Subscriber ID should match");
 
         // Remove the remote event subscription
-        registry.remove_remote_event_subscription(&topic).await.unwrap();
+        registry
+            .remove_remote_event_subscription(&topic)
+            .await
+            .unwrap();
 
         // Verify the handler is removed from the trie
         let handlers_after = registry.get_remote_event_subscribers(&topic).await;
@@ -1082,7 +1108,10 @@ async fn test_remove_remote_event_subscription() {
 
         // Verify that trying to unsubscribe again fails (indicating the ID was properly removed)
         let unsubscribe_result = registry.unsubscribe_remote(&subscription_id).await;
-        assert!(unsubscribe_result.is_err(), "Should not be able to unsubscribe from already removed subscription");
+        assert!(
+            unsubscribe_result.is_err(),
+            "Should not be able to unsubscribe from already removed subscription"
+        );
     })
     .await
     {

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
- 
+
 use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
@@ -17,8 +17,8 @@ use runar_serializer::{ArcValue, LabelKeyInfo};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use tokio::time::{sleep, Duration};
 use std::time::Instant;
+use tokio::time::{sleep, Duration};
 
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,11 +45,13 @@ use crate::services::registry_service::RegistryService;
 use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
-use crate::services::service_registry::{EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry, INTERNAL_SERVICES};
+use crate::services::service_registry::{
+    EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry, INTERNAL_SERVICES,
+};
 use crate::services::NodeDelegate;
 use crate::services::{
-    ActionHandler,   EventRegistrationOptions,
-    PublishOptions, RegistryDelegate, RemoteLifecycleContext, RequestContext,
+    ActionHandler, EventRegistrationOptions, PublishOptions, RegistryDelegate,
+    RemoteLifecycleContext, RequestContext,
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
@@ -97,7 +99,9 @@ impl PeerDirectory {
 
     pub async fn mark_connected(&self, peer_id: &str) {
         let mut guard = self.inner.write().await;
-        let entry = guard.entry(peer_id.to_string()).or_insert_with(PeerRecord::new);
+        let entry = guard
+            .entry(peer_id.to_string())
+            .or_insert_with(PeerRecord::new);
         entry.connected = true;
         entry.last_seen_at = Instant::now();
     }
@@ -110,7 +114,9 @@ impl PeerDirectory {
 
     pub async fn set_node_info(&self, peer_id: &str, info: NodeInfo) {
         let mut guard = self.inner.write().await;
-        let entry = guard.entry(peer_id.to_string()).or_insert_with(PeerRecord::new);
+        let entry = guard
+            .entry(peer_id.to_string())
+            .or_insert_with(PeerRecord::new);
         entry.last_capabilities_version = info.version;
         entry.node_info = Some(info);
         entry.last_seen_at = Instant::now();
@@ -236,8 +242,6 @@ impl std::fmt::Display for NodeConfig {
     }
 }
 
-
-
 /// The Node is the main entry point for the application
 ///
 /// INTENTION: Provide a high-level interface for services to communicate
@@ -298,7 +302,7 @@ pub struct Node {
     /// Pending requests waiting for responses, keyed by correlation ID
     pub(crate) pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
 
-        label_resolver: Arc<dyn LabelResolver>,
+    label_resolver: Arc<dyn LabelResolver>,
 
     registry_version: Arc<AtomicI64>,
 
@@ -315,17 +319,8 @@ impl Node {
     pub async fn is_connected(&self, peer_id: &str) -> bool {
         self.peer_directory.is_connected(peer_id).await
     }
-    async fn get_or_create_connect_mutex(
-        &self,
-        peer_id: &str,
-    ) -> Arc<tokio::sync::Mutex<()>> {
-        if let Some(m) = self
-            .peer_connect_mutexes
-            .read()
-            .await
-            .get(peer_id)
-            .cloned()
-        {
+    async fn get_or_create_connect_mutex(&self, peer_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        if let Some(m) = self.peer_connect_mutexes.read().await.get(peer_id).cloned() {
             return m;
         }
         let mut w = self.peer_connect_mutexes.write().await;
@@ -514,21 +509,36 @@ impl Node {
             registry
                 .update_local_service_state(&service_topic, ServiceState::Error)
                 .await?;
-            self.publish_with_options(format!("$registry/services/{}/state/error", service_topic.service_path()), 
-                Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
+            self.publish_with_options(
+                format!(
+                    "$registry/services/{}/state/error",
+                    service_topic.service_path()
+                ),
+                Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
+                PublishOptions::local_only(),
+            )
+            .await?;
             return Err(anyhow!("Failed to initialize service: {e}"));
         }
         registry
             .update_local_service_state(&service_topic, ServiceState::Initialized)
             .await?;
-        self.publish_with_options(format!("$registry/services/{}/state/initialized", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;
+        self.publish_with_options(
+            format!(
+                "$registry/services/{}/state/initialized",
+                service_topic.service_path()
+            ),
+            Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
+            PublishOptions::local_only(),
+        )
+        .await?;
         // Service initialized successfully, create the ServiceEntry and register it
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let service_entry =Arc::new( ServiceEntry {
+        let service_entry = Arc::new(ServiceEntry {
             service: Arc::new(service),
             service_topic: service_topic.clone(),
             service_state: ServiceState::Initialized,
@@ -540,7 +550,8 @@ impl Node {
             .await?;
 
         if self.running.load(Ordering::SeqCst) {
-            self.start_service(&service_topic, service_entry.as_ref(), true).await;
+            self.start_service(&service_topic, service_entry.as_ref(), true)
+                .await;
         }
 
         Ok(())
@@ -550,7 +561,7 @@ impl Node {
     pub fn node_id(&self) -> &str {
         &self.node_id
     }
- 
+
     /// Wait for an event to occur with a timeout
     ///
     /// INTENTION: Subscribe to an event topic and wait for the first event to occur,
@@ -563,20 +574,20 @@ impl Node {
     ///
     /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    pub async fn on(&self, topic: impl Into<String>, timeout: Duration) -> Result<Option<ArcValue>>
-    {
+    pub async fn on(
+        &self,
+        topic: impl Into<String>,
+        timeout: Duration,
+    ) -> Result<Option<ArcValue>> {
         let topic_string = topic.into();
-        
+
         // Process the topic based on its format
         let full_topic = if topic_string.contains(':') {
             // Already has network ID, use as is
             topic_string
         } else if topic_string.contains('/') {
             // Has service/topic but no network ID
-            format!(
-                "{network_id}:{topic_string}",
-                network_id = self.network_id
-            )
+            format!("{network_id}:{topic_string}", network_id = self.network_id)
         } else {
             // Simple topic name - add service path and network ID
             format!(
@@ -587,24 +598,27 @@ impl Node {
             )
         };
 
-        self.logger.debug(format!("Waiting for event on topic: {full_topic}"));
+        self.logger
+            .debug(format!("Waiting for event on topic: {full_topic}"));
 
         // Create a channel to receive the event
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
-        
+
         // Create a subscription that will send the first event to our channel
-        let subscription_id = self.subscribe_with_options(
-            full_topic.clone(),
-            Arc::new(move |_context, data| {
-                let tx = tx.clone();
-                Box::pin(async move {
-                    // Send the event data to our channel
-                    let _ = tx.send(data).await;
-                    Ok(())
-                })
-            }),
-            EventRegistrationOptions::default(),
-        ).await?;
+        let subscription_id = self
+            .subscribe_with_options(
+                full_topic.clone(),
+                Arc::new(move |_context, data| {
+                    let tx = tx.clone();
+                    Box::pin(async move {
+                        // Send the event data to our channel
+                        let _ = tx.send(data).await;
+                        Ok(())
+                    })
+                }),
+                EventRegistrationOptions::default(),
+            )
+            .await?;
 
         // Wait for the event with timeout
         match tokio::time::timeout(timeout, rx.recv()).await {
@@ -616,7 +630,9 @@ impl Node {
             Ok(None) => {
                 // Channel closed
                 self.unsubscribe(&subscription_id).await?;
-                Err(anyhow!("Channel closed while waiting for event on topic: {full_topic}"))
+                Err(anyhow!(
+                    "Channel closed while waiting for event on topic: {full_topic}"
+                ))
             }
             Err(_) => {
                 // Timeout
@@ -649,12 +665,19 @@ impl Node {
         let registry = Arc::clone(&self.service_registry);
         let local_services = registry.get_local_services().await;
 
-        let internal_services = local_services.iter().filter(|(_, service_entry)| INTERNAL_SERVICES.contains(&service_entry.service.path())).collect::<HashMap<_, _>>();
-        let non_internal_services = local_services.iter().filter(|(_, service_entry)| !INTERNAL_SERVICES.contains(&service_entry.service.path())).collect::<HashMap<_, _>>();
+        let internal_services = local_services
+            .iter()
+            .filter(|(_, service_entry)| INTERNAL_SERVICES.contains(&service_entry.service.path()))
+            .collect::<HashMap<_, _>>();
+        let non_internal_services = local_services
+            .iter()
+            .filter(|(_, service_entry)| !INTERNAL_SERVICES.contains(&service_entry.service.path()))
+            .collect::<HashMap<_, _>>();
 
         // start internal services first
         for (service_topic, service_entry) in internal_services {
-            self.start_service(service_topic, service_entry, false).await;
+            self.start_service(service_topic, service_entry, false)
+                .await;
         }
 
         // Start networking if enabled
@@ -666,34 +689,44 @@ impl Node {
             }
         }
 
-        self.logger.info("Node started successfully");
+        self.logger
+            .info("Node started successfully - it will start all services now");
         self.running.store(true, Ordering::SeqCst);
 
         // Start non-internal services in parallel to avoid blocking the loop
         let mut tasks_store = self.service_tasks.write().await;
-        let service_start_timeout = Duration::from_secs(30);//TODO MOVE THIS TO A CONFIG
+        let service_start_timeout = Duration::from_secs(30); //TODO MOVE THIS TO A CONFIG
         for (service_topic, service_entry) in non_internal_services {
             let node_clone = Arc::new(self.clone());
             let service_topic_clone = service_topic.clone();
             let service_entry_clone = service_entry.clone();
             let task = tokio::spawn(async move {
-                node_clone.logger.info(format!("Starting separate thread to start service: {service_topic_clone}"));
-                
+                node_clone.logger.info(format!(
+                    "Starting separate thread to start service: {service_topic_clone}"
+                ));
+
                 // Add timeout to the service start operation
                 match tokio::time::timeout(
-                    service_start_timeout, 
-                    node_clone.start_service(&service_topic_clone, &service_entry_clone, true)).await {
+                    service_start_timeout,
+                    node_clone.start_service(&service_topic_clone, &service_entry_clone, true),
+                )
+                .await
+                {
                     Ok(_) => {
-                        node_clone.logger.info(format!("Service start completed: {service_topic_clone}"));
+                        node_clone
+                            .logger
+                            .info(format!("Service start completed: {service_topic_clone}"));
                     }
                     Err(_) => {
-                        node_clone.logger.error(format!("Service start timed out after 30 seconds: {service_topic_clone}"));
+                        node_clone.logger.error(format!(
+                            "Service start timed out after 30 seconds: {service_topic_clone}"
+                        ));
                     }
-                } 
+                }
             });
             tasks_store.push((service_topic.clone(), task));
         }
-         
+
         Ok(())
     }
 
@@ -705,7 +738,12 @@ impl Node {
         Ok(())
     }
 
-    async fn start_service(&self, service_topic: &TopicPath, service_entry: &ServiceEntry, update_node_version: bool) {
+    async fn start_service(
+        &self,
+        service_topic: &TopicPath,
+        service_entry: &ServiceEntry,
+        update_node_version: bool,
+    ) {
         self.logger
             .info(format!("Starting service: {service_topic}"));
 
@@ -722,7 +760,7 @@ impl Node {
                     .with_component(runar_common::Component::Service),
             ),
         );
-        
+
         // Start the service using the context
         if let Err(e) = service.start(start_context).await {
             self.logger.error(format!(
@@ -730,28 +768,59 @@ impl Node {
             ));
             if let Err(update_err) = registry
                 .update_local_service_state(service_topic, ServiceState::Error)
-                .await {
-                self.logger.error(format!("Failed to update service state to Error: {update_err}"));
+                .await
+            {
+                self.logger.error(format!(
+                    "Failed to update service state to Error: {update_err}"
+                ));
             }
-            if let Err(publish_err) = self.publish_with_options(format!("$registry/services/{}/state/error", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await {
-                self.logger.error(format!("Failed to publish error state: {publish_err}"));
+            if let Err(publish_err) = self
+                .publish_with_options(
+                    format!(
+                        "$registry/services/{}/state/error",
+                        service_topic.service_path()
+                    ),
+                    Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
+                    PublishOptions::local_only(),
+                )
+                .await
+            {
+                self.logger
+                    .error(format!("Failed to publish error state: {publish_err}"));
             }
             return;
         }
-        
+
         if let Err(update_err) = registry
             .update_local_service_state(service_topic, ServiceState::Running)
-            .await {
-            self.logger.error(format!("Failed to update service state to Running: {update_err}"));
+            .await
+        {
+            self.logger.error(format!(
+                "Failed to update service state to Running: {update_err}"
+            ));
         }
 
-        if let Err(publish_err) = self.publish_with_options(format!("$registry/services/{}/state/running", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await {
-            self.logger.error(format!("Failed to publish running state: {publish_err}"));
+        if let Err(publish_err) = self
+            .publish_with_options(
+                format!(
+                    "$registry/services/{}/state/running",
+                    service_topic.service_path()
+                ),
+                Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
+                PublishOptions::local_only(),
+            )
+            .await
+        {
+            self.logger
+                .error(format!("Failed to publish running state: {publish_err}"));
         }
         if update_node_version {
-            self.logger.info(format!("Notifying node change for service: {service_topic}"));
+            self.logger.info(format!(
+                "Notifying node change for service: {service_topic}"
+            ));
             if let Err(notify_err) = self.notify_node_change().await {
-                self.logger.error(format!("Failed to notify node change: {notify_err}"));
+                self.logger
+                    .error(format!("Failed to notify node change: {notify_err}"));
             }
         }
     }
@@ -812,7 +881,15 @@ impl Node {
             registry
                 .update_local_service_state(&service_topic, ServiceState::Stopped)
                 .await?;
-            self.publish_with_options(format!("$registry/services/{}/state/stopped", service_topic.service_path()), Some(ArcValue::new_primitive(service_topic.as_str().to_string())), PublishOptions::local_only()).await?;   
+            self.publish_with_options(
+                format!(
+                    "$registry/services/{}/state/stopped",
+                    service_topic.service_path()
+                ),
+                Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
+                PublishOptions::local_only(),
+            )
+            .await?;
         }
 
         self.logger.info("Stopping networking...");
@@ -988,8 +1065,8 @@ impl Node {
 
                 // Prepare separate Arc clones for each callback to avoid move issues
                 let self_arc_for_conn = Arc::new(self.clone());
-                let connection_callback: crate::network::transport::ConnectionCallback =
-                    Arc::new(move |peer_node_id: String, connected: bool, _info: Option<NodeInfo>| {
+                let connection_callback: crate::network::transport::ConnectionCallback = Arc::new(
+                    move |peer_node_id: String, connected: bool, _info: Option<NodeInfo>| {
                         let node = self_arc_for_conn.clone();
                         Box::pin(async move {
                             if connected {
@@ -999,7 +1076,8 @@ impl Node {
                             }
                             Ok(())
                         })
-                    });
+                    },
+                );
 
                 let cert_config = self
                     .keys_manager
@@ -1088,7 +1166,8 @@ impl Node {
             let mut seen = self.discovery_seen_times.write().await;
             if let Some(last) = seen.get(&discovered_peer_id).cloned() {
                 if last.elapsed() < Duration::from_millis(150) {
-                    self.logger.debug(format!("Debounced discovery for {discovered_peer_id}"));
+                    self.logger
+                        .debug(format!("Debounced discovery for {discovered_peer_id}"));
                     // Do not early-return; small delay then continue to connect to ensure reconnection after restart
                     drop(seen);
                     tokio::time::sleep(Duration::from_millis(150)).await;
@@ -1114,7 +1193,8 @@ impl Node {
                 .await
                 .map_err(|e| anyhow!("Connection failed to {discovered_peer_id}: {e}"))?;
         } else {
-            self.logger.warn("No network transport available for connection");
+            self.logger
+                .warn("No network transport available for connection");
         }
 
         Ok(())
@@ -1197,7 +1277,10 @@ impl Node {
                     "Unknown message type: {message_type}",
                     message_type = message.message_type
                 ));
-                Err(anyhow!("Unknown message type: {message_type}", message_type =  message.message_type))
+                Err(anyhow!(
+                    "Unknown message type: {message_type}",
+                    message_type = message.message_type
+                ))
             }
         }
     }
@@ -1205,7 +1288,8 @@ impl Node {
     /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
     /// and forget the peer from known_peers and discovery caches.
     async fn cleanup_disconnected_peer(&self, peer_node_id: &str) -> Result<()> {
-        self.logger.info(format!("Cleaning up disconnected peer: {peer_node_id}"));
+        self.logger
+            .info(format!("Cleaning up disconnected peer: {peer_node_id}"));
 
         // 1) Remove remote subscriptions registered for this peer
         let sub_ids = self
@@ -1219,9 +1303,13 @@ impl Node {
         // 2) Remove remote services from this peer
         if let Some(prev_info) = self.peer_directory.take_node_info(peer_node_id).await {
             for service in prev_info.node_metadata.services {
-                let service_tp = crate::routing::TopicPath::new(&service.service_path, &service.network_id)
-                    .map_err(|e| anyhow!(e))?;
-                let _ = self.service_registry.remove_remote_service(&service_tp).await;
+                let service_tp =
+                    crate::routing::TopicPath::new(&service.service_path, &service.network_id)
+                        .map_err(|e| anyhow!(e))?;
+                let _ = self
+                    .service_registry
+                    .remove_remote_service(&service_tp)
+                    .await;
             }
         }
 
@@ -1415,10 +1503,8 @@ impl Node {
             ));
 
             // Deserialize the payload data
-            let payload_data = ArcValue::deserialize(
-                &payload_item.value_bytes,
-                Some(self.keys_manager.clone()),
-            )?;
+            let payload_data =
+                ArcValue::deserialize(&payload_item.value_bytes, Some(self.keys_manager.clone()))?;
 
             // Send the response (which is ArcValue) through the oneshot channel
             // payload_data is already ArcValue. If the original response was 'None',
@@ -1452,8 +1538,10 @@ impl Node {
             return Ok(None);
         }
 
-        self.logger
-            .debug(format!("Handling network event message_type: {message_type}", message_type= message.message_type));
+        self.logger.debug(format!(
+            "Handling network event message_type: {message_type}",
+            message_type = message.message_type
+        ));
 
         // Process each payload separately
         for payload_item in &message.payloads {
@@ -1477,10 +1565,8 @@ impl Node {
             };
 
             // Deserialize the payload data
-            let payload = ArcValue::deserialize(
-                &payload_item.value_bytes,
-                Some(self.keys_manager.clone()),
-            )?;
+            let payload =
+                ArcValue::deserialize(&payload_item.value_bytes, Some(self.keys_manager.clone()))?;
 
             // Create proper event context
             let event_context = Arc::new(EventContext::new(
@@ -1588,7 +1674,10 @@ impl Node {
 
         // First check local service state - if no state exists, no local service exists
         let service_topic = TopicPath::new_service(&self.network_id, &topic_path.service_path());
-        let service_state = self.service_registry.get_local_service_state(&service_topic).await;
+        let service_state = self
+            .service_registry
+            .get_local_service_state(&service_topic)
+            .await;
 
         // If service state exists, check if it's running
         if let Some(state) = service_state {
@@ -1599,7 +1688,10 @@ impl Node {
                     state
                 ));
                 // Try remote handlers instead
-                match self.remote_request(topic_path.as_str(), request_payload_av).await {
+                match self
+                    .remote_request(topic_path.as_str(), request_payload_av)
+                    .await
+                {
                     Ok(response) => return Ok(response),
                     Err(_) => {
                         // Remote request failed - return state-specific error since we know local service exists but is not running
@@ -1638,10 +1730,15 @@ impl Node {
         }
 
         // No local handler found - try remote handlers
-        self.remote_request(topic_path.as_str(), request_payload_av).await
+        self.remote_request(topic_path.as_str(), request_payload_av)
+            .await
     }
 
-    pub async fn remote_request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn remote_request<P>(
+        &self,
+        path: impl Into<String>,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -1719,7 +1816,7 @@ impl Node {
             .service_registry
             .get_local_event_subscribers(&topic_path)
             .await;
-        
+
         for (_subscription_id, callback, _options) in local_subscribers {
             // Create an event context for this subscriber
             let event_context = Arc::new(EventContext::new(
@@ -1744,7 +1841,7 @@ impl Node {
                 .await;
             for (_subscription_id, callback, _options) in remote_subscribers {
                 // Execute the callback with correct arguments
-                if let Err(e) = callback( data.clone()).await {
+                if let Err(e) = callback(data.clone()).await {
                     self.logger.error(format!(
                         "Error in remote event handler for {topic_string}: {e}"
                     ));
@@ -1780,27 +1877,33 @@ impl Node {
                 new_peer_version = new_peer.version
             ));
 
-            self.update_peer_capabilities(&existing_peer, &new_peer).await?;
+            self.update_peer_capabilities(&existing_peer, &new_peer)
+                .await?;
             // replace stored peer info
             self.peer_directory
                 .set_node_info(&new_peer_node_id, new_peer.clone())
                 .await;
-            self
-                .publish_with_options(
-                    format!("$registry/peer/{new_peer_node_id}/updated"),
-                    Some(ArcValue::new_primitive(new_peer_node_id.clone())),
-                    PublishOptions::local_only(),
-                )
-                .await?;
+            self.publish_with_options(
+                format!("$registry/peer/{new_peer_node_id}/updated"),
+                Some(ArcValue::new_primitive(new_peer_node_id.clone())),
+                PublishOptions::local_only(),
+            )
+            .await?;
             Ok(Vec::new())
         } else {
-            self.peer_directory.set_node_info(&new_peer_node_id, new_peer.clone()).await;
+            self.peer_directory
+                .set_node_info(&new_peer_node_id, new_peer.clone())
+                .await;
             self.peer_directory.mark_connected(&new_peer_node_id).await;
             let res = self.add_new_peer(new_peer).await;
-            self.publish_with_options(format!("$registry/peer/{new_peer_node_id}/discovered"), Some(ArcValue::new_primitive(new_peer_node_id.clone())), PublishOptions::local_only()).await?;
+            self.publish_with_options(
+                format!("$registry/peer/{new_peer_node_id}/discovered"),
+                Some(ArcValue::new_primitive(new_peer_node_id.clone())),
+                PublishOptions::local_only(),
+            )
+            .await?;
             res
         }
-
     }
 
     async fn update_peer_capabilities(
@@ -1809,7 +1912,7 @@ impl Node {
         new_peer: &NodeInfo,
     ) -> Result<()> {
         let peer_node_id = compact_id(&old_peer.node_public_key);
-        
+
         // FIRST: Diff services
         let old_services: std::collections::HashSet<String> = old_peer
             .node_metadata
@@ -1823,7 +1926,7 @@ impl Node {
             .iter()
             .map(|s| format!("{}:{}", s.network_id, s.service_path))
             .collect();
-            
+
         // Services to add
         for service_key in new_services.difference(&old_services) {
             // Find the actual service metadata for this key
@@ -1833,48 +1936,72 @@ impl Node {
                 .iter()
                 .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
             {
-                self.logger.info(format!("Adding new remote service: {service_key} from peer: {peer_node_id}"));
-                
+                self.logger.info(format!(
+                    "Adding new remote service: {service_key} from peer: {peer_node_id}"
+                ));
+
                 // Create and register the new remote service (reuse logic from add_new_peer)
-                let transport_arc = self.network_transport.read().await.clone().ok_or_else(|| anyhow!("Network transport not available"))?;
+                let transport_arc = self
+                    .network_transport
+                    .read()
+                    .await
+                    .clone()
+                    .ok_or_else(|| anyhow!("Network transport not available"))?;
                 let local_peer_id = self.node_id.clone();
-                
+
                 let rs_config = CreateRemoteServicesConfig {
                     services: vec![service_metadata.clone()],
                     peer_node_id: peer_node_id.clone(),
                     request_timeout_ms: self.config.request_timeout_ms,
                 };
-                
+
                 let rs_dependencies = RemoteServiceDependencies {
                     network_transport: transport_arc.clone(),
                     local_node_id: local_peer_id,
                     logger: self.logger.clone(),
                 };
-                
-                if let Ok(remote_services) = RemoteService::create_from_capabilities(rs_config, rs_dependencies).await {
+
+                if let Ok(remote_services) =
+                    RemoteService::create_from_capabilities(rs_config, rs_dependencies).await
+                {
                     for service in remote_services {
                         // Register the service instance with the registry
-                        if let Err(e) = self.service_registry.register_remote_service(service.clone()).await {
-                            self.logger.error(format!("Failed to register remote service '{}': {e}", service.path()));
+                        if let Err(e) = self
+                            .service_registry
+                            .register_remote_service(service.clone())
+                            .await
+                        {
+                            self.logger.error(format!(
+                                "Failed to register remote service '{}': {e}",
+                                service.path()
+                            ));
                             continue;
                         }
-                        
+
                         // Initialize the service - this triggers handler registration via the context
-                        let service_topic_path = TopicPath::new(service.path(), &self.network_id).unwrap();
-                        let registry_delegate: Arc<dyn RegistryDelegate + Send + Sync> = Arc::new(self.clone());
-                        let context = RemoteLifecycleContext::new(&service_topic_path, self.logger.clone())
-                            .with_registry_delegate(registry_delegate);
-                        
+                        let service_topic_path =
+                            TopicPath::new(service.path(), &self.network_id).unwrap();
+                        let registry_delegate: Arc<dyn RegistryDelegate + Send + Sync> =
+                            Arc::new(self.clone());
+                        let context =
+                            RemoteLifecycleContext::new(&service_topic_path, self.logger.clone())
+                                .with_registry_delegate(registry_delegate);
+
                         if let Err(e) = service.init(context).await {
-                            self.logger.error(format!("Failed to initialize remote service '{}': {e}", service.path()));
+                            self.logger.error(format!(
+                                "Failed to initialize remote service '{}': {e}",
+                                service.path()
+                            ));
                         }
-                        self.service_registry.update_remote_service_state(&service_topic_path, ServiceState::Running).await?;
+                        self.service_registry
+                            .update_remote_service_state(&service_topic_path, ServiceState::Running)
+                            .await?;
                     }
                 }
             }
         }
-        
-        // Services to remove  
+
+        // Services to remove
         for service_key in old_services.difference(&new_services) {
             // Find the actual service metadata for this key
             if let Some(service_metadata) = old_peer
@@ -1883,14 +2010,24 @@ impl Node {
                 .iter()
                 .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
             {
-                self.logger.info(format!("Removing remote service: {service_key} from peer: {peer_node_id}"));
-                let service_path = TopicPath::new(&service_metadata.service_path, &service_metadata.network_id).unwrap();
-                if let Err(e) = self.service_registry.remove_remote_service(&service_path).await {
-                    self.logger.warn(format!("Failed to remove remote service {service_key}: {e}"));
+                self.logger.info(format!(
+                    "Removing remote service: {service_key} from peer: {peer_node_id}"
+                ));
+                let service_path =
+                    TopicPath::new(&service_metadata.service_path, &service_metadata.network_id)
+                        .unwrap();
+                if let Err(e) = self
+                    .service_registry
+                    .remove_remote_service(&service_path)
+                    .await
+                {
+                    self.logger.warn(format!(
+                        "Failed to remove remote service {service_key}: {e}"
+                    ));
                 }
             }
         }
-        
+
         // SECOND: Diff subscriptions
         let old_set: std::collections::HashSet<String> = old_peer
             .node_metadata
@@ -1904,7 +2041,7 @@ impl Node {
             .iter()
             .map(|s| s.path.clone())
             .collect();
-            
+
         self.logger.debug(format!(
             "Subscription diffing for peer {peer_node_id}: old_set={old_set:?}, new_set={new_set:?}"
         ));
@@ -1914,10 +2051,16 @@ impl Node {
             self.logger.info(format!(
                 "Adding new remote subscription: {path} for peer: {peer_node_id}"
             ));
-            let topic_path = TopicPath::from_full_path(path).map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
+            let topic_path = TopicPath::from_full_path(path)
+                .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
             let tp_arc = Arc::new(topic_path.clone());
             // create remote handler same as add_new_peer logic (reuse closure building)
-            let transport_arc = self.network_transport.read().await.clone().ok_or_else(|| anyhow!("Network transport not available"))?;
+            let transport_arc = self
+                .network_transport
+                .read()
+                .await
+                .clone()
+                .ok_or_else(|| anyhow!("Network transport not available"))?;
             let logger = self.logger.clone();
             let peer_clone = peer_node_id.clone();
             let tp_clone = tp_arc.clone();
@@ -1936,7 +2079,11 @@ impl Node {
             });
             let sub_id = self
                 .service_registry
-                .register_remote_event_subscription(tp_arc.as_ref(), handler, EventRegistrationOptions::default())
+                .register_remote_event_subscription(
+                    tp_arc.as_ref(),
+                    handler,
+                    EventRegistrationOptions::default(),
+                )
                 .await?;
             self.service_registry
                 .upsert_remote_peer_subscription(&peer_node_id, tp_arc.as_ref(), sub_id)
@@ -1959,8 +2106,6 @@ impl Node {
         }
         Ok(())
     }
-
-
 
     async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
         let capabilities = &node_info.node_metadata;
@@ -2049,27 +2194,31 @@ impl Node {
                     path = service.path()
                 ));
             }
-            self.service_registry.update_remote_service_state(&service_topic_path, ServiceState::Running).await?;
+            self.service_registry
+                .update_remote_service_state(&service_topic_path, ServiceState::Running)
+                .await?;
         }
 
         // Handle remote node subscriptions - only for services that exist locally
         {
             // Vector to store subscription IDs we register for this peer so we can remove them later
-            
 
             for subscription in capabilities.subscriptions.clone() {
                 let path = subscription.path.clone();
                 let topic_path = match TopicPath::from_full_path(&path) {
                     Ok(tp) => tp,
                     Err(e) => {
-                        self.logger.warn(format!("Failed to parse subscription path '{path}': {e}"));
+                        self.logger
+                            .warn(format!("Failed to parse subscription path '{path}': {e}"));
                         continue;
                     }
                 };
 
                 // Skip if our node does not participate in the requested network
                 if !self.network_ids.contains(&topic_path.network_id()) {
-                    self.logger.debug(format!("Ignoring remote subscription {path} - network id not supported"));
+                    self.logger.debug(format!(
+                        "Ignoring remote subscription {path} - network id not supported"
+                    ));
                     continue;
                 }
 
@@ -2082,27 +2231,41 @@ impl Node {
                 let topic_path_handler = topic_path_arc.clone();
 
                 // Create event handler forwarding events to remote peer
-                let event_handler: RemoteEventHandler = Arc::new(move |event_data: Option<ArcValue>| {
-                    let logger = logger_cloned.clone();
-                    let peer_node_id = peer_node_id_cloned.clone();
-                    let topic_path = topic_path_handler.clone();
-                    let nt = network_transport_cloned.clone();
-                    Box::pin(async move {
-                        logger.debug(format!(
+                let event_handler: RemoteEventHandler = Arc::new(
+                    move |event_data: Option<ArcValue>| {
+                        let logger = logger_cloned.clone();
+                        let peer_node_id = peer_node_id_cloned.clone();
+                        let topic_path = topic_path_handler.clone();
+                        let nt = network_transport_cloned.clone();
+                        Box::pin(async move {
+                            logger.debug(format!(
                             "🚀 [RemoteEvent] Sending remote event - Event: {topic_path}, Target: {peer_node_id}"));
-                        nt.publish(topic_path.as_ref(), event_data, &peer_node_id)
-                            .await
-                            .map_err(|e| anyhow!(e))?;
-                        logger.debug(format!(
+                            nt.publish(topic_path.as_ref(), event_data, &peer_node_id)
+                                .await
+                                .map_err(|e| anyhow!(e))?;
+                            logger.debug(format!(
                             "✅ [RemoteEvent] Event forwarded - Event: {topic_path}, Target: {peer_node_id}"));
-                        Ok(())
-                    })
-                });
+                            Ok(())
+                        })
+                    },
+                );
 
-                match self.service_registry.register_remote_event_subscription(topic_path_arc.as_ref(), event_handler, EventRegistrationOptions::default()).await {
+                match self
+                    .service_registry
+                    .register_remote_event_subscription(
+                        topic_path_arc.as_ref(),
+                        event_handler,
+                        EventRegistrationOptions::default(),
+                    )
+                    .await
+                {
                     Ok(subscription_id) => {
                         self.service_registry
-                            .upsert_remote_peer_subscription(&peer_node_id, topic_path_arc.as_ref(), subscription_id)
+                            .upsert_remote_peer_subscription(
+                                &peer_node_id,
+                                topic_path_arc.as_ref(),
+                                subscription_id,
+                            )
                             .await;
                     }
                     Err(e) => {
@@ -2111,8 +2274,6 @@ impl Node {
                     }
                 }
             }
-
-
         }
 
         self.logger.info(format!(
@@ -2134,7 +2295,8 @@ impl Node {
     /// trigger the actual notification. After the debounce period, it delegates to notify_node_change_impl,
     /// which sends the latest node info to all known peers via the transport.
     pub async fn notify_node_change(&self) -> Result<()> {
-        self.logger.info("notify_node_change called - it will be debounced for 1 second");
+        self.logger
+            .info("notify_node_change called - it will be debounced for 1 second");
 
         let debounce_task = self.debounce_notify_task.clone();
         let this = self.clone();
@@ -2175,8 +2337,12 @@ impl Node {
         // Update discovery providers with new node info
         if let Some(discovery_providers) = self.network_discovery_providers.read().await.as_ref() {
             for provider in discovery_providers {
-                if let Err(e) = provider.update_local_node_info(local_node_info.clone()).await {
-                    self.logger.warn(format!("Failed to update discovery provider: {e}"));
+                if let Err(e) = provider
+                    .update_local_node_info(local_node_info.clone())
+                    .await
+                {
+                    self.logger
+                        .warn(format!("Failed to update discovery provider: {e}"));
                 }
             }
         }
@@ -2196,7 +2362,10 @@ impl Node {
     /// This includes service metadata and all registered actions.
     ///
     pub async fn collect_local_service_capabilities(&self) -> Result<NodeMetadata> {
-        let services_map = self.service_registry.get_all_service_metadata(false).await?;
+        let services_map = self
+            .service_registry
+            .get_all_service_metadata(false)
+            .await?;
         let services: Vec<ServiceMetadata> = services_map.values().cloned().collect();
         let subscriptions = self.service_registry.get_all_subscriptions(false).await?;
 
@@ -2355,11 +2524,7 @@ impl NodeDelegate for Node {
         self.publish_with_options(topic, data, options).await
     }
 
-    async fn subscribe(
-        &self,
-        topic: String,
-        callback: EventHandler,
-    ) -> Result<String> {
+    async fn subscribe(&self, topic: String, callback: EventHandler) -> Result<String> {
         // For the basic subscribe, create default metadata.
         // The full topic path (including network_id) is handled by subscribe_with_options.
         // Node::subscribe provides a simplified interface, using default registration options.
@@ -2380,7 +2545,7 @@ impl NodeDelegate for Node {
                 "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'", 
                 network_id=self.network_id
             ))?;
- 
+
         let node_started = self.running.load(Ordering::SeqCst);
 
         self.logger.debug(format!(
@@ -2401,11 +2566,11 @@ impl NodeDelegate for Node {
         Ok(subscription_id)
     }
 
-    async fn unsubscribe(&self, subscription_id:&str ) -> Result<()> {
-         
+    async fn unsubscribe(&self, subscription_id: &str) -> Result<()> {
         let node_started = self.running.load(Ordering::SeqCst);
-        self.logger
-            .debug(format!("Unsubscribing from with ID: {subscription_id} - node started: {node_started}"));
+        self.logger.debug(format!(
+            "Unsubscribing from with ID: {subscription_id} - node started: {node_started}"
+        ));
         // Directly forward to service registry's method
         let registry = self.service_registry.clone();
         match registry.unsubscribe_local(subscription_id).await {
@@ -2426,7 +2591,6 @@ impl NodeDelegate for Node {
             self.notify_node_change().await?;
         }
         Ok(())
-        
     }
 
     /// Register an action handler for a specific path
@@ -2443,7 +2607,7 @@ impl NodeDelegate for Node {
             .register_local_action_handler(&topic_path, handler, metadata)
             .await
     }
- 
+
     /// Wait for an event to occur with a timeout
     ///
     /// INTENTION: Allow services to wait for specific events to occur
@@ -2451,7 +2615,11 @@ impl NodeDelegate for Node {
     ///
     /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    async fn on(&self, topic: impl Into<String> + Send, timeout: std::time::Duration) -> Result<Option<ArcValue>> {
+    async fn on(
+        &self,
+        topic: impl Into<String> + Send,
+        timeout: std::time::Duration,
+    ) -> Result<Option<ArcValue>> {
         self.on(topic, timeout).await
     }
 }
@@ -2469,11 +2637,15 @@ impl KeysDelegate for Node {
 impl RegistryDelegate for Node {
     /// Get service state
     async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        self.service_registry.get_local_service_state(service_path).await
+        self.service_registry
+            .get_local_service_state(service_path)
+            .await
     }
 
     async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        self.service_registry.get_remote_service_state(service_path).await
+        self.service_registry
+            .get_remote_service_state(service_path)
+            .await
     }
 
     /// Get metadata for a specific service
@@ -2524,7 +2696,11 @@ impl RegistryDelegate for Node {
             .await
     }
 
-    async fn register_remote_event_handler(&self, topic_path: &TopicPath, handler: RemoteEventHandler) -> Result<String> {
+    async fn register_remote_event_handler(
+        &self,
+        topic_path: &TopicPath,
+        handler: RemoteEventHandler,
+    ) -> Result<String> {
         self.service_registry
             .register_remote_event_handler(topic_path, handler)
             .await
@@ -2550,12 +2726,16 @@ impl RegistryDelegate for Node {
 
     async fn validate_pause_transition(&self, service_path: &TopicPath) -> Result<()> {
         // Delegate to the service registry
-        self.service_registry.validate_pause_transition(service_path).await
+        self.service_registry
+            .validate_pause_transition(service_path)
+            .await
     }
 
     async fn validate_resume_transition(&self, service_path: &TopicPath) -> Result<()> {
         // Delegate to the service registry
-        self.service_registry.validate_resume_transition(service_path).await
+        self.service_registry
+            .validate_resume_transition(service_path)
+            .await
     }
 }
 

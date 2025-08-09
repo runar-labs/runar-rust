@@ -279,7 +279,7 @@ mod tests {
             ],
             // subscriptions: vec![
             //     SubscriptionMetadata {
-            //         path: "calculation.completed".to_string(), 
+            //         path: "calculation.completed".to_string(),
             //     },
             //     SubscriptionMetadata {
             //         path: "error.occurred".to_string(),
@@ -336,7 +336,6 @@ mod tests {
         assert!(extracted_metadata.actions[0].output_schema.is_some());
         assert!(extracted_metadata.actions[1].output_schema.is_some());
         assert!(extracted_metadata.actions[2].output_schema.is_some());
- 
 
         println!("✅ ServiceMetadata serialization roundtrip test passed!");
         println!("   - Network ID: {}", extracted_metadata.network_id);
@@ -624,7 +623,7 @@ mod tests {
         // Verify events
         // assert_eq!(obj_instance.subscriptions.len(), 1);
         // assert_eq!(obj_instance.subscriptions[0].path, "user.created");
- 
+
         println!("   - Successfully converted JSON to typed ServiceMetadata");
         println!("   - All fields match the input JSON structure");
 

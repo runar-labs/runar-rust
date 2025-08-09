@@ -410,7 +410,7 @@ mod tests {
 
         // Simulate the users_db service with actions at different levels
         // This replicates the actual bug where replication/get_table_events is not found
-        
+
         // Action at root level
         trie.set_value(
             TopicPath::new("users_db/execute_query", "network1").unwrap(),
@@ -426,20 +426,42 @@ mod tests {
         // Test wildcard search that should find ALL actions for the service
         let search_path = TopicPath::new("users_db/*", "network1").unwrap();
         let matches = trie.find(&search_path);
-        
+
         // This should return BOTH actions, but currently only returns execute_query
         // because replication/get_table_events is not a leaf node in the trie structure
-        assert_eq!(matches.len(), 2, "Expected 2 actions, but found {}", matches.len());
-        assert!(matches.contains(&"users_db/execute_query"), "execute_query not found");
-        assert!(matches.contains(&"users_db/replication/get_table_events"), "replication/get_table_events not found");
-        
+        assert_eq!(
+            matches.len(),
+            2,
+            "Expected 2 actions, but found {}",
+            matches.len()
+        );
+        assert!(
+            matches.contains(&"users_db/execute_query"),
+            "execute_query not found"
+        );
+        assert!(
+            matches.contains(&"users_db/replication/get_table_events"),
+            "replication/get_table_events not found"
+        );
+
         // Also test with multi-wildcard to be thorough
         let search_path_multi = TopicPath::new("users_db/>", "network1").unwrap();
         let matches_multi = trie.find(&search_path_multi);
-        
-        assert_eq!(matches_multi.len(), 2, "Expected 2 actions with multi-wildcard, but found {}", matches_multi.len());
-        assert!(matches_multi.contains(&"users_db/execute_query"), "execute_query not found with multi-wildcard");
-        assert!(matches_multi.contains(&"users_db/replication/get_table_events"), "replication/get_table_events not found with multi-wildcard");
+
+        assert_eq!(
+            matches_multi.len(),
+            2,
+            "Expected 2 actions with multi-wildcard, but found {}",
+            matches_multi.len()
+        );
+        assert!(
+            matches_multi.contains(&"users_db/execute_query"),
+            "execute_query not found with multi-wildcard"
+        );
+        assert!(
+            matches_multi.contains(&"users_db/replication/get_table_events"),
+            "replication/get_table_events not found with multi-wildcard"
+        );
     }
 
     #[test]
@@ -470,13 +492,27 @@ mod tests {
         // Test wildcard search
         let search_path = TopicPath::new("serviceA/*", "network1").unwrap();
         let matches = trie.find(&search_path);
-        
+
         // Should find action1 and all replication actions
-        assert_eq!(matches.len(), 4, "Expected 4 actions, but found {}", matches.len());
+        assert_eq!(
+            matches.len(),
+            4,
+            "Expected 4 actions, but found {}",
+            matches.len()
+        );
         assert!(matches.contains(&"serviceA/action1"), "action1 not found");
-        assert!(matches.contains(&"serviceA/replication/events/get_table_events"), "get_table_events not found");
-        assert!(matches.contains(&"serviceA/replication/events/get_table_state"), "get_table_state not found");
-        assert!(matches.contains(&"serviceA/replication/config/get_config"), "get_config not found");
+        assert!(
+            matches.contains(&"serviceA/replication/events/get_table_events"),
+            "get_table_events not found"
+        );
+        assert!(
+            matches.contains(&"serviceA/replication/events/get_table_state"),
+            "get_table_state not found"
+        );
+        assert!(
+            matches.contains(&"serviceA/replication/config/get_config"),
+            "get_config not found"
+        );
     }
 
     #[test]
@@ -512,14 +548,28 @@ mod tests {
         // Test wildcard search
         let search_path = TopicPath::new("serviceB/*", "network1").unwrap();
         let matches = trie.find(&search_path);
-        
+
         // Should find ALL actions at all levels
-        assert_eq!(matches.len(), 5, "Expected 5 actions, but found {}", matches.len());
+        assert_eq!(
+            matches.len(),
+            5,
+            "Expected 5 actions, but found {}",
+            matches.len()
+        );
         assert!(matches.contains(&"serviceB/query"), "query not found");
         assert!(matches.contains(&"serviceB/execute"), "execute not found");
-        assert!(matches.contains(&"serviceB/replication/sync"), "replication/sync not found");
-        assert!(matches.contains(&"serviceB/replication/events"), "replication/events not found");
-        assert!(matches.contains(&"serviceB/admin/config"), "admin/config not found");
+        assert!(
+            matches.contains(&"serviceB/replication/sync"),
+            "replication/sync not found"
+        );
+        assert!(
+            matches.contains(&"serviceB/replication/events"),
+            "replication/events not found"
+        );
+        assert!(
+            matches.contains(&"serviceB/admin/config"),
+            "admin/config not found"
+        );
     }
 
     /// Comprehensive test specifically for network isolation

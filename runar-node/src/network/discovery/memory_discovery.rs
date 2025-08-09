@@ -84,15 +84,8 @@ impl MemoryDiscovery {
 
             loop {
                 interval.tick().await;
-                Self::cleanup_stale_nodes(
-                    &nodes,
-                    &last_seen,
-                    &listeners,
-                    ttl,
-                    debounce,
-                    &logger,
-                )
-                .await;
+                Self::cleanup_stale_nodes(&nodes, &last_seen, &listeners, ttl, debounce, &logger)
+                    .await;
             }
         })
     }
@@ -144,7 +137,9 @@ impl MemoryDiscovery {
         }
         let listeners_vec = { listeners.read().unwrap().clone() };
         for key in stale_keys {
-            logger.debug(format!("[memory_discovery] TTL expired for {key}, emitting Lost"));
+            logger.debug(format!(
+                "[memory_discovery] TTL expired for {key}, emitting Lost"
+            ));
             nodes.write().unwrap().remove(&key);
             last_seen.write().unwrap().remove(&key);
             for listener in &listeners_vec {
@@ -169,7 +164,10 @@ impl MemoryDiscovery {
         self.logger
             .debug(format!("Added node to registry: {node_key}"));
 
-        let peer_info = PeerInfo::new(node_info.node_public_key.clone(), node_info.addresses.clone());
+        let peer_info = PeerInfo::new(
+            node_info.node_public_key.clone(),
+            node_info.addresses.clone(),
+        );
 
         // Notify listeners only on first discovery. Updates to existing entries
         // do not trigger notifications unless debounced window has elapsed.
@@ -289,8 +287,9 @@ impl NodeDiscovery for MemoryDiscovery {
                 let mut nodes_map = self.nodes.write().unwrap();
                 nodes_map.remove(&key);
             }
-            self.logger
-                .debug(format!("Removed local node {key} from registry (emitting Lost)"));
+            self.logger.debug(format!(
+                "Removed local node {key} from registry (emitting Lost)"
+            ));
 
             let listeners_vec = {
                 let guard = self.listeners.read().unwrap();
@@ -335,8 +334,9 @@ impl NodeDiscovery for MemoryDiscovery {
         let mut local_node_guard = self.local_node.write().unwrap();
         *local_node_guard = Some(new_node_info);
         drop(local_node_guard);
-        
-        self.logger.debug("Updated local node information for memory discovery");
+
+        self.logger
+            .debug("Updated local node information for memory discovery");
         Ok(())
     }
 

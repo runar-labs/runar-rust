@@ -245,7 +245,7 @@ pub const MESSAGE_TYPE_HANDSHAKE: u32 = 3;
 pub const MESSAGE_TYPE_REQUEST: u32 = 4;
 pub const MESSAGE_TYPE_RESPONSE: u32 = 5;
 pub const MESSAGE_TYPE_EVENT: u32 = 6;
-pub const MESSAGE_TYPE_ERROR: u32 = 7; 
+pub const MESSAGE_TYPE_ERROR: u32 = 7;
 
 /// Represents a message exchanged between nodes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -330,7 +330,7 @@ pub trait NetworkTransport: Send + Sync {
         params: Option<ArcValue>,
         peer_node_id: &str,
     ) -> Result<(), NetworkError>;
- 
+
     /// connect to a discovered node and perform the NodeInfo handshake.
     async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError>;
 
