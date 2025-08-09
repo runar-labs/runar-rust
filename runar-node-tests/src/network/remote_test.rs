@@ -70,14 +70,10 @@ async fn test_remote_action_call() -> Result<()> {
     let mut node1 = Node::new(node1_config).await?;
     node1.add_service(math_service1).await?;
 
-    // Start the subscription in the background
+    // Start the subscription in the background (hold join handle)
     let node1_arc = Arc::new(node1.clone());
     let node1_arc_clone = node1_arc.clone();
-    let on_added_future_2 = tokio::spawn(async move {
-        node1_arc_clone
-            .on("math1/math/added", Duration::from_secs(10))
-            .await
-    });
+    let on_added_future_2 = node1_arc_clone.on("math1/math/added", Duration::from_secs(10));
 
     node1.start().await?;
 
@@ -104,13 +100,9 @@ async fn test_remote_action_call() -> Result<()> {
     // Create subscription for math1/math/added BEFORE calling the math operation
     logger.debug("📥 Setting up subscription for math1/math/added event on node1...");
 
-    // Start the subscription in the background
+    // Start the subscription in the background (hold join handle)
     let node1_arc_clone = node1_arc.clone();
-    let on_added_future = tokio::spawn(async move {
-        node1_arc_clone
-            .on("math1/math/added", Duration::from_secs(10))
-            .await
-    });
+    let on_added_future = node1_arc_clone.on("math1/math/added", Duration::from_secs(10));
 
     // Give sufficient time for subscription to be fully registered in the unified store
     logger.debug("⏳ Waiting for subscription to be fully registered...");
@@ -131,7 +123,7 @@ async fn test_remote_action_call() -> Result<()> {
         "✅ Secure add operation succeeded: 5 + 3 = {response}"
     ));
 
-    let on_added_result = on_added_future.await.expect("Task should not panic")?;
+    let on_added_result = on_added_future.await??;
 
     match on_added_result {
         Some(event_data) => {
@@ -148,7 +140,7 @@ async fn test_remote_action_call() -> Result<()> {
         }
     }
 
-    let on_added_future_2_result = on_added_future_2.await.expect("Task should not panic")?;
+    let on_added_future_2_result = on_added_future_2.await??;
     match on_added_future_2_result {
         Some(event_data) => {
             let event_value: f64 = *event_data.as_type_ref()?;
@@ -177,11 +169,8 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("✅ Added math3 service to node1");
 
     let node2_arc = Arc::new(node2.clone());
-    let on_added_math3_future = tokio::spawn(async move {
-        node2_arc
-            .on("math3/math/added", Duration::from_secs(10))
-            .await
-    });
+    let on_added_math3_future = node2_arc
+        .on("math3/math/added", Duration::from_secs(10));
 
     // Wait for service discovery debounce (increased time for reliability)
     logger.debug("⏳ Waiting for service discovery propagation...");
@@ -201,8 +190,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     //check event on_added_math3_future
     let on_added_math3_result = on_added_math3_future
-        .await
-        .expect("Task should not panic")?;
+        .await??;
     match on_added_math3_result {
         Some(event_data) => {
             let event_value: f64 = *event_data.as_type_ref()?;

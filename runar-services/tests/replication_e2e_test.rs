@@ -261,20 +261,20 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     // Now start Node 2 - it should sync during startup
     logger.info("Starting Node 2 (should sync during startup)...");
     let mut node2 = Node::new(node2_config).await?;
+    // Pre-register discovery before starting Node 2
+    let node1_discovered_by_node2 = node2.on(
+        format!(
+            "$registry/peer/{node1_id}/discovered",
+            node1_id = node1.node_id()
+        ),
+        Duration::from_secs(3),
+    );
     node2.start().await?;
     logger.info("✅ Node 2 started");
 
     // Wait for nodes to discover each other and exchange service information
     logger.info("Waiting for nodes to discover each other...");
-    let _ = node2
-        .on(
-            format!(
-                "$registry/peer/{node1_id}/discovered",
-                node1_id = node1.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
+    let _ = node1_discovered_by_node2.await?;
     logger.info("✅ Nodes discovered each other");
 
     node2.add_service(sqlite_service2).await?;
@@ -544,30 +544,29 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let start_time = std::time::Instant::now();
     let mut node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
+    // Pre-register discovery before starting Node 2
+    let node1_discovered_by_node2 = node2.on(
+        format!(
+            "$registry/peer/{node1_id}/discovered",
+            node1_id = node1.node_id()
+        ),
+        Duration::from_secs(3),
+    );
+    let node2_discovered_by_node1 = node1.on(
+        format!(
+            "$registry/peer/{node2_id}/discovered",
+            node2_id = node2.node_id()
+        ),
+        Duration::from_secs(3),
+    );
     node2.start().await?;
     let startup_duration = start_time.elapsed();
     println!("✅ Node 2 started in {startup_duration:?}");
 
     // Wait for nodes to discover each other
     println!("Waiting for nodes to discover each other...");
-    let _ = node2
-        .on(
-            format!(
-                "$registry/peer/{node1_id}/discovered",
-                node1_id = node1.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
-    let _ = node1
-        .on(
-            format!(
-                "$registry/peer/{node2_id}/discovered",
-                node2_id = node2.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
+    let _ = node1_discovered_by_node2.await?;
+    let _ = node2_discovered_by_node1.await?;
 
     println!("✅ Nodes discovered each other");
 
@@ -1439,29 +1438,28 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     println!("Starting Node 2...");
     let mut node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
+    // Pre-register discovery before starting Node 2
+    let node1_discovered_by_node2 = node2.on(
+        format!(
+            "$registry/peer/{node1_id}/discovered",
+            node1_id = node1.node_id()
+        ),
+        Duration::from_secs(3),
+    );
+    let node2_discovered_by_node1 = node1.on(
+        format!(
+            "$registry/peer/{node2_id}/discovered",
+            node2_id = node2.node_id()
+        ),
+        Duration::from_secs(3),
+    );
     node2.start().await?;
     println!("✅ Node 2 started");
 
     // Wait for nodes to discover each other and sync
     println!("Waiting for nodes to discover each other...");
-    let _ = node2
-        .on(
-            format!(
-                "$registry/peer/{node1_id}/discovered",
-                node1_id = node1.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
-    let _ = node1
-        .on(
-            format!(
-                "$registry/peer/{node2_id}/discovered",
-                node2_id = node2.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
+    let _ = node1_discovered_by_node2.await?;
+    let _ = node2_discovered_by_node1.await?;
 
     println!("✅ Nodes discovered each other");
 
@@ -1684,29 +1682,28 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     println!("Starting Node 2 (should sync during startup)...");
     let mut node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
+    // Pre-register discovery before starting Node 2
+    let node1_discovered_by_node2 = node2.on(
+        format!(
+            "$registry/peer/{node1_id}/discovered",
+            node1_id = node1.node_id()
+        ),
+        Duration::from_secs(3),
+    );
+    let node2_discovered_by_node1 = node1.on(
+        format!(
+            "$registry/peer/{node2_id}/discovered",
+            node2_id = node2.node_id()
+        ),
+        Duration::from_secs(3),
+    );
     node2.start().await?;
     println!("✅ Node 2 started with ID: {}", node2.node_id());
 
     // Wait for nodes to discover each other
     println!("Waiting for nodes to discover each other...");
-    let _ = node2
-        .on(
-            format!(
-                "$registry/peer/{node1_id}/discovered",
-                node1_id = node1.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
-    let _ = node1
-        .on(
-            format!(
-                "$registry/peer/{node2_id}/discovered",
-                node2_id = node2.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
+    let _ = node1_discovered_by_node2.await?;
+    let _ = node2_discovered_by_node1.await?;
 
     println!("✅ Nodes discovered each other");
 
@@ -1944,7 +1941,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     let node2_config = configs[1].clone();
 
     let mut node2 = Node::new(node2_config).await?;
-
+    
     // Create SQLite service with replication for Node 2
     let sqlite_service2 = create_replicated_sqlite_service(
         "high_volume_sqlite",
@@ -1955,20 +1952,20 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     node2.add_service(sqlite_service2).await?;
     // Now start Node 2 - it should sync during startup
     println!("Starting Node 2 (should sync during startup)...");
+    // Pre-register discovery before starting Node 2
+    let node1_discovered_by_node2 = node2.on(
+        format!(
+            "$registry/peer/{node1_id}/discovered",
+            node1_id = node1.node_id()
+        ),
+        Duration::from_secs(3),
+    );
     node2.start().await?;
     println!("✅ Node 2 started");
 
     // Wait for nodes to discover each other and exchange service information
     println!("Waiting for nodes to discover each other...");
-    let _ = node2
-        .on(
-            format!(
-                "$registry/peer/{node1_id}/discovered",
-                node1_id = node1.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
+    let _ = node1_discovered_by_node2.await?;
     println!("✅ Nodes discovered each other");
 
     node2.wait_for_services_to_start().await?;

@@ -11,7 +11,7 @@ use std::time::Duration;
 async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
     // Create a node with NO networking
     let config = create_node_test_config()?;
-    let mut node = Node::new(config).await?;
+    let node = Node::new(config).await?;
 
     // Create counters to track which handlers get called
     let counter1 = Arc::new(Mutex::new(0));

@@ -26,6 +26,7 @@ use runar_macros_common::params;
 use crate::fixtures::math_service::MathService;
 use crate::fixtures::path_params_service::PathParamsService;
 use anyhow::Result;
+use tokio::task::JoinHandle;
 
 /// Test that verifies basic node creation functionality
 ///
@@ -347,13 +348,18 @@ async fn test_on_method() {
     match timeout(Duration::from_secs(15), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node
         node.start().await.unwrap();
 
+        // Helper to await Node::on join handle
+        async fn await_on(handle: JoinHandle<Result<Option<ArcValue>>>) -> anyhow::Result<Option<ArcValue>> {
+            handle.await.map_err(|e| anyhow::anyhow!(e))?
+        }
+
         // Test 1: on method should timeout when no event is published
-        let result = node.on("test_event", Duration::from_millis(100)).await;
+        let result = await_on(node.on("test_event", Duration::from_millis(100))).await;
         assert!(
             result.is_err(),
             "on method should timeout when no event is published"
@@ -377,7 +383,7 @@ async fn test_on_method() {
             .unwrap();
 
         // Wait for the event
-        let received_data = future
+        let received_data = await_on(future)
             .await?
             .expect("Received event data should not be None");
         assert_eq!(
@@ -486,7 +492,8 @@ async fn test_service_state_events() {
 
         // Wait for initialization event
         let init_data = init_future
-            .await?
+            .await
+            .map_err(|e| anyhow::anyhow!(e))??
             .expect("Received event data should not be None");
         let init_service_path = init_data.as_type_ref::<String>()?;
         assert_eq!(
@@ -495,7 +502,8 @@ async fn test_service_state_events() {
         );
 
         let wildcard_data = wildcard_future
-            .await?
+            .await
+            .map_err(|e| anyhow::anyhow!(e))??
             .expect("Received event data should not be None");
         let wildcard_service_path = wildcard_data.as_type_ref::<String>()?;
         assert_eq!(
@@ -513,7 +521,8 @@ async fn test_service_state_events() {
 
         // Wait for running event
         let running_data = running_future
-            .await?
+            .await
+            .map_err(|e| anyhow::anyhow!(e))??
             .expect("Received event data should not be None");
         let running_service_path = running_data.as_type_ref::<String>()?;
         assert_eq!(
@@ -531,7 +540,8 @@ async fn test_service_state_events() {
 
         // Wait for stopped event
         let stopped_data = stopped_future
-            .await?
+            .await
+            .map_err(|e| anyhow::anyhow!(e))??
             .expect("Received event data should not be None");
         let stopped_service_path = stopped_data.as_type_ref::<String>()?;
         assert_eq!(
@@ -582,7 +592,8 @@ async fn test_service_state_events_wildcard() {
 
         // Wait for wildcard event (should receive one of the running events)
         let wildcard_data = wildcard_future
-            .await?
+            .await
+            .map_err(|e| anyhow::anyhow!(e))??
             .expect("Received event data should not be None");
         let wildcard_service_path = wildcard_data.as_type_ref::<String>()?;
         assert!(
@@ -611,7 +622,7 @@ async fn test_service_error_state_events() {
         // Create a node with a test network ID
         let mut config = create_node_test_config().expect("Error creating test config");
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node
         node.start().await.unwrap();
@@ -621,7 +632,12 @@ async fn test_service_error_state_events() {
         let error_topic = "$registry/services/test_service/state/error";
 
         // The error event should timeout since no error is actually triggered
-        let result = node.on(error_topic, Duration::from_millis(100)).await;
+        // Flatten JoinHandle<Result<..>> into Result<..> for assertion
+        let join_res = node
+            .on(error_topic, Duration::from_millis(100))
+            .await;
+        assert!(join_res.is_ok(), "join should not fail");
+        let result = join_res.unwrap();
         assert!(
             result.is_err(),
             "Error event should timeout when no error occurs"
@@ -654,7 +670,7 @@ async fn test_multiple_concurrent_on_calls() {
         // Create a node with a test network ID
         let mut config = create_node_test_config().expect("Error creating test config");
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node
         node.start().await.unwrap();
@@ -707,13 +723,13 @@ async fn test_multiple_concurrent_on_calls() {
         let (result1, result2, result3) = tokio::join!(future1, future2, future3);
 
         // Verify each result
-        let data1 = result1?
+        let data1 = result1??
             .expect("Received event data should not be None")
             .as_type_ref::<String>()?;
-        let data2 = result2?
+        let data2 = result2??
             .expect("Received event data should not be None")
             .as_type_ref::<String>()?;
-        let data3 = result3?
+        let data3 = result3??
             .expect("Received event data should not be None")
             .as_type_ref::<String>()?;
 
@@ -755,15 +771,17 @@ async fn test_on_method_timeout_variations() {
         // Create a node with a test network ID
         let mut config = create_node_test_config().expect("Error creating test config");
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node
         node.start().await.unwrap();
 
         // Test 1: Very short timeout should fail
-        let result = node
+        let join_res = node
             .on("short_timeout_test", Duration::from_millis(1))
             .await;
+        assert!(join_res.is_ok(), "join should not fail");
+        let result = join_res.unwrap();
         assert!(result.is_err(), "Very short timeout should fail");
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -787,7 +805,7 @@ async fn test_on_method_timeout_variations() {
 
         let result = node
             .on(topic, Duration::from_millis(100))
-            .await?
+            .await??
             .expect("Received event data should not be None");
         assert_eq!(
             result, event_data,
@@ -810,7 +828,7 @@ async fn test_on_method_timeout_variations() {
 
         let result2 = node
             .on(topic2, Duration::from_secs(2))
-            .await?
+            .await??
             .expect("Received event data should not be None");
         assert_eq!(
             result2, event_data2,

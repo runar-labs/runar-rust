@@ -509,7 +509,7 @@ impl Node {
             registry
                 .update_local_service_state(&service_topic, ServiceState::Error)
                 .await?;
-            self.publish_with_options(
+        self.publish_with_options(
                 format!(
                     "$registry/services/{}/state/error",
                     service_topic.service_path()
@@ -869,7 +869,7 @@ impl Node {
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions::local_only(),
+            PublishOptions::local_only(),
             )
             .await?;
         }

@@ -152,13 +152,14 @@ impl JsNode {
 
     #[napi]
     pub async fn start(&self) -> napi::Result<()> {
-        let mut node = self.inner.lock().await;
+        let node = self.inner.lock().await;
         node.start().await.map_err(anyhow_to_napi_error)
     }
 
     #[napi]
     pub async fn stop(&self) -> napi::Result<()> {
         let mut node = self.inner.lock().await;
+        // Node::stop takes &mut self
         node.stop().await.map_err(anyhow_to_napi_error)
     }
 

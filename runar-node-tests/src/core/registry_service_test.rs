@@ -553,7 +553,7 @@ async fn test_registry_service_pause_nonexistent_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node (no services added)
         node.start().await.unwrap();
@@ -598,7 +598,7 @@ async fn test_registry_service_resume_nonexistent_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node (no services added)
         node.start().await.unwrap();
@@ -745,7 +745,7 @@ async fn test_registry_service_request_to_nonexistent_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node (no services added)
         node.start().await.unwrap();
