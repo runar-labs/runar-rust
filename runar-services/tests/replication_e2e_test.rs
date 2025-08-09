@@ -823,6 +823,15 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     println!("Starting Node 3 and sync.");
     let mut node3 = Node::new(node3_config).await?;
     node3.add_service(sqlite_service3).await?;
+    
+    let node2_discovered_future = node3
+        .on(
+            format!(
+                "$registry/peer/{node2_id}/discovered",
+                node2_id = node2.node_id()
+            ),
+            Duration::from_secs(3),
+        );
     node3.start().await?;
     println!("✅ Node 3 started");
     node3.wait_for_services_to_start().await?;
@@ -830,25 +839,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     println!("✅ Node 3 service started and data sync completed");
 
     println!("Waiting for nodes to discover each other...");
-    let _ = node3
-        .on(
-            format!(
-                "$registry/peer/{node1_id}/discovered",
-                node1_id = node1.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
-    let _ = node3
-        .on(
-            format!(
-                "$registry/peer/{node2_id}/discovered",
-                node2_id = node2.node_id()
-            ),
-            Duration::from_secs(3),
-        )
-        .await?;
-    println!("✅ Node3 discovered node 1 and node 2");
+    
+    let _ = node2_discovered_future.await?;
+    println!("✅ Node3 discovered node 2");
 
     //check that contain all the data the the other nodes has
     //check users

@@ -318,7 +318,10 @@ impl RequestContext {
         topic: impl Into<String>,
         timeout: std::time::Duration,
     ) -> Result<Option<ArcValue>> {
-        self.node_delegate.on(topic, timeout).await
+        // Node::on now returns a JoinHandle; await the handle, then unwrap the inner Result
+        let handle = self.node_delegate.on(topic, timeout);
+        let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
+        inner
     }
 }
 

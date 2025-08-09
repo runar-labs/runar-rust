@@ -562,84 +562,66 @@ impl Node {
         &self.node_id
     }
 
-    /// Wait for an event to occur with a timeout
+    /// Wait for an event to occur with a timeout (hot subscription)
     ///
-    /// INTENTION: Subscribe to an event topic and wait for the first event to occur,
-    /// or timeout if no event occurs within the specified duration.
+    /// INTENTION: Begin listening as soon as this method is called, avoiding races where
+    /// a one-shot event might fire before a future is awaited. Returns a JoinHandle that
+    /// resolves when the event occurs or times out.
     ///
     /// Handles different topic formats:
     /// - Full topic with network ID: "network:service/topic" (used as is)
     /// - Topic with service: "service/topic" (default network ID added)
     /// - Simple topic: "topic" (default network ID and service path added)
-    ///
-    /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
-    /// or Err with timeout message if no event occurs.
-    pub async fn on(
+    pub fn on(
         &self,
         topic: impl Into<String>,
         timeout: Duration,
-    ) -> Result<Option<ArcValue>> {
+    ) -> tokio::task::JoinHandle<Result<Option<ArcValue>>> {
         let topic_string = topic.into();
 
-        // Process the topic based on its format
+        // Build full topic path synchronously (no I/O here)
         let full_topic = if topic_string.contains(':') {
-            // Already has network ID, use as is
             topic_string
         } else if topic_string.contains('/') {
-            // Has service/topic but no network ID
-            format!("{network_id}:{topic_string}", network_id = self.network_id)
+            format!("{network_id}:{topic}", network_id = self.network_id, topic = topic_string)
         } else {
-            // Simple topic name - add service path and network ID
-            format!(
-                "{}:{}/{}",
-                self.network_id,
-                "default", // Use default service path for simple topics
-                topic_string
-            )
+            format!("{}:{}/{}", self.network_id, "default", topic_string)
         };
 
-        self.logger
-            .debug(format!("Waiting for event on topic: {full_topic}"));
+        let node = self.clone();
 
-        // Create a channel to receive the event
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
+        tokio::spawn(async move {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
 
-        // Create a subscription that will send the first event to our channel
-        let subscription_id = self
-            .subscribe_with_options(
-                full_topic.clone(),
-                Arc::new(move |_context, data| {
-                    let tx = tx.clone();
-                    Box::pin(async move {
-                        // Send the event data to our channel
-                        let _ = tx.send(data).await;
-                        Ok(())
-                    })
-                }),
-                EventRegistrationOptions::default(),
-            )
-            .await?;
+            // Register subscription now (await inside the spawned task)
+            let subscription_id = node
+                .subscribe_with_options(
+                    full_topic.clone(),
+                    Arc::new(move |_context, data| {
+                        let tx = tx.clone();
+                        Box::pin(async move {
+                            let _ = tx.send(data).await;
+                            Ok(())
+                        })
+                    }),
+                    EventRegistrationOptions::default(),
+                )
+                .await?;
 
-        // Wait for the event with timeout
-        match tokio::time::timeout(timeout, rx.recv()).await {
-            Ok(Some(event_data)) => {
-                // Event received, unsubscribe and return data
-                self.unsubscribe(&subscription_id).await?;
-                Ok(event_data)
-            }
-            Ok(None) => {
-                // Channel closed
-                self.unsubscribe(&subscription_id).await?;
-                Err(anyhow!(
+            // Wait for event or timeout
+            let result = match tokio::time::timeout(timeout, rx.recv()).await {
+                Ok(Some(event_data)) => Ok(event_data),
+                Ok(None) => Err(anyhow!(
                     "Channel closed while waiting for event on topic: {full_topic}"
-                ))
-            }
-            Err(_) => {
-                // Timeout
-                self.unsubscribe(&subscription_id).await?;
-                Err(anyhow!("Timeout waiting for event on topic: {full_topic}"))
-            }
-        }
+                )),
+                Err(_) => Err(anyhow!("Timeout waiting for event on topic: {full_topic}")),
+            };
+
+            // Best-effort unsubscribe
+            let _ = node.unsubscribe(&subscription_id).await;
+
+            result
+        })
     }
 
     /// Start the Node and all registered services
@@ -653,7 +635,7 @@ impl Node {
     /// 5. Start networking if enabled
     ///
     /// When network functionality is added, this will also advertise services to the network.
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&self) -> Result<()> {
         self.logger.info("Starting node...");
 
         if self.running.load(Ordering::SeqCst) {
@@ -2620,7 +2602,9 @@ impl NodeDelegate for Node {
         topic: impl Into<String> + Send,
         timeout: std::time::Duration,
     ) -> Result<Option<ArcValue>> {
-        self.on(topic, timeout).await
+        let handle = self.on(topic, timeout);
+        let inner = handle.await.map_err(|e| anyhow!(e))?;
+        inner
     }
 }
 

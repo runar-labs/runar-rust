@@ -279,7 +279,9 @@ impl EventContext {
         topic: impl Into<String>,
         timeout: std::time::Duration,
     ) -> Result<Option<ArcValue>> {
-        self.node_delegate.on(topic, timeout).await
+        let handle = self.node_delegate.on(topic, timeout);
+        let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
+        inner
     }
 }
 

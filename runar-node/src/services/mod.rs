@@ -243,7 +243,9 @@ impl LifecycleContext {
                 self.network_id, self.service_path, topic_string
             )
         };
-        self.node_delegate.on(full_topic, timeout).await
+        let handle = self.node_delegate.on(full_topic, timeout);
+        let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
+        inner
     }
 
     /// Register an action handler
