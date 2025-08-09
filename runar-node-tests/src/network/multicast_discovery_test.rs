@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::Node;
 use runar_test_utils::create_networked_node_test_config;
+use serial_test::serial;
 use std::time::SystemTime;
 use tokio::sync::oneshot;
 
@@ -126,6 +127,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result<()> {
     // Hard timeout watchdog
     let watchdog = tokio::spawn(async {
@@ -147,6 +149,30 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     }
     if let Some(net) = &mut configs[1].network_config {
         net.discovery_options = Some(DiscoveryOptions {
+            announce_interval: Duration::from_millis(80),
+            node_ttl: Duration::from_millis(400),
+            discovery_timeout: Duration::from_secs(1),
+            debounce_window: Duration::from_millis(120),
+            ..DiscoveryOptions::default()
+        });
+    }
+
+    // Use a unique multicast port for this test to avoid cross-test interference
+    let unique_port: u16 = 46000 + (rand::random::<u16>() % 1000);
+    let unique_group = format!("{DEFAULT_MULTICAST_ADDR}:{unique_port}");
+    if let Some(net) = &mut configs[0].network_config {
+        net.discovery_options = Some(DiscoveryOptions {
+            multicast_group: unique_group.clone(),
+            announce_interval: Duration::from_millis(80),
+            node_ttl: Duration::from_millis(400),
+            discovery_timeout: Duration::from_secs(1),
+            debounce_window: Duration::from_millis(120),
+            ..DiscoveryOptions::default()
+        });
+    }
+    if let Some(net) = &mut configs[1].network_config {
+        net.discovery_options = Some(DiscoveryOptions {
+            multicast_group: unique_group,
             announce_interval: Duration::from_millis(80),
             node_ttl: Duration::from_millis(400),
             discovery_timeout: Duration::from_secs(1),

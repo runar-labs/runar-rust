@@ -10,6 +10,7 @@ use runar_test_utils::create_networked_node_test_config;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use serial_test::serial;
 
 // Import the fixture MathService
 use crate::fixtures::math_service::MathService;
@@ -37,8 +38,23 @@ async fn test_remote_action_call() -> Result<()> {
         "",
     ));
 
-    let configs =
+    let mut configs =
         create_networked_node_test_config(2).expect("Failed to create multiple node test configs");
+    // Assign a unique multicast port for this test instance to isolate from other tests
+    let unique_port: u16 = 47000 + (rand::random::<u16>() % 1000);
+    let unique_group = format!("239.255.42.98:{unique_port}");
+    if let Some(net) = &mut configs[0].network_config {
+        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
+            multicast_group: unique_group.clone(),
+            ..Default::default()
+        });
+    }
+    if let Some(net) = &mut configs[1].network_config {
+        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
+            multicast_group: unique_group,
+            ..Default::default()
+        });
+    }
 
     let node1_config = configs[0].clone();
     let node1_id = node1_config.node_id.clone();
@@ -243,6 +259,7 @@ async fn test_remote_action_call() -> Result<()> {
 /// INTENTION: Test that a node can properly stop, restart, and reconnect to the network
 /// and resume remote service calls. This isolates the reconnection logic from replication.
 #[tokio::test]
+#[serial]
 async fn test_node_stop_restart_reconnection() -> Result<()> {
     // Hard timeout to prevent hangs in CI
     tokio::time::timeout(Duration::from_secs(40), async {

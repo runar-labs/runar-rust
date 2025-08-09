@@ -25,3 +25,6 @@ prost = "0.12"
 runar-keys = { path = "../runar-keys" }
 uuid = "1.7"
 rand = "0.8" 
+
+[dev-dependencies]
+serial_test = "3"
