@@ -36,6 +36,8 @@ pub struct SqliteEvent {
     pub table: String,
     pub data: ArcValue, // Original SQL query data
     pub timestamp: SystemTime,
+    pub origin_node_id: String,
+    pub origin_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Plain)]
@@ -47,6 +49,7 @@ pub struct ReplicationEvent {
     pub data: ArcValue,
     pub timestamp: i64,
     pub source_node_id: String,
+    pub origin_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Plain)]
@@ -62,6 +65,13 @@ pub struct TableEventsRequest {
     pub page: u32,
     pub page_size: u32,
     pub from_timestamp: i64,
+    pub from_by_origin: Vec<OriginCheckpoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Plain)]
+pub struct OriginCheckpoint {
+    pub origin_node_id: String,
+    pub origin_seq: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Plain)]
@@ -138,6 +148,7 @@ impl ReplicationManager {
                 page: 0,
                 page_size: 1,
                 from_timestamp: 0,
+                from_by_origin: Vec::new(),
             };
             let res = context
                 .remote_request(&remote_path, Some(ArcValue::new_struct(probe_req)))
@@ -211,23 +222,19 @@ impl ReplicationManager {
             event.table, event.operation, is_local
         ));
 
+        // Build replication event preserving origin metadata
+        let replication_event = self
+            .replication_event_from_sqlite_event(event)
+            .await?;
+
         if is_local {
-            self.logger
-                .debug("Local event: storing for replication history, not processing");
-            // Local event: just store for replication history, don't process
-            let replication_event = self
-                .create_replication_event(&event.operation, &event.table, event.data)
-                .await?;
-            self.store_event(&replication_event, true).await?; // Mark as processed
-            self.logger.debug("Local event stored and broadcasted");
+            // Local events are already applied to base tables; store for history only
+            self.store_event(&replication_event, true).await?;
+            self.logger.debug("Local event stored (processed=true)");
         } else {
-            self.logger.debug("Remote event: storing and processing");
-            // Remote event: store and process
-            let replication_event = self
-                .create_replication_event(&event.operation, &event.table, event.data)
-                .await?;
+            // Remote events: idempotent store + apply
             self.process_replication_event(replication_event).await?;
-            self.logger.debug("Remote event stored and processed");
+            self.logger.debug("Remote event stored/applied if new");
         }
 
         Ok(())
@@ -235,11 +242,75 @@ impl ReplicationManager {
 
     // Processes incoming replication events from other nodes
     pub async fn process_replication_event(&self, event: ReplicationEvent) -> Result<()> {
-        // Apply event to local database
-        self.apply_event_to_database(&event).await?;
+        // Idempotent ingest in a transaction:
+        // 1) Try to insert the event row first (OR IGNORE semantics via SQL)
+        // 2) If inserted, apply SQL to base table; otherwise skip (already applied)
+        // 3) Commit; on error, rollback
 
-        //store event as processed
-        self.store_event(&event, true).await?;
+        // Begin transaction
+        let _ = self
+            .sqlite_service
+            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                query: SqlQuery::new("BEGIN IMMEDIATE"),
+                reply_to: reply_tx,
+            })
+            .await;
+
+        // Attempt to store event with OR IGNORE semantics
+        let (mut inserted_ok, mut apply_needed) = (false, false);
+        let insert_res = self.store_event_or_ignore(&event).await;
+        match insert_res {
+            Ok(rows) => {
+                inserted_ok = true;
+                apply_needed = rows > 0;
+            }
+            Err(e) => {
+                // Rollback and surface error
+                let _ = self
+                    .sqlite_service
+                    .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                        query: SqlQuery::new("ROLLBACK"),
+                        reply_to: reply_tx,
+                    })
+                    .await;
+                return Err(e);
+            }
+        }
+
+        if apply_needed {
+            if let Err(apply_err) = self.apply_event_to_database(&event).await {
+                // Rollback and surface error
+                let _ = self
+                    .sqlite_service
+                    .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                        query: SqlQuery::new("ROLLBACK"),
+                        reply_to: reply_tx,
+                    })
+                    .await;
+                return Err(apply_err);
+            }
+        }
+
+        // Commit transaction
+        let commit_res = self
+            .sqlite_service
+            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                query: SqlQuery::new("COMMIT"),
+                reply_to: reply_tx,
+            })
+            .await;
+
+        if commit_res.is_err() && inserted_ok {
+            // Best-effort rollback if commit fails
+            let _ = self
+                .sqlite_service
+                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                    query: SqlQuery::new("ROLLBACK"),
+                    reply_to: reply_tx,
+                })
+                .await;
+            return Err(anyhow!("Failed to commit replication event transaction"));
+        }
 
         Ok(())
     }
@@ -303,28 +374,25 @@ impl ReplicationManager {
     }
 
     // Helper methods
-    async fn create_replication_event(
+    async fn replication_event_from_sqlite_event(
         &self,
-        operation: &str,
-        table: &str,
-        data: ArcValue,
+        ev: SqliteEvent,
     ) -> Result<ReplicationEvent> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-
         let event_id = Uuid::new_v4().to_string();
-        let record_id = Uuid::new_v4().to_string(); // This should be extracted from the data
-
+        let record_id = Uuid::new_v4().to_string();
         Ok(ReplicationEvent {
             id: event_id,
-            table_name: table.to_string(),
-            operation_type: operation.to_string(),
+            table_name: ev.table,
+            operation_type: ev.operation,
             record_id,
-            data,
+            data: ev.data,
             timestamp,
-            source_node_id: self.node_id.clone(),
+            source_node_id: ev.origin_node_id,
+            origin_seq: ev.origin_seq,
         })
     }
 
@@ -332,16 +400,17 @@ impl ReplicationManager {
         let event_table_name = format!("{}{}", event.table_name, EVENT_TABLE_SUFFIX);
 
         self.logger.debug(format!(
-            "Storing replication event: id={}, table={}, operation={}, processed={}",
-            event.id, event.table_name, event.operation_type, processed
+            "Storing replication event: id={}, table={}, operation={}, origin_seq={}, processed={}",
+            event.id, event.table_name, event.operation_type, event.origin_seq, processed
         ));
 
         let data_json = event.data.to_json()?;
         let data_json_str = serde_json::to_string(&data_json)?;
 
         let query = SqlQuery::new(&format!(
-            "INSERT INTO {event_table_name} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        )).with_params(crate::sqlite::Params::new()
+            "INSERT INTO {event_table_name} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, origin_seq, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ))
+        .with_params(crate::sqlite::Params::new()
             .with_value(Value::Text(event.id.clone()))
             .with_value(Value::Text(event.table_name.clone()))
             .with_value(Value::Text(event.operation_type.clone()))
@@ -349,6 +418,7 @@ impl ReplicationManager {
             .with_value(Value::Text(data_json_str))
             .with_value(Value::Integer(event.timestamp))
             .with_value(Value::Text(event.source_node_id.clone()))
+            .with_value(Value::Integer(event.origin_seq))
             .with_value(Value::Boolean(processed)) // Use the processed parameter
         );
 
@@ -363,6 +433,45 @@ impl ReplicationManager {
         self.logger
             .debug(format!("Replication event stored in {event_table_name}"));
         Ok(())
+    }
+
+    // Insert event row using OR IGNORE semantics. Returns rows affected (0 if existed).
+    async fn store_event_or_ignore(&self, event: &ReplicationEvent) -> Result<usize> {
+        let event_table_name = format!("{}{}", event.table_name, EVENT_TABLE_SUFFIX);
+
+        self.logger.debug(format!(
+            "Storing replication event (OR IGNORE): id={}, table={}, operation={}, origin_seq={}",
+            event.id, event.table_name, event.operation_type, event.origin_seq
+        ));
+
+        let data_json = event.data.to_json()?;
+        let data_json_str = serde_json::to_string(&data_json)?;
+
+        let query = SqlQuery::new(&format!(
+            "INSERT OR IGNORE INTO {event_table_name} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, origin_seq, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        ))
+        .with_params(crate::sqlite::Params::new()
+            .with_value(Value::Text(event.id.clone()))
+            .with_value(Value::Text(event.table_name.clone()))
+            .with_value(Value::Text(event.operation_type.clone()))
+            .with_value(Value::Text(event.record_id.clone()))
+            .with_value(Value::Text(data_json_str))
+            .with_value(Value::Integer(event.timestamp))
+            .with_value(Value::Text(event.source_node_id.clone()))
+            .with_value(Value::Integer(event.origin_seq))
+            .with_value(Value::Boolean(true))
+        );
+
+        let rows = self
+            .sqlite_service
+            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                query,
+                reply_to: reply_tx,
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to store event (OR IGNORE): {e}"))?;
+
+        Ok(rows)
     }
 
     async fn apply_event_to_database(&self, event: &ReplicationEvent) -> Result<()> {
@@ -380,7 +489,16 @@ impl ReplicationManager {
 
         // Extract the SQL query from the event data
         // The event data should contain the original SqlQuery that was executed
-        let sql_query = event.data.as_type::<crate::sqlite::SqlQuery>()?;
+        let mut sql_query = event.data.as_type::<crate::sqlite::SqlQuery>()?;
+
+        // Idempotence for CREATE operations: force INSERT OR IGNORE
+        if event.operation_type.eq_ignore_ascii_case("create") {
+            let trimmed = sql_query.statement.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("INSERT INTO ") {
+                let rewritten = format!("INSERT OR IGNORE INTO {rest}");
+                sql_query.statement = rewritten;
+            }
+        }
 
         self.logger
             .debug(format!("Executing SQL query: {}", sql_query.statement));
@@ -408,11 +526,13 @@ impl ReplicationManager {
         page: u32,
         context: &LifecycleContext,
     ) -> Result<TableEventsResponse> {
+        let checkpoints = self.compute_origin_checkpoints(table).await?;
         let request = TableEventsRequest {
             table_name: table.to_string(),
             page,
             page_size: 100,
-            from_timestamp: 0, // Start from beginning for startup sync
+            from_timestamp: 0,
+            from_by_origin: checkpoints,
         };
 
         // Request from remote nodes with the same SQLite service
@@ -465,14 +585,57 @@ impl ReplicationManager {
             event_table_name, request.page, request.page_size, request.from_timestamp
         ));
 
-        let query = SqlQuery::new(&format!(
-            "SELECT * FROM {event_table_name} ORDER BY timestamp ASC LIMIT ? OFFSET ?"
-        ))
-        .with_params(
-            crate::sqlite::Params::new()
-                .with_value(Value::Integer(request.page_size as i64))
-                .with_value(Value::Integer((request.page * request.page_size) as i64)),
-        );
+        // Build base query: support from_by_origin filtering if provided
+        let base_select = if !request.from_by_origin.is_empty() {
+            // We must include:
+            // - Events from origins NOT in the checkpoint set
+            // - Events from origins IN the set but with origin_seq > checkpoint
+            let mut greater_clauses: Vec<String> = Vec::new();
+            for _ in &request.from_by_origin {
+                greater_clauses.push("(source_node_id = ? AND origin_seq > ?)".to_string());
+            }
+            let mut where_parts: Vec<String> = Vec::new();
+            // Part 1: sources not in checkpoint set
+            let not_in_list = request
+                .from_by_origin
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(", ");
+            where_parts.push(format!(
+                "(source_node_id NOT IN ({}))",
+                if not_in_list.is_empty() { "''".to_string() } else { not_in_list }
+            ));
+            // Part 2: greater-than clauses per known origin
+            if !greater_clauses.is_empty() {
+                where_parts.push(format!("({})", greater_clauses.join(" OR ")));
+            }
+            format!(
+                "SELECT * FROM {event_table_name} WHERE {} ORDER BY timestamp ASC, id ASC LIMIT ? OFFSET ?",
+                where_parts.join(" OR ")
+            )
+        } else {
+            format!(
+                "SELECT * FROM {event_table_name} ORDER BY timestamp ASC, id ASC LIMIT ? OFFSET ?"
+            )
+        };
+
+        let mut params = crate::sqlite::Params::new();
+        // params for NOT IN list
+        for oc in &request.from_by_origin {
+            params = params.with_value(Value::Text(oc.origin_node_id.clone()));
+        }
+        // params for each (source = ? AND origin_seq > ?)
+        for oc in &request.from_by_origin {
+            params = params
+                .with_value(Value::Text(oc.origin_node_id.clone()))
+                .with_value(Value::Integer(oc.origin_seq));
+        }
+        params = params
+            .with_value(Value::Integer(request.page_size as i64))
+            .with_value(Value::Integer((request.page * request.page_size) as i64));
+
+        let query = SqlQuery::new(&base_select).with_params(params);
 
         let result = self
             .sqlite_service
@@ -525,6 +688,10 @@ impl ReplicationManager {
                     source_node_id: match row.get("source_node_id") {
                         Some(Value::Text(s)) => s.clone(),
                         _ => "".to_string(),
+                    },
+                    origin_seq: match row.get("origin_seq") {
+                        Some(Value::Integer(i)) => *i,
+                        _ => 0,
                     },
                 };
 
@@ -596,6 +763,7 @@ impl ReplicationManager {
                     data TEXT,
                     timestamp INTEGER NOT NULL,
                     source_node_id TEXT NOT NULL,
+                    origin_seq INTEGER NOT NULL DEFAULT 0,
                     processed BOOLEAN DEFAULT FALSE
                 )"
             );
@@ -622,9 +790,83 @@ impl ReplicationManager {
                 .await
                 .map_err(|e| anyhow!("Failed to create timestamp index: {e}"))?;
 
+            // Composite index to accelerate origin filtering
+            let index2_sql = format!(
+                "CREATE INDEX IF NOT EXISTS idx_{table}_events_origin ON {event_table_name} (source_node_id, origin_seq)"
+            );
+            let index2_query = SqlQuery::new(&index2_sql);
+            self.sqlite_service
+                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                    query: index2_query,
+                    reply_to: reply_tx,
+                })
+                .await
+                .map_err(|e| anyhow!("Failed to create origin index: {e}"))?;
+
+            // Unique index to enforce per-origin monotonic uniqueness
+            let uniq_sql = format!(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uniq_{table}_events_origin ON {event_table_name} (source_node_id, origin_seq)"
+            );
+            let uniq_query = SqlQuery::new(&uniq_sql);
+            self.sqlite_service
+                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                    query: uniq_query,
+                    reply_to: reply_tx,
+                })
+                .await
+                .map_err(|e| anyhow!("Failed to create unique origin index: {e}"))?;
+
             context.info(format!("Created event table: {event_table_name}"));
         }
 
+        // Ensure global origin sequence table exists (single-row counter)
+        let seq_table_sql = "CREATE TABLE IF NOT EXISTS __origin_seq (last_seq INTEGER NOT NULL)";
+        self.sqlite_service
+            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                query: SqlQuery::new(seq_table_sql),
+                reply_to: reply_tx,
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to create __origin_seq table: {e}"))?;
+        // Seed row if empty
+        let seed_sql = "INSERT INTO __origin_seq (last_seq) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM __origin_seq)";
+        self.sqlite_service
+            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                query: SqlQuery::new(seed_sql),
+                reply_to: reply_tx,
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to seed __origin_seq table: {e}"))?;
+
         Ok(())
+    }
+
+    // Compute per-origin checkpoints from local storage for a table
+    async fn compute_origin_checkpoints(&self, table: &str) -> Result<Vec<OriginCheckpoint>> {
+        let event_table_name = format!("{table}{EVENT_TABLE_SUFFIX}");
+        let query = SqlQuery::new(&format!(
+            "SELECT source_node_id, MAX(origin_seq) as max_seq FROM {event_table_name} GROUP BY source_node_id"
+        ));
+        let rows = self
+            .sqlite_service
+            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+                query,
+                reply_to: reply_tx,
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to compute origin checkpoints: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let origin_node_id = match row.get("source_node_id") {
+                Some(Value::Text(s)) => s.clone(),
+                _ => continue,
+            };
+            let origin_seq = match row.get("max_seq") {
+                Some(Value::Integer(i)) => *i,
+                _ => 0,
+            };
+            out.push(OriginCheckpoint { origin_node_id, origin_seq });
+        }
+        Ok(out)
     }
 }

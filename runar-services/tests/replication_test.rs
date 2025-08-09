@@ -159,6 +159,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
                     page: 0,
                     page_size: 10,
                     from_timestamp: 0,
+                    from_by_origin: Vec::new(),
                 },
             )),
         )
@@ -385,6 +386,7 @@ async fn test_replication_event_database_application() -> Result<()> {
                     page: 0,
                     page_size: 10,
                     from_timestamp: 0,
+                    from_by_origin: Vec::new(),
                 },
             )),
         )
@@ -534,6 +536,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
         ),
         timestamp: 1754382137011,
         source_node_id: "remote-node-processed".to_string(),
+        origin_seq: 1,
     };
 
     // Store the event as unprocessed (simulating a remote event)

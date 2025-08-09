@@ -635,6 +635,31 @@ impl SqliteService {
         }
     }
 
+    // Generate next origin sequence for a given table using __origin_seq
+    pub async fn next_origin_seq(&self, _table: &str) -> Result<i64, String> {
+        // Increment global counter
+        let _ = self
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
+                query: SqlQuery::new("UPDATE __origin_seq SET last_seq = last_seq + 1"),
+                reply_to: reply_tx,
+            })
+            .await?;
+
+        // Read back current value
+        let rows = self
+            .send_command(|reply_tx| SqliteWorkerCommand::Query {
+                query: SqlQuery::new("SELECT last_seq FROM __origin_seq"),
+                reply_to: reply_tx,
+            })
+            .await?;
+        if let Some(first) = rows.first() {
+            if let Some(Value::Integer(seq)) = first.get("last_seq") {
+                return Ok(*seq);
+            }
+        }
+        Err("Failed to read next origin sequence".to_string())
+    }
+
     pub async fn send_command<T: Send + 'static>(
         &self,
         constructor: impl FnOnce(oneshot::Sender<Result<T, String>>) -> SqliteWorkerCommand,
@@ -807,6 +832,11 @@ impl AbstractService for SqliteService {
                                             table: table_name.clone(),
                                             data: query_arc_value.clone(),
                                             timestamp: SystemTime::now(),
+                                            origin_node_id: req_ctx.logger.node_id().to_string(),
+                                            origin_seq: service_clone
+                                                .next_origin_seq(&table_name)
+                                                .await
+                                                .unwrap_or(0),
                                         };
 
                                         // Use proper namespacing: <service_path>/<table_name>/<operation>
