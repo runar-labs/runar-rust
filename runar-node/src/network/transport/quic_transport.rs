@@ -1,4 +1,5 @@
 use std::{net::SocketAddr, sync::Arc};
+use tokio::sync::watch;
 
 use async_trait::async_trait;
 use quinn::{ClientConfig, Endpoint, ServerConfig};
@@ -276,6 +277,9 @@ struct PeerState {
     initiator_nonce: u64,
     responder_peer_id: String,
     responder_nonce: u64,
+    // Connection becomes active only after duplicate-resolution + handshake complete
+    activation_tx: watch::Sender<bool>,
+    activation_rx: watch::Receiver<bool>,
 }
 
 impl PeerState {
@@ -287,6 +291,7 @@ impl PeerState {
         responder_peer_id: String,
         responder_nonce: u64,
     ) -> Self {
+        let (activation_tx, activation_rx) = watch::channel(false);
         Self {
             connection: connection.clone(),
             connection_id: connection.stable_id(),
@@ -295,6 +300,8 @@ impl PeerState {
             initiator_nonce,
             responder_peer_id,
             responder_nonce,
+            activation_tx,
+            activation_rx,
         }
     }
 }
@@ -486,14 +493,25 @@ impl QuicTransport {
         compact_id(&self.local_node_info.node_public_key)
     }
 
-    fn decide_connection_winner(
+    // Deprecated: nonce-based winner decision. Left for reference.
+    fn _decide_connection_winner_legacy(
         &self,
         existing: (&str, u64, &str, u64),
         candidate: (&str, u64, &str, u64),
     ) -> bool {
-        let existing_tuple = (existing.0, existing.1, existing.2, existing.3);
-        let candidate_tuple = (candidate.0, candidate.1, candidate.2, candidate.3);
-        candidate_tuple < existing_tuple
+        fn canonical_key<'a>(a_id: &'a str, a_nonce: u64, b_id: &'a str, b_nonce: u64) -> (std::cmp::Ordering, &'a str, u64, &'a str, u64) {
+            if a_id <= b_id {
+                (std::cmp::Ordering::Less, a_id, a_nonce, b_id, b_nonce)
+            } else {
+                (std::cmp::Ordering::Greater, b_id, b_nonce, a_id, a_nonce)
+            }
+        }
+        let (_e_ord, e_low_id, e_low_nonce, e_high_id, e_high_nonce) =
+            canonical_key(existing.0, existing.1, existing.2, existing.3);
+        let (_c_ord, c_low_id, c_low_nonce, c_high_id, c_high_nonce) =
+            canonical_key(candidate.0, candidate.1, candidate.2, candidate.3);
+        (c_low_id, c_low_nonce, c_high_id, c_high_nonce)
+            < (e_low_id, e_low_nonce, e_high_id, e_high_nonce)
     }
 
     async fn replace_or_keep_connection(
@@ -554,27 +572,56 @@ impl QuicTransport {
                     .write()
                     .await
                     .insert(new_id, peer_node_id.to_string());
+                // Activate the winner
+                if let Some(state) = peers.get(peer_node_id) {
+                    let _ = state.activation_tx.send(true);
+                }
                 // If the new connection differs from the placeholder's, close the old one
                 if new_id != existing_id {
                     existing.connection.close(0u32.into(), b"duplicate-replaced");
                 }
                 return true;
             }
-            let existing_key = (
-                existing.initiator_peer_id.as_str(),
-                existing.initiator_nonce,
-                existing.responder_peer_id.as_str(),
-                existing.responder_nonce,
-            );
-            let candidate_key = (
-                initiator_peer_id.as_str(),
-                initiator_nonce,
-                responder_peer_id.as_str(),
-                responder_nonce,
-            );
-            if self.decide_connection_winner(existing_key, candidate_key) {
+            // Deterministic, nonce-free tie-breaker based on peer IDs and local direction.
+            // Rule: Let L = local_node_id(), R = peer_node_id. If L < R, keep direction=Initiator (outbound) locally.
+            // Otherwise, keep direction=Responder (inbound) locally. This yields a single winner across both peers.
+            let local_id = self.local_node_id();
+            let desired_local_role = if local_id.as_str() < peer_node_id {
+                ConnectionRole::Initiator
+            } else {
+                ConnectionRole::Responder
+            };
+
+            let existing_local_role = if existing.initiator_peer_id == local_id {
+                ConnectionRole::Initiator
+            } else {
+                ConnectionRole::Responder
+            };
+            let candidate_local_role = if initiator_peer_id == local_id {
+                ConnectionRole::Initiator
+            } else {
+                ConnectionRole::Responder
+            };
+
+            let candidate_matches = candidate_local_role == desired_local_role;
+            let existing_matches = existing_local_role == desired_local_role;
+
+            let pick_candidate = match (existing_matches, candidate_matches) {
+                (false, true) => true,
+                (true, false) => false,
+                (true, true) => {
+                    // Same desired direction; prefer lower stable_id to avoid flapping locally
+                    new_conn.stable_id() < existing.connection_id
+                }
+                (false, false) => {
+                    // Neither matches (shouldn't happen); prefer existing for stability
+                    false
+                }
+            };
+
+            if pick_candidate {
                 self.logger.debug(format!(
-                    "🔁 [dup] Candidate connection wins for peer {peer_node_id}; closing existing"
+                    "🔁 [dup] Candidate wins (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}"
                 ));
                 let new_state = PeerState::new(
                     new_conn,
@@ -585,23 +632,22 @@ impl QuicTransport {
                     responder_nonce,
                 );
                 let conn_id = new_state.connection_id;
-                peers.insert(
-                    peer_node_id.to_string(),
-                    new_state,
-                );
+                peers.insert(peer_node_id.to_string(), new_state);
                 self.state
                     .connection_id_to_peer_id
                     .write()
                     .await
                     .insert(conn_id, peer_node_id.to_string());
-                // Close only if the old connection id differs
                 if existing.connection_id != conn_id {
                     existing.connection.close(0u32.into(), b"duplicate-replaced");
+                }
+                if let Some(state) = peers.get(peer_node_id) {
+                    let _ = state.activation_tx.send(true);
                 }
                 true
             } else {
                 self.logger.debug(format!(
-                    "🔁 [dup] Existing connection kept for peer {peer_node_id}; closing new"
+                    "🔁 [dup] Existing kept (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}; closing new"
                 ));
                 new_conn.close(0u32.into(), b"duplicate-loser");
                 false
@@ -625,6 +671,9 @@ impl QuicTransport {
                 .write()
                 .await
                 .insert(conn_id, peer_node_id.to_string());
+            if let Some(state) = peers.get(peer_node_id) {
+                let _ = state.activation_tx.send(true);
+            }
             true
         }
     }
@@ -1024,6 +1073,10 @@ impl QuicTransport {
                             // New inbound lost; skip further processing for this connection
                             continue;
                         }
+                        // Mark active after surviving dup-resolution
+                        if let Some(state) = self.state.peers.read().await.get(&peer_node_id) {
+                            let _ = state.activation_tx.send(true);
+                        }
                         should_send_response = true;
                         let _ = (self.message_handler)(msg.clone()).await;
                         if needs_to_correlate_peer_id {
@@ -1047,6 +1100,9 @@ impl QuicTransport {
                             ).await;
                             if !kept {
                                 continue;
+                            }
+                            if let Some(state) = self.state.peers.read().await.get(&peer_node_id) {
+                                let _ = state.activation_tx.send(true);
                             }
                             should_send_response = true;
                             let _ = (self.message_handler)(msg.clone()).await;
@@ -1510,6 +1566,13 @@ impl NetworkTransport for QuicTransport {
                     )));
                 }
             };
+            // Avoid generic sleeps: wait for activation only if not yet active
+            // If activation not yet signaled, wait using watch receiver (no busy wait)
+            if !*peer.activation_rx.borrow() {
+                let mut rx = peer.activation_rx.clone();
+                // Await a state change to true
+                let _ = rx.changed().await;
+            }
             self.logger.info("🔍 [request] Opening bidirectional stream");
             let open_res = peer.connection.open_bi().await;
             let (mut send, mut recv) = match open_res {
@@ -1694,6 +1757,33 @@ impl NetworkTransport for QuicTransport {
             })?;
 
         let dns_safe_peer_id = dns_safe_node_id(&peer_node_id);
+        // Deterministic dial-direction gate: Higher node-id yields to inbound
+        let local_id = self.local_node_id();
+        let prefer_inbound = local_id.as_str() > peer_node_id.as_str();
+        if prefer_inbound {
+            // If we prefer inbound and no connection exists yet, wait briefly for inbound acceptance
+            // This avoids simultaneous dials and reduces duplicate-resolution churn
+            let mut attempts = 0u8;
+            while attempts < 6 {
+                if self.state.peers.read().await.contains_key(&peer_node_id) {
+                    self.logger.debug(format!("[connect_peer] Prefer inbound and detected mapping for {peer_node_id}; skipping outbound dial"));
+                    return Ok(());
+                }
+                // If a cancel notify is signaled (due to inbound), break early
+                if let Some(n) = self.state.dial_cancel.read().await.get(&peer_node_id).cloned() {
+                    let notified = tokio::time::timeout(Duration::from_millis(50), n.notified()).await;
+                    if notified.is_ok() {
+                        self.logger.debug(format!("[connect_peer] Prefer inbound; cancel signal received for {peer_node_id}"));
+                        return Ok(());
+                    }
+                } else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                attempts = attempts.saturating_add(1);
+            }
+            // Fall through to dial if inbound did not arrive in time
+            self.logger.debug(format!("[connect_peer] Prefer inbound but none arrived; proceeding to dial {peer_node_id}"));
+        }
         self.logger.debug(format!("🔍 [connect_peer] Connecting to {peer_node_id} (DNS-safe: {dns_safe_peer_id}) at {addr}"));
 
         // Per-peer cancel Notify (created if absent)
@@ -1846,26 +1936,17 @@ impl NetworkTransport for QuicTransport {
 
         self.logger
             .debug("[connect_peer] Application handshake completed successfully");
-        // Record final metadata for this connection without triggering duplicate closure here.
-        // Inbound side will perform duplicate-resolution if a simultaneous dial occurred.
-        {
-            let mut peers = self.state.peers.write().await;
-            let new_state = PeerState::new(
+        // Decide winner deterministically using the same logic as inbound path to avoid clobbering an inbound winner
+        let _kept = self
+            .replace_or_keep_connection(
+                &peer_node_id,
                 conn_arc.clone(),
-                0,
                 self.local_node_id(),
                 local_nonce,
                 peer_node_id.clone(),
                 responder_nonce,
-            );
-            let conn_id = new_state.connection_id;
-            peers.insert(peer_node_id.clone(), new_state);
-            self.state
-                .connection_id_to_peer_id
-                .write()
-                .await
-                .insert(conn_id, peer_node_id.clone());
-        }
+            )
+            .await;
 
         // Reset backoff on success
         self.state.dial_backoff.write().await.remove(&peer_node_id);

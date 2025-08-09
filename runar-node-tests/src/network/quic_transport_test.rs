@@ -194,7 +194,7 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
 async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Watchdog to prevent indefinite hangs
     let watchdog = tokio::spawn(async {
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
         panic!("test_quic_transport timed out");
     });
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
@@ -912,7 +912,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Watchdog to prevent indefinite hangs
     let watchdog = tokio::spawn(async {
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
         panic!("test_quic_duplicate_resolution_simultaneous_dial timed out");
     });
 
@@ -1040,7 +1040,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
 async fn test_quic_lifecycle_callbacks(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let watchdog = tokio::spawn(async {
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
         panic!("test_quic_lifecycle_callbacks timed out");
     });
 
@@ -1167,7 +1167,7 @@ async fn test_quic_lifecycle_callbacks(
 async fn test_capability_version_bump_across_reconnect(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let watchdog = tokio::spawn(async {
-        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         panic!("test_capability_version_bump_across_reconnect timed out");
     });
 
@@ -1263,7 +1263,7 @@ async fn test_capability_version_bump_across_reconnect(
 async fn test_quic_anti_flap_under_race(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let watchdog = tokio::spawn(async {
-        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         panic!("test_quic_anti_flap_under_race timed out");
     });
 
@@ -1381,7 +1381,7 @@ async fn test_transport_message_header_bounds_checking(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Watchdog to prevent indefinite hangs
     let watchdog = tokio::spawn(async {
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
         panic!("test_transport_message_header_bounds_checking timed out");
     });
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);

@@ -224,7 +224,7 @@ async fn test_remote_action_call() -> Result<()> {
 #[tokio::test]
 async fn test_node_stop_restart_reconnection() -> Result<()> {
     // Hard timeout to prevent hangs in CI
-    tokio::time::timeout(Duration::from_secs(150), async {
+    tokio::time::timeout(Duration::from_secs(40), async {
     // Configure logging to ensure test logs are displayed
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
@@ -319,7 +319,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     drop(node1);
 
     // Allow OS to fully release previous UDP socket before rebinding same port
-    sleep(Duration::from_millis(2000)).await;
+    sleep(Duration::from_millis(1000)).await;
 
     // Create a fresh node using the same config (preserves node_id, keys, etc.)
     let mut node1 = Node::new(node1_config.clone()).await?;
