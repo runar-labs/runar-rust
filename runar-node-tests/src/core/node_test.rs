@@ -354,7 +354,9 @@ async fn test_on_method() {
         node.start().await.unwrap();
 
         // Helper to await Node::on join handle
-        async fn await_on(handle: JoinHandle<Result<Option<ArcValue>>>) -> anyhow::Result<Option<ArcValue>> {
+        async fn await_on(
+            handle: JoinHandle<Result<Option<ArcValue>>>,
+        ) -> anyhow::Result<Option<ArcValue>> {
             handle.await.map_err(|e| anyhow::anyhow!(e))?
         }
 
@@ -633,9 +635,7 @@ async fn test_service_error_state_events() {
 
         // The error event should timeout since no error is actually triggered
         // Flatten JoinHandle<Result<..>> into Result<..> for assertion
-        let join_res = node
-            .on(error_topic, Duration::from_millis(100))
-            .await;
+        let join_res = node.on(error_topic, Duration::from_millis(100)).await;
         assert!(join_res.is_ok(), "join should not fail");
         let result = join_res.unwrap();
         assert!(

@@ -7,10 +7,10 @@ use runar_serializer::ArcValue; // needed by params! macro
 use runar_node::node::Node;
 use runar_test_utils::create_networked_node_test_config;
 
+use serial_test::serial;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use serial_test::serial;
 
 // Import the fixture MathService
 use crate::fixtures::math_service::MathService;
@@ -169,8 +169,7 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("✅ Added math3 service to node1");
 
     let node2_arc = Arc::new(node2.clone());
-    let on_added_math3_future = node2_arc
-        .on("math3/math/added", Duration::from_secs(10));
+    let on_added_math3_future = node2_arc.on("math3/math/added", Duration::from_secs(10));
 
     // Wait for service discovery debounce (increased time for reliability)
     logger.debug("⏳ Waiting for service discovery propagation...");
@@ -189,8 +188,7 @@ async fn test_remote_action_call() -> Result<()> {
     ));
 
     //check event on_added_math3_future
-    let on_added_math3_result = on_added_math3_future
-        .await??;
+    let on_added_math3_result = on_added_math3_future.await??;
     match on_added_math3_result {
         Some(event_data) => {
             let event_value: f64 = *event_data.as_type_ref()?;

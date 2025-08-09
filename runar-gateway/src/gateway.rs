@@ -214,8 +214,7 @@ impl AbstractService for GatwayService {
                                     ));
                                     //TODO: Add routes for service {service_path}
                                 } else {
-                                    event_ctx.error( 
-                                        "GatwayService {service_name_clone} received $registry/services/*/state/running event with invalid value - expected String");
+                                    event_ctx.error("GatwayService {service_name_clone} received $registry/services/*/state/running event with invalid value - expected String");
                                 }
                                 // TODO: Implement dynamic route updates if required
                             } else {

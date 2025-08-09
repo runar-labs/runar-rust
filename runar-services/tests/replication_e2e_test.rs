@@ -822,15 +822,14 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     println!("Starting Node 3 and sync.");
     let mut node3 = Node::new(node3_config).await?;
     node3.add_service(sqlite_service3).await?;
-    
-    let node2_discovered_future = node3
-        .on(
-            format!(
-                "$registry/peer/{node2_id}/discovered",
-                node2_id = node2.node_id()
-            ),
-            Duration::from_secs(3),
-        );
+
+    let node2_discovered_future = node3.on(
+        format!(
+            "$registry/peer/{node2_id}/discovered",
+            node2_id = node2.node_id()
+        ),
+        Duration::from_secs(3),
+    );
     node3.start().await?;
     println!("✅ Node 3 started");
     node3.wait_for_services_to_start().await?;
@@ -838,7 +837,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     println!("✅ Node 3 service started and data sync completed");
 
     println!("Waiting for nodes to discover each other...");
-    
+
     let _ = node2_discovered_future.await?;
     println!("✅ Node3 discovered node 2");
 
@@ -1941,7 +1940,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     let node2_config = configs[1].clone();
 
     let mut node2 = Node::new(node2_config).await?;
-    
+
     // Create SQLite service with replication for Node 2
     let sqlite_service2 = create_replicated_sqlite_service(
         "high_volume_sqlite",
