@@ -319,7 +319,7 @@ mod service_registry_wildcard_tests {
             .register_local_event_subscription(
                 &pattern1,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
 
@@ -329,7 +329,7 @@ mod service_registry_wildcard_tests {
             .register_local_event_subscription(
                 &pattern2,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
 
@@ -340,7 +340,7 @@ mod service_registry_wildcard_tests {
             .register_local_event_subscription(
                 &specific_path,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
 
@@ -471,7 +471,7 @@ mod service_registry_wildcard_tests {
             .register_local_event_subscription(
                 &pattern,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
 
@@ -508,7 +508,7 @@ mod service_registry_wildcard_tests {
             .register_local_event_subscription(
                 &pattern,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
 
@@ -517,7 +517,7 @@ mod service_registry_wildcard_tests {
             .register_local_event_subscription(
                 &pattern,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
 
@@ -583,14 +583,14 @@ mod service_registry_wildcard_tests {
             .register_local_event_subscription(
                 &pattern,
                 callback1,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
         let _sub_id2 = registry
             .register_local_event_subscription(
                 &pattern,
                 callback2,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await?;
 

@@ -82,7 +82,7 @@ async fn test_subscribe_and_unsubscribe() {
             .register_local_event_subscription(
                 &topic,
                 callback,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -140,7 +140,7 @@ async fn test_wildcard_subscriptions() {
             .register_local_event_subscription(
                 &wildcard1,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -148,7 +148,7 @@ async fn test_wildcard_subscriptions() {
             .register_local_event_subscription(
                 &wildcard2,
                 callback.clone(),
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -490,7 +490,7 @@ async fn test_multiple_event_handlers() {
             .register_local_event_subscription(
                 &topic1,
                 handler1,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -498,7 +498,7 @@ async fn test_multiple_event_handlers() {
             .register_local_event_subscription(
                 &topic2,
                 handler2,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();

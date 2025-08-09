@@ -220,6 +220,33 @@ impl LifecycleContext {
         self.node_delegate.publish(full_topic, data).await
     }
 
+    /// Publish an event with options (e.g., retain_for for include_past support)
+    pub async fn publish_with_options(
+        &self,
+        topic: impl Into<String>,
+        data: Option<ArcValue>,
+        options: PublishOptions,
+    ) -> Result<()> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+
+        self.logger.debug(format!(
+            "LifecycleContext publishing (with options) to processed topic: {full_topic}"
+        ));
+        self.node_delegate
+            .publish_with_options(full_topic, data, options)
+            .await
+    }
+
     /// Wait for an event to occur with a timeout
     ///
     /// INTENTION: Allow services during their lifecycle to wait for specific events
@@ -599,9 +626,9 @@ pub struct PublishOptions {
     /// Whether delivery should be guaranteed (at-least-once semantics)
     pub guaranteed_delivery: bool,
 
-    /// How long the event should be retained for late subscribers (in seconds)
-    /// None means no retention, 0 means forever
-    pub retention_seconds: Option<u64>,
+    /// How long the event should be retained locally for late subscribers.
+    /// None means no retention.
+    pub retain_for: Option<std::time::Duration>,
 
     /// Target a specific node or service instead of all subscribers
     pub target: Option<String>,
@@ -612,7 +639,7 @@ impl PublishOptions {
         Self {
             broadcast: false,
             guaranteed_delivery: false,
-            retention_seconds: None,
+            retain_for: None,
             target: None,
         }
     }
@@ -626,8 +653,9 @@ impl PublishOptions {
 /// Options for registering an event subscription with metadata.
 #[derive(Clone, Debug, Default)]
 pub struct EventRegistrationOptions {
-    // this shuold be options related to the subscription behavior. like once, so after the first event is received the subscription is removed.
-    // and etc.
+    /// If set, deliver the newest retained event that occurred within this lookback window
+    /// immediately upon subscription (in addition to future events). Local-only.
+    pub include_past: Option<std::time::Duration>,
 }
 
 pub struct ActionRegistrationOptions {

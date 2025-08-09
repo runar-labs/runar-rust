@@ -447,7 +447,7 @@ impl ServiceRegistry {
         &self,
         topic_path: &TopicPath,
         callback: EventHandler,
-        _options: EventRegistrationOptions,
+        _options: &EventRegistrationOptions,
     ) -> Result<String> {
         let subscription_id = Uuid::new_v4().to_string();
 

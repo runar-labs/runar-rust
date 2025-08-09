@@ -311,6 +311,14 @@ pub struct Node {
     keys_manager_mut: Arc<Mutex<NodeKeyManager>>,
 
     service_tasks: Arc<RwLock<Vec<ServiceTask>>>,
+
+    /// Retained event store: exact full topic -> deque of (timestamp, data)
+    retained_events: dashmap::DashMap<
+        String,
+        std::collections::VecDeque<(std::time::Instant, Option<ArcValue>)>,
+    >,
+    /// Index of exact topics for wildcard lookups
+    retained_index: Arc<RwLock<crate::routing::PathTrie<String>>>,
 }
 
 // Implementation for Node
@@ -424,6 +432,8 @@ impl Node {
             keys_manager,
             keys_manager_mut,
             service_tasks: Arc::new(RwLock::new(Vec::new())),
+            retained_events: dashmap::DashMap::new(),
+            retained_index: Arc::new(RwLock::new(crate::routing::PathTrie::new())),
         };
 
         // Register the registry service
@@ -1784,7 +1794,7 @@ impl Node {
     }
 
     /// Publish with options - Helper method to implement the publish_with_options functionality
-    async fn publish_with_options(
+    pub async fn publish_with_options(
         &self,
         topic: impl Into<String>,
         data: Option<ArcValue>,
@@ -1817,6 +1827,31 @@ impl Node {
                     "Error in local event handler for {topic_string}: {e}"
                 ));
             }
+        }
+
+        // Retain event locally if configured
+        if let Some(retain_for) = options.retain_for {
+            let key = topic_path.as_str().to_string();
+            let now = std::time::Instant::now();
+            let expire_before = now - retain_for;
+            let mut deque = self.retained_events.entry(key.clone()).or_default();
+            // prune by time
+            while let Some((ts, _)) = deque.front() {
+                if *ts < expire_before {
+                    deque.pop_front();
+                } else {
+                    break;
+                }
+            }
+            // cap size
+            const MAX_RETAIN_PER_TOPIC: usize = 16;
+            while deque.len() >= MAX_RETAIN_PER_TOPIC {
+                deque.pop_front();
+            }
+            deque.push_back((now, data.clone()));
+            // ensure index contains the exact topic
+            let mut idx = self.retained_index.write().await;
+            idx.set_value(topic_path.clone(), topic_path.as_str().to_string());
         }
 
         // Broadcast to remote nodes if requested and network is available
@@ -2503,7 +2538,7 @@ impl NodeDelegate for Node {
         let options = PublishOptions {
             broadcast: true,
             guaranteed_delivery: false,
-            retention_seconds: None,
+            retain_for: None,
             target: None,
         };
 
@@ -2542,8 +2577,60 @@ impl NodeDelegate for Node {
 
         let subscription_id = self
             .service_registry
-            .register_local_event_subscription(&topic_path, callback, options)
+            .register_local_event_subscription(&topic_path, callback, &options)
             .await?;
+
+        // Deliver past event if requested
+        if let Some(lookback) = options.include_past {
+            let now = std::time::Instant::now();
+            let cutoff = now - lookback;
+
+            // Build matched exact topics via trie (handles exact and wildcard)
+            let matched: Vec<String> = if topic_path.is_pattern() {
+                let idx = self.retained_index.read().await;
+                idx.find_wildcard_matches(&topic_path)
+                    .into_iter()
+                    .map(|m| m.content)
+                    .collect()
+            } else {
+                vec![topic_path.as_str().to_string()]
+            };
+
+            // Find the newest retained event among matched topics within cutoff
+            let mut newest: Option<(std::time::Instant, Option<ArcValue>, String)> = None;
+            for key in matched {
+                if let Some(entry) = self.retained_events.get_mut(&key) {
+                    if let Some((ts, data)) = entry.iter().rev().find(|(ts, _)| *ts >= cutoff) {
+                        let is_newer = match &newest {
+                            None => true,
+                            Some((nts, _, _)) => ts > nts,
+                        };
+                        if is_newer {
+                            newest = Some((*ts, data.clone(), key.clone()));
+                        }
+                    }
+                }
+            }
+
+            if let Some((_ts, data, _key)) = newest.clone() {
+                let event_context = Arc::new(EventContext::new(
+                    &topic_path,
+                    Arc::new(self.clone()),
+                    true,
+                    self.logger.clone(),
+                ));
+                // Invoke only the newly registered subscription by id
+                let cb = self
+                    .service_registry
+                    .get_local_event_subscribers(&topic_path)
+                    .await;
+                for (sid, handler, _) in cb {
+                    if sid == subscription_id {
+                        let _ = handler(event_context.clone(), data.clone()).await;
+                    }
+                }
+            }
+        }
 
         if node_started {
             self.notify_node_change().await?;
@@ -2611,6 +2698,8 @@ impl NodeDelegate for Node {
         inner
     }
 }
+
+// Tests for include_past are located in runar-node-tests
 
 #[async_trait]
 impl KeysDelegate for Node {
@@ -2756,6 +2845,8 @@ impl Clone for Node {
             keys_manager: self.keys_manager.clone(),
             keys_manager_mut: self.keys_manager_mut.clone(),
             service_tasks: self.service_tasks.clone(),
+            retained_events: self.retained_events.clone(),
+            retained_index: self.retained_index.clone(),
         }
     }
 }

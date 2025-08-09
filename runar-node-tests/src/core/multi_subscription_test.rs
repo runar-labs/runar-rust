@@ -44,7 +44,7 @@ async fn test_multiple_subscriptions_same_topic() -> Result<()> {
         .register_local_event_subscription(
             &topic_path,
             handler1,
-            EventRegistrationOptions::default(),
+            &EventRegistrationOptions::default(),
         )
         .await?;
 
@@ -52,7 +52,7 @@ async fn test_multiple_subscriptions_same_topic() -> Result<()> {
         .register_local_event_subscription(
             &topic_path,
             handler2,
-            EventRegistrationOptions::default(),
+            &EventRegistrationOptions::default(),
         )
         .await?;
 

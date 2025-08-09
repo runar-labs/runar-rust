@@ -80,7 +80,7 @@ async fn test_get_subscription_metadata() {
             .register_local_event_subscription(
                 &temperature_event_path,
                 temperature_callback,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -89,7 +89,7 @@ async fn test_get_subscription_metadata() {
             .register_local_event_subscription(
                 &humidity_event_path,
                 humidity_callback,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
@@ -98,7 +98,7 @@ async fn test_get_subscription_metadata() {
             .register_local_event_subscription(
                 &pressure_event_path,
                 pressure_callback,
-                EventRegistrationOptions::default(),
+                &EventRegistrationOptions::default(),
             )
             .await
             .unwrap();
