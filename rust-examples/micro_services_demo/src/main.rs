@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
     logger.info(format!(
         "✅ Created order: {} items for ${:.2}",
         created_order.quantity,
-        created_order.total_price_cents as f64 / 100.0
+        created_order.total_price_cents / 100.0
     ));
 
     node.stop().await?;

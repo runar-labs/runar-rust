@@ -280,9 +280,13 @@ async fn test_node_events() {
         };
 
         // Subscribe to the topic using the node's API
-        node.subscribe(topic.clone(), Arc::new(handler))
-            .await
-            .unwrap();
+        node.subscribe(
+            topic.clone(),
+            Arc::new(handler),
+            Some(runar_node::services::EventRegistrationOptions::default()),
+        )
+        .await
+        .unwrap();
 
         // Publish an event to the topic
         let data = ArcValue::new_primitive("test data".to_string());
@@ -361,7 +365,14 @@ async fn test_on_method() {
         }
 
         // Test 1: on method should timeout when no event is published
-        let result = await_on(node.on("test_event", Duration::from_millis(100))).await;
+        let result = await_on(node.on(
+            "test_event",
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_millis(100),
+                include_past: None,
+            }),
+        ))
+        .await;
         assert!(
             result.is_err(),
             "on method should timeout when no event is published"
@@ -377,7 +388,13 @@ async fn test_on_method() {
         let event_data = ArcValue::new_primitive(42i32);
 
         // Get the future first
-        let future = node.on(topic, Duration::from_secs(5));
+        let future = node.on(
+            topic,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Publish the event (should trigger the future)
         node.publish(topic.to_string(), Some(event_data.clone()))
@@ -406,7 +423,13 @@ async fn test_on_method() {
         let context_event_data = ArcValue::new_primitive(100i32);
 
         // Get the future first
-        let context_future = context.on(context_topic, Duration::from_secs(5));
+        let context_future = context.on(
+            context_topic,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Publish event for context test
         node.publish(context_topic.to_string(), Some(context_event_data.clone()))
@@ -429,7 +452,13 @@ async fn test_on_method() {
         let lifecycle_event_data = ArcValue::new_primitive(200i32);
 
         // Get the future first
-        let lifecycle_future = lifecycle_context.on(lifecycle_topic, Duration::from_secs(5));
+        let lifecycle_future = lifecycle_context.on(
+            lifecycle_topic,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Publish event for lifecycle context test
         node.publish(
@@ -484,10 +513,22 @@ async fn test_service_state_events() {
         // Listen for initialization event before adding service
         let init_topic = format!("$registry/services/{service_path}/state/initialized");
         let node_clone = node.clone();
-        let init_future = node_clone.on(init_topic.clone(), Duration::from_secs(5));
+        let init_future = node_clone.on(
+            init_topic.clone(),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         let wildcard_topic = "$registry/services/*/state/initialized";
-        let wildcard_future = node_clone.on(wildcard_topic, Duration::from_secs(5));
+        let wildcard_future = node_clone.on(
+            wildcard_topic,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Add the service (should trigger initialized event)
         node.add_service(service).await.unwrap();
@@ -516,7 +557,13 @@ async fn test_service_state_events() {
         // Test 2: Service running state event
         let running_topic = format!("$registry/services/{service_path}/state/running");
         let node_clone = node.clone();
-        let running_future = node_clone.on(running_topic.clone(), Duration::from_secs(5));
+        let running_future = node_clone.on(
+            running_topic.clone(),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Start the service (should trigger running event)
         node.start().await.unwrap();
@@ -535,7 +582,13 @@ async fn test_service_state_events() {
         // Test 3: Service stopped state event
         let stopped_topic = format!("$registry/services/{service_path}/state/stopped");
         let node_clone2 = node.clone();
-        let stopped_future = node_clone2.on(stopped_topic.clone(), Duration::from_secs(5));
+        let stopped_future = node_clone2.on(
+            stopped_topic.clone(),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Stop the service (should trigger stopped event)
         node.stop().await.unwrap();
@@ -580,7 +633,13 @@ async fn test_service_state_events_wildcard() {
         // Test wildcard subscription for all service running events
         let wildcard_topic = "$registry/services/*/state/running";
         let node_clone = node.clone();
-        let wildcard_future = node_clone.on(wildcard_topic, Duration::from_secs(5));
+        let wildcard_future = node_clone.on(
+            wildcard_topic,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Add multiple services to trigger multiple running events
         let service1 = MathService::new("Service1", "service1");
@@ -635,7 +694,15 @@ async fn test_service_error_state_events() {
 
         // The error event should timeout since no error is actually triggered
         // Flatten JoinHandle<Result<..>> into Result<..> for assertion
-        let join_res = node.on(error_topic, Duration::from_millis(100)).await;
+        let join_res = node
+            .on(
+                error_topic,
+                Some(runar_node::services::OnOptions {
+                    timeout: Duration::from_millis(100),
+                    include_past: None,
+                }),
+            )
+            .await;
         assert!(join_res.is_ok(), "join should not fail");
         let result = join_res.unwrap();
         assert!(
@@ -680,9 +747,27 @@ async fn test_multiple_concurrent_on_calls() {
         let topic2 = "concurrent_event_2";
         let topic3 = "concurrent_event_3";
 
-        let future1 = node.on(topic1, Duration::from_secs(5));
-        let future2 = node.on(topic2, Duration::from_secs(5));
-        let future3 = node.on(topic3, Duration::from_secs(5));
+        let future1 = node.on(
+            topic1,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
+        let future2 = node.on(
+            topic2,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
+        let future3 = node.on(
+            topic3,
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            }),
+        );
 
         // Publish events for each topic with different delays
         let node_clone1 = node.clone();
@@ -778,7 +863,13 @@ async fn test_on_method_timeout_variations() {
 
         // Test 1: Very short timeout should fail
         let join_res = node
-            .on("short_timeout_test", Duration::from_millis(1))
+            .on(
+                "short_timeout_test",
+                Some(runar_node::services::OnOptions {
+                    timeout: Duration::from_millis(1),
+                    include_past: None,
+                }),
+            )
             .await;
         assert!(join_res.is_ok(), "join should not fail");
         let result = join_res.unwrap();
@@ -804,7 +895,13 @@ async fn test_on_method_timeout_variations() {
         });
 
         let result = node
-            .on(topic, Duration::from_millis(100))
+            .on(
+                topic,
+                Some(runar_node::services::OnOptions {
+                    timeout: Duration::from_millis(100),
+                    include_past: None,
+                }),
+            )
             .await??
             .expect("Received event data should not be None");
         assert_eq!(
@@ -838,7 +935,13 @@ async fn test_on_method_timeout_variations() {
         });
 
         let result2 = node
-            .on(topic2, Duration::from_secs(2))
+            .on(
+                topic2,
+                Some(runar_node::services::OnOptions {
+                    timeout: Duration::from_secs(2),
+                    include_past: None,
+                }),
+            )
             .await??
             .expect("Received event data should not be None");
         assert_eq!(

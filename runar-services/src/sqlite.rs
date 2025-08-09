@@ -952,12 +952,12 @@ impl AbstractService for SqliteService {
 
                 // Subscribe to all operation types for this table
                 context
-                    .subscribe(create_path, event_handler.clone())
+                    .subscribe(create_path, event_handler.clone(), None)
                     .await?;
                 context
-                    .subscribe(update_path, event_handler.clone())
+                    .subscribe(update_path, event_handler.clone(), None)
                     .await?;
-                context.subscribe(delete_path, event_handler).await?;
+                context.subscribe(delete_path, event_handler, None).await?;
             }
         }
 

@@ -28,7 +28,7 @@ async fn include_past_exact_topic_delivers_latest_retained_event() -> Result<()>
     // Subscribe with include_past
     let (tx, rx) = oneshot::channel::<Option<ArcValue>>();
     let _sub_id = node
-        .subscribe_with_options(
+        .subscribe(
             topic.to_string(),
             std::sync::Arc::new(move |_ctx, val| {
                 let tx = tx;
@@ -79,7 +79,7 @@ async fn include_past_window_too_small_no_delivery() -> Result<()> {
 
     let (tx, rx) = oneshot::channel::<Option<ArcValue>>();
     let _sub_id = node
-        .subscribe_with_options(
+        .subscribe(
             topic.to_string(),
             std::sync::Arc::new(move |_ctx, val| {
                 let tx = tx;
@@ -139,7 +139,7 @@ async fn include_past_picks_newest_of_same_topic() -> Result<()> {
 
     let (tx, rx) = oneshot::channel::<Option<ArcValue>>();
     let _sub_id = node
-        .subscribe_with_options(
+        .subscribe(
             topic.to_string(),
             std::sync::Arc::new(move |_ctx, val| {
                 let tx = tx;
@@ -233,7 +233,7 @@ async fn include_past_wildcard_picks_newest_across_topics() -> Result<()> {
 
     let (tx, rx) = oneshot::channel::<Option<ArcValue>>();
     let _sub_id = node
-        .subscribe_with_options(
+        .subscribe(
             "svc_multi/*".to_string(),
             std::sync::Arc::new(move |_ctx, val| {
                 let tx = tx;
@@ -291,6 +291,7 @@ async fn subscribe_without_include_past_no_immediate_delivery() -> Result<()> {
                     Ok(())
                 })
             }),
+            Some(EventRegistrationOptions::default()),
         )
         .await?;
 
@@ -319,7 +320,7 @@ async fn include_past_wildcard_delivers_latest_retained_event() -> Result<()> {
 
     let (tx, rx) = oneshot::channel::<Option<ArcValue>>();
     let _sub_id = node
-        .subscribe_with_options(
+        .subscribe(
             pattern.to_string(),
             std::sync::Arc::new(move |_ctx, val| {
                 let tx = tx;

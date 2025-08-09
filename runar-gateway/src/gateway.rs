@@ -225,6 +225,7 @@ impl AbstractService for GatwayService {
                         })
                     },
                 ),
+                Some(runar_node::services::EventRegistrationOptions::default()),
             )
             .await
             .map_err(|e| anyhow!("Failed to subscribe to $registry/service/added: {}", e))?;

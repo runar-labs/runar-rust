@@ -267,7 +267,10 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             "$registry/peer/{node1_id}/discovered",
             node1_id = node1.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     node2.start().await?;
     logger.info("✅ Node 2 started");
@@ -550,14 +553,20 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             "$registry/peer/{node1_id}/discovered",
             node1_id = node1.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     let node2_discovered_by_node1 = node1.on(
         format!(
             "$registry/peer/{node2_id}/discovered",
             node2_id = node2.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     node2.start().await?;
     let startup_duration = start_time.elapsed();
@@ -828,7 +837,10 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             "$registry/peer/{node2_id}/discovered",
             node2_id = node2.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     node3.start().await?;
     println!("✅ Node 3 started");
@@ -1443,14 +1455,20 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             "$registry/peer/{node1_id}/discovered",
             node1_id = node1.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     let node2_discovered_by_node1 = node1.on(
         format!(
             "$registry/peer/{node2_id}/discovered",
             node2_id = node2.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     node2.start().await?;
     println!("✅ Node 2 started");
@@ -1687,14 +1705,20 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             "$registry/peer/{node1_id}/discovered",
             node1_id = node1.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     let node2_discovered_by_node1 = node1.on(
         format!(
             "$registry/peer/{node2_id}/discovered",
             node2_id = node2.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     node2.start().await?;
     println!("✅ Node 2 started with ID: {}", node2.node_id());
@@ -1957,7 +1981,10 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             "$registry/peer/{node1_id}/discovered",
             node1_id = node1.node_id()
         ),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     node2.start().await?;
     println!("✅ Node 2 started");

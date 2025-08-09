@@ -101,7 +101,7 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         }
                     })
-                })).await?;
+                }), None).await?;
 
                 context.info(format!("Registered event handler for {}", #path_value));
                 Ok(())
@@ -129,7 +129,7 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         }
                     })
-                })).await?;
+                }), None).await?;
 
                 context.info(format!("Registered event handler for {}", #path_value));
                 Ok(())

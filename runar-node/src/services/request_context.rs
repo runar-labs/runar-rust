@@ -360,20 +360,19 @@ impl RequestContext {
     pub async fn on(
         &self,
         topic: impl Into<String>,
-        timeout: std::time::Duration,
+        options: Option<crate::services::OnOptions>,
     ) -> Result<Option<ArcValue>> {
-        // Node::on now returns a JoinHandle; await the handle, then unwrap the inner Result
-        let handle = self.node_delegate.on(topic, timeout);
-        let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
-        inner
+        // Node::on returns a JoinHandle; await the handle, then unwrap the inner Result
+        let handle = self.node_delegate.on(topic, options);
+        handle.await.map_err(|e| anyhow::anyhow!(e))?
     }
 
     /// Subscribe to an event with options from a request handler
-    pub async fn subscribe_with_options(
+    pub async fn subscribe(
         &self,
         topic: impl Into<String>,
         callback: EventHandler,
-        options: EventRegistrationOptions,
+        options: Option<EventRegistrationOptions>,
     ) -> Result<String> {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
@@ -394,19 +393,12 @@ impl RequestContext {
         };
 
         self.node_delegate
-            .subscribe_with_options(full_topic, callback, options)
+            .subscribe(full_topic, callback, options)
             .await
     }
 
-    /// Convenience subscribe without options
-    pub async fn subscribe(
-        &self,
-        topic: impl Into<String>,
-        callback: EventHandler,
-    ) -> Result<String> {
-        self.subscribe_with_options(topic, callback, EventRegistrationOptions::default())
-            .await
-    }
+    // Convenience subscribe without options removed to unify API
+    // subscribe without options removed to unify API
 }
 
 impl LoggingContext for RequestContext {

@@ -585,7 +585,7 @@ impl Node {
     pub fn on(
         &self,
         topic: impl Into<String>,
-        timeout: Duration,
+        options: Option<crate::services::OnOptions>,
     ) -> tokio::task::JoinHandle<Result<Option<ArcValue>>> {
         let topic_string = topic.into();
 
@@ -608,8 +608,12 @@ impl Node {
             let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
 
             // Register subscription now (await inside the spawned task)
+            let on_opts = options.clone().unwrap_or(crate::services::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            });
             let subscription_id = node
-                .subscribe_with_options(
+                .subscribe(
                     full_topic.clone(),
                     Arc::new(move |_context, data| {
                         let tx = tx.clone();
@@ -618,12 +622,14 @@ impl Node {
                             Ok(())
                         })
                     }),
-                    EventRegistrationOptions::default(),
+                    Some(EventRegistrationOptions {
+                        include_past: on_opts.include_past,
+                    }),
                 )
                 .await?;
 
             // Wait for event or timeout
-            let result = match tokio::time::timeout(timeout, rx.recv()).await {
+            let result = match tokio::time::timeout(on_opts.timeout, rx.recv()).await {
                 Ok(Some(event_data)) => Ok(event_data),
                 Ok(None) => Err(anyhow!(
                     "Channel closed while waiting for event on topic: {full_topic}"
@@ -2545,19 +2551,11 @@ impl NodeDelegate for Node {
         self.publish_with_options(topic, data, options).await
     }
 
-    async fn subscribe(&self, topic: String, callback: EventHandler) -> Result<String> {
-        // For the basic subscribe, create default metadata.
-        // The full topic path (including network_id) is handled by subscribe_with_options.
-        // Node::subscribe provides a simplified interface, using default registration options.
-        self.subscribe_with_options(topic, callback, EventRegistrationOptions::default())
-            .await
-    }
-
-    async fn subscribe_with_options(
+    async fn subscribe(
         &self,
         topic: String, // This is the service-relative path, e.g., "math_service/numbers"
         callback: EventHandler, // Changed to use the type alias
-        options: EventRegistrationOptions, // Changed from SubscriptionOptions
+        options: Option<EventRegistrationOptions>, // None-ish when default
     ) -> Result<String> {
         // The `topic` parameter is the service-relative path (e.g., "service_name/event_name").
         // This will be combined with `self.network_id` to form the full TopicPath for registry storage.
@@ -2570,18 +2568,22 @@ impl NodeDelegate for Node {
         let node_started = self.running.load(Ordering::SeqCst);
 
         self.logger.debug(format!(
-            "Node: subscribe_with_options called for topic_path '{topic_path}' - node started: {node_started}",
-            topic_path=topic_path.as_str(),
-            node_started=node_started
+            "Node: subscribe called for topic_path '{topic_path}' - node started: {node_started}",
+            topic_path = topic_path.as_str(),
+            node_started = node_started
         ));
 
         let subscription_id = self
             .service_registry
-            .register_local_event_subscription(&topic_path, callback, &options)
+            .register_local_event_subscription(
+                &topic_path,
+                callback,
+                &options.clone().unwrap_or_default(),
+            )
             .await?;
 
         // Deliver past event if requested
-        if let Some(lookback) = options.include_past {
+        if let Some(lookback) = options.and_then(|o| o.include_past) {
             let now = std::time::Instant::now();
             let cutoff = now - lookback;
 
@@ -2691,11 +2693,53 @@ impl NodeDelegate for Node {
     async fn on(
         &self,
         topic: impl Into<String> + Send,
-        timeout: std::time::Duration,
+        options: Option<crate::services::OnOptions>,
     ) -> Result<Option<ArcValue>> {
-        let handle = self.on(topic, timeout);
-        let inner = handle.await.map_err(|e| anyhow!(e))?;
-        inner
+        let topic_string: String = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else {
+            format!("{}:{}", self.network_id, topic_string)
+        };
+
+        let node = self.clone();
+        let handle = tokio::spawn(async move {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
+            use crate::services as services_mod;
+            let on_opts = options.clone().unwrap_or(services_mod::OnOptions {
+                timeout: Duration::from_secs(5),
+                include_past: None,
+            });
+            let opts = services_mod::EventRegistrationOptions {
+                include_past: on_opts.include_past,
+            };
+            let subscription_id = node
+                .subscribe(
+                    full_topic.clone(),
+                    Arc::new(move |_ctx, data| {
+                        let tx = tx.clone();
+                        Box::pin(async move {
+                            let _ = tx.send(data).await;
+                            Ok(())
+                        })
+                    }),
+                    Some(opts),
+                )
+                .await?;
+
+            let result = match tokio::time::timeout(on_opts.timeout, rx.recv()).await {
+                Ok(Some(event_data)) => Ok(event_data),
+                Ok(None) => Err(anyhow!(
+                    "Channel closed while waiting for event on topic: {full_topic}"
+                )),
+                Err(_) => Err(anyhow!("Timeout waiting for event on topic: {full_topic}")),
+            };
+
+            let _ = node.unsubscribe(&subscription_id).await;
+            result
+        });
+
+        handle.await.map_err(|e| anyhow!(e))?
     }
 }
 

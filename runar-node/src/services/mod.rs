@@ -257,7 +257,7 @@ impl LifecycleContext {
     pub async fn on(
         &self,
         topic: impl Into<String>,
-        timeout: std::time::Duration,
+        options: Option<OnOptions>,
     ) -> Result<Option<ArcValue>> {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
@@ -270,10 +270,12 @@ impl LifecycleContext {
                 self.network_id, self.service_path, topic_string
             )
         };
-        let handle = self.node_delegate.on(full_topic, timeout);
+        let handle = self.node_delegate.on(full_topic, options);
         let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
         inner
     }
+
+    // on_with_options removed; use on(topic, timeout, include_past) unified API instead
 
     /// Register an action handler
     ///
@@ -366,34 +368,11 @@ impl LifecycleContext {
     ///
     /// INTENTION: Allow a service to subscribe to an event topic and provide
     /// detailed metadata about the event for discovery and documentation purposes.
-    pub async fn subscribe_with_options(
-        &self,
-        topic: impl Into<String>,
-        callback: EventHandler,
-        options: EventRegistrationOptions,
-    ) -> Result<String> {
-        let topic_string = topic.into();
-        let full_topic = if topic_string.contains(':') {
-            topic_string
-        } else if topic_string.contains('/') {
-            format!("{0}:{1}", self.network_id, topic_string)
-        } else {
-            format!(
-                "{0}:{1}/{2}",
-                self.network_id, self.service_path, topic_string
-            )
-        };
-
-        let delegate = &self.node_delegate;
-        delegate
-            .subscribe_with_options(full_topic, callback, options)
-            .await
-    }
-
     pub async fn subscribe(
         &self,
         topic: impl Into<String>,
         callback: EventHandler,
+        options: Option<EventRegistrationOptions>,
     ) -> Result<String> {
         let topic_string = topic.into();
         let full_topic = if topic_string.contains(':') {
@@ -408,7 +387,14 @@ impl LifecycleContext {
         };
 
         let delegate = &self.node_delegate;
-        delegate.subscribe(full_topic, callback).await
+        delegate.subscribe(full_topic, callback, options).await
+    }
+
+    // subscribe without options removed to unify API
+
+    /// Unsubscribe from a subscription by ID
+    pub async fn unsubscribe(&self, subscription_id: &str) -> Result<()> {
+        self.node_delegate.unsubscribe(subscription_id).await
     }
 }
 
@@ -608,11 +594,7 @@ impl ServiceRequest {
 //     }
 // }
 
-/// Options for a subscription
-#[derive(Debug, Clone, Default)]
-pub struct SubscriptionOptions {
-    // Add subscription options as needed
-}
+// Removed SubscriptionOptions in favor of EventRegistrationOptions to avoid redundancy
 
 /// Options for publishing an event
 ///
@@ -658,6 +640,13 @@ pub struct EventRegistrationOptions {
     pub include_past: Option<std::time::Duration>,
 }
 
+/// Options for one-shot event waits (on)
+#[derive(Clone, Debug)]
+pub struct OnOptions {
+    pub timeout: std::time::Duration,
+    pub include_past: Option<std::time::Duration>,
+}
+
 pub struct ActionRegistrationOptions {
     /// Description of what the action does
     pub description: Option<String>,
@@ -698,21 +687,7 @@ pub trait NodeRequestHandler: Send + Sync {
                 + Send
                 + Sync,
         >,
-    ) -> Result<String>;
-
-    /// Subscribe to a topic with options
-    ///
-    /// INTENTION: Register a callback with specific delivery options for the subscription.
-    /// The callback receives both an EventContext and the event data.
-    async fn subscribe_with_options(
-        &self,
-        topic: String,
-        callback: Box<
-            dyn Fn(Arc<EventContext>, ArcValue) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
-        options: SubscriptionOptions,
+        options: Option<EventRegistrationOptions>,
     ) -> Result<String>;
 
     /// Unsubscribe from a topic
@@ -811,14 +786,11 @@ pub trait NodeDelegate: Send + Sync {
     async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()>;
 
     /// Subscribe to a topic
-    async fn subscribe(&self, topic: String, callback: EventHandler) -> Result<String>;
-
-    /// Subscribe with options for more control
-    async fn subscribe_with_options(
+    async fn subscribe(
         &self,
         topic: String,
         callback: EventHandler,
-        options: EventRegistrationOptions, // Changed from SubscriptionOptions
+        options: Option<EventRegistrationOptions>, // None means default behavior
     ) -> Result<String>;
 
     /// Unsubscribe from a topic
@@ -844,7 +816,7 @@ pub trait NodeDelegate: Send + Sync {
     async fn on(
         &self,
         topic: impl Into<String> + Send,
-        timeout: std::time::Duration,
+        options: Option<OnOptions>,
     ) -> Result<Option<ArcValue>>;
 }
 

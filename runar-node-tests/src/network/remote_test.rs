@@ -73,7 +73,13 @@ async fn test_remote_action_call() -> Result<()> {
     // Start the subscription in the background (hold join handle)
     let node1_arc = Arc::new(node1.clone());
     let node1_arc_clone = node1_arc.clone();
-    let on_added_future_2 = node1_arc_clone.on("math1/math/added", Duration::from_secs(10));
+    let on_added_future_2 = node1_arc_clone.on(
+        "math1/math/added",
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(10),
+            include_past: None,
+        }),
+    );
 
     node1.start().await?;
 
@@ -88,11 +94,17 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("⏳ Waiting for nodes to discover each other via multicast and establish QUIC connections...");
     let peer_future2 = node2.on(
         format!("$registry/peer/{node1_id}/discovered"),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     let peer_future1 = node1.on(
         format!("$registry/peer/{node2_id}/discovered"),
-        Duration::from_secs(3),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: None,
+        }),
     );
     //join both futures and wait for both to complete
     let _ = tokio::join!(peer_future2, peer_future1);
@@ -102,7 +114,13 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Start the subscription in the background (hold join handle)
     let node1_arc_clone = node1_arc.clone();
-    let on_added_future = node1_arc_clone.on("math1/math/added", Duration::from_secs(10));
+    let on_added_future = node1_arc_clone.on(
+        "math1/math/added",
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(10),
+            include_past: None,
+        }),
+    );
 
     // Give sufficient time for subscription to be fully registered in the unified store
     logger.debug("⏳ Waiting for subscription to be fully registered...");
@@ -169,7 +187,13 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("✅ Added math3 service to node1");
 
     let node2_arc = Arc::new(node2.clone());
-    let on_added_math3_future = node2_arc.on("math3/math/added", Duration::from_secs(10));
+    let on_added_math3_future = node2_arc.on(
+        "math3/math/added",
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(10),
+            include_past: None,
+        }),
+    );
 
     // Wait for service discovery debounce (increased time for reliability)
     logger.debug("⏳ Waiting for service discovery propagation...");
@@ -285,11 +309,17 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.debug("⏳ Waiting for nodes to discover each other...");
         let peer_future2 = node2.on(
             format!("$registry/peer/{node1_id}/discovered"),
-            Duration::from_secs(3),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(3),
+                include_past: None,
+            }),
         );
         let peer_future1 = node1.on(
             format!("$registry/peer/{node2_id}/discovered"),
-            Duration::from_secs(3),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(3),
+                include_past: None,
+            }),
         );
         let _ = tokio::join!(peer_future2, peer_future1);
         logger.debug("✅ Nodes discovered each other");
@@ -365,11 +395,17 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.debug("⏳ Waiting for nodes to rediscover each other...");
         let peer_future2 = node2.on(
             format!("$registry/peer/{node1_id}/discovered"),
-            Duration::from_secs(10),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(10),
+                include_past: None,
+            }),
         );
         let peer_future1 = node1.on(
             format!("$registry/peer/{node2_id}/discovered"),
-            Duration::from_secs(10),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(10),
+                include_past: None,
+            }),
         );
         let _ = tokio::join!(peer_future2, peer_future1);
         logger.debug("✅ Nodes rediscovered each other");

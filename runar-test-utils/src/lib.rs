@@ -674,7 +674,10 @@ mod tests {
                     "$registry/peer/{node1_id}/discovered",
                     node1_id = node1.node_id()
                 ),
-                Duration::from_secs(3),
+                Some(runar_node::services::OnOptions {
+                    timeout: Duration::from_secs(3),
+                    include_past: None,
+                }),
             )
             .await?;
         let _ = node1
@@ -683,7 +686,10 @@ mod tests {
                     "$registry/peer/{node2_id}/discovered",
                     node2_id = node2.node_id()
                 ),
-                Duration::from_secs(3),
+                Some(runar_node::services::OnOptions {
+                    timeout: Duration::from_secs(3),
+                    include_past: None,
+                }),
             )
             .await?;
 

@@ -30,6 +30,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
                     Ok(())
                 })
             }),
+            Some(runar_node::services::EventRegistrationOptions::default()),
         )
         .await?;
 
@@ -45,6 +46,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
                     Ok(())
                 })
             }),
+            Some(runar_node::services::EventRegistrationOptions::default()),
         )
         .await?;
 
@@ -108,6 +110,7 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
                     Ok(())
                 })
             }),
+            Some(runar_node::services::EventRegistrationOptions::default()),
         )
         .await?;
 

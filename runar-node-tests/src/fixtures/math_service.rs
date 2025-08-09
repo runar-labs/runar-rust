@@ -383,6 +383,7 @@ impl AbstractService for MathService {
                         Ok(()) // Return Result::Ok
                     })
                 }),
+                None,
             )
             .await?;
 

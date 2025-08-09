@@ -277,9 +277,9 @@ impl EventContext {
     pub async fn on(
         &self,
         topic: impl Into<String>,
-        timeout: std::time::Duration,
+        options: Option<crate::services::OnOptions>,
     ) -> Result<Option<ArcValue>> {
-        let handle = self.node_delegate.on(topic, timeout);
+        let handle = self.node_delegate.on(topic, options);
         let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
         inner
     }

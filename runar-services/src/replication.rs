@@ -108,7 +108,7 @@ impl ReplicationManager {
         let service_path = self.sqlite_service.path();
 
         // Check if remote service is already running (we want remote services, not local)
-        let service_running = match context
+        let _service_running = match context
             .request(
                 format!("$registry/services/{service_path}/state"),
                 Some(ArcValue::new_primitive(false)),
@@ -143,20 +143,45 @@ impl ReplicationManager {
             }
         };
 
-        // If service is not running, wait for it to become available
-        if !service_running {
-            context.debug(format!("Service not running for: {service_path}"));
-            let on_running = context
-                .on(
-                    format!("$registry/services/{service_path}/state/running"),
-                    Duration::from_secs(10),
-                )
-                .await;
+        // Always rely on on_with_options with include_past to eliminate race.
+        // This blocks startup until either we get the running signal or timeout.
+        context.debug(format!(
+            "Waiting (with include_past) for remote service running: {service_path}"
+        ));
+        let on_running = context
+            .on(
+                format!("$registry/services/{service_path}/state/running"),
+                Some(runar_node::services::OnOptions {
+                    timeout: Duration::from_secs(10),
+                    include_past: Some(Duration::from_secs(2)),
+                }),
+            )
+            .await;
 
-            if on_running.is_ok() {
-                context.info(format!("Service found in the network for: {service_path}"));
-            } else {
-                context.info(format!("Service discovery timed out - No service found in the network for: {service_path}"));
+        if on_running.is_ok() {
+            context.info(format!("Service found in the network for: {service_path}"));
+        } else {
+            // Fallback: attempt remote request once to cover long-delay service add after start
+            context.info(format!(
+                "Running event not observed, trying remote_request once: {service_path}"
+            ));
+            let remote_path = format!(
+                "{service_path}/{action}",
+                action = "replication/get_table_events"
+            );
+            let probe_req = crate::replication::TableEventsRequest {
+                table_name: "__probe__".to_string(),
+                page: 0,
+                page_size: 1,
+                from_timestamp: 0,
+            };
+            let res = context
+                .remote_request(&remote_path, Some(ArcValue::new_struct(probe_req)))
+                .await;
+            if res.is_err() {
+                context.info(format!(
+                    "No remote service available for: {service_path}; skipping startup sync"
+                ));
                 return Ok(());
             }
         }
