@@ -107,42 +107,6 @@ impl ReplicationManager {
         // Wait for service discovery
         let service_path = self.sqlite_service.path();
 
-        // Check if remote service is already running (we want remote services, not local)
-        let _service_running = match context
-            .request(
-                format!("$registry/services/{service_path}/state"),
-                Some(ArcValue::new_primitive(false)),
-            )
-            .await
-        {
-            Ok(response) => match response.as_type::<ServiceState>() {
-                Ok(ServiceState::Running) => {
-                    context.debug(format!(
-                        "Service already running in the network for: {service_path}"
-                    ));
-                    true
-                }
-                Ok(state) => {
-                    context.debug(format!(
-                        "Service found but not running (state: {state:?}) for: {service_path}"
-                    ));
-                    false
-                }
-                Err(e) => {
-                    context.error(format!(
-                        "Failed to parse service state for {service_path}: {e}"
-                    ));
-                    return Err(e);
-                }
-            },
-            Err(e) => {
-                context.error(format!(
-                    "Service state request failed for {service_path}: {e}"
-                ));
-                return Err(e);
-            }
-        };
-
         // Always rely on on_with_options with include_past to eliminate race.
         // This blocks startup until either we get the running signal or timeout.
         context.debug(format!(
@@ -152,8 +116,8 @@ impl ReplicationManager {
             .on(
                 format!("$registry/services/{service_path}/state/running"),
                 Some(runar_node::services::OnOptions {
-                    timeout: Duration::from_secs(10),
-                    include_past: Some(Duration::from_secs(2)),
+                    timeout: Duration::from_secs(20),
+                    include_past: Some(Duration::from_secs(10)),
                 }),
             )
             .await;

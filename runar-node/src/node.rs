@@ -323,6 +323,26 @@ pub struct Node {
 
 // Implementation for Node
 impl Node {
+    /// Remove retained events whose topic matches the given pattern (supports wildcards)
+    pub async fn clear_retained_events_matching(&self, pattern: &str) -> Result<usize> {
+        let topic_path = TopicPath::new(pattern, &self.network_id)
+            .map_err(|e| anyhow!(format!("Invalid topic pattern: {e}")))?;
+        // Find all exact topic keys that match the pattern via the trie
+        let matched: Vec<String> = {
+            let idx = self.retained_index.read().await;
+            idx.find_wildcard_matches(&topic_path)
+                .into_iter()
+                .map(|m| m.content)
+                .collect()
+        };
+        let mut removed = 0usize;
+        for key in matched {
+            if self.retained_events.remove(&key).is_some() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
     /// Public helper for tests: check if Node believes a peer is connected
     pub async fn is_connected(&self, peer_id: &str) -> bool {
         self.peer_directory.is_connected(peer_id).await
@@ -525,7 +545,12 @@ impl Node {
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions::local_only(),
+                PublishOptions {
+                    broadcast: false,
+                    guaranteed_delivery: false,
+                    retain_for: Some(Duration::from_secs(10)),
+                    target: None,
+                },
             )
             .await?;
             return Err(anyhow!("Failed to initialize service: {e}"));
@@ -539,7 +564,12 @@ impl Node {
                 service_topic.service_path()
             ),
             Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-            PublishOptions::local_only(),
+            PublishOptions {
+                broadcast: false,
+                guaranteed_delivery: false,
+                retain_for: Some(Duration::from_secs(10)),
+                target: None,
+            },
         )
         .await?;
         // Service initialized successfully, create the ServiceEntry and register it
@@ -783,7 +813,12 @@ impl Node {
                         service_topic.service_path()
                     ),
                     Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                    PublishOptions::local_only(),
+                    PublishOptions {
+                        broadcast: false,
+                        guaranteed_delivery: false,
+                        retain_for: Some(Duration::from_secs(10)),
+                        target: None,
+                    },
                 )
                 .await
             {
@@ -809,7 +844,12 @@ impl Node {
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions::local_only(),
+            PublishOptions {
+                    broadcast: false,
+                    guaranteed_delivery: false,
+                retain_for: Some(Duration::from_secs(10)),
+                    target: None,
+                },
             )
             .await
         {
@@ -889,7 +929,12 @@ impl Node {
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions::local_only(),
+                PublishOptions {
+                    broadcast: false,
+                    guaranteed_delivery: false,
+                    retain_for: Some(Duration::from_secs(3)),
+                    target: None,
+                },
             )
             .await?;
         }

@@ -457,8 +457,6 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     // Clean up any existing database files
     cleanup_database_files();
 
-    println!("=== Test 2: Service Availability During Sync ===");
-
     // Create two node configurations
     let configs = create_networked_node_test_config(3)?;
     let node1_config = configs[0].clone();
@@ -467,10 +465,15 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
+    let logger = Arc::new(Logger::new_root(
+        Component::Custom("test"),
+        "",
+    ));
+
     // Create SQLite services
     //node1 uses a file db becaue it will stop and start again and must retain its data
     let sqlite_service1 =
-        create_replicated_sqlite_service("sqlite_test", "users_db_test_2", "./node_1_db", true);
+        create_replicated_sqlite_service("sqlite_test", "users_db_test_2", "./node_1_db", false);
     let sqlite_service2 =
         create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", true);
 
@@ -959,29 +962,39 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     println!("Testing complex scenario with multiple operations from different nodes...");
 
     //restart node 1 -  it uses a file db - so it can be restarted
+    drop(node1);
+
+    //create new node1 from same config
+    let mut node1 = Node::new(configs[0].clone()).await?;
+    let sqlite_service1 =
+        create_replicated_sqlite_service("sqlite_test", "users_db_test_2", "./node_1_db", true);
+    node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     println!("✅ Node 1 started");
+    node1.on(
+        format!(
+            "$registry/peer/{node2_id}/discovered",
+            node2_id = node2.node_id()
+        ),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: Some(Duration::from_secs(10)),
+        }),
+    ).await??;
+    node1.on(
+        format!(
+            "$registry/peer/{node3_id}/discovered",
+            node3_id = node3.node_id()
+        ),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(3),
+            include_past: Some(Duration::from_secs(10)),
+        }),
+    ).await??;
+    println!("✅ Node 1 connected to node 2 and node 3");
     node1.wait_for_services_to_start().await?;
-    println!("✅ Node 1 all services started and synced");
-
-    // Wait for Node 1 to discover other nodes and sync
-    println!("Waiting for Node 1 to discover other nodes and sync...");
-
-    // Give time for network connections to be established and replication to happen
-    sleep(Duration::from_secs(10)).await;
-    println!("✅ Waited for network connections and replication to complete");
-
-    // Force Node 1 to sync with the network by making a request
-    println!("Forcing Node 1 to sync with network...");
-    let _ = node1
-        .local_request(
-            "users_db_test_2/execute_query",
-            Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
-                "SELECT COUNT(*) as count FROM users",
-            ))),
-        )
-        .await?;
-    println!("✅ Forced Node 1 to sync with network");
+    println!("✅ Node 1 all services started and data is synced");
+ 
 
     // Verify that Node 1 has synced with the network and received all changes that happened while it was stopped
     println!("Verifying Node 1 has synced with network after restart...");
@@ -1111,7 +1124,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     assert_eq!(affected_rows3, 1, "Should delete 1 user on Node 3");
 
     // Wait for all replications to complete
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Verify all nodes have consistent state
     println!("Verifying all nodes have consistent state after complex operations...");
@@ -1537,7 +1550,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     assert_eq!(affected_rows, 1, "Should delete 1 user");
 
     // Wait for replication
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Verify all event types on Node 1
     println!("Verifying all event types on Node 1...");
@@ -1731,7 +1744,8 @@ async fn test_mobile_simulator_replication() -> Result<()> {
     println!("✅ Nodes discovered each other");
 
     // Wait for replication to complete
-    sleep(Duration::from_secs(3)).await;
+    node2.wait_for_services_to_start().await?;
+    println!("✅ Node 2 all services started and data is synced");
 
     // Verify Node 2 has the same data (replication worked)
     println!("Verifying replication to Node 2...");
