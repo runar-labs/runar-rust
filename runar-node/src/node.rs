@@ -1958,7 +1958,7 @@ impl Node {
             self.publish_with_options(
                 format!("$registry/peer/{new_peer_node_id}/updated"),
                 Some(ArcValue::new_primitive(new_peer_node_id.clone())),
-                PublishOptions::local_only(),
+                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
             )
             .await?;
             Ok(Vec::new())
@@ -1971,7 +1971,7 @@ impl Node {
             self.publish_with_options(
                 format!("$registry/peer/{new_peer_node_id}/discovered"),
                 Some(ArcValue::new_primitive(new_peer_node_id.clone())),
-                PublishOptions::local_only(),
+                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
             )
             .await?;
             res

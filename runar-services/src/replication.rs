@@ -586,6 +586,9 @@ impl ReplicationManager {
         ));
 
         // Build base query: support from_by_origin filtering if provided
+        // Important: When filtering by origins, we do NOT use OFFSET based on `page`,
+        // because the client recomputes checkpoints between pages. Using OFFSET against
+        // the filtered set would skip new ranges. We always use OFFSET 0 in that mode.
         let base_select = if !request.from_by_origin.is_empty() {
             // We must include:
             // - Events from origins NOT in the checkpoint set
@@ -611,7 +614,7 @@ impl ReplicationManager {
                 where_parts.push(format!("({})", greater_clauses.join(" OR ")));
             }
             format!(
-                "SELECT * FROM {event_table_name} WHERE {} ORDER BY timestamp ASC, id ASC LIMIT ? OFFSET ?",
+                "SELECT * FROM {event_table_name} WHERE {} ORDER BY timestamp ASC, id ASC LIMIT ? OFFSET 0",
                 where_parts.join(" OR ")
             )
         } else {
@@ -632,8 +635,10 @@ impl ReplicationManager {
                 .with_value(Value::Integer(oc.origin_seq));
         }
         params = params
-            .with_value(Value::Integer(request.page_size as i64))
-            .with_value(Value::Integer((request.page * request.page_size) as i64));
+            .with_value(Value::Integer(request.page_size as i64));
+        if request.from_by_origin.is_empty() {
+            params = params.with_value(Value::Integer((request.page * request.page_size) as i64));
+        }
 
         let query = SqlQuery::new(&base_select).with_params(params);
 
@@ -709,29 +714,34 @@ impl ReplicationManager {
             .collect();
 
         // Check if there are more events
-        let total_query =
-            SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {event_table_name}"));
-        let total_result = self
-            .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
-                query: total_query,
-                reply_to: reply_tx,
-            })
-            .await
-            .map_err(|e| anyhow!("Failed to count total events: {e}"))?;
-
-        let total_count = if let Some(row) = total_result.first() {
-            row.get("count")
-                .map(|v| match v {
-                    Value::Integer(i) => *i,
-                    _ => 0,
+        let (total_count, has_more) = if request.from_by_origin.is_empty() {
+            let total_query =
+                SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {event_table_name}"));
+            let total_result = self
+                .sqlite_service
+                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+                    query: total_query,
+                    reply_to: reply_tx,
                 })
-                .unwrap_or(0)
-        } else {
-            0
-        };
+                .await
+                .map_err(|e| anyhow!("Failed to count total events: {e}"))?;
 
-        let has_more = (request.page + 1) * request.page_size < total_count as u32;
+            let total_count = if let Some(row) = total_result.first() {
+                row.get("count")
+                    .map(|v| match v {
+                        Value::Integer(i) => *i,
+                        _ => 0,
+                    })
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            let has_more = (request.page + 1) * request.page_size < total_count as u32;
+            (total_count as u32, has_more)
+        } else {
+            // In origin-filtered mode, client recomputes checkpoints; just indicate more if we filled a page
+            (events.len() as u32, events.len() as u32 == request.page_size)
+        };
 
         self.logger.debug(format!(
             "Returning {} events, total_count={}, has_more={}",
@@ -743,7 +753,7 @@ impl ReplicationManager {
         Ok(TableEventsResponse {
             events,
             has_more,
-            total_count: total_count as u32,
+            total_count,
             page: request.page,
             page_size: request.page_size,
         })

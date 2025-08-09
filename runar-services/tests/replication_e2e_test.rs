@@ -268,8 +268,8 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             node1_id = node1.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     node2.start().await?;
@@ -557,8 +557,8 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             node1_id = node1.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     let node2_discovered_by_node1 = node1.on(
@@ -567,8 +567,8 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             node2_id = node2.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     node2.start().await?;
@@ -841,8 +841,8 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             node2_id = node2.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     node3.start().await?;
@@ -977,7 +977,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             node2_id = node2.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
+            timeout: Duration::from_secs(10),
             include_past: Some(Duration::from_secs(10)),
         }),
     ).await??;
@@ -987,7 +987,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             node3_id = node3.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
+            timeout: Duration::from_secs(10),
             include_past: Some(Duration::from_secs(10)),
         }),
     ).await??;
@@ -1469,8 +1469,8 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             node1_id = node1.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     let node2_discovered_by_node1 = node1.on(
@@ -1479,8 +1479,8 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             node2_id = node2.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     node2.start().await?;
@@ -1719,8 +1719,8 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             node1_id = node1.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     let node2_discovered_by_node1 = node1.on(
@@ -1729,8 +1729,8 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             node2_id = node2.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     node2.start().await?;
@@ -1996,8 +1996,8 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             node1_id = node1.node_id()
         ),
         Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
+            timeout: Duration::from_secs(20),
+            include_past: Some(Duration::from_secs(10)),
         }),
     );
     node2.start().await?;

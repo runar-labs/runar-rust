@@ -625,6 +625,11 @@ impl PublishOptions {
             target: None,
         }
     }
+
+    pub fn with_retain_for(mut self, duration: std::time::Duration) -> Self {
+        self.retain_for = Some(duration);
+        self
+    }
 }
 
 /// Options for registering an action handler
