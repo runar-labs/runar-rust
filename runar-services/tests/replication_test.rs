@@ -53,6 +53,8 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
         conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
         startup_sync: true, // Enable startup sync to test the full replication lifecycle
         event_retention_days: 30,
+        wait_remote_service_timeout: 1,
+        past_events_window: 1,
     });
 
     // Create SQLite service
@@ -306,6 +308,8 @@ async fn test_replication_event_database_application() -> Result<()> {
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
             startup_sync: false, // Disable startup sync for this test
             event_retention_days: 30,
+            wait_remote_service_timeout: 0,
+            past_events_window: 0,
         },
     );
 
@@ -503,6 +507,8 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
             startup_sync: false,
             event_retention_days: 30,
+            wait_remote_service_timeout: 0,
+            past_events_window: 0,
         },
     );
 

@@ -110,6 +110,8 @@ fn create_replicated_sqlite_service(
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
             startup_sync, // Enable startup sync for this test
             event_retention_days: 30,
+            wait_remote_service_timeout: 25,
+            past_events_window: 10,
         });
 
     SqliteService::new(name.to_string(), path.to_string(), config)
@@ -147,7 +149,7 @@ fn cleanup_database_files() {
 #[serial]
 async fn test_basic_replication_between_nodes() -> Result<()> {
     // Configure logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     // Set up logger

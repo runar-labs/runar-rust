@@ -1112,7 +1112,9 @@ impl AbstractService for SqliteService {
                 // Perform startup sync if enabled
                 if replication_config.startup_sync {
                     context.info("Starting replication synchronization...");
-                    replication_manager.sync_on_startup(&context).await?;
+                    replication_manager
+                        .sync_on_startup(&context, replication_config)
+                        .await?;
                     context.info("Replication synchronization completed");
                 }
             }

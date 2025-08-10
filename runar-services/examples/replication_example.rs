@@ -103,6 +103,8 @@ async fn main() -> Result<()> {
         conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
         startup_sync: false, // Disable startup sync for this example
         event_retention_days: 30,
+        wait_remote_service_timeout: 0,
+        past_events_window: 0,
     });
 
     // Create SQLite service

@@ -34,11 +34,16 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
 
-    let logger = Arc::new(Logger::new_root(Component::Custom("registry_running_retention"), ""));
+    let logger = Arc::new(Logger::new_root(
+        Component::Custom("registry_running_retention"),
+        "",
+    ));
 
     // Node 1 with a service
     let mut node1 = Node::new(node1_config.clone()).await?;
-    node1.add_service(MathService::new("math1", "math1")).await?;
+    node1
+        .add_service(MathService::new("math1", "math1"))
+        .await?;
     node1.start().await?;
     node1.wait_for_services_to_start().await?;
 
@@ -49,11 +54,17 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     // Wait for nodes to discover each other
     let on1 = node2.on(
         format!("$registry/peer/{}/discovered", node1_config.node_id),
-        Some(runar_node::services::OnOptions { timeout: Duration::from_secs(10), include_past: None }),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(10),
+            include_past: None,
+        }),
     );
     let on2 = node1.on(
         format!("$registry/peer/{}/discovered", node2_config.node_id),
-        Some(runar_node::services::OnOptions { timeout: Duration::from_secs(10), include_past: None }),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(10),
+            include_past: None,
+        }),
     );
     let _ = tokio::join!(on1, on2);
 
@@ -75,12 +86,13 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     match res.unwrap() {
         Some(data) => {
             let s_ref = data.as_type_ref::<String>()?;
-            assert!(s_ref.ends_with(":math1"), "Expected payload to end with ':math1', got: {s_ref}");
+            assert!(
+                s_ref.ends_with(":math1"),
+                "Expected payload to end with ':math1', got: {s_ref}"
+            );
         }
         None => panic!("Expected retained running event"),
     }
 
     Ok(())
 }
-
-

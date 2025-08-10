@@ -858,7 +858,9 @@ impl Node {
             self.logger
                 .error(format!("Failed to publish running state: {publish_err}"));
         }
-        self.logger.info(format!("Published local-only running for local service {service_topic}"));
+        self.logger.info(format!(
+            "Published local-only running for local service {service_topic}"
+        ));
         if update_node_version {
             self.logger.info(format!(
                 "Notifying node change for service: {service_topic}"
@@ -2082,8 +2084,11 @@ impl Node {
                                     "$registry/services/{}/state/running",
                                     service_topic_path.service_path()
                                 ),
-                                Some(ArcValue::new_primitive(service_topic_path.as_str().to_string())),
-                                PublishOptions::local_only().with_retain_for(Duration::from_secs(120)),
+                                Some(ArcValue::new_primitive(
+                                    service_topic_path.as_str().to_string(),
+                                )),
+                                PublishOptions::local_only()
+                                    .with_retain_for(Duration::from_secs(120)),
                             )
                             .await
                         {
@@ -2091,7 +2096,9 @@ impl Node {
                                 "Failed to publish remote service running state: {publish_err}"
                             ));
                         }
-                        self.logger.info(format!("Published local-only running for remote service {service_topic_path}"));
+                        self.logger.info(format!(
+                            "Published local-only running for remote service {service_topic_path}"
+                        ));
                     }
                 }
             }
@@ -2299,7 +2306,9 @@ impl Node {
                         "$registry/services/{}/state/running",
                         service_topic_path.service_path()
                     ),
-                    Some(ArcValue::new_primitive(service_topic_path.as_str().to_string())),
+                    Some(ArcValue::new_primitive(
+                        service_topic_path.as_str().to_string(),
+                    )),
                     PublishOptions::local_only().with_retain_for(Duration::from_secs(120)),
                 )
                 .await
@@ -2406,6 +2415,13 @@ impl Node {
     /// trigger the actual notification. After the debounce period, it delegates to notify_node_change_impl,
     /// which sends the latest node info to all known peers via the transport.
     pub async fn notify_node_change(&self) -> Result<()> {
+        //check if network is en
+        if !self.supports_networking {
+            self.logger
+                .debug("notify_node_change called - network is not available");
+            return Ok(());
+        }
+
         self.logger
             .info("notify_node_change called - it will be debounced for 1 second");
 
@@ -2732,7 +2748,8 @@ impl NodeDelegate for Node {
             }
 
             if let Some((_ts, data, _key)) = newest.clone() {
-                self.logger.debug("[include_past] delivering retained event to new subscriber");
+                self.logger
+                    .debug("[include_past] delivering retained event to new subscriber");
                 let event_context = Arc::new(EventContext::new(
                     &topic_path,
                     Arc::new(self.clone()),
@@ -2750,7 +2767,8 @@ impl NodeDelegate for Node {
                     }
                 }
             } else {
-                self.logger.debug("[include_past] no retained event found to deliver");
+                self.logger
+                    .debug("[include_past] no retained event found to deliver");
             }
         }
 

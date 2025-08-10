@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::Logger;
 use runar_node::services::LifecycleContext;
-use runar_node::AbstractService;
+use runar_node::{AbstractService, ServiceState};
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -21,6 +21,8 @@ pub struct ReplicationConfig {
     pub conflict_resolution: ConflictResolutionStrategy,
     pub startup_sync: bool,
     pub event_retention_days: u32,
+    pub wait_remote_service_timeout: u64, // in seconds
+    pub past_events_window: u64,          // in seconds
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,34 +113,54 @@ impl ReplicationManager {
     }
 
     // Handles startup synchronization
-    pub async fn sync_on_startup(&self, context: &LifecycleContext) -> Result<()> {
-        context.info("Starting replication synchronization - waiting for remote service to be available...");
+    pub async fn sync_on_startup(
+        &self,
+        context: &LifecycleContext,
+        replication_config: &ReplicationConfig,
+    ) -> Result<()> {
+        context.info(
+            "Starting replication synchronization - waiting for remote service to be available...",
+        );
 
         // Wait for service discovery
         let service_path = self.sqlite_service.path();
 
-        // Always rely on on_with_options with include_past to eliminate race.
-        // This blocks startup until either we get the running signal or timeout.
-        context.debug(format!(
-            "Waiting (with include_past) for remote service running: {service_path}"
-        ));
-        let on_running = context
-            .on(
-                format!("$registry/services/{service_path}/state/running"),
-                Some(runar_node::services::OnOptions {
-                    timeout: Duration::from_secs(30),
-                    include_past: Some(Duration::from_secs(60)),
-                }),
+        let remote_service_state = context
+            .request(
+                format!("$registry/services/{service_path}/state"),
+                Some(ArcValue::new_primitive(false)),
             )
-            .await;
+            .await?
+            .as_type::<ServiceState>()?;
 
-        if on_running.is_ok() {
-            context.info(format!("Remote service found in the network for: {service_path}"));
-        } else {
-            context.warn(format!(
-                "Event $registry/services/{service_path}/state/running never fired - skipping startup sync for: {service_path}"
+        if remote_service_state != ServiceState::Running {
+            context.debug(format!(
+                "Remote service is not running - current state: {remote_service_state} - Waiting for remote service to change state to running - service path: {service_path}"
             ));
-            return Ok(());
+            let on_running = context
+                .on(
+                    format!("$registry/services/{service_path}/state/running"),
+                    Some(runar_node::services::OnOptions {
+                        timeout: Duration::from_secs(
+                            replication_config.wait_remote_service_timeout,
+                        ),
+                        include_past: Some(Duration::from_secs(
+                            replication_config.past_events_window,
+                        )),
+                    }),
+                )
+                .await;
+
+            if on_running.is_ok() {
+                context.info(format!(
+                    "Remote service found in the network for: {service_path}"
+                ));
+            } else {
+                context.warn(format!(
+                    "Event $registry/services/{service_path}/state/running never fired - skipping startup sync for: {service_path}"
+                ));
+                return Ok(());
+            }
         }
 
         // Request latest state from network for each enabled table
