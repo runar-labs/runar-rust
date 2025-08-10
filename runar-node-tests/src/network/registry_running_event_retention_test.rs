@@ -1,9 +1,7 @@
 use anyhow::Result;
-use runar_common::logging::{Component, Logger};
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::node::Node;
 use runar_test_utils::create_networked_node_test_config;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::fixtures::math_service::MathService;
@@ -34,11 +32,6 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
 
-    let logger = Arc::new(Logger::new_root(
-        Component::Custom("registry_running_retention"),
-        "",
-    ));
-
     // Node 1 with a service
     let mut node1 = Node::new(node1_config.clone()).await?;
     node1
@@ -48,7 +41,7 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     node1.wait_for_services_to_start().await?;
 
     // Node 2 without that service
-    let mut node2 = Node::new(node2_config.clone()).await?;
+    let node2 = Node::new(node2_config.clone()).await?;
     node2.start().await?;
 
     // Wait for nodes to discover each other
