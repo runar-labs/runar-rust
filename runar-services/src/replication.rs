@@ -240,6 +240,10 @@ impl ReplicationManager {
 
     // Processes incoming replication events from other nodes
     pub async fn process_replication_event(&self, event: ReplicationEvent) -> Result<()> {
+        self.logger.debug(format!(
+            "Processing replication event on node {}",
+            self.node_id
+        ));
         // Idempotent ingest in a transaction:
         // 1) Try to insert the event row first (OR IGNORE semantics via SQL)
         // 2) If inserted, apply SQL to base table; otherwise skip (already applied)
@@ -255,13 +259,8 @@ impl ReplicationManager {
             .await;
 
         // Attempt to store event with OR IGNORE semantics
-        let (mut inserted_ok, mut apply_needed) = (false, false);
-        let insert_res = self.store_event_or_ignore(&event).await;
-        match insert_res {
-            Ok(rows) => {
-                inserted_ok = true;
-                apply_needed = rows > 0;
-            }
+        let apply_needed: bool = match self.store_event_or_ignore(&event).await {
+            Ok(rows) => rows > 0,
             Err(e) => {
                 // Rollback and surface error
                 let _ = self
@@ -273,7 +272,7 @@ impl ReplicationManager {
                     .await;
                 return Err(e);
             }
-        }
+        };
 
         if apply_needed {
             if let Err(apply_err) = self.apply_event_to_database(&event).await {
@@ -316,7 +315,7 @@ impl ReplicationManager {
             })
             .await;
 
-        if commit_res.is_err() && inserted_ok {
+        if commit_res.is_err() {
             // Best-effort rollback if commit fails
             let _ = self
                 .sqlite_service

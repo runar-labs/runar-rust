@@ -637,7 +637,7 @@ impl SqliteService {
 
     // Generate next origin sequence for a specific table using replication_meta
     pub async fn next_origin_seq(&self, table: &str) -> Result<i64, String> {
-        let key = format!("origin_seq::{}", table);
+        let key = format!("origin_seq::{table}");
         // Upsert current value if missing
         let _ = self
             .send_command(|reply_tx| SqliteWorkerCommand::Execute {
