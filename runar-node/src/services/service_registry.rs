@@ -20,6 +20,7 @@
 // Request routing and handling is also the Node's responsibility.
 
 use anyhow::{anyhow, Result};
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -145,11 +146,11 @@ pub struct ServiceRegistry {
     event_subscriptions: Arc<RwLock<PathTrie<SubscriptionVec>>>,
 
     /// Map subscription IDs back to TopicPath for efficient unsubscription
-    /// (Single HashMap for both local and remote subscriptions)
-    subscription_id_to_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>,
+    /// (Single DashMap for both local and remote subscriptions)
+    subscription_id_to_topic_path: Arc<DashMap<String, TopicPath>>,
 
     /// Map subscription IDs back to the service TopicPath for efficient unsubscription
-    subscription_id_to_service_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>,
+    subscription_id_to_service_topic_path: Arc<DashMap<String, TopicPath>>,
 
     /// Local services registry (using PathTrie instead of HashMap)
     local_services: Arc<RwLock<PathTrie<Arc<ServiceEntry>>>>,
@@ -210,8 +211,8 @@ impl ServiceRegistry {
             local_action_handlers: Arc::new(RwLock::new(PathTrie::new())),
             remote_action_handlers: Arc::new(RwLock::new(PathTrie::new())),
             event_subscriptions: Arc::new(RwLock::new(PathTrie::new())),
-            subscription_id_to_topic_path: Arc::new(RwLock::new(HashMap::new())),
-            subscription_id_to_service_topic_path: Arc::new(RwLock::new(HashMap::new())),
+            subscription_id_to_topic_path: Arc::new(DashMap::new()),
+            subscription_id_to_service_topic_path: Arc::new(DashMap::new()),
             local_services: Arc::new(RwLock::new(PathTrie::new())),
             local_services_list: Arc::new(RwLock::new(HashMap::new())),
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
@@ -467,18 +468,12 @@ impl ServiceRegistry {
             trie.set_value(topic_path.clone(), list);
         }
 
-        // Map subscription ID to topic path
-        {
-            let mut id_map = self.subscription_id_to_topic_path.write().await;
-            id_map.insert(subscription_id.clone(), topic_path.clone());
-        }
+        // Map subscription ID to topic path - use Arc::clone for shared data
+        self.subscription_id_to_topic_path.insert(subscription_id.clone(), topic_path.clone());
 
         let service_topic =
             TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
-        {
-            let mut id_map = self.subscription_id_to_service_topic_path.write().await;
-            id_map.insert(subscription_id.clone(), service_topic);
-        }
+        self.subscription_id_to_service_topic_path.insert(subscription_id.clone(), service_topic);
         Ok(subscription_id)
     }
 
@@ -510,10 +505,8 @@ impl ServiceRegistry {
             trie.set_value(topic_path.clone(), list);
         }
 
-        {
-            let mut id_map = self.subscription_id_to_topic_path.write().await;
-            id_map.insert(subscription_id.clone(), topic_path.clone());
-        }
+        // Map subscription ID to topic path - use Arc::clone for shared data
+        self.subscription_id_to_topic_path.insert(subscription_id.clone(), topic_path.clone());
 
         Ok(subscription_id)
     }
@@ -553,11 +546,8 @@ impl ServiceRegistry {
 
         // Clean up maps
         for id in ids_to_remove {
-            self.subscription_id_to_topic_path.write().await.remove(&id);
-            self.subscription_id_to_service_topic_path
-                .write()
-                .await
-                .remove(&id);
+            self.subscription_id_to_topic_path.remove(&id);
+            self.subscription_id_to_service_topic_path.remove(&id);
         }
         Ok(())
     }
@@ -731,16 +721,18 @@ impl ServiceRegistry {
         self.local_services_list.read().await.clone()
     }
 
+    /// Get a reference to local services without cloning
+    pub async fn get_local_services_ref(&self) -> tokio::sync::RwLockReadGuard<'_, HashMap<TopicPath, Arc<ServiceEntry>>> {
+        self.local_services_list.read().await
+    }
+
     pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<()> {
         self.logger.debug(format!(
             "Attempting to unsubscribe local subscription ID: {subscription_id}"
         ));
 
         // Find the TopicPath associated with the subscription ID
-        let topic_path_option = {
-            let id_map = self.subscription_id_to_topic_path.read().await;
-            id_map.get(subscription_id).cloned()
-        };
+        let topic_path_option = self.subscription_id_to_topic_path.get(subscription_id).map(|entry| entry.value().clone());
 
         if let Some(topic_path) = topic_path_option {
             self.logger.debug(format!(
@@ -770,17 +762,10 @@ impl ServiceRegistry {
                 }
 
                 // Remove from the ID map
-                {
-                    let mut id_to_topic_path_map = self.subscription_id_to_topic_path.write().await;
-                    id_to_topic_path_map.remove(subscription_id);
-                }
+                self.subscription_id_to_topic_path.remove(subscription_id);
 
                 // Remove from service topic path map
-                {
-                    let mut service_topic_map =
-                        self.subscription_id_to_service_topic_path.write().await;
-                    service_topic_map.remove(subscription_id);
-                }
+                self.subscription_id_to_service_topic_path.remove(subscription_id);
 
                 self.logger.debug(format!(
                     "Successfully unsubscribed from topic: {} with ID: {}",
@@ -822,6 +807,20 @@ impl ServiceRegistry {
             .insert(path.as_str().to_string(), sub_id);
     }
 
+    /// Optimized version that takes ownership of peer_id to avoid cloning
+    pub async fn upsert_remote_peer_subscription_owned(
+        &self,
+        peer_id: String,
+        path: &TopicPath,
+        sub_id: String,
+    ) {
+        let mut guard = self.remote_peer_subscriptions.write().await;
+        guard
+            .entry(peer_id)
+            .or_default()
+            .insert(path.as_str().to_string(), sub_id);
+    }
+
     /// Remove a single subscription mapping and return its id (if any)
     pub async fn remove_remote_peer_subscription(
         &self,
@@ -853,16 +852,15 @@ impl ServiceRegistry {
             .unwrap_or_default()
     }
 
+
+
     pub async fn unsubscribe_remote(&self, subscription_id: &str) -> Result<()> {
         self.logger.debug(format!(
             "Attempting to unsubscribe remote subscription ID: {subscription_id}"
         ));
 
         // Find the TopicPath associated with the subscription ID
-        let topic_path_option = {
-            let id_map = self.subscription_id_to_topic_path.read().await;
-            id_map.get(subscription_id).cloned()
-        };
+        let topic_path_option = self.subscription_id_to_topic_path.get(subscription_id).map(|entry| entry.value().clone());
 
         if let Some(topic_path) = topic_path_option {
             self.logger.debug(format!(
@@ -892,12 +890,7 @@ impl ServiceRegistry {
                     removed_flag = true;
                 }
                 if removed_flag {
-                    {
-                        self.subscription_id_to_topic_path
-                            .write()
-                            .await
-                            .remove(subscription_id);
-                    }
+                    self.subscription_id_to_topic_path.remove(subscription_id);
                     self.logger.debug(format!(
                         "Successfully unsubscribed from remote topic: {} with ID: {}",
                         topic_path.as_str(),
@@ -934,7 +927,7 @@ impl ServiceRegistry {
 
         if !matches.is_empty() {
             let service_entry = &matches[0].content;
-            let service = service_entry.service.clone();
+            let service = &service_entry.service; // Use reference instead of cloning
             let search_path = format!("{service_path}/*", service_path = service.path());
             let network_id_string = topic_path.network_id();
             let service_topic_path =
@@ -990,6 +983,40 @@ impl ServiceRegistry {
         Ok(result)
     }
 
+    /// Optimized version that pre-allocates the result vector
+    pub async fn get_all_subscriptions_optimized(
+        &self,
+        include_internal_services: bool,
+    ) -> Result<Vec<SubscriptionMetadata>> {
+        let subscriptions = self.event_subscriptions.read().await;
+        let all_values = subscriptions.get_all_values();
+
+        // Pre-allocate with estimated capacity to reduce reallocations
+        let estimated_capacity = all_values.iter().map(|vec| vec.len()).sum();
+        let mut result = Vec::with_capacity(estimated_capacity);
+
+        for subscription_vec in all_values {
+            for (_, _, metadata) in subscription_vec {
+                // Filter out internal services if not included
+                if !include_internal_services {
+                    // metadata.path is a full topic path including network id prefix
+                    let tp = TopicPath::from_full_path(&metadata.path).map_err(|e| {
+                        anyhow!("Invalid subscription topic path {}: {e}", metadata.path)
+                    })?;
+                    let service_path = tp.service_path();
+                    if service_path.starts_with('$')
+                        || INTERNAL_SERVICES.contains(&service_path.as_str())
+                    {
+                        continue;
+                    }
+                }
+                result.push(metadata);
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Get metadata for all services with an option to filter internal services
     ///
     /// INTENTION: Retrieve metadata for all registered services with the option
@@ -1003,6 +1030,42 @@ impl ServiceRegistry {
 
         // Iterate through all services
         for (_, service_entry) in local_services {
+            let service = &service_entry.service;
+            let path_str = service.path();
+
+            // Skip internal services if not included
+            if !include_internal_services && INTERNAL_SERVICES.contains(&path_str) {
+                continue;
+            }
+
+            let search_path = format!("{path_str}/*");
+            let search_topic = TopicPath::new(
+                &search_path,
+                &service_entry.service_topic.network_id().to_string(),
+            )
+            .map_err(|e| anyhow!("Failed to create topic path: {e}"))?;
+            let service_metadata = self
+                .get_service_metadata(&search_topic)
+                .await
+                .ok_or_else(|| anyhow!("Service metadata not found for topic: {}", search_topic))?;
+
+            // Create metadata using individual getter methods from the service
+            result.insert(path_str.to_string(), service_metadata);
+        }
+
+        Ok(result)
+    }
+
+    /// Optimized version that uses references to avoid cloning
+    pub async fn get_all_service_metadata_ref(
+        &self,
+        include_internal_services: bool,
+    ) -> Result<HashMap<String, ServiceMetadata>> {
+        let mut result = HashMap::new();
+        let local_services_guard = self.local_services_list.read().await;
+
+        // Iterate through all services using references
+        for (_topic_path, service_entry) in local_services_guard.iter() {
             let service = &service_entry.service;
             let path_str = service.path();
 

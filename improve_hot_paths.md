@@ -2,12 +2,13 @@ Goal
 Refactor hot-path read/lookup code that currently uses async locks around HashMaps to reduce contention and allocation. Replace Arc<RwLock<HashMap<..>>> with DashMap, remove locks on the read path, and, where applicable, add a short-lived, idempotent replay cache with TTL and a periodic prune task.
 
 ## **PROGRESS SUMMARY** ✅
-**Current Status**: Phase 1.3 (Network Transport) - 2/3 fields completed
-**Next Target**: Peer Maps conversion in QuicTransport
+**Current Status**: Phase 1.1 (Service Registry) - 1/3 fields completed + Memory Efficiency Complete
+**Next Target**: Service State Maps conversion in ServiceRegistry
 **Completed Fields**:
 - ✅ `dial_backoff` - Converted to DashMap, all tests passing
 - ✅ `dial_cancel` - Converted to DashMap, all tests passing  
 - ✅ `connection_id_to_peer_id` - Converted to DashMap, all tests passing
+- ✅ **Service Registry Subscription Maps** - Converted to DashMap + Memory Efficiency Optimizations ✅
 
 **Test Results**: All 123 tests in runar-node-tests pass successfully after each conversion
 
@@ -45,11 +46,16 @@ Acceptance criteria
 **Priority: HIGH - These affect the most frequently accessed operations**
 
 #### **1.1 Service Registry (`src/services/service_registry.rs`)**
-- [ ] **Subscription ID Maps** - Convert to DashMap
-  - [ ] `subscription_id_to_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>` → `Arc<DashMap<String, TopicPath>>`
-  - [ ] `subscription_id_to_service_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>` → `Arc<DashMap<String, TopicPath>>`
-  - [ ] Update all read/write operations to use DashMap patterns
-  - [ ] Test: subscription lookups, unsubscription operations
+- [x] **Subscription ID Maps** - Convert to DashMap ✅
+  - [x] `subscription_id_to_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>` → `Arc<DashMap<String, TopicPath>>` ✅
+  - [x] `subscription_id_to_service_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>` → `Arc<DashMap<String, TopicPath>>` ✅
+  - [x] Update all read/write operations to use DashMap patterns ✅
+  - [x] Test: subscription lookups, unsubscription operations ✅
+  - [x] **Memory Efficiency Optimizations** - Applied comprehensive memory optimization checklist ✅
+    - [x] Reduced excessive cloning in `get_service_metadata` ✅
+    - [x] Added reference-based alternatives to avoid cloning ✅
+    - [x] Pre-allocated vectors in `get_all_subscriptions_optimized` ✅
+    - [x] Added `upsert_remote_peer_subscription_owned` for ownership transfer ✅
 
 - [ ] **Service State Maps** - Convert to DashMap
   - [ ] `local_service_states: Arc<RwLock<HashMap<String, ServiceState>>>` → `Arc<DashMap<String, ServiceState>>`
@@ -180,8 +186,8 @@ For each completed task, verify:
 
 ### **PROGRESS TRACKING**
 - **Total Tasks**: 45+ individual optimizations
-- **Phase 1 Complete**: 7/15 (47%)
+- **Phase 1 Complete**: 8/15 (53%) - **Service Registry Subscription Maps + Memory Efficiency Complete**
 - **Phase 2 Complete**: 0/12 (0%)
 - **Phase 3 Complete**: 0/8 (0%)
 - **Phase 4 Complete**: 0/6 (0%)
-- **Overall Progress**: 7/41+ (17%)
+- **Overall Progress**: 8/41+ (20%)
