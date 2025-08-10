@@ -117,6 +117,10 @@ fn create_replicated_sqlite_service(
 
 /// Clean up database files to ensure test isolation
 fn cleanup_database_files() {
+    let logger = Arc::new(Logger::new_root(
+        Component::Custom("test"),
+        "",
+    ));
     let db_files = vec![
         "./node_1_db",
         "./node_1_db-shm",
@@ -132,7 +136,7 @@ fn cleanup_database_files() {
     for db_file in db_files {
         if Path::new(db_file).exists() {
             if let Err(e) = fs::remove_file(db_file) {
-                eprintln!("Warning: Failed to remove database file {db_file}: {e}");
+                logger.info(format!("Warning: Failed to remove database file {db_file}: {e}"));
             }
         }
     }
@@ -144,7 +148,7 @@ fn cleanup_database_files() {
 #[serial]
 async fn test_basic_replication_between_nodes() -> Result<()> {
     // Configure logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
 
     // Set up logger
@@ -400,7 +404,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         1,
         "Node 2 should have the new user from Node 1"
     );
-    println!("✅ Live replication Node 1 → Node 2 successful");
+    logger.info("✅ Live replication Node 1 → Node 2 successful");
 
     // Final verification: both nodes should have the same total count
     let final_users1 = node1
@@ -440,12 +444,12 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         "Both nodes should have the same user count"
     );
     assert_eq!(final_count1, 5, "Both nodes should have 5 users total");
-    println!("✅ Final verification: Both nodes have {final_count1} users");
+    logger.info(format!("✅ Final verification: Both nodes have {final_count1} users"));
 
     // Clean up
     node1.stop().await?;
     node2.stop().await?;
-    println!("✅ Test 1 completed successfully!");
+    logger.info("✅ Test 1 completed successfully!");
     Ok(())
 }
 
@@ -478,13 +482,13 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", true);
 
     // Start Node 1 and add substantial data
-    println!("Starting Node 1 and adding substantial data...");
+    logger.info("Starting Node 1 and adding substantial data...");
     let mut node1 = Node::new(node1_config).await?;
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
-    println!("✅ Node 1 started");
+    logger.info("✅ Node 1 started");
     node1.wait_for_services_to_start().await?;
-    println!("✅ Node 1 all services started");
+    logger.info("✅ Node 1 all services started");
 
     // Add 10 users and 5 posts to Node 1
     for i in 1..=10 {
@@ -525,7 +529,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         assert_eq!(affected_rows, 1, "Should insert 1 post");
     }
 
-    println!("✅ Node 1 has 10 users and 5 posts");
+    logger.info("✅ Node 1 has 10 users and 5 posts");
 
     // Verify Node 1 data
     let users_result = node1
@@ -546,7 +550,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     assert_eq!(user_count, 10, "Node 1 should have 10 users");
 
     // Now start Node 2 - it should sync during startup and service should not be available until complete
-    println!("Starting Node 2 (service should not be available until sync completes)...");
+    logger.info("Starting Node 2 (service should not be available until sync completes)...");
     let start_time = std::time::Instant::now();
     let mut node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
@@ -573,21 +577,21 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     );
     node2.start().await?;
     let startup_duration = start_time.elapsed();
-    println!("✅ Node 2 started in {startup_duration:?}");
+    logger.info(format!("✅ Node 2 started in {startup_duration:?}"));
 
     // Wait for nodes to discover each other
-    println!("Waiting for nodes to discover each other...");
+    logger.info("Waiting for nodes to discover each other...");
     let _ = node1_discovered_by_node2.await?;
     let _ = node2_discovered_by_node1.await?;
 
-    println!("✅ Nodes discovered each other");
+    logger.info("✅ Nodes discovered each other");
 
     node2.wait_for_services_to_start().await?;
     let node2_start_sync_duration = start_time.elapsed();
-    println!("✅ Node 2 services started and sync completed in {node2_start_sync_duration:?}");
+    logger.info(format!("✅ Node 2 services started and sync completed in {node2_start_sync_duration:?}"));
 
     // Verify that Node 2 has the same data (replication worked)
-    println!("Verifying replication to Node 2...");
+    logger.info("Verifying replication to Node 2...");
     let users_result2 = node2
         .local_request(
             "users_db_test_2/execute_query",
@@ -628,9 +632,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         "Node 2 should have 5 posts after replication"
     );
 
-    println!("✅ Node 2 has {user_count2} users and {post_count2} posts (sync successful)");
+    logger.info(format!("✅ Node 2 has {user_count2} users and {post_count2} posts (sync successful)"));
 
-    println!("Check a specific record after sync...");
+    logger.info("Check a specific record after sync...");
     let test_result = node2
         .local_request(
             "users_db_test_2/execute_query",
@@ -645,7 +649,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         1,
         "Node 2 should be able to query data after sync"
     );
-    println!("✅ Node 2 service is available and working");
+    logger.info("✅ Node 2 service is available and working");
 
     //check events table on node1
     let events_result1 = node1
@@ -662,7 +666,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         10,
         "Node 1 should have 10 events on users_Events table"
     );
-    println!("✅ Node 1 has 10 events on users_Events table");
+    logger.info("✅ Node 1 has 10 events on users_Events table");
 
     //check events table on node2
     let events_result2 = node2
@@ -679,10 +683,10 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         10,
         "Node 2 should have 10 events on users_Events table"
     );
-    println!("✅ Node 2 has 10 events on users_Events table");
+    logger.info("✅ Node 2 has 10 events on users_Events table");
 
     // Test bidirectional live replication after sync
-    println!("Testing bidirectional live replication after sync...");
+    logger.info("Testing bidirectional live replication after sync...");
 
     // Add data to Node 2
     let timestamp = chrono::Utc::now().timestamp();
@@ -738,7 +742,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         email, "post_sync@example.com",
         "Email should be post_sync@example.com"
     );
-    println!("✅ Post-sync replication Node 2 → Node 1 successful");
+    logger.info("✅ Post-sync replication Node 2 → Node 1 successful");
 
     // Add data to Node 1
     let timestamp = chrono::Utc::now().timestamp();
@@ -774,7 +778,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         1,
         "Node 2 should have the new user from Node 1"
     );
-    println!("✅ Post-sync replication Node 1 → Node 2 successful");
+    logger.info("✅ Post-sync replication Node 1 → Node 2 successful");
 
     // Final verification
     let final_users1 = node1
@@ -817,7 +821,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         final_count1, 12,
         "Both nodes should have 12 users total (10 initial + 2 post-sync)"
     );
-    println!("✅ Final verification: Both nodes have {final_count1} users");
+    logger.info(format!("✅ Final verification: Both nodes have {final_count1} users"));
 
     //lets add a third node to make sure it can sync with the other two
     let node3_config = configs[2].clone();
@@ -825,17 +829,17 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     //stop node 1 - which was the first node to start
     //so node3 will sync from node2
     node1.stop().await?;
-    println!("✅ Node 1 stopped");
+    logger.info("✅ Node 1 stopped");
 
     // Create SQLite services
     let sqlite_service3 =
         create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", true);
 
-    println!("Starting Node 3 and sync.");
+    logger.info("Starting Node 3 and sync.");
     let mut node3 = Node::new(node3_config).await?;
     node3.add_service(sqlite_service3).await?;
 
-    let node2_discovered_future = node3.on(
+    let on_node2_found = node3.on(
         format!(
             "$registry/peer/{node2_id}/discovered",
             node2_id = node2.node_id()
@@ -845,16 +849,25 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             include_past: Some(Duration::from_secs(10)),
         }),
     );
+    let on_node3_found = node2.on(
+        format!(
+            "$registry/peer/{node3_id}/discovered",
+            node3_id = node3.node_id()
+        ),
+        Some(runar_node::services::OnOptions {
+            timeout: Duration::from_secs(10),
+            include_past: Some(Duration::from_secs(10)),
+        }),
+    );
     node3.start().await?;
-    println!("✅ Node 3 started");
+    logger.info("✅ Node 3 started");
     node3.wait_for_services_to_start().await?;
 
-    println!("✅ Node 3 service started and data sync completed");
+    logger.info("✅ Node 3 service started and data sync completed");
 
-    println!("Waiting for nodes to discover each other...");
-
-    let _ = node2_discovered_future.await?;
-    println!("✅ Node3 discovered node 2");
+    logger.info("Waiting for nodes to discover each other...");
+    let _ = tokio::join!(on_node2_found, on_node3_found);
+    logger.info("✅ Node3 discovered node 2");
 
     //check that contain all the data the the other nodes has
     //check users
@@ -879,7 +892,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     );
 
     // Test UPDATE operations: Change records in Node 3 and verify they're updated in Node 1 and Node 2
-    println!("Testing UPDATE operations from Node 3...");
+    logger.info("Testing UPDATE operations from Node 3...");
 
     // Update a user on Node 3
     let result = node3
@@ -920,10 +933,10 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         email2, "updated_by_node3@example.com",
         "Email should be updated by Node 3"
     );
-    println!("✅ UPDATE replication Node 3 → Node 2 successful");
+    logger.info("✅ UPDATE replication Node 3 → Node 2 successful");
 
     // Test DELETE operations: Remove record on Node 2 and verify it's removed in Node 1 and Node 3
-    println!("Testing DELETE operations from Node 2...");
+    logger.info("Testing DELETE operations from Node 2...");
 
     // Delete a user on Node 2
     let result = node2
@@ -956,10 +969,10 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         0,
         "Node 3 should not have the deleted user"
     );
-    println!("✅ DELETE replication Node 2 → Node 3 successful");
+    logger.info("✅ DELETE replication Node 2 → Node 3 successful");
 
     // Test complex scenario: Multiple operations from different nodes
-    println!("Testing complex scenario with multiple operations from different nodes...");
+    logger.info("Testing complex scenario with multiple operations from different nodes...");
 
     //restart node 1 -  it uses a file db - so it can be restarted
     drop(node1);
@@ -970,7 +983,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         create_replicated_sqlite_service("sqlite_test", "users_db_test_2", "./node_1_db", true);
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
-    println!("✅ Node 1 started");
+    logger.info("✅ Node 1 started");
     node1.on(
         format!(
             "$registry/peer/{node2_id}/discovered",
@@ -991,13 +1004,13 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             include_past: Some(Duration::from_secs(10)),
         }),
     ).await??;
-    println!("✅ Node 1 connected to node 2 and node 3");
+    logger.info("✅ Node 1 connected to node 2 and node 3");
     node1.wait_for_services_to_start().await?;
-    println!("✅ Node 1 all services started and data is synced");
+    logger.info("✅ Node 1 all services started and data is synced");
  
 
     // Verify that Node 1 has synced with the network and received all changes that happened while it was stopped
-    println!("Verifying Node 1 has synced with network after restart...");
+    logger.info("Verifying Node 1 has synced with network after restart...");
 
     // Check that Node 1 has the same user count as other nodes (should be 11 after the UPDATE and DELETE operations)
     let restart_count1 = node1
@@ -1019,7 +1032,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         restart_user_count1, 12,
         "Node 1 should have 12 users after syncing (it was stopped before the DELETE operation)"
     );
-    println!("✅ Node 1 has correct user count after restart: {restart_user_count1}");
+    logger.info(format!("✅ Node 1 has correct user count after restart: {restart_user_count1}"));
 
     // Verify that Node 1 received the UPDATE operation from Node 3 (sync_user2 email update)
     let update_check1 = node1
@@ -1048,7 +1061,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         email1, "updated_by_node3@example.com",
         "Node 1 should have received the UPDATE from Node 3"
     );
-    println!("✅ Node 1 received UPDATE operation from Node 3");
+    logger.info("✅ Node 1 received UPDATE operation from Node 3");
 
     // Verify that Node 1 received the DELETE operation from Node 2 (sync_user5 deletion)
     let delete_check1 = node1
@@ -1066,7 +1079,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         0,
         "Node 1 should not have sync_user5 after restart (was deleted by Node 2)"
     );
-    println!("✅ Node 1 received DELETE operation from Node 2");
+    logger.info("✅ Node 1 received DELETE operation from Node 2");
 
     // Verify that Node 1 still has the post-sync users that were added before it was stopped
     let post_sync_check1 = node1
@@ -1084,9 +1097,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         1,
         "Node 1 should still have post_sync_user after restart"
     );
-    println!("✅ Node 1 retained existing data and received all network changes");
+    logger.info("✅ Node 1 retained existing data and received all network changes");
 
-    println!("✅ Node 1 successfully synced with network after restart - all changes from other nodes are present");
+    logger.info("✅ Node 1 successfully synced with network after restart - all changes from other nodes are present");
 
     // Node 1: Add a new user
     let timestamp = chrono::Utc::now().timestamp();
@@ -1127,7 +1140,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     sleep(Duration::from_secs(1)).await;
 
     // Verify all nodes have consistent state
-    println!("Verifying all nodes have consistent state after complex operations...");
+    logger.info("Verifying all nodes have consistent state after complex operations...");
 
     // Check final counts on all nodes
     let final_count1 = node1
@@ -1190,7 +1203,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         count1, 11,
         "All nodes should have 11 users total (12 initial - 2 deleted + 1 added)"
     );
-    println!("✅ All nodes have consistent state: {count1} users each");
+    logger.info(format!("✅ All nodes have consistent state: {count1} users each"));
 
     // Verify specific operations propagated correctly
     // Check that complex_user1 exists on all nodes
@@ -1328,14 +1341,14 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         (*delete_check3.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     assert_eq!(delete_users3.len(), 0, "Node 3 should not have sync_user7");
 
-    println!("✅ Complex multi-node operations completed successfully");
+    logger.info("✅ Complex multi-node operations completed successfully");
 
     // Clean up
     node1.stop().await?;
     node2.stop().await?;
     node3.stop().await?;
     cleanup_database_files();
-    println!("✅ Test 2 completed successfully!");
+    logger.info("✅ Test 2 completed successfully!");
     Ok(())
 }
 
@@ -1344,15 +1357,21 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_event_tables_and_ordering() -> Result<()> {
-    println!("=== Test 3: Event Tables and Ordering ===");
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
+    logging_config.apply();
+
+     let logger = Arc::new(Logger::new_root(
+        Component::Custom("test"),
+        "",
+    ));
+    logger.info("=== Test 3: Event Tables and Ordering ===");
 
     // Create two node configurations
     let configs = create_networked_node_test_config(2)?;
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
-    logging_config.apply();
+    
 
     // Create SQLite services
     let sqlite_service1 =
@@ -1361,16 +1380,16 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         create_replicated_sqlite_service("sqlite_service", "users_db_test_3", ":memory:", true);
 
     // Start Node 1
-    println!("Starting Node 1...");
+    logger.info("Starting Node 1...");
     let mut node1 = Node::new(node1_config).await?;
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
-    println!("✅ Node 1 started");
+    logger.info("✅ Node 1 started");
     node1.wait_for_services_to_start().await?;
-    println!("✅ Node 1 all services started");
+    logger.info("✅ Node 1 all services started");
 
     // Verify event tables were created
-    println!("Verifying event tables were created on Node 1...");
+    logger.info("Verifying event tables were created on Node 1...");
     let event_tables_result = node1
         .local_request("users_db_test_3/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_Events' ORDER BY name")
@@ -1405,10 +1424,10 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         table_names.contains(&"posts_Events".to_string()),
         "Should have posts_Events table"
     );
-    println!("✅ Event tables created: {table_names:?}");
+    logger.info(format!("✅ Event tables created: {table_names:?}"));
 
     // Add some data to Node 1
-    println!("Adding data to Node 1...");
+    logger.info("Adding data to Node 1...");
     for i in 1..=3 {
         let username = format!("event_user{i}");
         let email = format!("event_user{i}@example.com");
@@ -1429,7 +1448,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     }
 
     // Verify events were created
-    println!("Verifying events were created...");
+    logger.info("Verifying events were created...");
     let events_result = node1
         .local_request(
             "users_db_test_3/execute_query",
@@ -1456,10 +1475,10 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         );
         prev_timestamp = *timestamp;
     }
-    println!("✅ Events created with proper timestamp ordering");
+    logger.info("✅ Events created with proper timestamp ordering");
 
     // Start Node 2
-    println!("Starting Node 2...");
+    logger.info("Starting Node 2...");
     let mut node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
     // Pre-register discovery before starting Node 2
@@ -1484,20 +1503,20 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         }),
     );
     node2.start().await?;
-    println!("✅ Node 2 started");
+    logger.info("✅ Node 2 started");
 
     // Wait for nodes to discover each other and sync
-    println!("Waiting for nodes to discover each other...");
+    logger.info("Waiting for nodes to discover each other...");
     let _ = node1_discovered_by_node2.await?;
     let _ = node2_discovered_by_node1.await?;
 
-    println!("✅ Nodes discovered each other");
+    logger.info("✅ Nodes discovered each other");
 
     node2.wait_for_services_to_start().await?;
-    println!("✅ Node 2 all services started");
+    logger.info("✅ Node 2 all services started");
 
     // Verify Node 2 has the same event tables
-    println!("Verifying Node 2 has event tables...");
+    logger.info("Verifying Node 2 has event tables...");
     let event_tables_result2 = node2
         .local_request("users_db_test_3/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_Events' ORDER BY name")
@@ -1506,10 +1525,10 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     let event_tables2: Vec<ArcValue> =
         (*event_tables_result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     assert_eq!(event_tables2.len(), 2, "Node 2 should have 2 event tables");
-    println!("✅ Node 2 has event tables");
+    logger.info("✅ Node 2 has event tables");
 
     // Verify Node 2 has the same events
-    println!("Verifying Node 2 has the same events...");
+    logger.info("Verifying Node 2 has the same events...");
     let events_result2 = node2
         .local_request(
             "users_db_test_3/execute_query",
@@ -1520,10 +1539,10 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         .await?;
     let events2: Vec<ArcValue> = (*events_result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     assert_eq!(events2.len(), 3, "Node 2 should have 3 events");
-    println!("✅ Node 2 has the same events");
+    logger.info("✅ Node 2 has the same events");
 
     // Test UPDATE and DELETE operations to verify different event types
-    println!("Testing UPDATE and DELETE operations...");
+    logger.info("Testing UPDATE and DELETE operations...");
 
     // Update a user
     let result = node1
@@ -1553,7 +1572,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     sleep(Duration::from_secs(1)).await;
 
     // Verify all event types on Node 1
-    println!("Verifying all event types on Node 1...");
+    logger.info("Verifying all event types on Node 1...");
     let all_events_result = node1
         .local_request(
             "users_db_test_3/execute_query",
@@ -1578,7 +1597,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         })
         .collect();
 
-    println!("Event types on Node 1: {operation_types:?}");
+    logger.info(format!("Event types on Node 1: {operation_types:?}"));
     assert!(
         operation_types.contains(&"CREATE".to_string()),
         "Should have CREATE events"
@@ -1591,10 +1610,10 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         operation_types.contains(&"DELETE".to_string()),
         "Should have DELETE events"
     );
-    println!("✅ All event types present on Node 1");
+    logger.info("✅ All event types present on Node 1");
 
     // Verify all event types on Node 2
-    println!("Verifying all event types on Node 2...");
+    logger.info("Verifying all event types on Node 2...");
     let all_events_result2 = node2
         .local_request(
             "users_db_test_3/execute_query",
@@ -1619,17 +1638,17 @@ async fn test_event_tables_and_ordering() -> Result<()> {
         })
         .collect();
 
-    println!("Event types on Node 2: {operation_types2:?}");
+    logger.info(format!("Event types on Node 2: {operation_types2:?}"));
     assert_eq!(
         operation_types, operation_types2,
         "Both nodes should have the same event types"
     );
-    println!("✅ All event types present on Node 2");
+    logger.info("✅ All event types present on Node 2");
 
     // Clean up
     node1.stop().await?;
     node2.stop().await?;
-    println!("✅ Test 3 completed successfully!");
+    logger.info("✅ Test 3 completed successfully!");
     Ok(())
 }
 
@@ -1638,14 +1657,16 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_mobile_simulator_replication() -> Result<()> {
-    println!("=== Test 4: Mobile Simulator Replication Test ===");
-
-    // Set up logging
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
-
+    let logger = Arc::new(Logger::new_root(
+        Component::Custom("test"),
+        "",
+    ));
+    logger.info("=== Test 4: Mobile Simulator Replication Test ===");
+ 
     // Create mobile simulation environment
-    println!("Creating mobile simulation environment...");
+    logger.info("Creating mobile simulation environment...");
     let (simulator, node1_config) = create_test_environment()?;
     simulator.print_summary();
 
@@ -1659,16 +1680,16 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         create_replicated_sqlite_service("sqlite2", "users_db_test_4", ":memory:", true);
 
     // Start Node 1
-    println!("Starting Node 1...");
+    logger.info("Starting Node 1...");
     let mut node1 = Node::new(node1_config).await?;
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
-    println!("✅ Node 1 started with ID: {}", node1.node_id());
+    logger.info(format!("✅ Node 1 started with ID: {}", node1.node_id()));
     node1.wait_for_services_to_start().await?;
-    println!("✅ Node 1 all services started");
+    logger.info("✅ Node 1 all services started");
 
     // Add initial data to Node 1
-    println!("Adding initial data to Node 1...");
+    logger.info("Adding initial data to Node 1...");
     for i in 1..=5 {
         let username = format!("mobile_user{i}");
         let email = format!("mobile_user{i}@example.com");
@@ -1686,7 +1707,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
         assert_eq!(affected_rows, 1, "Should insert 1 user");
-        println!("   ✅ Inserted user: {username}");
+        logger.info(format!("   ✅ Inserted user: {username}"));
     }
 
     // Verify Node 1 has the data
@@ -1706,10 +1727,10 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         .as_type_ref::<i64>()
         .unwrap();
     assert_eq!(user_count, 5, "Node 1 should have 5 users");
-    println!("✅ Node 1 has {user_count} users");
+    logger.info(format!("✅ Node 1 has {user_count} users"));
 
     // Start Node 2 - it should sync during startup
-    println!("Starting Node 2 (should sync during startup)...");
+    logger.info("Starting Node 2 (should sync during startup)...");
     let mut node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
     // Pre-register discovery before starting Node 2
@@ -1734,21 +1755,21 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         }),
     );
     node2.start().await?;
-    println!("✅ Node 2 started with ID: {}", node2.node_id());
+    logger.info(format!("✅ Node 2 started with ID: {}", node2.node_id()));
 
     // Wait for nodes to discover each other
-    println!("Waiting for nodes to discover each other...");
+    logger.info("Waiting for nodes to discover each other...");
     let _ = node1_discovered_by_node2.await?;
     let _ = node2_discovered_by_node1.await?;
 
-    println!("✅ Nodes discovered each other");
+    logger.info("✅ Nodes discovered each other");
 
     // Wait for replication to complete
     node2.wait_for_services_to_start().await?;
-    println!("✅ Node 2 all services started and data is synced");
+    logger.info("✅ Node 2 all services started and data is synced");
 
     // Verify Node 2 has the same data (replication worked)
-    println!("Verifying replication to Node 2...");
+    logger.info("Verifying replication to Node 2...");
     let users_result2 = node2
         .local_request(
             "users_db_test_4/execute_query",
@@ -1768,10 +1789,10 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         user_count2, 5,
         "Node 2 should have 5 users after replication"
     );
-    println!("✅ Node 2 has {user_count2} users (replication successful)");
+    logger.info(format!("✅ Node 2 has {user_count2} users (replication successful)"));
 
     // Test live replication: Add data to Node 2 and verify it appears on Node 1
-    println!("Testing live replication from Node 2 to Node 1...");
+    logger.info("Testing live replication from Node 2 to Node 1...");
     let timestamp = chrono::Utc::now().timestamp();
     let result = node2
         .local_request("users_db_test_4/execute_query", Some(ArcValue::new_struct(
@@ -1805,10 +1826,10 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         1,
         "Node 1 should have the new user from Node 2"
     );
-    println!("✅ Live replication Node 2 → Node 1 successful");
+    logger.info("✅ Live replication Node 2 → Node 1 successful");
 
     // Test live replication: Add data to Node 1 and verify it appears on Node 2
-    println!("Testing live replication from Node 1 to Node 2...");
+    logger.info("Testing live replication from Node 1 to Node 2...");
     let timestamp = chrono::Utc::now().timestamp();
     let result = node1
         .local_request("users_db_test_4/execute_query", Some(ArcValue::new_struct(
@@ -1842,15 +1863,15 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         1,
         "Node 2 should have the new user from Node 1"
     );
-    println!("✅ Live replication Node 1 → Node 2 successful");
+    logger.info("✅ Live replication Node 1 → Node 2 successful");
 
     // Test encryption with mobile simulator label resolvers
-    println!("Testing encryption with mobile simulator...");
+    logger.info("Testing encryption with mobile simulator...");
     let (_mobile_resolver, _node_resolver) = simulator.create_label_resolvers()?;
 
     // Verify label resolvers were created successfully
-    println!("✅ Label resolvers created successfully");
-    println!("✅ Mobile simulator integration working");
+    logger.info("✅ Label resolvers created successfully");
+    logger.info("✅ Mobile simulator integration working");
 
     // Final verification: both nodes should have the same total count
     let final_users1 = node1
@@ -1893,19 +1914,25 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         final_count1, 7,
         "Both nodes should have 7 users total (5 initial + 2 live)"
     );
-    println!("✅ Final verification: Both nodes have {final_count1} users");
+    logger.info(format!("✅ Final verification: Both nodes have {final_count1} users"));
 
     // Clean up
     node1.stop().await?;
     node2.stop().await?;
-    println!("✅ Test 4 completed successfully!");
+    logger.info("✅ Test 4 completed successfully!");
     Ok(())
 }
 
 #[tokio::test]
 #[serial]
 async fn test_high_volume_replication_with_pagination() -> Result<()> {
-    println!("🧪 Testing high-volume replication with pagination (400 records)...");
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(
+        Component::Custom("test"),
+        "",
+    ));
+    logger.info("🧪 Testing high-volume replication with pagination (400 records)...");
 
     // Create Node 1 with 400 records
     let configs = create_networked_node_test_config(2)?;
@@ -1922,15 +1949,15 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     );
 
     // Start Node 1 and add some initial data
-    println!("Starting Node 1...");
+    logger.info("Starting Node 1...");
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
-    println!("✅ Node 1 started");
+    logger.info("✅ Node 1 started");
     node1.wait_for_services_to_start().await?;
-    println!("✅ Node 1 all services started");
+    logger.info("✅ Node 1 all services started");
 
     // Create 400 records on Node 1
-    println!("📝 Creating 400 records on Node 1...");
+    logger.info("📝 Creating 400 records on Node 1...");
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -1951,7 +1978,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             .await?;
 
         if i % 50 == 0 {
-            println!("   Created {i}/400 records...");
+            logger.info(format!("   Created {i}/400 records..."));
         }
     }
 
@@ -1972,7 +1999,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
         .as_type_ref::<i64>()
         .unwrap();
     assert_eq!(count1, 1000, "Node 1 should have 1000 users");
-    println!("✅ Node 1 has {count1} records");
+    logger.info(format!("✅ Node 1 has {count1} records"));
 
     // Create Node 2 (empty, will sync from Node 1)
     let node2_config = configs[1].clone();
@@ -1988,7 +2015,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     );
     node2.add_service(sqlite_service2).await?;
     // Now start Node 2 - it should sync during startup
-    println!("Starting Node 2 (should sync during startup)...");
+    logger.info("Starting Node 2 (should sync during startup)...");
     // Pre-register discovery before starting Node 2
     let node1_discovered_by_node2 = node2.on(
         format!(
@@ -2001,17 +2028,17 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
         }),
     );
     node2.start().await?;
-    println!("✅ Node 2 started");
+    logger.info("✅ Node 2 started");
 
     // Wait for nodes to discover each other and exchange service information
-    println!("Waiting for nodes to discover each other...");
+    logger.info("Waiting for nodes to discover each other...");
     let _ = node1_discovered_by_node2.await?;
-    println!("✅ Nodes discovered each other");
+    logger.info("✅ Nodes discovered each other");
 
     node2.wait_for_services_to_start().await?;
-    println!("✅ Node 2 all services started and synced");
+    logger.info("✅ Node 2 all services started and synced");
 
-    // Verify Node 2 has synced all 400 records
+    // Verify Node 2 has synced all 1000 records
     let result = node2
         .local_request(
             "high_volume_sqlite/execute_query",
@@ -2028,7 +2055,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
         .as_type_ref::<i64>()
         .unwrap();
     assert_eq!(count2, 1000, "Node 2 should have synced all 1000 users");
-    println!("✅ Node 2 synced {count2} records");
+    logger.info(format!("✅ Node 2 synced {count2} records"));
 
     // Verify specific records are present on Node 2
     let result = node2
@@ -2064,7 +2091,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     let rows: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
     assert!(!rows.is_empty(), "Node 2 should have user400");
 
-    println!("✅ Verified specific records (user001, user200, user400) are present on Node 2");
+    logger.info("✅ Verified specific records (user001, user200, user400) are present on Node 2");
 
     // Test that both nodes have identical data
     let result1 = node1
@@ -2137,15 +2164,15 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
         assert_eq!(username1_last, username2_last, "Last records should match");
     }
 
-    println!("✅ Verified both nodes have identical data");
+    logger.info("✅ Verified both nodes have identical data");
 
     // Note: Real-time replication is tested in other tests and works correctly
     // This test focuses on high-volume startup synchronization with pagination
-    println!("✅ High-volume replication with pagination working correctly");
+    logger.info("✅ High-volume replication with pagination working correctly");
 
     // Clean up
     node1.stop().await?;
     node2.stop().await?;
-    println!("✅ Test 5 completed successfully!");
+    logger.info("✅ Test 5 completed successfully!");
     Ok(())
 }

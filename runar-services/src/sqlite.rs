@@ -635,26 +635,39 @@ impl SqliteService {
         }
     }
 
-    // Generate next origin sequence for a given table using __origin_seq
-    pub async fn next_origin_seq(&self, _table: &str) -> Result<i64, String> {
-        // Increment global counter
+    // Generate next origin sequence for a specific table using replication_meta
+    pub async fn next_origin_seq(&self, table: &str) -> Result<i64, String> {
+        let key = format!("origin_seq::{}", table);
+        // Upsert current value if missing
         let _ = self
             .send_command(|reply_tx| SqliteWorkerCommand::Execute {
-                query: SqlQuery::new("UPDATE __origin_seq SET last_seq = last_seq + 1"),
+                query: SqlQuery::new("INSERT INTO replication_meta (key, value) VALUES (?, '0') ON CONFLICT(key) DO NOTHING")
+                    .with_params(Params::new().with_value(Value::Text(key.clone()))),
                 reply_to: reply_tx,
             })
             .await?;
 
-        // Read back current value
+        // Increment and return
+        let _ = self
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
+                query: SqlQuery::new("UPDATE replication_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = ?")
+                    .with_params(Params::new().with_value(Value::Text(key.clone()))),
+                reply_to: reply_tx,
+            })
+            .await?;
+
         let rows = self
             .send_command(|reply_tx| SqliteWorkerCommand::Query {
-                query: SqlQuery::new("SELECT last_seq FROM __origin_seq"),
+                query: SqlQuery::new("SELECT value FROM replication_meta WHERE key = ?")
+                    .with_params(Params::new().with_value(Value::Text(key))),
                 reply_to: reply_tx,
             })
             .await?;
         if let Some(first) = rows.first() {
-            if let Some(Value::Integer(seq)) = first.get("last_seq") {
-                return Ok(*seq);
+            if let Some(Value::Text(s)) = first.get("value") {
+                if let Ok(parsed) = s.parse::<i64>() {
+                    return Ok(parsed);
+                }
             }
         }
         Err("Failed to read next origin sequence".to_string())

@@ -355,7 +355,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
 
         // Wait for the stop to complete and cleanup to finish
         // In a real scenario, a node would stay down for a meaningful period
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_secs(1)).await;
 
         // ==========================================
         // STEP 4: Verify Node 1 is unreachable
@@ -381,7 +381,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         drop(node1);
 
         // Allow OS to fully release previous UDP socket before rebinding same port
-        sleep(Duration::from_millis(1000)).await;
+        //sleep(Duration::from_millis(1000)).await;
 
         // Create a fresh node using the same config (preserves node_id, keys, etc.)
         let mut node1 = Node::new(node1_config.clone()).await?;
@@ -393,21 +393,21 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
 
         // Wait for nodes to discover each other again - same as initial setup
         logger.debug("⏳ Waiting for nodes to rediscover each other...");
-        let peer_future2 = node2.on(
+        let on_node1_found = node2.on(
             format!("$registry/peer/{node1_id}/discovered"),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(10),
                 include_past: None,
             }),
         );
-        let peer_future1 = node1.on(
+        let on_node2_found = node1.on(
             format!("$registry/peer/{node2_id}/discovered"),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(10),
                 include_past: None,
             }),
         );
-        let _ = tokio::join!(peer_future2, peer_future1);
+        let _ = tokio::join!(on_node1_found, on_node2_found);
         logger.debug("✅ Nodes rediscovered each other");
 
         // ==========================================

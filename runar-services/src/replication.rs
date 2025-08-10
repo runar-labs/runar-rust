@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::Logger;
 use runar_node::AbstractService;
-use runar_node::{services::LifecycleContext, ServiceState};
+use runar_node::services::LifecycleContext;
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -289,6 +289,24 @@ impl ReplicationManager {
                     .await;
                 return Err(apply_err);
             }
+
+            // Update replication checkpoint for this table and origin
+            let upsert_checkpoint_sql = "INSERT INTO replication_checkpoints (table_name, origin_node_id, origin_seq)
+                VALUES (?, ?, ?)
+                ON CONFLICT(table_name, origin_node_id)
+                DO UPDATE SET origin_seq = MAX(replication_checkpoints.origin_seq, excluded.origin_seq)";
+            let cp_params = crate::sqlite::Params::new()
+                .with_value(Value::Text(event.table_name.clone()))
+                .with_value(Value::Text(event.source_node_id.clone()))
+                .with_value(Value::Integer(event.origin_seq));
+            let _ = self
+                .sqlite_service
+                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                    query: SqlQuery::new(upsert_checkpoint_sql).with_params(cp_params),
+                    reply_to: reply_tx,
+                })
+                .await
+                .map_err(|e| anyhow!("Failed to upsert replication checkpoint: {e}"))?;
         }
 
         // Commit transaction
@@ -511,7 +529,7 @@ impl ReplicationManager {
                 reply_to: reply_tx,
             })
             .await
-            .map_err(|e| anyhow!("Failed to execute replicated SQL query: {}", e))?;
+            .map_err(|e| anyhow!("Failed to execute replicated SQL query: {e}"))?;
 
         self.logger
             .debug(format!("SQL query executed successfully: {result:?}"));
@@ -580,9 +598,12 @@ impl ReplicationManager {
     ) -> Result<TableEventsResponse> {
         let event_table_name = format!("{}{EVENT_TABLE_SUFFIX}", request.table_name);
 
-        self.logger.debug(format!(
-            "Querying events from {}: page={}, page_size={}, from_timestamp={}",
-            event_table_name, request.page, request.page_size, request.from_timestamp
+        self.logger.info(format!(
+            "Querying events from {}: page={}, page_size={}, from_by_origin={} entries",
+            event_table_name,
+            request.page,
+            request.page_size,
+            request.from_by_origin.len()
         ));
 
         // Build base query: support from_by_origin filtering if provided
@@ -614,12 +635,12 @@ impl ReplicationManager {
                 where_parts.push(format!("({})", greater_clauses.join(" OR ")));
             }
             format!(
-                "SELECT * FROM {event_table_name} WHERE {} ORDER BY timestamp ASC, id ASC LIMIT ? OFFSET 0",
+                "SELECT * FROM {event_table_name} WHERE {} ORDER BY source_node_id ASC, origin_seq ASC, id ASC LIMIT ? OFFSET 0",
                 where_parts.join(" OR ")
             )
         } else {
             format!(
-                "SELECT * FROM {event_table_name} ORDER BY timestamp ASC, id ASC LIMIT ? OFFSET ?"
+                "SELECT * FROM {event_table_name} ORDER BY source_node_id ASC, origin_seq ASC, id ASC LIMIT ? OFFSET ?"
             )
         };
 
@@ -652,7 +673,7 @@ impl ReplicationManager {
             .map_err(|e| anyhow!("Failed to query events: {e}"))?;
 
         self.logger
-            .debug(format!("Found {} raw rows in event table", result.len()));
+            .info(format!("Found {} rows for this page before mapping", result.len()));
 
         // Convert rows to ReplicationEvent objects
         let events: Vec<ReplicationEvent> = result
@@ -743,11 +764,18 @@ impl ReplicationManager {
             (events.len() as u32, events.len() as u32 == request.page_size)
         };
 
-        self.logger.debug(format!(
-            "Returning {} events, total_count={}, has_more={}",
+        let mut origin_min_max: std::collections::BTreeMap<String, (i64, i64)> = Default::default();
+        for e in &events {
+            let entry = origin_min_max.entry(e.source_node_id.clone()).or_insert((e.origin_seq, e.origin_seq));
+            if e.origin_seq < entry.0 { entry.0 = e.origin_seq; }
+            if e.origin_seq > entry.1 { entry.1 = e.origin_seq; }
+        }
+        self.logger.info(format!(
+            "Returning {} events, total_count={}, has_more={}, origin_ranges={:?}",
             events.len(),
             total_count,
-            has_more
+            has_more,
+            origin_min_max
         ));
 
         Ok(TableEventsResponse {
@@ -829,30 +857,67 @@ impl ReplicationManager {
             context.info(format!("Created event table: {event_table_name}"));
         }
 
-        // Ensure global origin sequence table exists (single-row counter)
-        let seq_table_sql = "CREATE TABLE IF NOT EXISTS __origin_seq (last_seq INTEGER NOT NULL)";
+        // Ensure replication metadata and checkpoints tables exist
+        let meta_table_sql = "CREATE TABLE IF NOT EXISTS replication_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)";
         self.sqlite_service
             .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
-                query: SqlQuery::new(seq_table_sql),
+                query: SqlQuery::new(meta_table_sql),
                 reply_to: reply_tx,
             })
             .await
-            .map_err(|e| anyhow!("Failed to create __origin_seq table: {e}"))?;
-        // Seed row if empty
-        let seed_sql = "INSERT INTO __origin_seq (last_seq) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM __origin_seq)";
+            .map_err(|e| anyhow!("Failed to create replication_meta table: {e}"))?;
+
+        // Create checkpoints table
+        let checkpoints_sql = "CREATE TABLE IF NOT EXISTS replication_checkpoints (
+            table_name TEXT NOT NULL,
+            origin_node_id TEXT NOT NULL,
+            origin_seq INTEGER NOT NULL,
+            PRIMARY KEY(table_name, origin_node_id)
+        )";
         self.sqlite_service
             .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
-                query: SqlQuery::new(seed_sql),
+                query: SqlQuery::new(checkpoints_sql),
                 reply_to: reply_tx,
             })
             .await
-            .map_err(|e| anyhow!("Failed to seed __origin_seq table: {e}"))?;
+            .map_err(|e| anyhow!("Failed to create replication_checkpoints table: {e}"))?;
 
         Ok(())
     }
 
     // Compute per-origin checkpoints from local storage for a table
     async fn compute_origin_checkpoints(&self, table: &str) -> Result<Vec<OriginCheckpoint>> {
+        // Prefer dedicated checkpoints table
+        let cp_query = SqlQuery::new(
+            "SELECT origin_node_id, origin_seq FROM replication_checkpoints WHERE table_name = ?",
+        )
+        .with_params(crate::sqlite::Params::new().with_value(Value::Text(table.to_string())));
+        let cp_rows = self
+            .sqlite_service
+            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+                query: cp_query,
+                reply_to: reply_tx,
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to read replication checkpoints: {e}"))?;
+
+        let mut out = Vec::new();
+        if !cp_rows.is_empty() {
+            for row in cp_rows {
+                let origin_node_id = match row.get("origin_node_id") {
+                    Some(Value::Text(s)) => s.clone(),
+                    _ => continue,
+                };
+                let origin_seq = match row.get("origin_seq") {
+                    Some(Value::Integer(i)) => *i,
+                    _ => 0,
+                };
+                out.push(OriginCheckpoint { origin_node_id, origin_seq });
+            }
+            return Ok(out);
+        }
+
+        // Fallback to scanning local event store if checkpoints empty (first run/migration)
         let event_table_name = format!("{table}{EVENT_TABLE_SUFFIX}");
         let query = SqlQuery::new(&format!(
             "SELECT source_node_id, MAX(origin_seq) as max_seq FROM {event_table_name} GROUP BY source_node_id"
@@ -864,8 +929,7 @@ impl ReplicationManager {
                 reply_to: reply_tx,
             })
             .await
-            .map_err(|e| anyhow!("Failed to compute origin checkpoints: {e}"))?;
-        let mut out = Vec::new();
+            .map_err(|e| anyhow!("Failed to compute origin checkpoints from events: {e}"))?;
         for row in rows {
             let origin_node_id = match row.get("source_node_id") {
                 Some(Value::Text(s)) => s.clone(),
