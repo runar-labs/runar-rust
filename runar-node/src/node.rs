@@ -2120,21 +2120,14 @@ impl Node {
 
         // Paths to add
         for path in new_set.difference(&old_set) {
-            // Skip internal topics (services starting with $)
-            let topic_path = TopicPath::from_full_path(path)
-                .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
-            if topic_path.service_path().starts_with('$')
-                || INTERNAL_SERVICES.contains(&topic_path.service_path().as_str())
-            {
-                self.logger.debug(format!(
-                    "Skipping internal remote subscription: {path} for peer: {peer_node_id}"
-                ));
-                continue;
-            }
+            let topic_path = Arc::new(
+                TopicPath::from_full_path(path)
+                    .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?,
+            );
             self.logger.info(format!(
                 "Adding new remote subscription: {path} for peer: {peer_node_id}"
             ));
-            let tp_arc = Arc::new(topic_path.clone());
+            let tp_arc = topic_path.clone();
             // create remote handler same as add_new_peer logic (reuse closure building)
             let transport_arc = self
                 .network_transport
@@ -2287,7 +2280,7 @@ impl Node {
             for subscription in capabilities.subscriptions.clone() {
                 let path = subscription.path.clone();
                 let topic_path = match TopicPath::from_full_path(&path) {
-                    Ok(tp) => tp,
+                    Ok(tp) => Arc::new(tp),
                     Err(e) => {
                         self.logger
                             .warn(format!("Failed to parse subscription path '{path}': {e}"));
@@ -2305,7 +2298,7 @@ impl Node {
 
                 // Determine if the referenced service exists locally (ignore patterns)
 
-                let topic_path_arc = Arc::new(topic_path.clone());
+                let topic_path_arc = topic_path.clone();
                 let peer_node_id_cloned = peer_node_id.clone();
                 let network_transport_cloned = transport_arc.clone();
                 let logger_cloned = self.logger.clone();

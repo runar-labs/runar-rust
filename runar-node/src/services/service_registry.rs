@@ -975,15 +975,13 @@ impl ServiceRegistry {
                 // Filter out internal services if not included
                 if !include_internal_services {
                     // metadata.path is a full topic path including network id prefix
-                    if let Ok(tp) = TopicPath::from_full_path(&metadata.path) {
-                        let service_path = tp.service_path();
-                        if service_path.starts_with('$')
-                            || INTERNAL_SERVICES.contains(&service_path.as_str())
-                        {
-                            continue;
-                        }
-                    } else if metadata.path.starts_with('$') {
-                        // Fallback: if parsing fails, still try the simple check
+                    let tp = TopicPath::from_full_path(&metadata.path).map_err(|e| {
+                        anyhow!("Invalid subscription topic path {}: {e}", metadata.path)
+                    })?;
+                    let service_path = tp.service_path();
+                    if service_path.starts_with('$')
+                        || INTERNAL_SERVICES.contains(&service_path.as_str())
+                    {
                         continue;
                     }
                 }
