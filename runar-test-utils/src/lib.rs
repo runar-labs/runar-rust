@@ -117,6 +117,8 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
             .with_private_key(node_cert_config.private_key)
             .with_root_certificates(vec![ca_certificate.clone()]);
 
+        //transport_options.
+
         let config = NodeConfig::new(node_id, default_network_id.clone())
             .with_key_manager_state(key_state_bytes)
             .with_network_config(

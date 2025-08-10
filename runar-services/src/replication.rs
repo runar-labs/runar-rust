@@ -112,7 +112,7 @@ impl ReplicationManager {
 
     // Handles startup synchronization
     pub async fn sync_on_startup(&self, context: &LifecycleContext) -> Result<()> {
-        context.info("Starting replication synchronization - waiting for node discovery...");
+        context.info("Starting replication synchronization - waiting for remote service to be available...");
 
         // Wait for service discovery
         let service_path = self.sqlite_service.path();
@@ -126,18 +126,17 @@ impl ReplicationManager {
             .on(
                 format!("$registry/services/{service_path}/state/running"),
                 Some(runar_node::services::OnOptions {
-                    timeout: Duration::from_secs(20),
-                    include_past: Some(Duration::from_secs(10)),
+                    timeout: Duration::from_secs(30),
+                    include_past: Some(Duration::from_secs(60)),
                 }),
             )
             .await;
 
         if on_running.is_ok() {
-            context.info(format!("Service found in the network for: {service_path}"));
+            context.info(format!("Remote service found in the network for: {service_path}"));
         } else {
-            // Fallback: attempt remote request once to cover long-delay service add after start
             context.warn(format!(
-                "Running event not observed skipping startup sync for: {service_path}"
+                "Event $registry/services/{service_path}/state/running never fired - skipping startup sync for: {service_path}"
             ));
             return Ok(());
         }

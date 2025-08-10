@@ -56,6 +56,10 @@ use crate::services::{
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::{AbstractService, ServiceState};
 
+// Type aliases to reduce clippy type_complexity warnings
+type RetainedDeque = std::collections::VecDeque<(std::time::Instant, Option<ArcValue>)>;
+type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
+
 // PeerDirectory: single source of truth for known peers
 #[derive(Default)]
 pub struct PeerDirectory {
@@ -313,10 +317,8 @@ pub struct Node {
     service_tasks: Arc<RwLock<Vec<ServiceTask>>>,
 
     /// Retained event store: exact full topic -> deque of (timestamp, data)
-    retained_events: dashmap::DashMap<
-        String,
-        std::collections::VecDeque<(std::time::Instant, Option<ArcValue>)>,
-    >,
+    /// Wrapped in Arc to ensure Node clones share the same storage
+    retained_events: Arc<RetainedEventsMap>,
     /// Index of exact topics for wildcard lookups
     retained_index: Arc<RwLock<crate::routing::PathTrie<String>>>,
 }
@@ -452,7 +454,7 @@ impl Node {
             keys_manager,
             keys_manager_mut,
             service_tasks: Arc::new(RwLock::new(Vec::new())),
-            retained_events: dashmap::DashMap::new(),
+            retained_events: Arc::new(RetainedEventsMap::new()),
             retained_index: Arc::new(RwLock::new(crate::routing::PathTrie::new())),
         };
 
@@ -847,7 +849,7 @@ impl Node {
                 PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
-                    retain_for: Some(Duration::from_secs(10)),
+                    retain_for: Some(Duration::from_secs(120)),
                     target: None,
                 },
             )
@@ -856,6 +858,7 @@ impl Node {
             self.logger
                 .error(format!("Failed to publish running state: {publish_err}"));
         }
+        self.logger.info(format!("Published local-only running for local service {service_topic}"));
         if update_node_version {
             self.logger.info(format!(
                 "Notifying node change for service: {service_topic}"
@@ -1903,6 +1906,13 @@ impl Node {
             // ensure index contains the exact topic
             let mut idx = self.retained_index.write().await;
             idx.set_value(topic_path.clone(), topic_path.as_str().to_string());
+
+            self.logger.debug(format!(
+                "[retain] topic={} count={} window={:?}",
+                key,
+                deque.len(),
+                retain_for
+            ));
         }
 
         // Broadcast to remote nodes if requested and network is available
@@ -2064,6 +2074,24 @@ impl Node {
                         self.service_registry
                             .update_remote_service_state(&service_topic_path, ServiceState::Running)
                             .await?;
+
+                        // Publish local-only running state for remote service so local components can await readiness
+                        if let Err(publish_err) = self
+                            .publish_with_options(
+                                format!(
+                                    "$registry/services/{}/state/running",
+                                    service_topic_path.service_path()
+                                ),
+                                Some(ArcValue::new_primitive(service_topic_path.as_str().to_string())),
+                                PublishOptions::local_only().with_retain_for(Duration::from_secs(120)),
+                            )
+                            .await
+                        {
+                            self.logger.error(format!(
+                                "Failed to publish remote service running state: {publish_err}"
+                            ));
+                        }
+                        self.logger.info(format!("Published local-only running for remote service {service_topic_path}"));
                     }
                 }
             }
@@ -2263,6 +2291,23 @@ impl Node {
             self.service_registry
                 .update_remote_service_state(&service_topic_path, ServiceState::Running)
                 .await?;
+
+            // Publish local-only running state for remote service so local components can await readiness
+            if let Err(publish_err) = self
+                .publish_with_options(
+                    format!(
+                        "$registry/services/{}/state/running",
+                        service_topic_path.service_path()
+                    ),
+                    Some(ArcValue::new_primitive(service_topic_path.as_str().to_string())),
+                    PublishOptions::local_only().with_retain_for(Duration::from_secs(120)),
+                )
+                .await
+            {
+                self.logger.error(format!(
+                    "Failed to publish remote service running state: {publish_err}"
+                ));
+            }
         }
 
         // Handle remote node subscriptions - only for services that exist locally
@@ -2626,7 +2671,7 @@ impl NodeDelegate for Node {
             let now = std::time::Instant::now();
             let cutoff = now - lookback;
 
-            // Build matched exact topics via trie (handles exact and wildcard)
+            // Build matched topics: prefer index (supports normalized keys), fallback to direct exact key
             let matched: Vec<String> = if topic_path.is_pattern() {
                 let idx = self.retained_index.read().await;
                 idx.find_wildcard_matches(&topic_path)
@@ -2634,13 +2679,35 @@ impl NodeDelegate for Node {
                     .map(|m| m.content)
                     .collect()
             } else {
-                vec![topic_path.as_str().to_string()]
+                let idx = self.retained_index.read().await;
+                let exact = idx
+                    .find_matches(&topic_path)
+                    .into_iter()
+                    .map(|m| m.content)
+                    .collect::<Vec<String>>();
+                if exact.is_empty() {
+                    vec![topic_path.as_str().to_string()]
+                } else {
+                    exact
+                }
             };
+
+            self.logger.debug(format!(
+                "[include_past] matched_keys={} first={}",
+                matched.len(),
+                matched.first().cloned().unwrap_or_default()
+            ));
 
             // Find the newest retained event among matched topics within cutoff
             let mut newest: Option<(std::time::Instant, Option<ArcValue>, String)> = None;
             for key in matched {
-                if let Some(entry) = self.retained_events.get_mut(&key) {
+                if let Some(entry) = self.retained_events.get(&key) {
+                    self.logger.debug(format!(
+                        "[include_past] considering key={} retained_count={} cutoff={:?}",
+                        key,
+                        entry.len(),
+                        lookback
+                    ));
                     if let Some((ts, data)) = entry.iter().rev().find(|(ts, _)| *ts >= cutoff) {
                         let is_newer = match &newest {
                             None => true,
@@ -2650,10 +2717,22 @@ impl NodeDelegate for Node {
                             newest = Some((*ts, data.clone(), key.clone()));
                         }
                     }
+                } else {
+                    // Debug: list available retained keys to diagnose mismatches
+                    let sample: Vec<String> = self
+                        .retained_events
+                        .iter()
+                        .take(3)
+                        .map(|kv| kv.key().clone())
+                        .collect();
+                    self.logger.debug(format!(
+                        "[include_past] no entry for key='{key}'; sample_keys={sample:?}"
+                    ));
                 }
             }
 
             if let Some((_ts, data, _key)) = newest.clone() {
+                self.logger.debug("[include_past] delivering retained event to new subscriber");
                 let event_context = Arc::new(EventContext::new(
                     &topic_path,
                     Arc::new(self.clone()),
@@ -2670,6 +2749,8 @@ impl NodeDelegate for Node {
                         let _ = handler(event_context.clone(), data.clone()).await;
                     }
                 }
+            } else {
+                self.logger.debug("[include_past] no retained event found to deliver");
             }
         }
 

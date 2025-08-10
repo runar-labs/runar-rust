@@ -147,7 +147,7 @@ fn cleanup_database_files() {
 #[serial]
 async fn test_basic_replication_between_nodes() -> Result<()> {
     // Configure logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
 
     // Set up logger

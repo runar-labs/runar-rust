@@ -44,7 +44,7 @@ pub struct DiscoveryOptions {
 impl Default for DiscoveryOptions {
     fn default() -> Self {
         Self {
-            announce_interval: Duration::from_secs(60),
+            announce_interval: Duration::from_secs(5),
             discovery_timeout: Duration::from_secs(10),
             node_ttl: Duration::from_secs(300),
             debounce_window: Duration::from_millis(400),
