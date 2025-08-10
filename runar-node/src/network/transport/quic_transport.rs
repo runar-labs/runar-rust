@@ -39,6 +39,8 @@ pub struct QuicTransportOptions {
     logger: Option<Arc<Logger>>,
     keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
     label_resolver: Option<Arc<dyn runar_serializer::traits::LabelResolver>>,
+    // Cache TTL for idempotent response replay
+    response_cache_ttl: Duration,
 }
 
 impl std::fmt::Debug for QuicTransportOptions {
@@ -128,6 +130,7 @@ impl Default for QuicTransportOptions {
             logger: None,
             keystore: None,
             label_resolver: None,
+            response_cache_ttl: Duration::from_secs(5),
         }
     }
 }
@@ -200,6 +203,11 @@ impl QuicTransportOptions {
         self
     }
 
+    pub fn with_response_cache_ttl(mut self, ttl: Duration) -> Self {
+        self.response_cache_ttl = ttl;
+        self
+    }
+
     // Getters for original options
     pub fn certificates(&self) -> Option<&Vec<CertificateDer<'static>>> {
         self.certificates.as_ref()
@@ -245,6 +253,10 @@ impl QuicTransportOptions {
     pub fn label_resolver(&self) -> Option<&Arc<dyn runar_serializer::traits::LabelResolver>> {
         self.label_resolver.as_ref()
     }
+
+    pub fn response_cache_ttl(&self) -> Duration {
+        self.response_cache_ttl
+    }
 }
 
 impl Clone for QuicTransportOptions {
@@ -263,6 +275,7 @@ impl Clone for QuicTransportOptions {
             logger: self.logger.clone(),
             keystore: self.keystore.clone(),
             label_resolver: self.label_resolver.clone(),
+            response_cache_ttl: self.response_cache_ttl,
         }
     }
 }
@@ -718,6 +731,7 @@ impl QuicTransport {
                 .expect("Failed to install default crypto provider");
         }
 
+        let cache_ttl = options.response_cache_ttl();
         Ok(Self {
             local_node_info,
             bind_addr,
@@ -733,7 +747,7 @@ impl QuicTransport {
             tasks: Mutex::new(Vec::new()),
             running: tokio::sync::RwLock::new(false),
             response_cache: dashmap::DashMap::new(),
-            response_cache_ttl: Duration::from_secs(5),
+            response_cache_ttl: cache_ttl,
         })
     }
 
@@ -1250,9 +1264,12 @@ impl QuicTransport {
                 Ok(Some(reply)) => {
                     // Cache the successful response for a short period to deduplicate retries
                     if reply.message_type == super::MESSAGE_TYPE_RESPONSE {
-                        if let Some(corr_id) = reply.payloads.first().map(|p| p.correlation_id.clone()) {
+                        if let Some(corr_id) =
+                            reply.payloads.first().map(|p| p.correlation_id.clone())
+                        {
                             let now = Instant::now();
-                            self.response_cache.insert(corr_id, (now, Arc::new(reply.clone())));
+                            self.response_cache
+                                .insert(corr_id, (now, Arc::new(reply.clone())));
                         }
                     }
                     self.write_message(&mut send, &reply).await?;
@@ -1578,6 +1595,24 @@ impl NetworkTransport for QuicTransport {
         // spawn accept loops
         let accept_task: tokio::task::JoinHandle<()> = self.clone().spawn_accept_loop(endpoint);
         self.tasks.lock().await.push(accept_task);
+
+        // spawn periodic cache prune task
+        let prune_self = self.clone();
+        let ttl = self.response_cache_ttl;
+        let prune_task = tokio::spawn(async move {
+            let interval = Duration::from_secs(1);
+            loop {
+                if !*prune_self.running.read().await {
+                    break;
+                }
+                let now = Instant::now();
+                prune_self
+                    .response_cache
+                    .retain(|_, (ts, _)| now.saturating_duration_since(*ts) <= ttl);
+                tokio::time::sleep(interval).await;
+            }
+        });
+        self.tasks.lock().await.push(prune_task);
 
         *running_guard = true;
         Ok(())
