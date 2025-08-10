@@ -48,6 +48,9 @@ pub struct PathTrie<T: Clone> {
 
     /// Network-specific tries - the top level trie is keyed by network_id
     networks: HashMap<String, PathTrie<T>>,
+
+    /// Total count of all values in this trie (cached for efficiency)
+    count: usize,
 }
 
 impl<T: Clone> Default for PathTrie<T> {
@@ -67,21 +70,18 @@ impl<T: Clone> PathTrie<T> {
             template_param_name: None,
             multi_wildcard: Vec::new(),
             networks: HashMap::new(),
+            count: 0,
         }
     }
 
-    /// Add a topic path and its handlers to the trie
+    /// Add a topic path and its handlers to the trie – replaces any existing list stored at that leaf
     pub fn set_values(&mut self, topic: TopicPath, content_list: Vec<T>) {
         let network_id = topic.network_id();
-
-        // Get or create network-specific trie
         let network_trie = self.networks.entry(network_id.to_string()).or_default();
-
-        // Add to the network-specific trie
         network_trie.set_values_internal(&topic.get_segments(), 0, content_list);
     }
 
-    /// Add a single handler for a topic path
+    /// Add a single handler for a topic path – replaces previous list with a single-element list
     pub fn set_value(&mut self, topic: TopicPath, content: T) {
         self.set_values(topic, vec![content]);
     }
@@ -107,7 +107,9 @@ impl<T: Clone> PathTrie<T> {
     fn remove_values_internal(&mut self, segments: &[String], index: usize) {
         if index >= segments.len() {
             // We've reached the end of the path, remove handlers here
+            let old_count = self.content.len();
             self.content.clear();
+            self.count -= old_count;
             return;
         }
 
@@ -116,17 +118,23 @@ impl<T: Clone> PathTrie<T> {
         if segment == "*" {
             // Single wildcard - remove from wildcard child
             if let Some(child) = &mut self.wildcard_child {
+                let old_count = child.count;
                 child.remove_values_internal(segments, index + 1);
+                self.count -= old_count - child.count;
             }
         } else if is_template_param(segment) {
             // Template parameter - remove from template child
             if let Some(child) = &mut self.template_child {
+                let old_count = child.count;
                 child.remove_values_internal(segments, index + 1);
+                self.count -= old_count - child.count;
             }
         } else {
             // Literal segment - remove from child
             if let Some(child) = self.children.get_mut(segment) {
+                let old_count = child.count;
                 child.remove_values_internal(segments, index + 1);
+                self.count -= old_count - child.count;
             }
         }
     }
@@ -134,8 +142,10 @@ impl<T: Clone> PathTrie<T> {
     /// Internal recursive implementation of add
     fn set_values_internal(&mut self, segments: &[String], index: usize, handlers: Vec<T>) {
         if index >= segments.len() {
-            // We've reached the end of the path, add handlers here
+            // We've reached the end of the path, replace handlers here
+            let old_count = self.content.len();
             self.content.extend(handlers);
+            self.count += self.content.len() - old_count;
             return;
         }
 
@@ -143,7 +153,9 @@ impl<T: Clone> PathTrie<T> {
 
         if segment == ">" {
             // Multi-wildcard - adds handlers here and matches everything below
+            let old_count = self.multi_wildcard.len();
             self.multi_wildcard.extend(handlers);
+            self.count += self.multi_wildcard.len() - old_count;
         } else if segment == "*" {
             // Single wildcard - create/get wildcard child and continue
             if self.wildcard_child.is_none() {
@@ -151,7 +163,9 @@ impl<T: Clone> PathTrie<T> {
             }
 
             if let Some(child) = &mut self.wildcard_child {
+                let old_count = child.count;
                 child.set_values_internal(segments, index + 1, handlers);
+                self.count += child.count - old_count;
             }
         } else if is_template_param(segment) {
             // Template parameter - create/get template child and continue
@@ -162,13 +176,16 @@ impl<T: Clone> PathTrie<T> {
             }
 
             if let Some(child) = &mut self.template_child {
+                let old_count = child.count;
                 child.set_values_internal(segments, index + 1, handlers);
+                self.count += child.count - old_count;
             }
         } else {
             // Literal segment - create/get child and continue
             let child = self.children.entry(segment.clone()).or_default();
-
+            let old_count = child.count;
             child.set_values_internal(segments, index + 1, handlers);
+            self.count += child.count - old_count;
         }
     }
 
@@ -235,19 +252,9 @@ impl<T: Clone> PathTrie<T> {
         // Handle different segment types
         if segment == "*" {
             // Single wildcard - match any single segment
-            // Check all children at this level
-            for child in self.children.values() {
-                child.collect_wildcard_matches(pattern_segments, index + 1, results);
-            }
-
-            // Also check wildcard and template children if they exist
-            if let Some(child) = &self.wildcard_child {
-                child.collect_wildcard_matches(pattern_segments, index + 1, results);
-            }
-
-            if let Some(child) = &self.template_child {
-                child.collect_wildcard_matches(pattern_segments, index + 1, results);
-            }
+            // For * wildcard, we need to collect ALL handlers from this node and ALL descendants
+            // This is equivalent to a multi-wildcard (>) at this level
+            self.collect_all_handlers(results);
         } else if segment == ">" {
             // Multi-wildcard - match everything below this level
             // Add all handlers from this level and all children recursively
@@ -440,30 +447,37 @@ impl<T: Clone> PathTrie<T> {
             && self.networks.is_empty()
     }
 
-    /// Get the count of handlers in this trie
+    /// Get the total number of handlers in the trie
     pub fn handler_count(&self) -> usize {
-        let mut count = self.content.len() + self.multi_wildcard.len();
+        self.count
+    }
 
-        // Count handlers in children
-        for child in self.children.values() {
-            count += child.handler_count();
-        }
-
-        // Count handlers in wildcard child
-        if let Some(child) = &self.wildcard_child {
-            count += child.handler_count();
-        }
-
-        // Count handlers in template child
-        if let Some(child) = &self.template_child {
-            count += child.handler_count();
-        }
-
-        // Count handlers in network-specific tries
+    /// Get all values from the trie
+    pub fn get_all_values(&self) -> Vec<T> {
+        let mut results = Vec::new();
         for network_trie in self.networks.values() {
-            count += network_trie.handler_count();
+            network_trie.collect_all_values_internal(&mut results);
+        }
+        results
+    }
+
+    /// Internal method to collect all values from this trie and its children
+    fn collect_all_values_internal(&self, results: &mut Vec<T>) {
+        // Add content from this node
+        results.extend(self.content.clone());
+        results.extend(self.multi_wildcard.clone());
+
+        // Recursively collect from children
+        for child in self.children.values() {
+            child.collect_all_values_internal(results);
         }
 
-        count
+        if let Some(wildcard) = &self.wildcard_child {
+            wildcard.collect_all_values_internal(results);
+        }
+
+        if let Some(template) = &self.template_child {
+            template.collect_all_values_internal(results);
+        }
     }
 }

@@ -168,7 +168,7 @@ fn test_encryption_in_arcvalue() -> Result<()> {
         keystore: mobile_ks.clone(),
         resolver: resolver.clone(),
         network_id: network_id.clone(),
-        profile_public_key: profile_pk.clone(),
+        profile_public_key: Some(profile_pk.clone()),
     };
 
     // Serialize with encryption

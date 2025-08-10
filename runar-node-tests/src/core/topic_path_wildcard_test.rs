@@ -290,14 +290,14 @@ mod topic_path_wildcard_tests {
 #[cfg(test)]
 mod service_registry_wildcard_tests {
     use super::*;
-    use runar_node::Node;
+    use runar_node::{services::EventRegistrationOptions, Node};
     use runar_test_utils::create_node_test_config;
 
     /// Test event handler for wildcard subscriptions
     #[tokio::test]
     async fn test_wildcard_event_subscriptions() -> Result<()> {
         // Create service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create a counter to track event deliveries
         let counter = Arc::new(Mutex::new(0));
@@ -316,20 +316,32 @@ mod service_registry_wildcard_tests {
         // Subscribe to a pattern with a single-level wildcard
         let pattern1 = TopicPath::new("main:services/*/state", "default").expect("Valid pattern");
         let _sub_id1 = registry
-            .register_local_event_subscription(&pattern1, callback.clone(), None)
+            .register_local_event_subscription(
+                &pattern1,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Subscribe to a pattern with a multi-level wildcard
         let pattern2 = TopicPath::new("main:events/>", "default").expect("Valid pattern");
         let _sub_id2 = registry
-            .register_local_event_subscription(&pattern2, callback.clone(), None)
+            .register_local_event_subscription(
+                &pattern2,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Subscribe to a specific path to compare
         let specific_path =
             TopicPath::new("main:services/math/add", "default").expect("Valid path");
         let _sub_id3 = registry
-            .register_local_event_subscription(&specific_path, callback.clone(), None)
+            .register_local_event_subscription(
+                &specific_path,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Publish to various topics and check if they match
@@ -354,13 +366,14 @@ mod service_registry_wildcard_tests {
         // Should match pattern1 (services/*/state)
         let handlers1 = registry.get_local_event_subscribers(&topic1).await;
         assert_eq!(handlers1.len(), 1);
-        for (_, handler) in handlers1 {
+        for (_, handler, _) in handlers1 {
             let context = Arc::new(EventContext::new(
                 &topic1,
                 Arc::new(
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -369,13 +382,14 @@ mod service_registry_wildcard_tests {
         // Should match pattern1 (services/*/state)
         let handlers2 = registry.get_local_event_subscribers(&topic2).await;
         assert_eq!(handlers2.len(), 1);
-        for (_, handler) in handlers2 {
+        for (_, handler, _) in handlers2 {
             let context = Arc::new(EventContext::new(
                 &topic2,
                 Arc::new(
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -384,13 +398,14 @@ mod service_registry_wildcard_tests {
         // Should match pattern2 (events/>)
         let handlers3 = registry.get_local_event_subscribers(&topic3).await;
         assert_eq!(handlers3.len(), 1);
-        for (_, handler) in handlers3 {
+        for (_, handler, _) in handlers3 {
             let context = Arc::new(EventContext::new(
                 &topic3,
                 Arc::new(
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -399,13 +414,14 @@ mod service_registry_wildcard_tests {
         // Should match pattern2 (events/>)
         let handlers4 = registry.get_local_event_subscribers(&topic4).await;
         assert_eq!(handlers4.len(), 1);
-        for (_, handler) in handlers4 {
+        for (_, handler, _) in handlers4 {
             let context = Arc::new(EventContext::new(
                 &topic4,
                 Arc::new(
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -414,13 +430,14 @@ mod service_registry_wildcard_tests {
         // Should match specific_path (services/math/add)
         let handlers5 = registry.get_local_event_subscribers(&topic5).await;
         assert_eq!(handlers5.len(), 1);
-        for (_, handler) in handlers5 {
+        for (_, handler, _) in handlers5 {
             let context = Arc::new(EventContext::new(
                 &topic5,
                 Arc::new(
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;
@@ -441,7 +458,7 @@ mod service_registry_wildcard_tests {
     #[tokio::test]
     async fn test_wildcard_unsubscription() -> Result<()> {
         // Create service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create a callback
         let callback = Arc::new(move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
@@ -451,7 +468,11 @@ mod service_registry_wildcard_tests {
         // Subscribe to a pattern with a wildcard
         let pattern = TopicPath::new("main:services/*/state", "default").expect("Valid pattern");
         let sub_id = registry
-            .register_local_event_subscription(&pattern, callback.clone(), None)
+            .register_local_event_subscription(
+                &pattern,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Publish to a matching topic
@@ -469,10 +490,68 @@ mod service_registry_wildcard_tests {
         Ok(())
     }
 
+    /// Minimal test to isolate PathTrie wildcard duplication issue
+    #[tokio::test]
+    async fn test_path_trie_wildcard_duplication() -> Result<()> {
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+
+        // Create a callback
+        let callback = Arc::new(move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
+            Box::pin(async move { Ok(()) }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
+        });
+
+        // Register two handlers to the same wildcard pattern
+        let pattern = TopicPath::new("main:events/>", "default").expect("Valid pattern");
+
+        // Add first handler
+        let sub_id1 = registry
+            .register_local_event_subscription(
+                &pattern,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
+            .await?;
+
+        // Add second handler to the same pattern
+        let sub_id2 = registry
+            .register_local_event_subscription(
+                &pattern,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
+            .await?;
+
+        // Now test what happens when we search for a matching topic
+        let search_topic =
+            TopicPath::new("main:events/user/updated", "default").expect("Valid path");
+        let handlers = registry.get_local_event_subscribers(&search_topic).await;
+
+        // The issue: we should have exactly 2 handlers, but we're getting more
+        assert_eq!(
+            handlers.len(),
+            2,
+            "Should have exactly 2 handlers, found {}",
+            handlers.len()
+        );
+
+        // Verify we have the expected subscription IDs
+        let handler_ids: Vec<String> = handlers.iter().map(|(id, _, _)| id.clone()).collect();
+        assert!(
+            handler_ids.contains(&sub_id1),
+            "First subscription ID not found"
+        );
+        assert!(
+            handler_ids.contains(&sub_id2),
+            "Second subscription ID not found"
+        );
+
+        Ok(())
+    }
+
     /// Test that multiple wildcard handlers can be registered and receive events
     #[tokio::test]
     async fn test_multiple_wildcard_handlers() -> Result<()> {
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
         let counter1 = Arc::new(Mutex::new(0));
         let counter2 = Arc::new(Mutex::new(0));
 
@@ -501,10 +580,18 @@ mod service_registry_wildcard_tests {
         // Subscribe both callbacks to the same wildcard pattern
         let pattern = TopicPath::new("main:events/>", "default").expect("Valid pattern");
         let _sub_id1 = registry
-            .register_local_event_subscription(&pattern, callback1, None)
+            .register_local_event_subscription(
+                &pattern,
+                callback1,
+                &EventRegistrationOptions::default(),
+            )
             .await?;
         let _sub_id2 = registry
-            .register_local_event_subscription(&pattern, callback2, None)
+            .register_local_event_subscription(
+                &pattern,
+                callback2,
+                &EventRegistrationOptions::default(),
+            )
             .await?;
 
         // Publish to a matching topic
@@ -515,13 +602,14 @@ mod service_registry_wildcard_tests {
         let handlers = registry.get_local_event_subscribers(&topic).await;
         assert_eq!(handlers.len(), 2); // Should now be exactly 2 handlers, no duplicates
 
-        for (_, handler) in handlers {
+        for (_, handler, _) in handlers {
             let context = Arc::new(EventContext::new(
                 &topic,
                 Arc::new(
                     Node::new(create_node_test_config().expect("Error creating test config"))
                         .await?,
                 ),
+                true,
                 Arc::new(Logger::new_root(Component::Service, "test")),
             ));
             handler(context, Some(data.clone())).await?;

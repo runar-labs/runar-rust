@@ -383,7 +383,7 @@ mod tests {
 
     async fn create_test_context() -> TestContext {
         //set log to debug
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
         logging_config.apply();
 
         let logger = Arc::new(Logger::new_root(Component::Custom("macro_test"), ""));
@@ -408,6 +408,9 @@ mod tests {
 
         // Start the node to initialize all services
         node.start().await.expect("Failed to start node");
+        node.wait_for_services_to_start()
+            .await
+            .expect("Services did not reach Running state");
 
         TestContext {
             node,

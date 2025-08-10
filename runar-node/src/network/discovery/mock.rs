@@ -8,7 +8,7 @@ use runar_common::compact_ids::compact_id;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use super::{DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
+use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 
 /// A mock implementation of NodeDiscovery that stores nodes in memory
 pub struct MockNodeDiscovery {
@@ -41,7 +41,21 @@ impl MockNodeDiscovery {
 
     /// Clear all nodes
     pub fn clear_nodes(&self) {
+        let keys: Vec<String> = self.nodes.read().unwrap().keys().cloned().collect();
         self.nodes.write().unwrap().clear();
+        // Emit Lost for all cleared nodes
+        let listeners = {
+            let guard = self.listeners.read().unwrap();
+            guard.iter().cloned().collect::<Vec<_>>()
+        };
+        tokio::spawn(async move {
+            for key in keys {
+                for listener in &listeners {
+                    let fut = listener(DiscoveryEvent::Lost(key.clone()));
+                    fut.await;
+                }
+            }
+        });
     }
 
     /// Helper to add nodes for testing
@@ -58,7 +72,21 @@ impl MockNodeDiscovery {
             guard.iter().cloned().collect::<Vec<_>>()
         };
         for listener in listeners {
-            let fut = listener(peer_info.clone());
+            let fut = listener(DiscoveryEvent::Discovered(peer_info.clone()));
+            fut.await;
+        }
+    }
+
+    /// Helper to remove a node and emit Lost (testing)
+    pub async fn remove_mock_node(&self, node_public_key: Vec<u8>) {
+        let key = compact_id(&node_public_key);
+        self.nodes.write().unwrap().remove(&key);
+        let listeners = {
+            let guard = self.listeners.read().unwrap();
+            guard.iter().cloned().collect::<Vec<_>>()
+        };
+        for listener in listeners {
+            let fut = listener(DiscoveryEvent::Lost(key.clone()));
             fut.await;
         }
     }
@@ -78,13 +106,18 @@ impl NodeDiscovery for MockNodeDiscovery {
         Ok(())
     }
 
-    async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()> {
+    async fn subscribe(&self, listener: DiscoveryListener) -> Result<()> {
         self.listeners.write().unwrap().push(listener);
         Ok(())
     }
 
     async fn shutdown(&self) -> Result<()> {
         self.nodes.write().unwrap().clear();
+        Ok(())
+    }
+
+    async fn update_local_node_info(&self, _new_node_info: NodeInfo) -> Result<()> {
+        // Mock implementation - no action needed
         Ok(())
     }
 }

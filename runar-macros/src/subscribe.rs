@@ -75,7 +75,7 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let self_clone = self.clone();
 
                 // Register the event handler
-                context.subscribe(#path, Box::new(move |ctx, value| {
+                context.subscribe(#path, Arc::new(move |ctx, value| {
                     // Create a boxed future that returns Result<(), anyhow::Error>
                     let self_clone = self_clone.clone();
                     Box::pin(async move {
@@ -101,7 +101,7 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         }
                     })
-                })).await?;
+                }), None).await?;
 
                 context.info(format!("Registered event handler for {}", #path_value));
                 Ok(())
@@ -129,7 +129,7 @@ pub fn subscribe_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                             }
                         }
                     })
-                })).await?;
+                }), None).await?;
 
                 context.info(format!("Registered event handler for {}", #path_value));
                 Ok(())

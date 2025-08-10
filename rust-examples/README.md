@@ -1,72 +1,105 @@
-# Runar Framework Examples
+# Runar Examples and Test Utilities
 
-This directory contains examples demonstrating various features and patterns of the Runar framework.
+This crate provides examples and test utilities for the Runar P2P stack, including a comprehensive mobile simulator for testing end-to-end scenarios.
 
-## Available Examples
+## Mobile Simulator
 
-### Node API Example
-A comprehensive example demonstrating proper service implementation and registration using the Runar Node API.
+The mobile simulator provides utilities for simulating realistic mobile behavior with the mobile key manager, allowing examples and tests to easily set up scenarios with master mobiles and multiple user mobiles.
 
-**Features demonstrated:**
-- Creating and configuring a node
-- Creating a custom service that handles events
-- Proper service registration using `add_service()`
-- Making service requests using the request-based API
-- Using `vmap!` for clean parameter extraction
-- Proper service implementation following the `AbstractService` trait
-- Event handling and storage
+### Features
 
-**To run this example:**
-```bash
-cargo run --example node_api_example
+- **Master Mobile**: Simulates the mobile device that sets up the network and can issue certificates
+- **User Mobiles**: Simulates multiple user mobile devices with different profile keys
+- **Node Configuration**: Creates properly configured node instances that work with the mobile simulation
+- **Label Resolvers**: Provides encryption/decryption context for realistic access control scenarios
+
+### Basic Usage
+
+```rust
+use runar_examples::{create_simple_mobile_simulation, create_test_environment};
+
+// Create a simple simulation with one user
+let simulator = create_simple_mobile_simulation()?;
+
+// Or create a complete test environment with node config
+let (simulator, node_config) = create_test_environment()?;
+
+// Add additional users
+simulator.add_user_mobile("bob", &["personal", "work"])?;
+
+// Create label resolvers for encryption
+let (mobile_resolver, node_resolver) = simulator.create_label_resolvers()?;
+
+// Print simulation summary
+simulator.print_summary();
 ```
 
-### Macro Example
-A comprehensive example demonstrating proper usage of Runar macros for service definition and integration.
+### Advanced Usage
 
-**Features demonstrated:**
-- Using the `service!` macro to define services
-- Proper field initialization in service structs
-- Implementing action handlers with the `action!` macro
-- Subscribing to events with the `sub!` macro
-- Service-to-service communication via events
-- Complete task management application with analytics
+```rust
+use runar_examples::MobileSimulator;
+use runar_common::logging::{Component, Logger};
+use std::sync::Arc;
 
-**To run this example:**
-```bash
-cargo run --example macro_example
+// Create a custom simulation
+let logger = Arc::new(Logger::new_root(Component::System, "my-sim"));
+let mut simulator = MobileSimulator::new(logger)?;
+
+// Add multiple users with different profiles
+simulator.add_user_mobile("alice", &["personal", "work", "family"])?;
+simulator.add_user_mobile("bob", &["personal", "work"])?;
+simulator.add_user_mobile("charlie", &["personal"])?;
+
+// Create node configuration
+let node_config = simulator.create_node_config()?;
+
+// Access specific users
+let alice_mobile = simulator.get_user_mobile("alice").unwrap();
+let master_mobile = simulator.get_master_mobile();
 ```
 
-## Running Examples
+### Examples
 
-Each example can be run using Cargo:
+- **Simple Example**: Basic service demonstration with mobile simulator
+- **Microservices Demo**: More complex example with multiple services
+
+### Running Examples
 
 ```bash
-cargo run --example <example_name>
+# Run the simple example
+cargo run --example simple
+
+# Run tests
+cargo test
 ```
 
-## Best Practices Shown in Examples
+## Architecture
 
-The examples in this directory follow Runar's architectural guidelines and best practices:
+The mobile simulator consists of several key components:
 
-1. **Service Definition**: Services are defined using the `AbstractService` trait or the `service!` macro, properly implementing all required methods.
+1. **MasterMobile**: The mobile device that owns the network and can issue certificates
+2. **MobileDevice**: Individual user mobile devices with profile keys
+3. **MobileSimulator**: The main orchestrator that manages the simulation
 
-2. **Service Registration**: Services are registered using the `add_service()` method instead of deprecated approaches.
+### Key Concepts
 
-3. **Request-Based API**: Examples use the request-based API pattern for service interactions, avoiding direct access to service methods.
+- **Network ID**: Unique identifier for the network created by the master mobile
+- **Profile Keys**: User-specific keys derived from the root key for different contexts (personal, work, etc.)
+- **Label Resolvers**: Maps encryption labels to actual keys for access control
+- **Node Configuration**: Pre-configured node instances that can work with the mobile simulation
 
-4. **Event-Driven Communication**: Where applicable, examples demonstrate how to use Runar's event system for communication between services.
+### Use Cases
 
-5. **Clean Parameter Extraction**: Examples show how to use the `vmap!` macro for safely extracting parameters with default values.
+- **End-to-End Testing**: Test complete workflows involving multiple mobile devices and nodes
+- **Access Control Testing**: Verify encryption/decryption with different key ownership scenarios
+- **Integration Testing**: Test how different components work together in realistic scenarios
+- **Example Development**: Create examples that demonstrate real-world usage patterns
 
-6. **Field Initialization**: Services properly initialize fields in their struct definitions, following best practices.
+## Contributing
 
-## Adding New Examples
+When adding new examples or test utilities:
 
-When adding new examples, please follow these guidelines:
-
-1. Place your example file in the `examples/` directory
-2. Follow the naming convention: `feature_name_example.rs`
-3. Include thorough documentation in your example explaining what it demonstrates
-4. Mark "correct" patterns with ✅ in comments to highlight proper usage
-5. Consider adding your example to this README file
+1. Follow the existing patterns for mobile simulation setup
+2. Use the convenience functions like `create_test_environment()` when possible
+3. Add appropriate tests for new functionality
+4. Update this README with new features or examples

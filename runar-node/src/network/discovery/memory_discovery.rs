@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use super::multicast_discovery::PeerInfo;
 // Internal imports
 // Import PeerInfo from the parent module where it's properly exposed
-use super::{DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
+use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
 use tokio::time;
@@ -34,6 +34,10 @@ pub struct MemoryDiscovery {
     announce_task: Mutex<Option<JoinHandle<()>>>,
     /// Listeners for discovery events
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>, // DiscoveryListener is now Arc<...>
+    /// Last-seen timestamps per peer for TTL/Lost emission
+    last_seen: Arc<RwLock<HashMap<String, SystemTime>>>,
+    /// Debounce: last emit time per peer
+    last_emitted: Arc<RwLock<HashMap<String, SystemTime>>>,
     /// Logger instance
     logger: Logger,
 }
@@ -48,6 +52,8 @@ impl MemoryDiscovery {
             cleanup_task: Mutex::new(None),
             announce_task: Mutex::new(None),
             listeners: Arc::new(RwLock::new(Vec::new())),
+            last_seen: Arc::new(RwLock::new(HashMap::new())),
+            last_emitted: Arc::new(RwLock::new(HashMap::new())),
             logger,
         }
     }
@@ -60,15 +66,26 @@ impl MemoryDiscovery {
     /// Start a background task to periodically clean up stale nodes
     fn start_cleanup_task(&self, options: DiscoveryOptions) -> JoinHandle<()> {
         let nodes = Arc::clone(&self.nodes);
+        let last_seen = Arc::clone(&self.last_seen);
         let ttl = options.node_ttl;
+        let debounce = options.debounce_window;
         let logger = self.logger.clone();
+        let listeners = Arc::clone(&self.listeners);
 
         tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(60));
+            let check_interval = if ttl <= Duration::from_millis(100) {
+                Duration::from_millis(100)
+            } else if ttl <= Duration::from_secs(1) {
+                ttl
+            } else {
+                Duration::from_secs(1)
+            };
+            let mut interval = time::interval(check_interval);
 
             loop {
                 interval.tick().await;
-                Self::cleanup_stale_nodes(&nodes, ttl, &logger);
+                Self::cleanup_stale_nodes(&nodes, &last_seen, &listeners, ttl, debounce, &logger)
+                    .await;
             }
         })
     }
@@ -77,7 +94,7 @@ impl MemoryDiscovery {
     fn start_announce_task(&self, info: NodeInfo, options: DiscoveryOptions) -> JoinHandle<()> {
         let interval = options.announce_interval;
         let node_info = info.clone();
-        let listeners: Arc<RwLock<Vec<DiscoveryListener>>> = Arc::clone(&self.listeners);
+        let _listeners: Arc<RwLock<Vec<DiscoveryListener>>> = Arc::clone(&self.listeners);
         let logger = self.logger.clone();
 
         tokio::spawn(async move {
@@ -86,60 +103,59 @@ impl MemoryDiscovery {
             loop {
                 ticker.tick().await;
 
-                let peer_info = PeerInfo {
-                    public_key: node_info.node_public_key.clone(),
-                    addresses: node_info.addresses.clone(),
-                };
-
+                // In memory discovery, periodic announce is a no-op. We notify listeners only
+                // on first-time discovery (see add_node_internal) or after explicit removal.
                 logger.debug(format!(
-                    "Announcing local node: {}",
+                    "Periodic announce for local node: {} (no listener notification)",
                     compact_id(&node_info.node_public_key)
                 ));
-
-                // Notify listeners (simulating network discovery update)
-                let listeners_vec = {
-                    let guard = listeners.read().unwrap();
-                    guard.clone() // clones the Arc for each listener
-                };
-                for listener in listeners_vec {
-                    let fut = listener(peer_info.clone());
-                    fut.await;
-                }
             }
         })
     }
 
     /// Remove nodes that haven't been seen for a while
-    fn cleanup_stale_nodes(
-        nodes: &RwLock<HashMap<String, NodeInfo>>,
-        _ttl: Duration,
-        _logger: &Logger,
+    async fn cleanup_stale_nodes(
+        nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>,
+        last_seen: &Arc<RwLock<HashMap<String, SystemTime>>>,
+        listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
+        ttl: Duration,
+        _debounce: Duration,
+        logger: &Logger,
     ) {
-        let _now = SystemTime::now();
-        let _nodes_map = nodes.write().unwrap();
-
-        // Collect keys of stale nodes first to avoid borrowing issues
-        // let stale_keys: Vec<String> = nodes_map
-        //     .iter()
-        //     .filter_map(|(key, info)| {
-        //         info.version
-        //             .elapsed()
-        //             .ok()
-        //             .filter(|elapsed| *elapsed > ttl)
-        //             .map(|_| key.clone())
-        //     })
-        //     .collect();
-
-        // // Remove stale nodes
-        // for key in stale_keys {
-        //     logger.debug(format!("Removing stale node: {}", key));
-        //     nodes_map.remove(&key);
-        // }
+        let now = SystemTime::now();
+        let stale_keys: Vec<String> = {
+            let seen = last_seen.read().unwrap();
+            seen.iter()
+                .filter_map(|(peer_id, ts)| match now.duration_since(*ts) {
+                    Ok(elapsed) if elapsed > ttl => Some(peer_id.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        if stale_keys.is_empty() {
+            return;
+        }
+        let listeners_vec = { listeners.read().unwrap().clone() };
+        for key in stale_keys {
+            logger.debug(format!(
+                "[memory_discovery] TTL expired for {key}, emitting Lost"
+            ));
+            nodes.write().unwrap().remove(&key);
+            last_seen.write().unwrap().remove(&key);
+            for listener in &listeners_vec {
+                let fut = listener(DiscoveryEvent::Lost(key.clone()));
+                fut.await;
+            }
+        }
     }
 
     /// Adds a node to the discovery registry.
     async fn add_node_internal(&self, node_info: NodeInfo) {
         let node_key = compact_id(&node_info.node_public_key);
+        let is_new = {
+            let nodes = self.nodes.read().unwrap();
+            !nodes.contains_key(&node_key)
+        };
         {
             let mut nodes = self.nodes.write().unwrap();
             nodes.insert(node_key.clone(), node_info.clone());
@@ -148,20 +164,59 @@ impl MemoryDiscovery {
         self.logger
             .debug(format!("Added node to registry: {node_key}"));
 
-        let peer_info = PeerInfo {
-            public_key: node_info.node_public_key.clone(),
-            addresses: node_info.addresses.clone(),
-        };
+        let peer_info = PeerInfo::new(
+            node_info.node_public_key.clone(),
+            node_info.addresses.clone(),
+        );
 
-        // Notify listeners
-        let listeners_vec = {
-            let guard = self.listeners.read().unwrap();
-            guard.clone()
-        };
-        drop(node_key); // ensure node_key is not used after this point
-        for listener in listeners_vec {
-            let fut = listener(peer_info.clone());
-            fut.await;
+        // Notify listeners only on first discovery. Updates to existing entries
+        // do not trigger notifications unless debounced window has elapsed.
+        let mut should_emit = is_new;
+        if !is_new {
+            // debounce Updated
+            let mut emitted = self.last_emitted.write().unwrap();
+            let now = SystemTime::now();
+            let last = emitted.get(&node_key).cloned();
+            let debounce = self
+                .options
+                .read()
+                .unwrap()
+                .as_ref()
+                .map(|o| o.debounce_window)
+                .unwrap_or(Duration::from_millis(400));
+            if last.map(|t| now.duration_since(t).unwrap_or_default() >= debounce) != Some(false) {
+                should_emit = true;
+                emitted.insert(node_key.clone(), now);
+            }
+        } else {
+            self.last_emitted
+                .write()
+                .unwrap()
+                .insert(node_key.clone(), SystemTime::now());
+        }
+        // update last_seen
+        self.last_seen
+            .write()
+            .unwrap()
+            .insert(node_key.clone(), SystemTime::now());
+
+        if should_emit {
+            let addresses_len = node_info.addresses.len();
+            let event_label = if is_new { "Discovered" } else { "Updated" };
+            self.logger.debug(format!(
+                "📣 [discovery] provider=memory event={event_label} peer_id={node_key} addresses={addresses_len} debounced={}",
+                !is_new
+            ));
+            let listeners_vec = self.listeners.read().unwrap().clone();
+            drop(node_key); // ensure node_key is not used after this point
+            for listener in listeners_vec {
+                let fut = listener(if is_new {
+                    DiscoveryEvent::Discovered(peer_info.clone())
+                } else {
+                    DiscoveryEvent::Updated(peer_info.clone())
+                });
+                fut.await;
+            }
         }
     }
 }
@@ -224,20 +279,32 @@ impl NodeDiscovery for MemoryDiscovery {
             task.abort();
         }
 
-        // Remove our node from the registry
-        if let Some(info) = &*self.local_node.read().unwrap() {
-            let mut nodes_map = self.nodes.write().unwrap();
-            nodes_map.remove(&compact_id(&info.node_public_key));
+        // Remove our node from the registry and notify Lost
+        let local_info_opt = { self.local_node.read().unwrap().clone() };
+        if let Some(info) = local_info_opt {
+            let key = compact_id(&info.node_public_key);
+            {
+                let mut nodes_map = self.nodes.write().unwrap();
+                nodes_map.remove(&key);
+            }
             self.logger.debug(format!(
-                "Removed local node {} from registry",
-                compact_id(&info.node_public_key)
+                "Removed local node {key} from registry (emitting Lost)"
             ));
+
+            let listeners_vec = {
+                let guard = self.listeners.read().unwrap();
+                guard.clone()
+            };
+            for listener in listeners_vec {
+                let fut = listener(DiscoveryEvent::Lost(key.clone()));
+                fut.await;
+            }
         }
 
         Ok(())
     }
 
-    async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()> {
+    async fn subscribe(&self, listener: DiscoveryListener) -> Result<()> {
         self.logger.debug("Adding discovery listener".to_string());
         self.listeners.write().unwrap().push(listener);
         Ok(())
@@ -262,4 +329,16 @@ impl NodeDiscovery for MemoryDiscovery {
 
         Ok(())
     }
+
+    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()> {
+        let mut local_node_guard = self.local_node.write().unwrap();
+        *local_node_guard = Some(new_node_info);
+        drop(local_node_guard);
+
+        self.logger
+            .debug("Updated local node information for memory discovery");
+        Ok(())
+    }
+
+    // Stateless interface: no remove_discovered_peer
 }

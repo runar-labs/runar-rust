@@ -20,4 +20,5 @@ runar-serializer = { path = "../../runar-serializer" }
 runar_macros_common = { path = "../../runar-macros-common" }
 runar-keys = { path = "../../runar-keys" }
 runar-schemas = { path = "../../runar-schemas" }
+runar_services = { path = "../../runar-services" }
 prost = { version = "0.12", default-features = false, features = ["std", "derive"] }

@@ -17,7 +17,7 @@ use runar_common::logging::{Component, Logger};
 use runar_node::routing::TopicPath;
 use runar_node::services::abstract_service::ServiceState;
 use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
-use runar_node::services::{ActionHandler, EventContext, RequestContext};
+use runar_node::services::{ActionHandler, EventContext, EventRegistrationOptions, RequestContext};
 use runar_serializer::ArcValue;
 
 use crate::fixtures::math_service::MathService;
@@ -54,7 +54,7 @@ async fn test_subscribe_and_unsubscribe() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create a TopicPath for the test topic
         let topic = TopicPath::new("test/event", "net1").expect("Valid topic path");
@@ -79,7 +79,11 @@ async fn test_subscribe_and_unsubscribe() {
 
         // Subscribe to the topic using the correct method
         let subscription_id = registry
-            .register_local_event_subscription(&topic, callback, None)
+            .register_local_event_subscription(
+                &topic,
+                callback,
+                &EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -116,7 +120,7 @@ async fn test_wildcard_subscriptions() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create a callback
         let callback = Arc::new(
@@ -133,11 +137,19 @@ async fn test_wildcard_subscriptions() {
 
         // Subscribe to wildcard topics using the correct method
         let _id1 = registry
-            .register_local_event_subscription(&wildcard1, callback.clone(), None)
+            .register_local_event_subscription(
+                &wildcard1,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
         let id2 = registry
-            .register_local_event_subscription(&wildcard2, callback.clone(), None)
+            .register_local_event_subscription(
+                &wildcard2,
+                callback.clone(),
+                &EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -434,7 +446,7 @@ async fn test_multiple_event_handlers() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new_with_default_logger();
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
 
         // Create test topics
         let topic1 = TopicPath::new("events/created", "net1").expect("Valid topic path");
@@ -475,11 +487,19 @@ async fn test_multiple_event_handlers() {
 
         // Subscribe handlers to topics using the correct method
         let id1 = registry
-            .register_local_event_subscription(&topic1, handler1, None)
+            .register_local_event_subscription(
+                &topic1,
+                handler1,
+                &EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
         let id2 = registry
-            .register_local_event_subscription(&topic2, handler2, None)
+            .register_local_event_subscription(
+                &topic2,
+                handler2,
+                &EventRegistrationOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -1025,6 +1045,72 @@ async fn test_get_local_services() {
             services[&topic_path3.clone()].service.path().to_string(),
             service_entry3.service.path().to_string(),
             "Service 3 entry should match"
+        );
+    })
+    .await
+    {
+        Ok(_) => (), // Test completed within the timeout
+        Err(_) => panic!("Test timed out after 10 seconds"),
+    }
+}
+
+/// Test that verifies remove_remote_event_subscription properly cleans up all mappings
+///
+/// INTENTION: This test validates that the registry properly:
+/// - Removes subscriptions from the remote_event_subscriptions trie
+/// - Removes subscription IDs from subscription_id_to_topic_path mapping
+/// - Removes subscription IDs from subscription_id_to_service_topic_path mapping
+#[tokio::test]
+async fn test_remove_remote_event_subscription() {
+    // Wrap the test in a timeout to prevent it from hanging
+    match timeout(Duration::from_secs(10), async {
+        // Create a service registry
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+
+        // Create a TopicPath for the test topic
+        let topic = TopicPath::new("test/event", "net1").expect("Valid topic path");
+
+        // Create a callback for remote events
+        let callback = Arc::new(
+            move |_data: Option<ArcValue>| -> Pin<Box<dyn Future<Output = Result<()>> + Send>> {
+                Box::pin(async move { Ok(()) })
+            },
+        );
+
+        // Register remote event subscription
+        let subscription_id = registry
+            .register_remote_event_subscription(
+                &topic,
+                callback,
+                EventRegistrationOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        // Verify the subscription was registered
+        let handlers = registry.get_remote_event_subscribers(&topic).await;
+        assert_eq!(handlers.len(), 1, "Expected one handler to be registered");
+        assert_eq!(handlers[0].0, subscription_id, "Subscriber ID should match");
+
+        // Remove the remote event subscription
+        registry
+            .remove_remote_event_subscription(&topic)
+            .await
+            .unwrap();
+
+        // Verify the handler is removed from the trie
+        let handlers_after = registry.get_remote_event_subscribers(&topic).await;
+        assert_eq!(
+            handlers_after.len(),
+            0,
+            "Expected handler to be removed after unsubscribe"
+        );
+
+        // Verify that trying to unsubscribe again fails (indicating the ID was properly removed)
+        let unsubscribe_result = registry.unsubscribe_remote(&subscription_id).await;
+        assert!(
+            unsubscribe_result.is_err(),
+            "Should not be able to unsubscribe from already removed subscription"
         );
     })
     .await

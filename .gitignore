@@ -40,4 +40,5 @@ runar-nodejs-ffi/node_modules/
 runar-nodejs-ffi/runar-nodejs-ffi.darwin-arm64.node
 runar-nodejs-ffi/runar-nodejs-ffi.node
 runar-nodejs-ffi/*.node
-cargo-wrapper.sh
+cargo-wrapper.sh 
+runar-services/node_1_db

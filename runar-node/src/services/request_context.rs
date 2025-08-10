@@ -13,7 +13,9 @@
 
 use crate::node::Node; // Added for concrete type
 use crate::routing::TopicPath;
+use crate::services::service_registry::EventHandler;
 use crate::services::NodeDelegate;
+use crate::services::{EventRegistrationOptions, PublishOptions};
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext};
 use runar_serializer::arc_value::AsArcValue;
@@ -193,11 +195,24 @@ impl RequestContext {
             // Already has network ID, use as is
             topic_string
         } else if topic_string.contains('/') {
-            // Has service/topic but no network ID
-            format!(
-                "{network_id}:{topic_string}",
-                network_id = self.topic_path.network_id()
-            )
+            // Path contains a '/', could already include service path. Check first segment.
+            let first_seg = topic_string.split('/').next().unwrap_or("");
+            if first_seg == self.topic_path.service_path() {
+                // Already has service path, just prefix network id
+                format!(
+                    "{network_id}:{topic}",
+                    network_id = self.topic_path.network_id(),
+                    topic = topic_string,
+                )
+            } else {
+                // Treat as relative to this service – prepend service path and network
+                format!(
+                    "{network_id}:{service}/{topic}",
+                    network_id = self.topic_path.network_id(),
+                    service = self.topic_path.service_path(),
+                    topic = topic_string,
+                )
+            }
         } else {
             // Simple topic name - add service path and network ID
             format!(
@@ -211,6 +226,86 @@ impl RequestContext {
         self.logger
             .debug(format!("Publishing to processed topic: {full_topic}"));
         self.node_delegate.publish(full_topic, data).await
+    }
+
+    /// Publish an event with options (e.g., retain_for)
+    pub async fn publish_with_options(
+        &self,
+        topic: impl Into<String>,
+        data: Option<ArcValue>,
+        options: PublishOptions,
+    ) -> Result<()> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            let first_seg = topic_string.split('/').next().unwrap_or("");
+            if first_seg == self.topic_path.service_path() {
+                format!(
+                    "{network_id}:{topic}",
+                    network_id = self.topic_path.network_id(),
+                    topic = topic_string,
+                )
+            } else {
+                format!(
+                    "{network_id}:{service}/{topic}",
+                    network_id = self.topic_path.network_id(),
+                    service = self.topic_path.service_path(),
+                    topic = topic_string,
+                )
+            }
+        } else {
+            format!(
+                "{}:{}/{}",
+                self.topic_path.network_id(),
+                self.topic_path.service_path(),
+                topic_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Publishing (with options) to: {full_topic}"));
+        self.node_delegate
+            .publish_with_options(full_topic, data, options)
+            .await
+    }
+
+    pub async fn remote_request<P>(
+        &self,
+        path: impl Into<String>,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
+    where
+        P: AsArcValue + Send + Sync,
+    {
+        let path_string = path.into();
+
+        // Process the path based on its format
+        let full_path = if path_string.contains(':') {
+            // Already has network ID, use as is
+            path_string
+        } else if path_string.contains('/') {
+            // Has service/action but no network ID
+            format!(
+                "{network_id}:{path_string}",
+                network_id = self.topic_path.network_id()
+            )
+        } else {
+            // Simple action name - add both service path and network ID
+            format!(
+                "{}:{}/{}",
+                self.topic_path.network_id(),
+                self.topic_path.service_path(),
+                path_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Making request to processed path: {full_path}"));
+
+        self.node_delegate
+            .remote_request::<P>(full_path, payload)
+            .await
     }
 
     /// Make a service request
@@ -254,6 +349,56 @@ impl RequestContext {
 
         self.node_delegate.request::<P>(full_path, payload).await
     }
+
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Allow event handlers to wait for specific events to occur
+    /// before proceeding with their logic.
+    ///
+    /// Returns Ok(Option<ArcValue>) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    pub async fn on(
+        &self,
+        topic: impl Into<String>,
+        options: Option<crate::services::OnOptions>,
+    ) -> Result<Option<ArcValue>> {
+        // Node::on returns a JoinHandle; await the handle, then unwrap the inner Result
+        let handle = self.node_delegate.on(topic, options);
+        handle.await.map_err(|e| anyhow::anyhow!(e))?
+    }
+
+    /// Subscribe to an event with options from a request handler
+    pub async fn subscribe(
+        &self,
+        topic: impl Into<String>,
+        callback: EventHandler,
+        options: Option<EventRegistrationOptions>,
+    ) -> Result<String> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            format!(
+                "{network_id}:{topic}",
+                network_id = self.topic_path.network_id(),
+                topic = topic_string
+            )
+        } else {
+            format!(
+                "{}:{}/{}",
+                self.topic_path.network_id(),
+                self.topic_path.service_path(),
+                topic_string
+            )
+        };
+
+        self.node_delegate
+            .subscribe(full_topic, callback, options)
+            .await
+    }
+
+    // Convenience subscribe without options removed to unify API
+    // subscribe without options removed to unify API
 }
 
 impl LoggingContext for RequestContext {

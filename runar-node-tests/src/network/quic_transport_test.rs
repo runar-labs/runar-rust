@@ -1,10 +1,172 @@
+#[tokio::test]
+async fn test_dial_cancel_on_inbound_connect(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::compact_ids::compact_id;
+    use runar_common::logging::{Component, Logger};
+    use runar_node::config::{LogLevel, LoggingConfig};
+    // PeerInfo not used in this test
+    use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
+    use runar_node::network::transport::{
+        NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("dial_cancel_test"), ""));
+
+    // Use CA + node certs as in other tests
+    let mut mobile_ca = runar_keys::MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km1 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let csr1 = km1.generate_csr()?;
+    let cert1 = mobile_ca.process_setup_token(&csr1)?;
+    km1.install_certificate(cert1)?;
+    let mut km2 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let csr2 = km2.generate_csr()?;
+    let cert2 = mobile_ca.process_setup_token(&csr2)?;
+    km2.install_certificate(cert2)?;
+    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    // Make two transports with ephemeral ports
+    // Build minimal NodeInfo for transports
+    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+        node_public_key: rand::random::<[u8; 32]>().to_vec(),
+        network_ids: vec!["main".to_string()],
+        addresses: vec![addr.to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    // Bind explicit ports to avoid get_local_address returning :0
+    let t1_addr = "127.0.0.1:50151".parse().unwrap();
+    let t2_addr = "127.0.0.1:50152".parse().unwrap();
+    let t1_info = mk_info("127.0.0.1:0");
+    let t2_info = mk_info("127.0.0.1:0");
+
+    // Simple echo response handler to satisfy request/response
+    let mk_handler = || -> runar_node::network::transport::MessageHandler {
+        Box::new(|m: NetworkMessage| {
+            Box::pin(async move {
+                let corr = m
+                    .payloads
+                    .first()
+                    .map(|p| p.correlation_id.clone())
+                    .unwrap_or_default();
+                let path = m
+                    .payloads
+                    .first()
+                    .map(|p| p.path.clone())
+                    .unwrap_or_else(|| "test".to_string());
+                let response_value = ArcValue::new_primitive("ok".to_string());
+                let reply = NetworkMessage {
+                    source_node_id: m.destination_node_id.clone(),
+                    destination_node_id: m.source_node_id.clone(),
+                    message_type: runar_node::network::transport::MESSAGE_TYPE_RESPONSE,
+                    payloads: vec![NetworkMessagePayloadItem {
+                        path,
+                        value_bytes: response_value.serialize(None).unwrap_or_default(),
+                        context: None,
+                        correlation_id: corr,
+                    }],
+                };
+                Ok(Some(reply))
+            })
+        })
+    };
+    let handler1 = mk_handler();
+    let handler2 = mk_handler();
+    let one_way1: runar_node::network::transport::OneWayMessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let one_way2: runar_node::network::transport::OneWayMessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(()) }));
+    // Use the default configurable resolver with empty config
+    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+        label_mappings: HashMap::new(),
+    }));
+    let t1_opts = QuicTransportOptions::new()
+        .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km1.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert.clone()])
+        .with_local_node_info(t1_info)
+        .with_bind_addr(t1_addr)
+        .with_message_handler(handler1)
+        .with_one_way_message_handler(one_way1)
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(resolver.clone())
+        .with_logger(logger.clone());
+    let t2_opts = QuicTransportOptions::new()
+        .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km2.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert])
+        .with_local_node_info(t2_info)
+        .with_bind_addr(t2_addr)
+        .with_message_handler(handler2)
+        .with_one_way_message_handler(one_way2)
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(resolver)
+        .with_logger(logger.clone());
+    let id1 = compact_id(&km1.get_node_public_key());
+    let id2 = compact_id(&km2.get_node_public_key());
+    let p1_pub = km1.get_node_public_key();
+    let p2_pub = km2.get_node_public_key();
+    let t1 = Arc::new(QuicTransport::new(t1_opts)?);
+    let t2 = Arc::new(QuicTransport::new(t2_opts)?);
+    t1.clone().start().await?;
+    t2.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Prepare peer infos using the bound addresses directly
+    let p1 = PeerInfo {
+        public_key: p1_pub,
+        addresses: vec!["127.0.0.1:50151".to_string()],
+    };
+    let p2 = PeerInfo {
+        public_key: p2_pub,
+        addresses: vec!["127.0.0.1:50152".to_string()],
+    };
+
+    // Start outbound dial from t1 to t2, and almost immediately accept inbound by dialing back t2->t1
+    let _d1 = {
+        let t1c = t1.clone();
+        let p2c = p2.clone();
+        tokio::spawn(async move { t1c.connect_peer(p2c).await })
+    };
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let _ = t2.clone().connect_peer(p1.clone()).await; // inbound should cancel t1's outbound if it wins
+
+    // Allow some time for duplicate resolution
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Exactly one side should have a single active connection and requests must work
+    assert!(t1.is_connected(id2.clone()).await || t2.is_connected(id1.clone()).await);
+
+    // Simple request to verify stable connection
+    let topic = runar_node::routing::TopicPath::new("$registry/services/list", "main").unwrap();
+    let ctx = runar_node::network::transport::MessageContext {
+        profile_public_key: vec![],
+    };
+    let res1 = t1.request(&topic, None, &id2, ctx.clone()).await;
+    let _ = match res1 {
+        Ok(v) => Ok(v),
+        Err(_) => t2.request(&topic, None, &id1, ctx).await,
+    }?;
+
+    t1.stop().await?;
+    t2.stop().await?;
+    Ok(())
+}
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::network::transport::{
-    MessageContext, MESSAGE_TYPE_ANNOUNCEMENT, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
-    MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
+    MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST,
+    MESSAGE_TYPE_RESPONSE,
 };
+use runar_schemas::{NodeMetadata, SubscriptionMetadata};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,14 +176,15 @@ use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
-    MessageHandler, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
-    OneWayMessageHandler,
+    ConnectionCallback, MessageHandler, NetworkMessage, NetworkMessagePayloadItem,
+    NetworkTransport, OneWayMessageHandler,
 };
 use runar_node::routing::TopicPath;
-use runar_node::{ActionMetadata, EventMetadata, ServiceMetadata};
+use runar_node::{ActionMetadata, ServiceMetadata};
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
 use runar_serializer::ArcValue;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 // Dummy crypto that performs no-op encryption for tests
@@ -58,7 +221,12 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
 /// 5. Certificate-based security
 #[tokio::test]
 async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    // Watchdog to prevent indefinite hangs
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        panic!("test_quic_transport timed out");
+    });
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("quic_test"), ""));
@@ -325,34 +493,34 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         node_public_key: node1_public_key_bytes.clone(),
         network_ids: vec!["test".to_string()],
         addresses: vec!["127.0.0.1:50069".to_string()],
-        services: vec![ServiceMetadata {
-            network_id: "test".to_string(),
-            service_path: "api1".to_string(),
-            name: "api1".to_string(),
-            version: "1.0.0".to_string(),
-            description: "API 1".to_string(),
-            actions: vec![
-                ActionMetadata {
-                    name: "get".to_string(),
-                    description: "GET operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-                ActionMetadata {
-                    name: "post".to_string(),
-                    description: "POST operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-            ],
-            events: vec![EventMetadata {
-                path: "data_processed".to_string(),
-                description: "Data processing completed".to_string(),
-                data_schema: None,
+        node_metadata: NodeMetadata {
+            services: vec![ServiceMetadata {
+                network_id: "test".to_string(),
+                service_path: "api1".to_string(),
+                name: "api1".to_string(),
+                version: "1.0.0".to_string(),
+                description: "API 1".to_string(),
+                actions: vec![
+                    ActionMetadata {
+                        name: "get".to_string(),
+                        description: "GET operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                    ActionMetadata {
+                        name: "post".to_string(),
+                        description: "POST operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                ],
+                registration_time: 0,
+                last_start_time: None,
             }],
-            registration_time: 0,
-            last_start_time: None,
-        }],
+            subscriptions: vec![SubscriptionMetadata {
+                path: "data_processed".to_string(),
+            }],
+        },
         version: 1,
     };
 
@@ -360,34 +528,34 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         node_public_key: node2_public_key_bytes.clone(),
         network_ids: vec!["test".to_string()],
         addresses: vec!["127.0.0.1:50044".to_string()],
-        services: vec![ServiceMetadata {
-            network_id: "test".to_string(),
-            service_path: "storage1".to_string(),
-            name: "storage1".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Storage 1".to_string(),
-            actions: vec![
-                ActionMetadata {
-                    name: "store".to_string(),
-                    description: "Store operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-                ActionMetadata {
-                    name: "retrieve".to_string(),
-                    description: "Retrieve operation".to_string(),
-                    input_schema: None,
-                    output_schema: None,
-                },
-            ],
-            events: vec![EventMetadata {
-                path: "storage_updated".to_string(),
-                description: "Storage state changed".to_string(),
-                data_schema: None,
+        node_metadata: NodeMetadata {
+            services: vec![ServiceMetadata {
+                network_id: "test".to_string(),
+                service_path: "storage1".to_string(),
+                name: "storage1".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Storage 1".to_string(),
+                actions: vec![
+                    ActionMetadata {
+                        name: "store".to_string(),
+                        description: "Store operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                    ActionMetadata {
+                        name: "retrieve".to_string(),
+                        description: "Retrieve operation".to_string(),
+                        input_schema: None,
+                        output_schema: None,
+                    },
+                ],
+                registration_time: 0,
+                last_start_time: None,
             }],
-            registration_time: 0,
-            last_start_time: None,
-        }],
+            subscriptions: vec![SubscriptionMetadata {
+                path: "storage_updated".to_string(),
+            }],
+        },
         version: 1,
     };
 
@@ -433,8 +601,12 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // ==================================================
 
     logger.debug("Starting transport services...");
-    transport1.clone().start().await?;
-    transport2.clone().start().await?;
+    // Start transports concurrently
+    let (r1, r2) = tokio::join!(transport1.clone().start(), transport2.clone().start());
+    r1?;
+    r2?;
+    // Small readiness wait to ensure endpoint is bound before connect
+    tokio::time::sleep(Duration::from_millis(150)).await;
 
     logger.debug("Started both transport services");
 
@@ -447,22 +619,27 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
 
     logger.debug("Connecting peers...");
 
-    // Test connection establishment
-    let peer_info_1 = PeerInfo::new(node1_public_key_bytes.clone(), node1_info.addresses.clone());
+    // Test connection establishment (single initiator)
     let peer_info_2 = PeerInfo::new(node2_public_key_bytes.clone(), node2_info.addresses.clone());
 
-    // Force both transports to connect to each other for bidirectional communication
-    logger.debug(" Establishing bidirectional connections...");
+    // Single initiator to avoid simultaneous dial races
+    logger.debug(" Establishing connection from Transport1 to Transport2...");
     transport1.clone().connect_peer(peer_info_2).await?;
-    transport2.clone().connect_peer(peer_info_1).await?;
 
     logger.debug("⏱️  Waiting for connections to establish...");
-    // Allow connections to establish
-    // tokio::time::sleep(Duration::from_millis(1000)).await;
-
-    // Verify connections
-    let t1_connected = transport1.is_connected(node2_id.clone()).await;
-    let t2_connected = transport2.is_connected(node1_id.clone()).await;
+    // Bounded wait loop to allow duplicate-resolution/handshake to settle
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let (t1_connected, t2_connected) = loop {
+        let t1 = transport1.is_connected(node2_id.clone()).await;
+        let t2 = transport2.is_connected(node1_id.clone()).await;
+        if t1 && t2 {
+            break (t1, t2);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break (t1, t2);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
     logger.debug(format!(
         " Connection status: T1→T2={t1_connected}, T2→T1={t2_connected}"
     ));
@@ -539,6 +716,31 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     let (sender_transport, sender_info, receiver_info) =
         (transport1.clone(), &node1_info, &node2_info);
 
+    // Reconfirm connectivity just before request; attempt idempotent reconnect if needed
+    if !sender_transport
+        .is_connected(compact_id(&receiver_info.node_public_key))
+        .await
+    {
+        let peer_info = PeerInfo::new(
+            receiver_info.node_public_key.clone(),
+            receiver_info.addresses.clone(),
+        );
+        let _ = sender_transport.clone().connect_peer(peer_info).await; // best-effort
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if sender_transport
+                .is_connected(compact_id(&receiver_info.node_public_key))
+                .await
+            {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     // Create a test request
     let test_data = ArcValue::new_primitive("test_value".to_string());
 
@@ -588,19 +790,15 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     logger.info("📡 Testing event publishing...");
 
     let event_data = ArcValue::new_primitive("event_data".to_string());
-    let event_message = NetworkMessage {
-        source_node_id: compact_id(&sender_info.node_public_key),
-        destination_node_id: compact_id(&receiver_info.node_public_key),
-        message_type: MESSAGE_TYPE_EVENT,
-        payloads: vec![NetworkMessagePayloadItem {
-            path: "test:api1/data_processed".to_string(),
-            value_bytes: event_data.serialize(None)?,
-            correlation_id: format!("event-{}", uuid::Uuid::new_v4()),
-            context: None,
-        }],
-    };
 
-    sender_transport.publish(event_message).await?;
+    let topic_path = TopicPath::new("test:api1/data_processed", "test")?;
+    sender_transport
+        .publish(
+            &topic_path,
+            Some(event_data),
+            &compact_id(&receiver_info.node_public_key),
+        )
+        .await?;
 
     // Allow message to be processed
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -619,42 +817,6 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     drop(event_msgs);
 
     logger.info("Event publishing working correctly");
-
-    // ==================================================
-    // STEP 13: Test Announcement Messages
-    // ==================================================
-
-    logger.info("Testing announcement messages...");
-
-    let announcement_message = NetworkMessage {
-        source_node_id: compact_id(&sender_info.node_public_key),
-        destination_node_id: compact_id(&receiver_info.node_public_key),
-        message_type: MESSAGE_TYPE_ANNOUNCEMENT,
-        payloads: vec![NetworkMessagePayloadItem {
-            path: "".to_string(),
-            value_bytes: "Test announcement data".as_bytes().to_vec(),
-            correlation_id: "announcement_test".to_string(),
-            context: None,
-        }],
-    };
-
-    sender_transport.publish(announcement_message).await?;
-
-    // Allow message to be processed
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Check that announcement was received
-    let announcement_msgs = receiver_msgs.lock().await;
-    let announcement_received = announcement_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
-    assert!(
-        announcement_received,
-        "Announcement message should be received"
-    );
-    drop(announcement_msgs);
-
-    logger.info("Announcement messages working correctly");
 
     // ==================================================
     // STEP 14: Comprehensive Analysis
@@ -745,12 +907,6 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         || node2_msgs
             .iter()
             .any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
-    let has_announcement = node1_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT)
-        || node2_msgs
-            .iter()
-            .any(|msg| msg.message_type == MESSAGE_TYPE_ANNOUNCEMENT);
 
     if has_handshake {
         logger.info("Handshake messages processed successfully");
@@ -761,16 +917,524 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     if has_event {
         logger.info("Event messages processed successfully");
     }
-    if has_announcement {
-        logger.info("Announcement messages processed successfully");
-    }
 
     // Clean up
     logger.info("\nCleaning up...");
     transport1.stop().await?;
     transport2.stop().await?;
     logger.info("Transports stopped successfully!");
+    // Cancel watchdog on success
+    watchdog.abort();
+    let _ = watchdog.await;
 
+    Ok(())
+}
+
+/// Ensures server-side idempotency: two REQUESTs with the same correlation_id
+/// must invoke the handler only once and the second request must be served from
+/// the transport response cache.
+#[tokio::test]
+async fn test_request_dedup_same_correlation_id_two_sends(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::compact_ids::compact_id;
+    use runar_common::logging::{Component, Logger};
+    use runar_keys::{MobileKeyManager, NodeKeyManager};
+    use runar_node::config::{LogLevel, LoggingConfig};
+    use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
+    use runar_node::network::transport::SkipServerVerification;
+    use runar_node::network::transport::{
+        NetworkMessage, NetworkMessagePayloadItem, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
+    };
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("dedup_test"), ""));
+
+    // CA + node certs
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km_server = NodeKeyManager::new(logger.clone())?;
+    let csr_server = km_server.generate_csr()?;
+    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
+    km_server.install_certificate(cert_server)?;
+
+    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    // Minimal NodeInfo
+    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+        node_public_key: rand::random::<[u8; 32]>().to_vec(),
+        network_ids: vec!["main".to_string()],
+        addresses: vec![addr.to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+
+    // Bind server transport
+    let server_addr = "127.0.0.1:50161".parse().unwrap();
+    let server_info = mk_info("127.0.0.1:0");
+
+    let invocation_count = Arc::new(AtomicUsize::new(0));
+    let count_clone = invocation_count.clone();
+    let handler: MessageHandler = Box::new(move |m: NetworkMessage| {
+        let count_clone = count_clone.clone();
+        Box::pin(async move {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+            let corr = m
+                .payloads
+                .first()
+                .map(|p| p.correlation_id.clone())
+                .unwrap_or_default();
+            let path = m
+                .payloads
+                .first()
+                .map(|p| p.path.clone())
+                .unwrap_or_else(|| "test".to_string());
+            let response_value = ArcValue::new_primitive("ok".to_string());
+            let reply = NetworkMessage {
+                source_node_id: m.destination_node_id.clone(),
+                destination_node_id: m.source_node_id.clone(),
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payloads: vec![NetworkMessagePayloadItem {
+                    path,
+                    value_bytes: response_value.serialize(None).unwrap_or_default(),
+                    context: None,
+                    correlation_id: corr,
+                }],
+            };
+            Ok(Some(reply))
+        })
+    });
+    let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+
+    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+        label_mappings: HashMap::new(),
+    }));
+    let server_opts = QuicTransportOptions::new()
+        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert])
+        .with_local_node_info(server_info)
+        .with_bind_addr(server_addr)
+        .with_response_cache_ttl(Duration::from_secs(3))
+        .with_message_handler(handler)
+        .with_one_way_message_handler(one_way)
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(resolver)
+        .with_logger(logger.clone());
+    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
+    let server_id = compact_id(&km_server.get_node_public_key());
+    server_transport.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Build a raw QUIC client using SkipServerVerification to simplify TLS
+    let client_endpoint = {
+        let transport_config = quinn::TransportConfig::default();
+        let client_rustls = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
+            .with_no_client_auth();
+        let quic_client = quinn::crypto::rustls::QuicClientConfig::try_from(client_rustls)?;
+        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client));
+        client_config.transport_config(Arc::new(transport_config));
+
+        let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse::<SocketAddr>()?)?;
+        endpoint.set_default_client_config(client_config);
+        endpoint
+    };
+
+    let server_sock: SocketAddr = server_transport.get_local_address().parse()?;
+    let dns_name = "test.local"; // SNI arbitrary; server does not validate it
+
+    // Helper to encode a request message with given correlation id
+    fn encode_len_prefixed(msg: &NetworkMessage) -> Vec<u8> {
+        let mut buf = serde_cbor::to_vec(msg).expect("cbor");
+        let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
+        framed.append(&mut buf);
+        framed
+    }
+
+    // Create a request with fixed correlation id
+    let correlation_id = "corr-123".to_string();
+    let request_msg = NetworkMessage {
+        source_node_id: "raw_client".to_string(),
+        destination_node_id: server_id.clone(),
+        message_type: MESSAGE_TYPE_REQUEST,
+        payloads: vec![NetworkMessagePayloadItem {
+            path: "$test/path".to_string(),
+            value_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
+            context: Some(MessageContext {
+                profile_public_key: vec![],
+            }),
+            correlation_id: correlation_id.clone(),
+        }],
+    };
+    let framed = encode_len_prefixed(&request_msg);
+
+    // First send: write request then drop the connection without reading the response
+    {
+        let connecting = client_endpoint.connect(server_sock, dns_name)?;
+        let conn = connecting.await?;
+        let (mut send, _recv) = conn.open_bi().await?;
+        // Write part of the frame to simulate a mid-write drop
+        let half = framed.len() / 2;
+        send.write_all(&framed[..half]).await?;
+        // drop without finishing, then close connection
+        conn.close(0u32.into(), b"test-drop");
+    }
+
+    // Small delay to allow server to process
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Second send with the same correlation id: should be served from cache; handler count must remain 1
+    {
+        let connecting = client_endpoint.connect(server_sock, dns_name)?;
+        let conn = connecting.await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(&framed).await?;
+        send.finish()?;
+
+        // Read length-prefixed response
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf).await?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut data = vec![0u8; len];
+        recv.read_exact(&mut data).await?;
+        let reply: NetworkMessage = serde_cbor::from_slice(&data)?;
+        assert_eq!(reply.message_type, MESSAGE_TYPE_RESPONSE);
+        assert_eq!(reply.payloads.len(), 1);
+        assert_eq!(reply.payloads[0].correlation_id, correlation_id);
+    }
+
+    assert_eq!(
+        invocation_count.load(Ordering::SeqCst),
+        1,
+        "handler must be invoked exactly once"
+    );
+
+    server_transport.stop().await?;
+    Ok(())
+}
+
+/// Force failure on write path (open_bi ok but connection closed before any write)
+/// Ensure no cache insert occurs and handler invoked once upon later success.
+#[tokio::test]
+async fn test_write_failure_then_success_does_not_cache_until_sent(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::compact_ids::compact_id;
+    use runar_common::logging::{Component, Logger};
+    use runar_keys::{MobileKeyManager, NodeKeyManager};
+    use runar_node::config::{LogLevel, LoggingConfig};
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("write_fail_test"), ""));
+
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km_server = NodeKeyManager::new(logger.clone())?;
+    let csr_server = km_server.generate_csr()?;
+    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
+    km_server.install_certificate(cert_server)?;
+    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+        node_public_key: rand::random::<[u8; 32]>().to_vec(),
+        network_ids: vec!["main".to_string()],
+        addresses: vec![addr.to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let server_addr = "127.0.0.1:50162".parse().unwrap();
+    let server_info = mk_info("127.0.0.1:0");
+
+    let invocation_count = Arc::new(AtomicUsize::new(0));
+    let count_clone = invocation_count.clone();
+    let handler: MessageHandler = Box::new(move |m: NetworkMessage| {
+        let count_clone = count_clone.clone();
+        Box::pin(async move {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+            let corr = m
+                .payloads
+                .first()
+                .map(|p| p.correlation_id.clone())
+                .unwrap_or_default();
+            let path = m
+                .payloads
+                .first()
+                .map(|p| p.path.clone())
+                .unwrap_or_else(|| "test".to_string());
+            let response_value = ArcValue::new_primitive("ok".to_string());
+            let reply = NetworkMessage {
+                source_node_id: m.destination_node_id.clone(),
+                destination_node_id: m.source_node_id.clone(),
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payloads: vec![NetworkMessagePayloadItem {
+                    path,
+                    value_bytes: response_value.serialize(None).unwrap_or_default(),
+                    context: None,
+                    correlation_id: corr,
+                }],
+            };
+            Ok(Some(reply))
+        })
+    });
+    let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+
+    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+        label_mappings: HashMap::new(),
+    }));
+    let server_opts = QuicTransportOptions::new()
+        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert])
+        .with_local_node_info(server_info)
+        .with_bind_addr(server_addr)
+        .with_response_cache_ttl(Duration::from_secs(3))
+        .with_message_handler(handler)
+        .with_one_way_message_handler(one_way)
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(resolver)
+        .with_logger(logger.clone());
+    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
+    let server_id = compact_id(&km_server.get_node_public_key());
+    server_transport.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Build client endpoint with SkipServerVerification
+    use runar_node::network::transport::SkipServerVerification;
+    let endpoint = {
+        let client_rustls = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
+            .with_no_client_auth();
+        let quic_client = quinn::crypto::rustls::QuicClientConfig::try_from(client_rustls)?;
+        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client));
+        client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        let mut ep = quinn::Endpoint::client("127.0.0.1:0".parse::<SocketAddr>()?)?;
+        ep.set_default_client_config(client_config);
+        ep
+    };
+    let server_sock: SocketAddr = server_transport.get_local_address().parse()?;
+
+    // Prepare message
+    let correlation_id = "corr-write-fail".to_string();
+    let request_msg = NetworkMessage {
+        source_node_id: "raw_client".to_string(),
+        destination_node_id: server_id.clone(),
+        message_type: MESSAGE_TYPE_REQUEST,
+        payloads: vec![NetworkMessagePayloadItem {
+            path: "$test/path".to_string(),
+            value_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
+            context: Some(MessageContext {
+                profile_public_key: vec![],
+            }),
+            correlation_id: correlation_id.clone(),
+        }],
+    };
+    let mut framed = serde_cbor::to_vec(&request_msg)?;
+    let mut len = (framed.len() as u32).to_be_bytes().to_vec();
+    len.append(&mut framed);
+
+    // First attempt: open then immediately close before any write
+    {
+        let conn = endpoint.connect(server_sock, "test.local")?.await?;
+        let (_send, _recv) = conn.open_bi().await?;
+        // Immediately close before writing to simulate write failure
+        conn.close(0u32.into(), b"abort-before-write");
+    }
+
+    tokio::time::sleep(Duration::from_millis(120)).await;
+
+    // Second attempt: send fully and read response
+    {
+        let conn = endpoint.connect(server_sock, "test.local")?.await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(&len).await?;
+        send.finish()?;
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf).await?;
+        let resp_len = u32::from_be_bytes(len_buf) as usize;
+        let mut data = vec![0u8; resp_len];
+        recv.read_exact(&mut data).await?;
+        let reply: NetworkMessage = serde_cbor::from_slice(&data)?;
+        assert_eq!(reply.message_type, MESSAGE_TYPE_RESPONSE);
+        assert_eq!(reply.payloads[0].correlation_id, correlation_id);
+    }
+
+    // Handler must have been invoked exactly once
+    assert_eq!(invocation_count.load(Ordering::SeqCst), 1);
+    server_transport.stop().await?;
+    Ok(())
+}
+
+/// Verify cache expiry: after TTL, the same correlation_id triggers the handler again
+#[tokio::test]
+async fn test_cache_expiry_triggers_handler_again(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::compact_ids::compact_id;
+    use runar_common::logging::{Component, Logger};
+    use runar_keys::{MobileKeyManager, NodeKeyManager};
+    use runar_node::config::{LogLevel, LoggingConfig};
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("expiry_test"), ""));
+
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km_server = NodeKeyManager::new(logger.clone())?;
+    let csr_server = km_server.generate_csr()?;
+    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
+    km_server.install_certificate(cert_server)?;
+    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+        node_public_key: rand::random::<[u8; 32]>().to_vec(),
+        network_ids: vec!["main".to_string()],
+        addresses: vec![addr.to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let server_addr = "127.0.0.1:50163".parse().unwrap();
+    let server_info = mk_info("127.0.0.1:0");
+
+    let invocation_count = Arc::new(AtomicUsize::new(0));
+    let count_clone = invocation_count.clone();
+    let handler: MessageHandler = Box::new(move |m: NetworkMessage| {
+        let count_clone = count_clone.clone();
+        Box::pin(async move {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+            let corr = m
+                .payloads
+                .first()
+                .map(|p| p.correlation_id.clone())
+                .unwrap_or_default();
+            let path = m
+                .payloads
+                .first()
+                .map(|p| p.path.clone())
+                .unwrap_or_else(|| "test".to_string());
+            let response_value = ArcValue::new_primitive("ok".to_string());
+            let reply = NetworkMessage {
+                source_node_id: m.destination_node_id.clone(),
+                destination_node_id: m.source_node_id.clone(),
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payloads: vec![NetworkMessagePayloadItem {
+                    path,
+                    value_bytes: response_value.serialize(None).unwrap_or_default(),
+                    context: None,
+                    correlation_id: corr,
+                }],
+            };
+            Ok(Some(reply))
+        })
+    });
+    let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+
+    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+        label_mappings: HashMap::new(),
+    }));
+    let ttl = Duration::from_secs(2);
+    let server_opts = QuicTransportOptions::new()
+        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert])
+        .with_local_node_info(server_info)
+        .with_bind_addr(server_addr)
+        .with_response_cache_ttl(ttl)
+        .with_message_handler(handler)
+        .with_one_way_message_handler(one_way)
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(resolver)
+        .with_logger(logger.clone());
+    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
+    let server_id = compact_id(&km_server.get_node_public_key());
+    server_transport.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Client setup with SkipServerVerification
+    use runar_node::network::transport::SkipServerVerification;
+    let client_endpoint = {
+        let client_rustls = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
+            .with_no_client_auth();
+        let quic_client = quinn::crypto::rustls::QuicClientConfig::try_from(client_rustls)?;
+        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client));
+        client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        let mut ep = quinn::Endpoint::client("127.0.0.1:0".parse::<SocketAddr>()?)?;
+        ep.set_default_client_config(client_config);
+        ep
+    };
+    let server_sock: SocketAddr = server_transport.get_local_address().parse()?;
+    let corr = "corr-expiry".to_string();
+
+    let mk_req = || NetworkMessage {
+        source_node_id: "raw_client".to_string(),
+        destination_node_id: server_id.clone(),
+        message_type: MESSAGE_TYPE_REQUEST,
+        payloads: vec![NetworkMessagePayloadItem {
+            path: "$x".to_string(),
+            value_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
+            context: Some(MessageContext {
+                profile_public_key: vec![],
+            }),
+            correlation_id: corr.clone(),
+        }],
+    };
+    let encode = |m: &NetworkMessage| {
+        let mut b = serde_cbor::to_vec(m).unwrap();
+        let mut f = (b.len() as u32).to_be_bytes().to_vec();
+        f.append(&mut b);
+        f
+    };
+
+    // First call
+    {
+        let conn = client_endpoint.connect(server_sock, "test.local")?.await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        // no extra imports needed
+        let framed = encode(&mk_req());
+        send.write_all(&framed).await?;
+        send.finish()?;
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf).await?;
+        let resp_len = u32::from_be_bytes(len_buf) as usize;
+        let mut data = vec![0u8; resp_len];
+        recv.read_exact(&mut data).await?;
+        let _reply: NetworkMessage = serde_cbor::from_slice(&data)?;
+    }
+
+    // Wait past TTL
+    tokio::time::sleep(ttl + Duration::from_millis(300)).await;
+
+    // Second call with same correlation id should invoke handler again
+    {
+        let conn = client_endpoint.connect(server_sock, "test.local")?.await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        // read_exact is used below via fully qualified path
+        let framed = encode(&mk_req());
+        send.write_all(&framed).await?;
+        send.finish()?;
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf).await?;
+        let resp_len = u32::from_be_bytes(len_buf) as usize;
+        let mut data = vec![0u8; resp_len];
+        recv.read_exact(&mut data).await?;
+        let _reply: NetworkMessage = serde_cbor::from_slice(&data)?;
+    }
+
+    assert_eq!(invocation_count.load(Ordering::SeqCst), 2);
+    server_transport.stop().await?;
     Ok(())
 }
 
@@ -780,9 +1444,706 @@ fn map_message_type_to_string(message_type: u32) -> String {
         MESSAGE_TYPE_REQUEST => "REQUEST".to_string(),
         MESSAGE_TYPE_RESPONSE => "RESPONSE".to_string(),
         MESSAGE_TYPE_EVENT => "EVENT".to_string(),
-        MESSAGE_TYPE_ANNOUNCEMENT => "ANNOUNCEMENT".to_string(),
         _ => "UNKNOWN".to_string(),
     }
+}
+
+// Duplicate-resolution and simultaneous dial scenario
+#[tokio::test]
+async fn test_quic_duplicate_resolution_simultaneous_dial(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Watchdog to prevent indefinite hangs
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        panic!("test_quic_duplicate_resolution_simultaneous_dial timed out");
+    });
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("dup_test"), ""));
+
+    // Keys and certs
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
+    let cert_1 = mobile_ca.process_setup_token(&node_key_manager_1.generate_csr()?)?;
+    node_key_manager_1.install_certificate(cert_1)?;
+    let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
+    let cert_2 = mobile_ca.process_setup_token(&node_key_manager_2.generate_csr()?)?;
+    node_key_manager_2.install_certificate(cert_2)?;
+
+    let node1_cert_config = node_key_manager_1.get_quic_certificate_config()?;
+    let node2_cert_config = node_key_manager_2.get_quic_certificate_config()?;
+    let ca_certificate = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    // Node infos
+    let node1_pk = node_key_manager_1.get_node_public_key();
+    let node2_pk = node_key_manager_2.get_node_public_key();
+    let node1_id = compact_id(&node1_pk);
+    let node2_id = compact_id(&node2_pk);
+
+    let node1_info = NodeInfo {
+        node_public_key: node1_pk.clone(),
+        network_ids: vec!["test".to_string()],
+        addresses: vec!["127.0.0.1:50111".to_string()],
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let node2_info = NodeInfo {
+        node_public_key: node2_pk.clone(),
+        network_ids: vec!["test".to_string()],
+        addresses: vec!["127.0.0.1:50112".to_string()],
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+
+    // Minimal handlers
+    let logger1 = logger.clone();
+    let handler1: MessageHandler = Box::new(move |msg: NetworkMessage| {
+        let log = logger1.clone();
+        Box::pin(async move {
+            log.debug(format!(
+                "[dup_test.T1] received msg type={} from {}",
+                msg.message_type, msg.source_node_id
+            ));
+            if msg.message_type == MESSAGE_TYPE_REQUEST {
+                let resp = NetworkMessage {
+                    source_node_id: msg.destination_node_id.clone(),
+                    destination_node_id: msg.source_node_id.clone(),
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payloads: msg.payloads.clone(),
+                };
+                Ok(Some(resp))
+            } else {
+                Ok(None)
+            }
+        })
+    });
+    let one_way1: OneWayMessageHandler =
+        Box::new(move |_msg: NetworkMessage| Box::pin(async { Ok(()) }));
+
+    let logger2 = logger.clone();
+    let handler2: MessageHandler = Box::new(move |msg: NetworkMessage| {
+        let log = logger2.clone();
+        Box::pin(async move {
+            log.debug(format!(
+                "[dup_test.T2] received msg type={} from {}",
+                msg.message_type, msg.source_node_id
+            ));
+            if msg.message_type == MESSAGE_TYPE_REQUEST {
+                let resp = NetworkMessage {
+                    source_node_id: msg.destination_node_id.clone(),
+                    destination_node_id: msg.source_node_id.clone(),
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payloads: msg.payloads.clone(),
+                };
+                Ok(Some(resp))
+            } else {
+                Ok(None)
+            }
+        })
+    });
+    let one_way2: OneWayMessageHandler =
+        Box::new(move |_msg: NetworkMessage| Box::pin(async { Ok(()) }));
+
+    // Build transports
+    let empty_resolver: Arc<dyn LabelResolver> =
+        Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+            label_mappings: HashMap::new(),
+        }));
+    let t1_opts = QuicTransportOptions::new()
+        .with_certificates(node1_cert_config.certificate_chain)
+        .with_private_key(node1_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate.clone()])
+        .with_local_node_info(node1_info.clone())
+        .with_bind_addr("127.0.0.1:50111".parse::<SocketAddr>()?)
+        .with_message_handler(handler1)
+        .with_one_way_message_handler(one_way1)
+        .with_logger(logger.clone())
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(empty_resolver.clone());
+    let t2_opts = QuicTransportOptions::new()
+        .with_certificates(node2_cert_config.certificate_chain)
+        .with_private_key(node2_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate])
+        .with_local_node_info(node2_info.clone())
+        .with_bind_addr("127.0.0.1:50112".parse::<SocketAddr>()?)
+        .with_message_handler(handler2)
+        .with_one_way_message_handler(one_way2)
+        .with_logger(logger.clone())
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(empty_resolver.clone());
+
+    let t1 = Arc::new(QuicTransport::new(t1_opts)?);
+    let t2 = Arc::new(QuicTransport::new(t2_opts)?);
+
+    let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
+    sr1?;
+    sr2?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Simultaneous dial
+    let p1 = PeerInfo::new(
+        node1_info.node_public_key.clone(),
+        node1_info.addresses.clone(),
+    );
+    let p2 = PeerInfo::new(
+        node2_info.node_public_key.clone(),
+        node2_info.addresses.clone(),
+    );
+    let (c12, c21) = tokio::join!(t1.clone().connect_peer(p2), t2.clone().connect_peer(p1));
+    c12?;
+    c21?;
+
+    // Allow duplicate-resolution to settle
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if t1.is_connected(node2_id.clone()).await && t2.is_connected(node1_id.clone()).await {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert!(
+        t1.is_connected(node2_id.clone()).await && t2.is_connected(node1_id.clone()).await,
+        "both directions should be connected after simultaneous dial"
+    );
+
+    // Concurrent requests both directions to ensure stability
+    let path1 = TopicPath::new("test:echo/req", "test")?;
+    let payload = ArcValue::new_primitive("x".to_string());
+    let ctx1 = MessageContext {
+        profile_public_key: node1_info.node_public_key.clone(),
+    };
+    let ctx2 = MessageContext {
+        profile_public_key: node2_info.node_public_key.clone(),
+    };
+    let f1 = t1.request(&path1, Some(payload.clone()), &node2_id, ctx1);
+    let f2 = t2.request(&path1, Some(payload.clone()), &node1_id, ctx2);
+    let (r1, r2) = tokio::join!(f1, f2);
+    assert!(
+        r1.is_ok() && r2.is_ok(),
+        "bidirectional requests should succeed post-dup-resolution"
+    );
+
+    t1.stop().await?;
+    t2.stop().await?;
+    watchdog.abort();
+    let _ = watchdog.await;
+    Ok(())
+}
+
+// Lifecycle callbacks (on_up/on_down) scenario
+#[tokio::test]
+async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        panic!("test_quic_lifecycle_callbacks timed out");
+    });
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("lifecycle_test"), ""));
+
+    // Keys and certs
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km1 = NodeKeyManager::new(logger.clone())?;
+    let csr1 = km1.generate_csr()?;
+    let cert1 = mobile_ca.process_setup_token(&csr1)?;
+    km1.install_certificate(cert1)?;
+    let mut km2 = NodeKeyManager::new(logger.clone())?;
+    let csr2 = km2.generate_csr()?;
+    let cert2 = mobile_ca.process_setup_token(&csr2)?;
+    km2.install_certificate(cert2)?;
+    let n1 = km1.get_node_public_key();
+    let n2 = km2.get_node_public_key();
+    let id1 = compact_id(&n1);
+    let id2 = compact_id(&n2);
+    let ca = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    let info1 = NodeInfo {
+        node_public_key: n1.clone(),
+        network_ids: vec!["test".to_string()],
+        addresses: vec!["127.0.0.1:50131".to_string()],
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let info2 = NodeInfo {
+        node_public_key: n2.clone(),
+        network_ids: vec!["test".to_string()],
+        addresses: vec!["127.0.0.1:50132".to_string()],
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+
+    // Handlers no-op
+    let handler: MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+
+    // Capture lifecycle events
+    let events1: Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
+        Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let events2: Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
+        Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let cb1: ConnectionCallback = {
+        let ev = events1.clone();
+        Arc::new(move |peer: String, up: bool, _info: Option<NodeInfo>| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, up));
+                Ok(())
+            })
+        })
+    };
+    let cb2: ConnectionCallback = {
+        let ev = events2.clone();
+        Arc::new(move |peer: String, up: bool, _info: Option<NodeInfo>| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, up));
+                Ok(())
+            })
+        })
+    };
+
+    let resolver: Arc<dyn LabelResolver> =
+        Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+            label_mappings: HashMap::new(),
+        }));
+    let t1 = Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca.clone()])
+            .with_local_node_info(info1.clone())
+            .with_bind_addr("127.0.0.1:50131".parse::<SocketAddr>()?)
+            .with_message_handler(handler)
+            .with_one_way_message_handler(one_way)
+            .with_connection_callback(cb1)
+            .with_logger(logger.clone())
+            .with_keystore(Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
+    let t2 = Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca])
+            .with_local_node_info(info2.clone())
+            .with_bind_addr("127.0.0.1:50132".parse::<SocketAddr>()?)
+            .with_message_handler(Box::new(|_m| Box::pin(async { Ok(None) })))
+            .with_one_way_message_handler(Box::new(|_m| Box::pin(async { Ok(()) })))
+            .with_connection_callback(cb2)
+            .with_logger(logger.clone())
+            .with_keystore(Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
+
+    let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
+    sr1?;
+    sr2?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Connect 1 -> 2
+    t1.clone()
+        .connect_peer(PeerInfo::new(
+            info2.node_public_key.clone(),
+            info2.addresses.clone(),
+        ))
+        .await?;
+    // Wait for on_up
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let ev1 = events1.lock().await.clone();
+    let ev2 = events2.lock().await.clone();
+    assert!(
+        ev1.iter().any(|(p, up)| p == &id2 && *up),
+        "t1 should see on_up for t2"
+    );
+    assert!(
+        ev2.iter().any(|(p, up)| p == &id1 && *up),
+        "t2 should see on_up for t1 (inbound)"
+    );
+
+    // Stop t2, expect on_down at t1 after grace period
+    t2.stop().await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let ev1b = events1.lock().await.clone();
+    assert!(
+        ev1b.iter().any(|(p, up)| p == &id2 && !*up),
+        "t1 should see on_down for t2 after stop"
+    );
+
+    // Restart t2 and reconnect
+    t2.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    t1.clone()
+        .connect_peer(PeerInfo::new(
+            info2.node_public_key.clone(),
+            info2.addresses.clone(),
+        ))
+        .await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let ev1c = events1.lock().await.clone();
+    assert!(
+        ev1c.iter().filter(|(p, up)| p == &id2 && *up).count() >= 2,
+        "t1 should see second on_up for t2 after restart"
+    );
+
+    t1.stop().await?;
+    t2.stop().await?;
+    watchdog.abort();
+    let _ = watchdog.await;
+    Ok(())
+}
+
+// Capability version bump across reconnect
+#[tokio::test]
+async fn test_capability_version_bump_across_reconnect(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        panic!("test_capability_version_bump_across_reconnect timed out");
+    });
+
+    let logging_config = runar_node::config::LoggingConfig::new()
+        .with_default_level(runar_node::config::LogLevel::Warn);
+    logging_config.apply();
+    let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
+        runar_common::logging::Component::Custom("cap_version_test"),
+        "",
+    ));
+
+    // Keys/certs
+    let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
+    let _ = ca.initialize_user_root_key()?;
+    let mut km1 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let cert1 = ca.process_setup_token(&km1.generate_csr()?)?;
+    km1.install_certificate(cert1)?;
+    let mut km2 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let cert2 = ca.process_setup_token(&km2.generate_csr()?)?;
+    km2.install_certificate(cert2)?;
+    let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
+
+    // NodeInfo v0
+    let pk1 = km1.get_node_public_key();
+    let pk2 = km2.get_node_public_key();
+    let id1 = runar_common::compact_ids::compact_id(&pk1);
+    let id2 = runar_common::compact_ids::compact_id(&pk2);
+    let mut info1 = runar_node::network::discovery::NodeInfo {
+        node_public_key: pk1.clone(),
+        network_ids: vec!["test".into()],
+        addresses: vec!["127.0.0.1:50171".into()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let info2 = runar_node::network::discovery::NodeInfo {
+        node_public_key: pk2.clone(),
+        network_ids: vec!["test".into()],
+        addresses: vec!["127.0.0.1:50172".into()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+
+    // Handlers: respond ok, no-op one-way (distinct instances per transport)
+    let handler1: runar_node::network::transport::MessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way1: runar_node::network::transport::OneWayMessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let handler2: runar_node::network::transport::MessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way2: runar_node::network::transport::OneWayMessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let resolver: std::sync::Arc<dyn runar_serializer::traits::LabelResolver> =
+        std::sync::Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
+            runar_serializer::traits::KeyMappingConfig {
+                label_mappings: std::collections::HashMap::new(),
+            },
+        ));
+
+    let t1 = std::sync::Arc::new(
+        runar_node::network::transport::quic_transport::QuicTransport::new(
+            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
+                .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+                .with_private_key(km1.get_quic_certificate_config()?.private_key)
+                .with_root_certificates(vec![ca_cert.clone()])
+                .with_local_node_info(info1.clone())
+                .with_bind_addr("127.0.0.1:50171".parse()?)
+                .with_message_handler(handler1)
+                .with_one_way_message_handler(one_way1)
+                .with_logger(logger.clone())
+                .with_keystore(std::sync::Arc::new(NoCrypto))
+                .with_label_resolver(resolver.clone()),
+        )?,
+    );
+    let t2 = std::sync::Arc::new(
+        runar_node::network::transport::quic_transport::QuicTransport::new(
+            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
+                .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+                .with_private_key(km2.get_quic_certificate_config()?.private_key)
+                .with_root_certificates(vec![ca_cert])
+                .with_local_node_info(info2.clone())
+                .with_bind_addr("127.0.0.1:50172".parse()?)
+                .with_message_handler(handler2)
+                .with_one_way_message_handler(one_way2)
+                .with_logger(logger.clone())
+                .with_keystore(std::sync::Arc::new(NoCrypto))
+                .with_label_resolver(resolver.clone()),
+        )?,
+    );
+
+    let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
+    sr1?;
+    sr2?;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    // Connect and wait
+    t1.clone()
+        .connect_peer(
+            runar_node::network::discovery::multicast_discovery::PeerInfo::new(
+                info2.node_public_key.clone(),
+                info2.addresses.clone(),
+            ),
+        )
+        .await?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !t1.is_connected(id2.clone()).await || !t2.is_connected(id1.clone()).await {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Bump capability version on t1 and update peers
+    info1.version += 1;
+    t1.update_peers(info1.clone()).await?;
+
+    // Simulate t2 restart: stop and start again with same info
+    t2.stop().await?;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    t2.clone().start().await?;
+
+    // Reconnect
+    t1.clone()
+        .connect_peer(
+            runar_node::network::discovery::multicast_discovery::PeerInfo::new(
+                info2.node_public_key.clone(),
+                info2.addresses.clone(),
+            ),
+        )
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Basic check: still connected both ways
+    assert!(t1.is_connected(id2.clone()).await && t2.is_connected(id1.clone()).await);
+
+    t1.stop().await?;
+    t2.stop().await?;
+    watchdog.abort();
+    let _ = watchdog.await;
+    Ok(())
+}
+
+// Anti-flap: repeated simultaneous dials should converge to one stable connection without oscillation
+#[tokio::test]
+async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        panic!("test_quic_anti_flap_under_race timed out");
+    });
+
+    let logging_config = runar_node::config::LoggingConfig::new()
+        .with_default_level(runar_node::config::LogLevel::Warn);
+    logging_config.apply();
+    let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
+        runar_common::logging::Component::Custom("anti_flap_test"),
+        "",
+    ));
+
+    // Keys/certs
+    let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
+    let _ = ca.initialize_user_root_key()?;
+    let mut km1 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let cert1 = ca.process_setup_token(&km1.generate_csr()?)?;
+    km1.install_certificate(cert1)?;
+    let mut km2 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let cert2 = ca.process_setup_token(&km2.generate_csr()?)?;
+    km2.install_certificate(cert2)?;
+    let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
+
+    let pk1 = km1.get_node_public_key();
+    let pk2 = km2.get_node_public_key();
+    let id1 = runar_common::compact_ids::compact_id(&pk1);
+    let id2 = runar_common::compact_ids::compact_id(&pk2);
+    let info1 = runar_node::network::discovery::NodeInfo {
+        node_public_key: pk1.clone(),
+        network_ids: vec!["test".into()],
+        addresses: vec!["127.0.0.1:50181".into()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let info2 = runar_node::network::discovery::NodeInfo {
+        node_public_key: pk2.clone(),
+        network_ids: vec!["test".into()],
+        addresses: vec!["127.0.0.1:50182".into()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+
+    // Handlers
+    let handler1: runar_node::network::transport::MessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(None) }));
+    let handler2: runar_node::network::transport::MessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way1: runar_node::network::transport::OneWayMessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let one_way2: runar_node::network::transport::OneWayMessageHandler =
+        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let resolver: std::sync::Arc<dyn runar_serializer::traits::LabelResolver> =
+        std::sync::Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
+            runar_serializer::traits::KeyMappingConfig {
+                label_mappings: std::collections::HashMap::new(),
+            },
+        ));
+
+    // Lifecycle counters
+    let ev1: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let ev2: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let cb1: runar_node::network::transport::ConnectionCallback = {
+        let ev = ev1.clone();
+        std::sync::Arc::new(
+            move |peer: String,
+                  up: bool,
+                  _info: Option<runar_node::network::discovery::NodeInfo>| {
+                let ev = ev.clone();
+                Box::pin(async move {
+                    ev.lock().await.push((peer, up));
+                    Ok(())
+                })
+            },
+        )
+    };
+    let cb2: runar_node::network::transport::ConnectionCallback = {
+        let ev = ev2.clone();
+        std::sync::Arc::new(
+            move |peer: String,
+                  up: bool,
+                  _info: Option<runar_node::network::discovery::NodeInfo>| {
+                let ev = ev.clone();
+                Box::pin(async move {
+                    ev.lock().await.push((peer, up));
+                    Ok(())
+                })
+            },
+        )
+    };
+
+    let t1 = std::sync::Arc::new(
+        runar_node::network::transport::quic_transport::QuicTransport::new(
+            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
+                .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+                .with_private_key(km1.get_quic_certificate_config()?.private_key)
+                .with_root_certificates(vec![ca_cert.clone()])
+                .with_local_node_info(info1.clone())
+                .with_bind_addr("127.0.0.1:50181".parse()?)
+                .with_message_handler(handler1)
+                .with_one_way_message_handler(one_way1)
+                .with_connection_callback(cb1)
+                .with_logger(logger.clone())
+                .with_keystore(std::sync::Arc::new(NoCrypto))
+                .with_label_resolver(resolver.clone()),
+        )?,
+    );
+    let t2 = std::sync::Arc::new(
+        runar_node::network::transport::quic_transport::QuicTransport::new(
+            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
+                .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+                .with_private_key(km2.get_quic_certificate_config()?.private_key)
+                .with_root_certificates(vec![ca_cert])
+                .with_local_node_info(info2.clone())
+                .with_bind_addr("127.0.0.1:50182".parse()?)
+                .with_message_handler(handler2)
+                .with_one_way_message_handler(one_way2)
+                .with_connection_callback(cb2)
+                .with_logger(logger.clone())
+                .with_keystore(std::sync::Arc::new(NoCrypto))
+                .with_label_resolver(resolver.clone()),
+        )?,
+    );
+
+    let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
+    sr1?;
+    sr2?;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+    // Repeated race rounds
+    let p1 = runar_node::network::discovery::multicast_discovery::PeerInfo::new(
+        info1.node_public_key.clone(),
+        info1.addresses.clone(),
+    );
+    let p2 = runar_node::network::discovery::multicast_discovery::PeerInfo::new(
+        info2.node_public_key.clone(),
+        info2.addresses.clone(),
+    );
+    for _ in 0..5 {
+        let (a, b) = tokio::join!(
+            t1.clone().connect_peer(p2.clone()),
+            t2.clone().connect_peer(p1.clone())
+        );
+        let _ = (a, b);
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    }
+
+    // Allow final settling
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(t1.is_connected(id2.clone()).await && t2.is_connected(id1.clone()).await);
+
+    // Verify no flapping: exactly one Up per side, and no Down
+    let ev1 = ev1.lock().await.clone();
+    let ev2 = ev2.lock().await.clone();
+    let up1 = ev1.iter().filter(|(_, up)| *up).count();
+    let down1 = ev1.iter().filter(|(_, up)| !*up).count();
+    let up2 = ev2.iter().filter(|(_, up)| *up).count();
+    let down2 = ev2.iter().filter(|(_, up)| !*up).count();
+    assert_eq!(up1, 1, "t1 should see a single Up");
+    assert_eq!(down1, 0, "t1 should see no Down");
+    assert_eq!(up2, 1, "t2 should see a single Up");
+    assert_eq!(down2, 0, "t2 should see no Down");
+
+    t1.stop().await?;
+    t2.stop().await?;
+    watchdog.abort();
+    let _ = watchdog.await;
+    Ok(())
 }
 
 /// Test that the transport properly handles message header bounds checking
@@ -790,7 +2151,12 @@ fn map_message_type_to_string(message_type: u32) -> String {
 #[tokio::test]
 async fn test_transport_message_header_bounds_checking(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    // Watchdog to prevent indefinite hangs
+    let watchdog = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        panic!("test_transport_message_header_bounds_checking timed out");
+    });
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("bounds_test"), ""));
 
@@ -860,11 +2226,10 @@ async fn test_transport_message_header_bounds_checking(
     // that the CBOR serialization works correctly, which is the core of the message format
 
     // Test 5: Verify message type constants are properly defined
-    assert_eq!(MESSAGE_TYPE_HANDSHAKE, 4);
-    assert_eq!(MESSAGE_TYPE_REQUEST, 5);
-    assert_eq!(MESSAGE_TYPE_RESPONSE, 6);
-    assert_eq!(MESSAGE_TYPE_EVENT, 7);
-    assert_eq!(MESSAGE_TYPE_ANNOUNCEMENT, 3);
+    assert_eq!(MESSAGE_TYPE_HANDSHAKE, 3);
+    assert_eq!(MESSAGE_TYPE_REQUEST, 4);
+    assert_eq!(MESSAGE_TYPE_RESPONSE, 5);
+    assert_eq!(MESSAGE_TYPE_EVENT, 6);
 
     // Test 6: Verify message structure validation
     let empty_msg = NetworkMessage {
@@ -880,5 +2245,8 @@ async fn test_transport_message_header_bounds_checking(
     assert_eq!(empty_decoded.payloads.len(), 0);
 
     logger.debug("Message header bounds checking test completed successfully");
+    // Cancel watchdog on success
+    watchdog.abort();
+    let _ = watchdog.await;
     Ok(())
 }

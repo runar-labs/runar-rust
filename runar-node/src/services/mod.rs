@@ -29,6 +29,7 @@ pub mod service_registry;
 // Import necessary components
 use crate::node::Node; // Added for concrete type Node
 use crate::routing::TopicPath;
+use crate::services::service_registry::{EventHandler, RemoteEventHandler};
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
 use runar_schemas::{ActionMetadata, FieldSchema};
@@ -64,12 +65,6 @@ pub type ActionRegistrar = Arc<
             ActionHandler,
             Option<ActionMetadata>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-        + Send
-        + Sync,
->;
-
-pub type EventCallback = Box<
-    dyn Fn(Arc<EventContext>, Option<ArcValue>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
         + Send
         + Sync,
 >;
@@ -137,6 +132,36 @@ impl LifecycleContext {
         self.logger.error(message);
     }
 
+    pub async fn remote_request<P>(
+        &self,
+        topic: impl Into<String>,
+        payload: Option<P>,
+    ) -> Result<ArcValue>
+    where
+        P: AsArcValue + Send + Sync,
+    {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            // Treat as service/action path
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            // Treat as action under current service
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+
+        self.logger
+            .debug(format!("Making request to processed path: {full_topic}"));
+
+        self.node_delegate
+            .remote_request::<P>(full_topic, payload)
+            .await
+    }
+
     /// Make a service request from the lifecycle context.
     ///
     /// INTENTION: Allow services during their lifecycle (e.g., init, shutdown)
@@ -146,26 +171,26 @@ impl LifecycleContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (current network ID added)
     /// - Simple action: "action" (current network ID and service path added - calls own service)
-    pub async fn request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, topic: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let path_string = path.into();
-        let full_path = if path_string.contains(':') {
-            path_string
-        } else if path_string.contains('/') {
-            format!("{0}:{1}", self.network_id, path_string)
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            format!("{0}:{1}", self.network_id, topic_string)
         } else {
             format!(
                 "{0}:{1}/{2}",
-                self.network_id, self.service_path, path_string
+                self.network_id, self.service_path, topic_string
             )
         };
 
         self.logger.debug(format!(
-            "LifecycleContext making request to processed path: {full_path}"
+            "LifecycleContext making request to processed path: {full_topic}"
         ));
-        self.node_delegate.request::<P>(full_path, payload).await
+        self.node_delegate.request::<P>(full_topic, payload).await
     }
 
     /// Publish an event from the lifecycle context.
@@ -194,6 +219,63 @@ impl LifecycleContext {
         ));
         self.node_delegate.publish(full_topic, data).await
     }
+
+    /// Publish an event with options (e.g., retain_for for include_past support)
+    pub async fn publish_with_options(
+        &self,
+        topic: impl Into<String>,
+        data: Option<ArcValue>,
+        options: PublishOptions,
+    ) -> Result<()> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+
+        self.logger.debug(format!(
+            "LifecycleContext publishing (with options) to processed topic: {full_topic}"
+        ));
+        self.node_delegate
+            .publish_with_options(full_topic, data, options)
+            .await
+    }
+
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Allow services during their lifecycle to wait for specific events
+    /// to occur before proceeding with their logic.
+    ///
+    /// Returns Ok(Option<ArcValue>) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    pub async fn on(
+        &self,
+        topic: impl Into<String>,
+        options: Option<OnOptions>,
+    ) -> Result<Option<ArcValue>> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+        let handle = self.node_delegate.on(full_topic, options);
+        let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
+        inner
+    }
+
+    // on_with_options removed; use on(topic, timeout, include_past) unified API instead
 
     /// Register an action handler
     ///
@@ -286,25 +368,33 @@ impl LifecycleContext {
     ///
     /// INTENTION: Allow a service to subscribe to an event topic and provide
     /// detailed metadata about the event for discovery and documentation purposes.
-    pub async fn subscribe_with_options(
-        &self,
-        topic: impl Into<String>,
-        callback: EventCallback,
-        options: EventRegistrationOptions,
-    ) -> Result<String> {
-        let delegate = &self.node_delegate;
-        delegate
-            .subscribe_with_options(topic.into(), callback, options)
-            .await
-    }
-
     pub async fn subscribe(
         &self,
         topic: impl Into<String>,
-        callback: EventCallback,
+        callback: EventHandler,
+        options: Option<EventRegistrationOptions>,
     ) -> Result<String> {
+        let topic_string = topic.into();
+        let full_topic = if topic_string.contains(':') {
+            topic_string
+        } else if topic_string.contains('/') {
+            format!("{0}:{1}", self.network_id, topic_string)
+        } else {
+            format!(
+                "{0}:{1}/{2}",
+                self.network_id, self.service_path, topic_string
+            )
+        };
+
         let delegate = &self.node_delegate;
-        delegate.subscribe(topic.into(), callback).await
+        delegate.subscribe(full_topic, callback, options).await
+    }
+
+    // subscribe without options removed to unify API
+
+    /// Unsubscribe from a subscription by ID
+    pub async fn unsubscribe(&self, subscription_id: &str) -> Result<()> {
+        self.node_delegate.unsubscribe(subscription_id).await
     }
 }
 
@@ -504,11 +594,7 @@ impl ServiceRequest {
 //     }
 // }
 
-/// Options for a subscription
-#[derive(Debug, Clone, Default)]
-pub struct SubscriptionOptions {
-    // Add subscription options as needed
-}
+// Removed SubscriptionOptions in favor of EventRegistrationOptions to avoid redundancy
 
 /// Options for publishing an event
 ///
@@ -522,12 +608,28 @@ pub struct PublishOptions {
     /// Whether delivery should be guaranteed (at-least-once semantics)
     pub guaranteed_delivery: bool,
 
-    /// How long the event should be retained for late subscribers (in seconds)
-    /// None means no retention, 0 means forever
-    pub retention_seconds: Option<u64>,
+    /// How long the event should be retained locally for late subscribers.
+    /// None means no retention.
+    pub retain_for: Option<std::time::Duration>,
 
     /// Target a specific node or service instead of all subscribers
     pub target: Option<String>,
+}
+
+impl PublishOptions {
+    pub fn local_only() -> Self {
+        Self {
+            broadcast: false,
+            guaranteed_delivery: false,
+            retain_for: None,
+            target: None,
+        }
+    }
+
+    pub fn with_retain_for(mut self, duration: std::time::Duration) -> Self {
+        self.retain_for = Some(duration);
+        self
+    }
 }
 
 /// Options for registering an action handler
@@ -538,10 +640,16 @@ pub struct PublishOptions {
 /// Options for registering an event subscription with metadata.
 #[derive(Clone, Debug, Default)]
 pub struct EventRegistrationOptions {
-    /// Description of what the event signifies.
-    pub description: Option<String>,
-    /// Schema for the event data, for validation and documentation.
-    pub data_schema: Option<FieldSchema>,
+    /// If set, deliver the newest retained event that occurred within this lookback window
+    /// immediately upon subscription (in addition to future events). Local-only.
+    pub include_past: Option<std::time::Duration>,
+}
+
+/// Options for one-shot event waits (on)
+#[derive(Clone, Debug)]
+pub struct OnOptions {
+    pub timeout: std::time::Duration,
+    pub include_past: Option<std::time::Duration>,
 }
 
 pub struct ActionRegistrationOptions {
@@ -584,21 +692,7 @@ pub trait NodeRequestHandler: Send + Sync {
                 + Send
                 + Sync,
         >,
-    ) -> Result<String>;
-
-    /// Subscribe to a topic with options
-    ///
-    /// INTENTION: Register a callback with specific delivery options for the subscription.
-    /// The callback receives both an EventContext and the event data.
-    async fn subscribe_with_options(
-        &self,
-        topic: String,
-        callback: Box<
-            dyn Fn(Arc<EventContext>, ArcValue) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
-        options: SubscriptionOptions,
+        options: Option<EventRegistrationOptions>,
     ) -> Result<String>;
 
     /// Unsubscribe from a topic
@@ -700,33 +794,12 @@ pub trait NodeDelegate: Send + Sync {
     async fn subscribe(
         &self,
         topic: String,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValue>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
-    ) -> Result<String>;
-
-    /// Subscribe with options for more control
-    async fn subscribe_with_options(
-        &self,
-        topic: String,
-        callback: Box<
-            dyn Fn(
-                    Arc<EventContext>,
-                    Option<ArcValue>,
-                ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
-                + Send
-                + Sync,
-        >,
-        options: EventRegistrationOptions, // Changed from SubscriptionOptions
+        callback: EventHandler,
+        options: Option<EventRegistrationOptions>, // None means default behavior
     ) -> Result<String>;
 
     /// Unsubscribe from a topic
-    async fn unsubscribe(&self, subscription_id: Option<&str>) -> Result<()>;
+    async fn unsubscribe(&self, subscription_id: &str) -> Result<()>;
 
     /// Register an action handler for a specific path
     ///
@@ -737,6 +810,19 @@ pub trait NodeDelegate: Send + Sync {
         handler: ActionHandler,
         metadata: Option<ActionMetadata>,
     ) -> Result<()>;
+
+    /// Wait for an event to occur with a timeout
+    ///
+    /// INTENTION: Allow services to wait for specific events to occur
+    /// before proceeding with their logic.
+    ///
+    /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
+    /// or Err with timeout message if no event occurs.
+    async fn on(
+        &self,
+        topic: impl Into<String> + Send,
+        options: Option<OnOptions>,
+    ) -> Result<Option<ArcValue>>;
 }
 
 /// Registry Delegate trait for keys service operations
@@ -758,7 +844,9 @@ pub trait KeysDelegate: Send + Sync {
 /// the functionality needed by registry operations.
 #[async_trait::async_trait]
 pub trait RegistryDelegate: Send + Sync {
-    async fn get_service_state(&self, service_path: &TopicPath) -> Option<ServiceState>;
+    async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState>;
+
+    async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState>;
 
     /// Get metadata for a specific service
     async fn get_service_metadata(&self, service_path: &TopicPath) -> Option<ServiceMetadata>;
@@ -770,7 +858,7 @@ pub trait RegistryDelegate: Send + Sync {
     async fn get_all_service_metadata(
         &self,
         include_internal_services: bool,
-    ) -> HashMap<String, ServiceMetadata>;
+    ) -> Result<HashMap<String, ServiceMetadata>>;
 
     /// Get metadata for all actions under a specific service path
     ///
@@ -789,6 +877,43 @@ pub trait RegistryDelegate: Send + Sync {
     ) -> Result<()>;
 
     async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()>;
+
+    async fn register_remote_event_handler(
+        &self,
+        topic_path: &TopicPath,
+        handler: RemoteEventHandler,
+    ) -> Result<String>;
+
+    async fn remove_remote_event_handler(&self, topic_path: &TopicPath) -> Result<()>;
+
+    /// Update service state only if the transition is valid
+    ///
+    /// INTENTION: Validate state transitions before updating service state.
+    /// This ensures that services can only transition to valid states.
+    async fn update_local_service_state_if_valid(
+        &self,
+        service_path: &TopicPath,
+        new_state: ServiceState,
+        current_state: ServiceState,
+    ) -> Result<()>;
+
+    // async fn update_remote_service_state(
+    //     &self,
+    //     service_path: &TopicPath,
+    //     new_state: ServiceState,
+    // ) -> Result<()>;
+
+    /// Validate that a service can be paused
+    ///
+    /// INTENTION: Check if the service is in a state that allows pausing.
+    /// Only services in Running state can be paused.
+    async fn validate_pause_transition(&self, service_path: &TopicPath) -> Result<()>;
+
+    /// Validate that a service can be resumed
+    ///
+    /// INTENTION: Check if the service is in a state that allows resuming.
+    /// Only services in Paused state can be resumed.
+    async fn validate_resume_transition(&self, service_path: &TopicPath) -> Result<()>;
 }
 
 /// Remote service lifecycle context

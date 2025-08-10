@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-use runar_schemas::ServiceMetadata;
+use runar_schemas::NodeMetadata;
 
 pub mod memory_discovery;
 pub mod mock;
@@ -31,6 +31,8 @@ pub struct DiscoveryOptions {
     pub discovery_timeout: Duration,
     /// Time-to-live for discovered nodes (in seconds)
     pub node_ttl: Duration,
+    /// Per-peer debounce window to coalesce bursty events
+    pub debounce_window: Duration,
     /// Whether to use multicast for discovery (if supported)
     pub use_multicast: bool,
     /// Whether to limit discovery to the local network
@@ -42,9 +44,10 @@ pub struct DiscoveryOptions {
 impl Default for DiscoveryOptions {
     fn default() -> Self {
         Self {
-            announce_interval: Duration::from_secs(60),
+            announce_interval: Duration::from_secs(5),
             discovery_timeout: Duration::from_secs(10),
             node_ttl: Duration::from_secs(300),
+            debounce_window: Duration::from_millis(400),
             use_multicast: true,
             local_network_only: true,
             multicast_group: DEFAULT_MULTICAST_ADDR.to_string(),
@@ -69,7 +72,7 @@ pub struct NodeInfo {
     /// The node's  network addressess (e.g., "IP:PORT") - ordered by preference
     pub addresses: Vec<String>,
     /// Node services representing the services provided by this node
-    pub services: Vec<ServiceMetadata>,
+    pub node_metadata: NodeMetadata,
     /// incremental version counter that change everytime the node changes (new services added, new event subscriptions, etc)
     /// when that happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
     pub version: i64,
@@ -79,9 +82,17 @@ pub struct NodeInfo {
 use std::future::Future;
 use std::pin::Pin;
 
+/// Discovery events emitted by providers. Providers are event sources; Node decides behavior.
+#[derive(Clone, Debug)]
+pub enum DiscoveryEvent {
+    Discovered(PeerInfo),
+    Updated(PeerInfo),
+    Lost(String), // peer_id
+}
+
 /// Callback function type for discovery events (async)
 pub type DiscoveryListener =
-    Arc<dyn Fn(PeerInfo) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+    Arc<dyn Fn(DiscoveryEvent) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Interface for node discovery mechanisms
 #[async_trait]
@@ -95,9 +106,14 @@ pub trait NodeDiscovery: Send + Sync {
     /// Stop announcing this node's presence
     async fn stop_announcing(&self) -> Result<()>;
 
-    /// Set a listener to be called when nodes are discovered or updated (async)
-    async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()>;
+    /// Subscribe a listener for discovery events
+    async fn subscribe(&self, listener: DiscoveryListener) -> Result<()>;
 
     /// Shutdown the discovery mechanism
     async fn shutdown(&self) -> Result<()>;
+
+    /// Update the local node information (called when node capabilities change)
+    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()>;
+
+    // Stateless providers do not maintain authoritative peer caches.
 }

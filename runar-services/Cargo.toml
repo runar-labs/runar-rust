@@ -14,6 +14,7 @@ thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0" # Added for crud_sqlite.rs
 uuid = { version = "1.8", features = ["v4", "serde"] } # Added for crud_sqlite.rs
+chrono = { version = "0.4", features = ["serde"] } # Added for replication example
 futures = "0.3"
 tokio = { version = "1.37", features = ["sync", "rt", "macros"] }
 runar_common = { path = "../runar-common", features = ["abstract_service"] }
@@ -33,4 +34,5 @@ runar_macros = { path = "../runar-macros" }
 runar-test-utils = { path = "../runar-test-utils" }
 serde_json = "1.0"
 runar_macros_common = { path = "../runar-macros-common" }
+serial_test = "2.0"
 # These are required for integration tests in tests/rusqlite_examples.rs

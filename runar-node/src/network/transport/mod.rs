@@ -241,14 +241,11 @@ impl NetworkMessagePayloadItem {
 
 pub const MESSAGE_TYPE_DISCOVERY: u32 = 1;
 pub const MESSAGE_TYPE_HEARTBEAT: u32 = 2;
-pub const MESSAGE_TYPE_ANNOUNCEMENT: u32 = 3;
-pub const MESSAGE_TYPE_HANDSHAKE: u32 = 4;
-pub const MESSAGE_TYPE_REQUEST: u32 = 5;
-pub const MESSAGE_TYPE_RESPONSE: u32 = 6;
-pub const MESSAGE_TYPE_EVENT: u32 = 7;
-pub const MESSAGE_TYPE_ERROR: u32 = 8;
-pub const MESSAGE_TYPE_NODE_INFO_UPDATE: u32 = 9;
-pub const MESSAGE_TYPE_NODE_INFO_HANDSHAKE_RESPONSE: u32 = 10;
+pub const MESSAGE_TYPE_HANDSHAKE: u32 = 3;
+pub const MESSAGE_TYPE_REQUEST: u32 = 4;
+pub const MESSAGE_TYPE_RESPONSE: u32 = 5;
+pub const MESSAGE_TYPE_EVENT: u32 = 6;
+pub const MESSAGE_TYPE_ERROR: u32 = 7;
 
 /// Represents a message exchanged between nodes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,9 +322,14 @@ pub trait NetworkTransport: Send + Sync {
         context: MessageContext,
     ) -> Result<ArcValue, NetworkError>;
 
-    /// Fire-and-forget / broadcast message (pattern B) such as announcements,
+    /// Fire-and-forget / broadcast message (pattern B)  
     /// events or heart-beats.
-    async fn publish(&self, message: NetworkMessage) -> Result<(), NetworkError>;
+    async fn publish(
+        &self,
+        topic_path: &TopicPath,
+        params: Option<ArcValue>,
+        peer_node_id: &str,
+    ) -> Result<(), NetworkError>;
 
     /// connect to a discovered node and perform the NodeInfo handshake.
     async fn connect_peer(self: Arc<Self>, discovery_msg: PeerInfo) -> Result<(), NetworkError>;

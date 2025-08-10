@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 // Internal imports
-use super::{DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
+use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 
 // Default multicast address and port
 const DEFAULT_MULTICAST_PORT: u16 = 45678;
@@ -82,6 +82,10 @@ impl MulticastMessage {
 pub struct MulticastDiscovery {
     options: Arc<RwLock<DiscoveryOptions>>,
     discovered_nodes: Arc<RwLock<HashMap<String, PeerInfo>>>,
+    // Last-seen for TTL/Lost emission
+    last_seen: Arc<RwLock<HashMap<String, std::time::SystemTime>>>,
+    // Debounce: last time we emitted an event per peer
+    last_emitted: Arc<RwLock<HashMap<String, std::time::SystemTime>>>,
     local_node: Arc<RwLock<Option<NodeInfo>>>,
     socket: Arc<UdpSocket>,
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>,
@@ -145,6 +149,8 @@ impl MulticastDiscovery {
         let instance = Self {
             options: Arc::new(RwLock::new(options)),
             discovered_nodes: Arc::new(RwLock::new(HashMap::new())),
+            last_seen: Arc::new(RwLock::new(HashMap::new())),
+            last_emitted: Arc::new(RwLock::new(HashMap::new())),
             local_node: Arc::new(RwLock::new(Some(local_node))),
             socket: Arc::new(socket),
             listeners: Arc::new(RwLock::new(Vec::new())),
@@ -229,6 +235,9 @@ impl MulticastDiscovery {
         let listeners = Arc::clone(&self.listeners);
         let local_node = Arc::clone(&self.local_node);
         let socket_for_process = Arc::clone(&self.socket);
+        let last_seen = Arc::clone(&self.last_seen);
+        let last_emitted = Arc::clone(&self.last_emitted);
+        let options_arc = Arc::clone(&self.options);
         let logger = self.logger.clone();
 
         tokio::spawn(async move {
@@ -268,6 +277,9 @@ impl MulticastDiscovery {
                                         &listeners,
                                         &socket_for_process,
                                         &local_node,
+                                        &last_seen,
+                                        &last_emitted,
+                                        &options_arc,
                                         &logger,
                                     )
                                     .await;
@@ -291,28 +303,45 @@ impl MulticastDiscovery {
     fn start_announce_task(
         &self,
         tx: Sender<MulticastMessage>,
-        info: NodeInfo,
         interval: Duration,
     ) -> JoinHandle<()> {
         let logger = self.logger.clone();
+        let local_node = Arc::clone(&self.local_node);
 
         tokio::spawn(async move {
             let mut ticker = time::interval(interval);
 
-            let peer_info = PeerInfo::new(info.node_public_key, info.addresses.clone());
-
             loop {
                 ticker.tick().await;
 
+                // Get fresh NodeInfo for each announcement
+                let local_node_guard = local_node.read().await;
+                let local_info = match local_node_guard.as_ref() {
+                    Some(info) => info.clone(),
+                    None => {
+                        logger.error(
+                            "No local node information available for announcement".to_string(),
+                        );
+                        continue;
+                    }
+                };
+                drop(local_node_guard);
+
+                let peer_info = PeerInfo::new(
+                    local_info.node_public_key.clone(),
+                    local_info.addresses.clone(),
+                );
+
                 // Send announcement
                 logger.debug(format!(
-                    "Sending announcement for node {peer_node_id}",
-                    peer_node_id = compact_id(&peer_info.public_key)
+                    "📡 [multicast] Sending announcement for node {peer_node_id} with version {version}",
+                    peer_node_id = compact_id(&peer_info.public_key),
+                    version = local_info.version
                 ));
 
                 if tx
                     .send(MulticastMessage {
-                        announce: Some(peer_info.clone()),
+                        announce: Some(peer_info),
                         goodbye: None,
                     })
                     .await
@@ -333,28 +362,57 @@ impl MulticastDiscovery {
         ttl: Duration,
     ) -> JoinHandle<()> {
         let logger = self.logger.clone();
+        let last_seen = Arc::clone(&self.last_seen);
+        let listeners = Arc::clone(&self.listeners);
         tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(60)); // Check every 60s
+            let check = if ttl <= Duration::from_millis(100) {
+                Duration::from_millis(100)
+            } else if ttl <= Duration::from_secs(1) {
+                ttl
+            } else {
+                Duration::from_secs(1)
+            };
+            let mut interval = time::interval(check);
             loop {
                 interval.tick().await;
-                Self::cleanup_stale_nodes(&nodes, ttl, &logger).await;
+                Self::cleanup_stale_nodes(&nodes, &last_seen, &listeners, ttl, &logger).await;
             }
         })
     }
 
     /// Helper function to clean up stale nodes
     async fn cleanup_stale_nodes(
-        _nodes: &Arc<RwLock<HashMap<String, PeerInfo>>>,
-        _ttl: Duration,
+        nodes: &Arc<RwLock<HashMap<String, PeerInfo>>>,
+        last_seen: &Arc<RwLock<HashMap<String, std::time::SystemTime>>>,
+        listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
+        ttl: Duration,
         logger: &Logger,
     ) {
-        // Implementation is simplified since we don't track last_seen in DiscoveryMessage
-        // This is a placeholder to satisfy the call in start_cleanup_task
-        logger
-            .debug("Cleanup stale nodes called - not implemented for DiscoveryMessage".to_string());
-        // In a complete implementation, we would:
-        // 1. Iterate through all nodes
-        // 2. Remove those whose last_seen is older than now - ttl
+        let now = std::time::SystemTime::now();
+        let stale_keys: Vec<String> = {
+            let seen = last_seen.read().await;
+            seen.iter()
+                .filter_map(|(peer_id, ts)| match now.duration_since(*ts) {
+                    Ok(elapsed) if elapsed > ttl => Some(peer_id.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        if stale_keys.is_empty() {
+            return;
+        }
+        let listeners_vec = { listeners.read().await.clone() };
+        for key in stale_keys {
+            logger.debug(format!(
+                "📉 [discovery] TTL expired for {key}, emitting Lost"
+            ));
+            nodes.write().await.remove(&key);
+            last_seen.write().await.remove(&key);
+            for listener in &listeners_vec {
+                let fut = listener(DiscoveryEvent::Lost(key.clone()));
+                fut.await;
+            }
+        }
     }
 
     /// Task to send outgoing messages (announcements, requests)
@@ -410,6 +468,7 @@ impl MulticastDiscovery {
     }
 
     /// Process a received multicast message
+    #[allow(clippy::too_many_arguments)]
     async fn process_message(
         message: MulticastMessage,
         src: SocketAddr,
@@ -417,6 +476,9 @@ impl MulticastDiscovery {
         listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
         socket: &Arc<UdpSocket>,
         local_node: &Arc<RwLock<Option<NodeInfo>>>,
+        last_seen: &Arc<RwLock<HashMap<String, std::time::SystemTime>>>,
+        last_emitted: &Arc<RwLock<HashMap<String, std::time::SystemTime>>>,
+        options: &Arc<RwLock<DiscoveryOptions>>,
         logger: &Logger,
     ) {
         // Get local node info once at the beginning
@@ -445,28 +507,71 @@ impl MulticastDiscovery {
 
             logger.debug(format!("Processing announce message from {peer_node_id}"));
 
-            // Check if this is a new peer before responding
+            // Check if this is a new peer before responding AND notifying
             let is_new_peer = {
                 let nodes_read = nodes.read().await;
                 !nodes_read.contains_key(&peer_node_id)
             };
 
-            // Store the peer info - clone peer_public_key before using it outside this block
+            // Store the peer info (always refresh)
             {
                 let mut nodes_write = nodes.write().await;
                 nodes_write.insert(peer_node_id.clone(), peer_info.clone());
             }
 
-            // Notify listeners
-            {
+            // Debounce Updated events per peer
+            let mut emit_event = is_new_peer;
+            if !is_new_peer {
+                let debounce = { options.read().await.debounce_window };
+                let now = std::time::SystemTime::now();
+                let mut last = last_emitted.write().await;
+                match last.get(&peer_node_id).cloned() {
+                    Some(prev) => {
+                        if now.duration_since(prev).unwrap_or_default() >= debounce {
+                            emit_event = true;
+                            last.insert(peer_node_id.clone(), now);
+                        }
+                    }
+                    None => {
+                        emit_event = true;
+                        last.insert(peer_node_id.clone(), now);
+                    }
+                }
+            } else {
+                last_emitted
+                    .write()
+                    .await
+                    .insert(peer_node_id.clone(), std::time::SystemTime::now());
+            }
+
+            // Update last_seen for TTL tracking
+            last_seen
+                .write()
+                .await
+                .insert(peer_node_id.clone(), std::time::SystemTime::now());
+
+            if emit_event {
+                // Notify listeners with stateless events
+                logger.debug(format!(
+                    "📣 [discovery] provider=multicast event={} peer_id={} addrs={} debounced={}",
+                    if is_new_peer { "Discovered" } else { "Updated" },
+                    peer_node_id,
+                    peer_info.addresses.len(),
+                    !is_new_peer
+                ));
+                let event = if is_new_peer {
+                    DiscoveryEvent::Discovered(peer_info.clone())
+                } else {
+                    DiscoveryEvent::Updated(peer_info.clone())
+                };
                 let listeners_read = listeners.read().await;
                 for listener in listeners_read.iter() {
-                    let fut = listener(peer_info.clone());
+                    let fut = listener(event.clone());
                     fut.await;
                 }
             }
 
-            // Only respond if this is a new peer we haven't seen before
+            // Respond if this is a new peer OR if an existing peer was previously evicted
             if is_new_peer {
                 // Build a discovery message with our own info
                 let local_info_msg = PeerInfo::new(
@@ -503,6 +608,13 @@ impl MulticastDiscovery {
             let key = identifier.to_string();
             let mut nodes_write = nodes.write().await;
             nodes_write.remove(&key);
+            // Notify listeners Lost
+            let event = DiscoveryEvent::Lost(key.clone());
+            let listeners_read = listeners.read().await;
+            for listener in listeners_read.iter() {
+                let fut = listener(event.clone());
+                fut.await;
+            }
         } else {
             // No message content
             logger.warn("Received multicast message with no content".to_string());
@@ -589,7 +701,7 @@ impl NodeDiscovery for MulticastDiscovery {
         .await
         .map_err(|e| anyhow!("Failed to send initial announcement: {e}"))?;
 
-        let task = self.start_announce_task(tx.clone(), local_info.clone(), interval);
+        let task = self.start_announce_task(tx.clone(), interval);
         *self.announce_task.lock().await = Some(task);
 
         Ok(())
@@ -603,9 +715,19 @@ impl NodeDiscovery for MulticastDiscovery {
         Ok(())
     }
 
-    async fn set_discovery_listener(&self, listener: DiscoveryListener) -> Result<()> {
+    async fn subscribe(&self, listener: DiscoveryListener) -> Result<()> {
         self.logger.debug("Adding discovery listener".to_string());
         self.listeners.write().await.push(listener);
+        Ok(())
+    }
+
+    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()> {
+        let mut local_node_guard = self.local_node.write().await;
+        *local_node_guard = Some(new_node_info);
+        drop(local_node_guard);
+
+        self.logger
+            .debug("Updated local node information for multicast discovery");
         Ok(())
     }
 
@@ -621,4 +743,6 @@ impl NodeDiscovery for MulticastDiscovery {
 
         Ok(())
     }
+
+    // Stateless interface: no remove_discovered_peer
 }

@@ -64,7 +64,7 @@ impl EchoService {
 async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
     let logging_config = runar_node::config::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Debug);
+        .with_default_level(runar_node::config::LogLevel::Warn);
     logging_config.apply();
 
     let node_config = create_node_test_config()
@@ -89,6 +89,7 @@ async fn test_gateway_routes() -> Result<()> {
 
     // 5. Start Node
     node.start().await?;
+    node.wait_for_services_to_start().await?;
     logger.debug(
         "Node started, allowing time for GatwayService to initialize and Axum server to start...",
     );

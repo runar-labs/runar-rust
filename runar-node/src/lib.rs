@@ -13,11 +13,11 @@ pub use services::abstract_service::{AbstractService, ServiceState};
 pub use services::service_registry::ServiceRegistry;
 pub use services::{
     ActionHandler, EventContext, LifecycleContext, NodeDelegate, PublishOptions, RegistryDelegate,
-    RequestContext, ServiceRequest, SubscriptionOptions,
+    RequestContext, ServiceRequest,
 };
 
 // Re-export the schema types from runar_common
-pub use runar_schemas::{ActionMetadata, EventMetadata, ServiceMetadata};
+pub use runar_schemas::{ActionMetadata, ServiceMetadata};
 
 // Re-export the main types from the routing module
 pub use routing::TopicPath;

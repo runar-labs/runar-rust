@@ -202,25 +202,30 @@ impl AbstractService for GatwayService {
         let service_name = self.name.clone();
         context
             .subscribe(
-                "$registry/service/added",
-                Box::new(
+                "$registry/services/*/state/running",
+                Arc::new(
                     move |event_ctx: Arc<EventContext>, value: Option<ArcValue>| {
                         let service_name_clone = service_name.clone();
                         Box::pin(async move {
                             if let Some(val) = value {
-                                event_ctx.info(format!(
-                                    "GatwayService '{service_name_clone}' received $registry/service/added event: {val:?}",
-                                ));
+                                if let Ok(service_path) = val.as_type::<String>() {
+                                    event_ctx.info(format!(
+                                        "GatwayService {service_name_clone} received $registry/services/{service_path}/state/running event - will add routes for service {service_path}", 
+                                    ));
+                                    //TODO: Add routes for service {service_path}
+                                } else {
+                                    event_ctx.error("GatwayService {service_name_clone} received $registry/services/*/state/running event with invalid value - expected String");
+                                }
                                 // TODO: Implement dynamic route updates if required
                             } else {
-                                event_ctx.warn(format!(
-                        "GatwayService '{service_name_clone}' received $registry/service/added event with no value"
-                    ));
+                                event_ctx.error( format!(
+                                    "GatwayService '{service_name_clone}' received $registry/services/*/state/running event with no value"));
                             }
                             Ok(())
                         })
                     },
                 ),
+                Some(runar_node::services::EventRegistrationOptions::default()),
             )
             .await
             .map_err(|e| anyhow!("Failed to subscribe to $registry/service/added: {}", e))?;

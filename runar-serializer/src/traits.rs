@@ -145,5 +145,5 @@ pub struct SerializationContext {
     pub keystore: Arc<KeyStore>,
     pub resolver: Arc<dyn LabelResolver>,
     pub network_id: String,
-    pub profile_public_key: Vec<u8>,
+    pub profile_public_key: Option<Vec<u8>>,
 }

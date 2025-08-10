@@ -67,11 +67,11 @@ mod tests {
     #[tokio::test]
     async fn test_insert() {
         //set log to debug
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
 
         // Create a node with a test network ID
         let config = create_node_test_config()
-            .expect("Error creating test config")
+            .expect("Debug creating test config")
             .with_logging_config(logging_config);
         let mut node = Node::new(config).await.unwrap();
 
@@ -115,6 +115,7 @@ mod tests {
             db_path: db_guard.path().to_string(),
             schema,
             encryption: true,
+            replication: None,
         };
 
         let service = SqliteService::new(service_name, service_path, sqlite_config);
@@ -124,6 +125,8 @@ mod tests {
 
         // Start the node to initialize all services
         node.start().await.unwrap();
+        // Wait for non-internal services to fully start (reach Running state)
+        node.wait_for_services_to_start().await.unwrap();
 
         // Test SQLite INSERT operation
         let insert_params = Params::new()

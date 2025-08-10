@@ -26,7 +26,7 @@ const CRUD_SERVICE_NAME: &str = "test_crud_service";
 const CRUD_SERVICE_PATH: &str = "crud_db";
 
 async fn setup_node_with_services() -> Result<Node> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     let node_config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
@@ -148,6 +148,7 @@ async fn setup_node_with_services() -> Result<Node> {
         db_path: ":memory:".to_string(),
         schema: (*app_schema).clone(), // SqliteService takes ownership of the schema for table creation
         encryption: false,
+        replication: None,
     };
     let sqlite_service = SqliteService::new(
         SQLITE_SERVICE_NAME.to_string(),
@@ -166,6 +167,7 @@ async fn setup_node_with_services() -> Result<Node> {
     node.add_service(crud_service).await?;
 
     node.start().await?;
+    node.wait_for_services_to_start().await?;
     Ok(node)
 }
 

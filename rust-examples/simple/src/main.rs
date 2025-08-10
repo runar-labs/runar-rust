@@ -7,7 +7,7 @@ use runar_node::{
     Node,
 };
 use runar_serializer::ArcValue;
-use runar_test_utils::create_node_test_config;
+use runar_test_utils::create_test_environment;
 use std::sync::{Arc, Mutex};
 
 #[service(
@@ -64,8 +64,9 @@ async fn main() -> Result<()> {
     // Setup logging
     let logger = Arc::new(Logger::new_root(Component::System, "simple-example"));
 
-    // Create a minimal Node configuration
-    let config = create_node_test_config().expect("Error creating test config");
+    // Create a test environment with mobile simulator
+    let (simulator, config) = create_test_environment().expect("Error creating test environment");
+    simulator.print_summary();
     let mut node = Node::new(config).await?;
 
     // Register services
