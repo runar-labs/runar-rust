@@ -64,28 +64,33 @@ Acceptance criteria
   - [x] Update all read/write operations to use DashMap patterns ✅
   - [x] Test: service state updates, lookups, removals ✅
 
-- [ ] **Service Lists** - Convert to DashMap
-  - [ ] `local_services_list: Arc<RwLock<HashMap<TopicPath, Arc<ServiceEntry>>>>` → `Arc<DashMap<TopicPath, Arc<ServiceEntry>>>`
-  - [ ] Update constructor and clone method
-  - [ ] Update get_local_services method to use DashMap iter
-  - [ ] Update register_local_service method to use DashMap insert
-  - [ ] Test: service registration, service listing
+- [x] **Service Lists** - Convert to DashMap ✅
+  - [x] `local_services_list: Arc<RwLock<HashMap<TopicPath, Arc<ServiceEntry>>>>` → `Arc<DashMap<TopicPath, Arc<ServiceEntry>>>` ✅
+  - [x] Update constructor and clone method ✅
+  - [x] Update get_local_services method to use DashMap iter ✅
+  - [x] Update register_local_service method to use DashMap insert ✅
+  - [x] Test: service registration, service listing ✅
 
 #### **1.2 Node Core (`src/node.rs`)**
-- [ ] **Pending Requests** - Convert to DashMap ✅
-  - [ ] `pending_requests: Arc<RwLock<HashMap<u64, oneshot::Sender<Response>>>>` → `Arc<DashMap<u64, oneshot::Sender<Response>>>`
-  - [ ] Update request tracking and correlation ID handling
-  - [ ] Test: request-response correlation, timeout handling
+- [x] **Pending Requests** - Convert to DashMap ✅
+  - [x] `pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>` → `Arc<DashMap<String, oneshot::Sender<Result<ArcValue>>>>` ✅
+  - [x] Update constructor to use DashMap::new() ✅
+  - [x] Update handle_network_response method to use DashMap remove ✅
+  - [x] Test: network response handling, pending request cleanup ✅
 
-- [ ] **Discovery Timing** - Convert to DashMap ✅
-  - [ ] `discovery_seen_times: Arc<RwLock<HashMap<String, Instant>>>` → `Arc<DashMap<String, Instant>>`
-  - [ ] Update discovery debouncing logic
-  - [ ] Test: discovery event timing, duplicate prevention
+- [x] **Discovery Timing** - Convert to DashMap ✅
+  - [x] `discovery_seen_times: Arc<RwLock<HashMap<String, Instant>>>` → `Arc<DashMap<String, Instant>>` ✅
+  - [x] Update constructor to use DashMap::new() ✅
+  - [x] Update handle_discovered_node method to use DashMap patterns ✅
+  - [x] Fix: Extract values before await to avoid holding guards across async operations ✅
+  - [x] Test: Discovery debouncing, network integration tests ✅
 
-- [ ] **Peer Connect Mutexes** - Convert to DashMap ✅
-  - [ ] `peer_connect_mutexes: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>` → `Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>`
-  - [ ] Update peer connection synchronization
-  - [ ] Test: concurrent peer connections, mutex management
+- [x] **Peer Connect Mutexes** - Convert to DashMap ✅
+  - [x] `peer_connect_mutexes: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>` → `Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>` ✅
+  - [x] Update constructor to use DashMap::new() ✅
+  - [x] Update get_or_create_connect_mutex method to use DashMap::entry().or_insert_with() ✅
+  - [x] Eliminate read-then-write race condition pattern ✅
+  - [x] Test: All node tests pass, integration tests pass ✅
 
 #### **1.3 Network Transport (`src/network/transport/quic_transport.rs`)**
 - [ ] **Peer Maps** - Convert to DashMap
@@ -187,8 +192,8 @@ For each completed task, verify:
 
 ### **PROGRESS TRACKING**
 - **Total Tasks**: 45+ individual optimizations
-- **Phase 1 Complete**: 10/15 (67%) - **Service Registry Service State Maps Complete**
+- **Phase 1 Complete**: 14/15 (93%) - **Service Registry Service Lists, Node Core Pending Requests, Discovery Timing & Peer Connect Mutexes Complete**
 - **Phase 2 Complete**: 0/12 (0%)
 - **Phase 3 Complete**: 0/8 (0%)
 - **Phase 4 Complete**: 0/6 (0%)
-- **Overall Progress**: 10/41+ (24%)
+- **Overall Progress**: 14/41+ (34%)

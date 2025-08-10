@@ -23,6 +23,7 @@ use tokio::time::{sleep, Duration};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{oneshot, RwLock};
+use dashmap::DashMap;
 
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
@@ -280,10 +281,10 @@ pub struct Node {
     pub(crate) peer_directory: Arc<PeerDirectory>,
 
     // Per-peer connect guards to avoid concurrent connects
-    pub(crate) peer_connect_mutexes: Arc<RwLock<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    pub(crate) peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 
     // Debounce repeated discovery events per peer
-    pub(crate) discovery_seen_times: Arc<RwLock<HashMap<String, Instant>>>,
+    pub(crate) discovery_seen_times: Arc<DashMap<String, Instant>>,
 
     /// Logger instance
     pub(crate) logger: Arc<Logger>,
@@ -304,7 +305,7 @@ pub struct Node {
     pub(crate) load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
 
     /// Pending requests waiting for responses, keyed by correlation ID
-    pub(crate) pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>,
+    pub(crate) pending_requests: Arc<DashMap<String, oneshot::Sender<Result<ArcValue>>>>,
 
     label_resolver: Arc<dyn LabelResolver>,
 
@@ -350,11 +351,8 @@ impl Node {
         self.peer_directory.is_connected(peer_id).await
     }
     async fn get_or_create_connect_mutex(&self, peer_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        if let Some(m) = self.peer_connect_mutexes.read().await.get(peer_id).cloned() {
-            return m;
-        }
-        let mut w = self.peer_connect_mutexes.write().await;
-        w.entry(peer_id.to_string())
+        self.peer_connect_mutexes
+            .entry(peer_id.to_string())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
     }
@@ -441,14 +439,14 @@ impl Node {
             logger: logger.clone(),
             service_registry,
             peer_directory: Arc::new(PeerDirectory::new()),
-            peer_connect_mutexes: Arc::new(RwLock::new(HashMap::new())),
-            discovery_seen_times: Arc::new(RwLock::new(HashMap::new())),
+            peer_connect_mutexes: Arc::new(DashMap::new()),
+            discovery_seen_times: Arc::new(DashMap::new()),
             running: AtomicBool::new(false),
             supports_networking: networking_enabled,
             network_transport: Arc::new(RwLock::new(None)),
             network_discovery_providers: Arc::new(RwLock::new(None)),
             load_balancer: Arc::new(RwLock::new(RoundRobinLoadBalancer::new())),
-            pending_requests: Arc::new(RwLock::new(HashMap::new())),
+            pending_requests: Arc::new(DashMap::new()),
             label_resolver,
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager,
@@ -1215,19 +1213,19 @@ impl Node {
         // Debounce rapid duplicate announcements only when not connected is false (we already checked not connected),
         // but still avoid spamming connects if multiple events arrive within a very short window.
         {
-            let mut seen = self.discovery_seen_times.write().await;
-            if let Some(last) = seen.get(&discovered_peer_id).cloned() {
-                if last.elapsed() < Duration::from_millis(150) {
-                    self.logger
-                        .debug(format!("Debounced discovery for {discovered_peer_id}"));
-                    // Do not early-return; small delay then continue to connect to ensure reconnection after restart
-                    drop(seen);
-                    tokio::time::sleep(Duration::from_millis(150)).await;
-                } else {
-                    seen.insert(discovered_peer_id.clone(), Instant::now());
-                }
+            let should_debounce = if let Some(last) = self.discovery_seen_times.get(&discovered_peer_id) {
+                last.elapsed() < Duration::from_millis(150)
             } else {
-                seen.insert(discovered_peer_id.clone(), Instant::now());
+                false
+            };
+
+            if should_debounce {
+                self.logger
+                    .debug(format!("Debounced discovery for {discovered_peer_id}"));
+                // Do not early-return; small delay then continue to connect to ensure reconnection after restart
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            } else {
+                self.discovery_seen_times.insert(discovered_peer_id.clone(), Instant::now());
             }
         }
 
@@ -1547,8 +1545,8 @@ impl Node {
         ));
 
         // Find any pending response handlers
-        if let Some(pending_request_sender) =
-            self.pending_requests.write().await.remove(correlation_id)
+        if let Some((_, pending_request_sender)) =
+            self.pending_requests.remove(correlation_id)
         {
             self.logger.debug(format!(
                 "Found response handler for correlation ID: {correlation_id}"
@@ -1570,7 +1568,7 @@ impl Node {
                 )),
             } // Closes match pending_request_sender.send(Ok(payload_data))
         } else {
-            // This is the else for `if let Some(pending_request_sender)`
+            // This is the else for `if let Some((_, pending_request_sender))`
             self.logger.warn(format!(
                 "No response handler found for correlation ID: {correlation_id}"
             ));

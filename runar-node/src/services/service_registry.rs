@@ -155,7 +155,7 @@ pub struct ServiceRegistry {
     /// Local services registry (using PathTrie instead of HashMap)
     local_services: Arc<RwLock<PathTrie<Arc<ServiceEntry>>>>,
 
-    local_services_list: Arc<RwLock<HashMap<TopicPath, Arc<ServiceEntry>>>>,
+    local_services_list: Arc<DashMap<TopicPath, Arc<ServiceEntry>>>,
 
     /// Remote services registry (using PathTrie instead of HashMap)
     remote_services: Arc<RwLock<PathTrie<Arc<RemoteService>>>>,
@@ -214,7 +214,7 @@ impl ServiceRegistry {
             subscription_id_to_topic_path: Arc::new(DashMap::new()),
             subscription_id_to_service_topic_path: Arc::new(DashMap::new()),
             local_services: Arc::new(RwLock::new(PathTrie::new())),
-            local_services_list: Arc::new(RwLock::new(HashMap::new())),
+            local_services_list: Arc::new(DashMap::new()),
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
             local_service_states: Arc::new(DashMap::new()),
             remote_service_states: Arc::new(DashMap::new()),
@@ -238,10 +238,7 @@ impl ServiceRegistry {
             .await
             .set_value(service_topic.clone(), service);
         //TODO understand why we have this duplciation of local_services and local_services_list
-        self.local_services_list
-            .write()
-            .await
-            .insert(service_topic, service_entry.clone());
+        self.local_services_list.insert(service_topic, service_entry.clone());
 
         Ok(())
     }
@@ -713,12 +710,17 @@ impl ServiceRegistry {
     /// starting, and stopping. This preserves the Node's responsibility for service
     /// lifecycle management while keeping the Registry focused on registration.
     pub async fn get_local_services(&self) -> HashMap<TopicPath, Arc<ServiceEntry>> {
-        self.local_services_list.read().await.clone()
+        // Convert DashMap to HashMap using DashMap iter pattern
+        let mut result = HashMap::new();
+        for entry in self.local_services_list.iter() {
+            result.insert(entry.key().clone(), entry.value().clone());
+        }
+        result
     }
 
     /// Get a reference to local services without cloning
-    pub async fn get_local_services_ref(&self) -> tokio::sync::RwLockReadGuard<'_, HashMap<TopicPath, Arc<ServiceEntry>>> {
-        self.local_services_list.read().await
+    pub async fn get_local_services_ref(&self) -> &DashMap<TopicPath, Arc<ServiceEntry>> {
+        &self.local_services_list
     }
 
     pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<()> {
@@ -1057,10 +1059,10 @@ impl ServiceRegistry {
         include_internal_services: bool,
     ) -> Result<HashMap<String, ServiceMetadata>> {
         let mut result = HashMap::new();
-        let local_services_guard = self.local_services_list.read().await;
 
-        // Iterate through all services using references
-        for (_topic_path, service_entry) in local_services_guard.iter() {
+        // Iterate through all services using DashMap iter pattern
+        for entry in self.local_services_list.iter() {
+            let service_entry = entry.value();
             let service = &service_entry.service;
             let path_str = service.path();
 
