@@ -336,12 +336,12 @@ fn dns_safe_node_id(node_id: &str) -> String {
 #[derive(Clone, Debug)]
 struct SharedState {
     peers: PeerMap,
-    connection_id_to_peer_id: ConnectionIdToPeerIdMap,
+    connection_id_to_peer_id: Arc<DashMap<usize, String>>,
     dial_backoff: Arc<DashMap<String, (u32, Instant)>>,
     dial_cancel: Arc<DashMap<String, Arc<Notify>>>,
 }
 type PeerMap = Arc<RwLock<HashMap<String, PeerState>>>;
-type ConnectionIdToPeerIdMap = Arc<RwLock<HashMap<usize, String>>>;
+type ConnectionIdToPeerIdMap = Arc<DashMap<usize, String>>;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 enum ConnectionRole {
@@ -589,8 +589,6 @@ impl QuicTransport {
                 // Update mapping for the connection id
                 self.state
                     .connection_id_to_peer_id
-                    .write()
-                    .await
                     .insert(new_id, peer_node_id.to_string());
                 // Activate the winner
                 if let Some(state) = peers.get(peer_node_id) {
@@ -657,8 +655,6 @@ impl QuicTransport {
                 peers.insert(peer_node_id.to_string(), new_state);
                 self.state
                     .connection_id_to_peer_id
-                    .write()
-                    .await
                     .insert(conn_id, peer_node_id.to_string());
                 if existing.connection_id != conn_id {
                     existing
@@ -687,11 +683,9 @@ impl QuicTransport {
             );
             let conn_id = new_state.connection_id;
             peers.insert(peer_node_id.to_string(), new_state);
-            self.state
-                .connection_id_to_peer_id
-                .write()
-                .await
-                .insert(conn_id, peer_node_id.to_string());
+                            self.state
+                    .connection_id_to_peer_id
+                    .insert(conn_id, peer_node_id.to_string());
             if let Some(state) = peers.get(peer_node_id) {
                 let _ = state.activation_tx.send(true);
             }
@@ -859,11 +853,9 @@ impl QuicTransport {
                 match self_clone
                     .state
                     .connection_id_to_peer_id
-                    .read()
-                    .await
                     .get(&connection_id)
                 {
-                    Some(peer_id) => peer_id.clone(),
+                    Some(entry) => entry.value().clone(),
                     None => {
                         self_clone.logger.error(format!("Connection id {connection_id} not found in connection id to peer id map"));
                         return;
@@ -1133,8 +1125,6 @@ impl QuicTransport {
                         if needs_to_correlate_peer_id {
                             self.state
                                 .connection_id_to_peer_id
-                                .write()
-                                .await
                                 .insert(conn.stable_id(), peer_node_id);
                         }
                     } else {
@@ -1168,8 +1158,6 @@ impl QuicTransport {
                                 if needs_to_correlate_peer_id {
                                     self.state
                                         .connection_id_to_peer_id
-                                        .write()
-                                        .await
                                         .insert(conn.stable_id(), peer_node_id);
                                 }
                             }
@@ -1222,10 +1210,8 @@ impl QuicTransport {
                     if let Some(resolved_peer_id) = self
                         .state
                         .connection_id_to_peer_id
-                        .read()
-                        .await
                         .get(&connection_id)
-                        .cloned()
+                        .map(|entry| entry.value().clone())
                     {
                         let _ = (cb)(resolved_peer_id, true, None).await;
                     } else {
@@ -1531,7 +1517,7 @@ impl QuicTransport {
     fn shared_state() -> SharedState {
         SharedState {
             peers: Arc::new(RwLock::new(HashMap::new())),
-            connection_id_to_peer_id: Arc::new(RwLock::new(HashMap::new())),
+            connection_id_to_peer_id: Arc::new(DashMap::new()),
             dial_backoff: Arc::new(DashMap::new()),
             dial_cancel: Arc::new(DashMap::new()),
         }
@@ -1650,7 +1636,7 @@ impl NetworkTransport for QuicTransport {
         }
 
         // Clear in-memory maps
-        self.state.connection_id_to_peer_id.write().await.clear();
+        self.state.connection_id_to_peer_id.clear();
         self.state.dial_backoff.clear();
         self.state.dial_cancel.clear();
 
