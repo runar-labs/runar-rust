@@ -161,10 +161,10 @@ pub struct ServiceRegistry {
     remote_services: Arc<RwLock<PathTrie<Arc<RemoteService>>>>,
 
     /// Local service lifecycle states
-    local_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
+    local_service_states: Arc<DashMap<String, ServiceState>>,
 
     /// Remote service lifecycle states
-    remote_service_states: Arc<RwLock<HashMap<String, ServiceState>>>,
+    remote_service_states: Arc<DashMap<String, ServiceState>>,
 
     /// Mapping of peer node IDs to subscription IDs registered on their behalf
     remote_peer_subscriptions: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
@@ -216,8 +216,8 @@ impl ServiceRegistry {
             local_services: Arc::new(RwLock::new(PathTrie::new())),
             local_services_list: Arc::new(RwLock::new(HashMap::new())),
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
-            local_service_states: Arc::new(RwLock::new(HashMap::new())),
-            remote_service_states: Arc::new(RwLock::new(HashMap::new())),
+            local_service_states: Arc::new(DashMap::new()),
+            remote_service_states: Arc::new(DashMap::new()),
             remote_peer_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             logger,
         }
@@ -618,8 +618,7 @@ impl ServiceRegistry {
             service_topic.clone(),
             state
         ));
-        let mut states = self.local_service_states.write().await;
-        states.insert(service_topic.as_str().to_string(), state);
+        self.local_service_states.insert(service_topic.as_str().to_string(), state);
         Ok(())
     }
 
@@ -636,27 +635,23 @@ impl ServiceRegistry {
             service_topic.clone(),
             state
         ));
-        let mut states = self.remote_service_states.write().await;
-        states.insert(service_topic.as_str().to_string(), state);
+        self.remote_service_states.insert(service_topic.as_str().to_string(), state);
         Ok(())
     }
 
     pub async fn remove_remote_service_state(&self, service_topic: &TopicPath) -> Result<()> {
-        let mut states = self.remote_service_states.write().await;
-        states.remove(service_topic.as_str());
+        self.remote_service_states.remove(service_topic.as_str());
         Ok(())
     }
 
     /// Get local service state
     pub async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        let map = self.local_service_states.read().await;
-        map.get(service_path.as_str()).copied()
+        self.local_service_states.get(service_path.as_str()).map(|entry| *entry.value())
     }
 
     /// Get remote service state
     pub async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        let map = self.remote_service_states.read().await;
-        map.get(service_path.as_str()).copied()
+        self.remote_service_states.get(service_path.as_str()).map(|entry| *entry.value())
     }
 
     /// Get metadata for all events under a specific service path
