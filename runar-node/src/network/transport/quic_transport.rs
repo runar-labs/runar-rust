@@ -477,6 +477,10 @@ pub struct QuicTransport {
     // shared runtime state (peers + broadcast)
     state: SharedState,
 
+    // short-lived cache to deduplicate REQUEST handling by correlation_id
+    response_cache: dashmap::DashMap<String, (Instant, Arc<NetworkMessage>)>,
+    response_cache_ttl: Duration,
+
     // background tasks
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 
@@ -728,6 +732,8 @@ impl QuicTransport {
             state: Self::shared_state(),
             tasks: Mutex::new(Vec::new()),
             running: tokio::sync::RwLock::new(false),
+            response_cache: dashmap::DashMap::new(),
+            response_cache_ttl: Duration::from_secs(5),
         })
     }
 
@@ -1224,8 +1230,31 @@ impl QuicTransport {
             let source_node_id = msg.source_node_id.clone();
             let payloads = msg.payloads.clone();
 
+            // For REQUEST messages, attempt idempotent handling using correlation_id
+            if msg.message_type == super::MESSAGE_TYPE_REQUEST {
+                if let Some(corr_id_ref) = msg.payloads.first().map(|p| p.correlation_id.as_str()) {
+                    if let Some(entry) = self.response_cache.get(corr_id_ref) {
+                        let (ts, cached) = entry.value();
+                        let now = Instant::now();
+                        if now.saturating_duration_since(*ts) <= self.response_cache_ttl {
+                            self.write_message(&mut send, cached).await?;
+                            send.finish()
+                                .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             match (self.message_handler)(msg).await {
                 Ok(Some(reply)) => {
+                    // Cache the successful response for a short period to deduplicate retries
+                    if reply.message_type == super::MESSAGE_TYPE_RESPONSE {
+                        if let Some(corr_id) = reply.payloads.first().map(|p| p.correlation_id.clone()) {
+                            let now = Instant::now();
+                            self.response_cache.insert(corr_id, (now, Arc::new(reply.clone())));
+                        }
+                    }
                     self.write_message(&mut send, &reply).await?;
                     send.finish()
                         .map_err(|e| NetworkError::TransportError(e.to_string()))?;

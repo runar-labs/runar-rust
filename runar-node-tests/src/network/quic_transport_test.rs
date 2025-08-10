@@ -4,7 +4,7 @@ async fn test_dial_cancel_on_inbound_connect(
     use runar_common::compact_ids::compact_id;
     use runar_common::logging::{Component, Logger};
     use runar_node::config::{LogLevel, LoggingConfig};
-    use runar_node::network::discovery::multicast_discovery::PeerInfo;
+    // PeerInfo not used in this test
     use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
     use runar_node::network::transport::{
         NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
@@ -185,6 +185,7 @@ use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, Labe
 use runar_serializer::ArcValue;
 use std::collections::HashMap;
 use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Dummy crypto that performs no-op encryption for tests
 struct NoCrypto;
@@ -926,6 +927,164 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     watchdog.abort();
     let _ = watchdog.await;
 
+    Ok(())
+}
+
+/// Ensures server-side idempotency: two REQUESTs with the same correlation_id
+/// must invoke the handler only once and the second request must be served from
+/// the transport response cache.
+#[tokio::test]
+async fn test_request_dedup_same_correlation_id_two_sends(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::logging::{Component, Logger};
+    use runar_node::config::{LogLevel, LoggingConfig};
+    use runar_node::network::discovery::multicast_discovery::PeerInfo;
+    use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
+    use runar_node::network::transport::{NetworkMessage, NetworkMessagePayloadItem, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE};
+    use runar_node::network::transport::SkipServerVerification;
+    use runar_keys::{MobileKeyManager, NodeKeyManager};
+    use runar_common::compact_ids::compact_id;
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("dedup_test"), ""));
+
+    // CA + node certs
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km_server = NodeKeyManager::new(logger.clone())?;
+    let csr_server = km_server.generate_csr()?;
+    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
+    km_server.install_certificate(cert_server)?;
+
+    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
+
+    // Minimal NodeInfo
+    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+        node_public_key: rand::random::<[u8; 32]>().to_vec(),
+        network_ids: vec!["main".to_string()],
+        addresses: vec![addr.to_string()],
+        node_metadata: runar_schemas::NodeMetadata { services: vec![], subscriptions: vec![] },
+        version: 0,
+    };
+
+    // Bind server transport
+    let server_addr = "127.0.0.1:50161".parse().unwrap();
+    let server_info = mk_info("127.0.0.1:0");
+
+    let invocation_count = Arc::new(AtomicUsize::new(0));
+    let count_clone = invocation_count.clone();
+    let handler: MessageHandler = Box::new(move |m: NetworkMessage| {
+        let count_clone = count_clone.clone();
+        Box::pin(async move {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+            let corr = m.payloads.first().map(|p| p.correlation_id.clone()).unwrap_or_default();
+            let path = m.payloads.first().map(|p| p.path.clone()).unwrap_or_else(|| "test".to_string());
+            let response_value = ArcValue::new_primitive("ok".to_string());
+            let reply = NetworkMessage {
+                source_node_id: m.destination_node_id.clone(),
+                destination_node_id: m.source_node_id.clone(),
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payloads: vec![NetworkMessagePayloadItem { path, value_bytes: response_value.serialize(None).unwrap_or_default(), context: None, correlation_id: corr }],
+            };
+            Ok(Some(reply))
+        })
+    });
+    let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+
+    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig { label_mappings: HashMap::new() }));
+    let server_opts = QuicTransportOptions::new()
+        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert])
+        .with_local_node_info(server_info)
+        .with_bind_addr(server_addr)
+        .with_message_handler(handler)
+        .with_one_way_message_handler(one_way)
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(resolver)
+        .with_logger(logger.clone());
+    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
+    let server_id = compact_id(&km_server.get_node_public_key());
+    server_transport.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Build a raw QUIC client using SkipServerVerification to simplify TLS
+    let client_endpoint = {
+        let mut transport_config = quinn::TransportConfig::default();
+        let client_rustls = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
+            .with_no_client_auth();
+        let quic_client = quinn::crypto::rustls::QuicClientConfig::try_from(client_rustls)?;
+        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client));
+        client_config.transport_config(Arc::new(transport_config));
+
+        let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse::<SocketAddr>()?)?;
+        endpoint.set_default_client_config(client_config);
+        endpoint
+    };
+
+    let server_sock: SocketAddr = server_transport.get_local_address().parse()?;
+    let dns_name = "test.local"; // SNI arbitrary; server does not validate it
+
+    // Helper to encode a request message with given correlation id
+    fn encode_len_prefixed(msg: &NetworkMessage) -> Vec<u8> {
+        let mut buf = serde_cbor::to_vec(msg).expect("cbor");
+        let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
+        framed.append(&mut buf);
+        framed
+    }
+
+    // Create a request with fixed correlation id
+    let correlation_id = "corr-123".to_string();
+    let request_msg = NetworkMessage {
+        source_node_id: "raw_client".to_string(),
+        destination_node_id: server_id.clone(),
+        message_type: MESSAGE_TYPE_REQUEST,
+        payloads: vec![NetworkMessagePayloadItem { path: "$test/path".to_string(), value_bytes: ArcValue::null().serialize(None).unwrap_or_default(), context: Some(MessageContext { profile_public_key: vec![] }), correlation_id: correlation_id.clone() }],
+    };
+    let framed = encode_len_prefixed(&request_msg);
+
+    // First send: write request then drop the connection without reading the response
+    {
+        let connecting = client_endpoint.connect(server_sock, dns_name)?;
+        let conn = connecting.await?;
+        let (mut send, _recv) = conn.open_bi().await?;
+        use tokio::io::AsyncWriteExt;
+        send.write_all(&framed).await?;
+        let _ = send.finish(); // ignore result; drop conn immediately
+        conn.close(0u32.into(), b"test-drop");
+    }
+
+    // Small delay to allow server to process
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Second send with the same correlation id: should be served from cache; handler count must remain 1
+    {
+        let connecting = client_endpoint.connect(server_sock, dns_name)?;
+        let conn = connecting.await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        use tokio::io::AsyncWriteExt;
+        send.write_all(&framed).await?;
+        send.finish()?;
+
+        // Read length-prefixed response
+        use tokio::io::AsyncReadExt;
+        let mut len_buf = [0u8; 4];
+        recv.read_exact(&mut len_buf).await?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut data = vec![0u8; len];
+        recv.read_exact(&mut data).await?;
+        let reply: NetworkMessage = serde_cbor::from_slice(&data)?;
+        assert_eq!(reply.message_type, MESSAGE_TYPE_RESPONSE);
+        assert_eq!(reply.payloads.len(), 1);
+        assert_eq!(reply.payloads[0].correlation_id, correlation_id);
+    }
+
+    assert_eq!(invocation_count.load(Ordering::SeqCst), 1, "handler must be invoked exactly once");
+
+    server_transport.stop().await?;
     Ok(())
 }
 
