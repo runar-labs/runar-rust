@@ -138,8 +138,8 @@ impl ReplicationManager {
             // Fallback: attempt remote request once to cover long-delay service add after start
             context.warn(format!(
                 "Running event not observed skipping startup sync for: {service_path}"
-            )); 
-            return Ok(()); 
+            ));
+            return Ok(());
         }
 
         // Request latest state from network for each enabled table

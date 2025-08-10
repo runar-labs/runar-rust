@@ -283,7 +283,7 @@ impl ServiceRegistry {
     /// Register a remote service
     ///
     /// INTENTION: Register a service that exists on a remote node, making it available for local requests.
-    pub async fn register_remote_service(&self, service: Arc<RemoteService>) -> Result<()> {
+    pub async fn register_remote_service(&self, service: Arc<RemoteService>) -> bool {
         let service_topic = service.service_topic.clone();
         let service_path = service.path().to_string();
         let peer_node_id = service.peer_node_id().clone();
@@ -301,15 +301,13 @@ impl ServiceRegistry {
                 // No existing services for this topic
                 services.set_value(service_topic, service);
             } else {
-                //return an error.. just one service shuold exist for a given topic
-                return Err(anyhow!(
-                    "Service already exists for topic: {}",
-                    service_topic
-                ));
+                self.logger
+                    .warn(format!("Service already exists for topic: {service_topic}"));
+                return false;
             }
         }
 
-        Ok(())
+        true
     }
 
     /// Register a local action handler

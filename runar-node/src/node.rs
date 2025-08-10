@@ -2038,15 +2038,11 @@ impl Node {
                 {
                     for service in remote_services {
                         // Register the service instance with the registry
-                        if let Err(e) = self
+                        if !self
                             .service_registry
                             .register_remote_service(service.clone())
                             .await
                         {
-                            self.logger.error(format!(
-                                "Failed to register remote service '{}': {e}",
-                                service.path()
-                            ));
                             continue;
                         }
 
@@ -2234,15 +2230,11 @@ impl Node {
         // Register each service and initialize it to register its handlers
         for service in &remote_services {
             // Register the service instance with the registry
-            if let Err(e) = self
+            if !self
                 .service_registry
                 .register_remote_service(service.clone())
                 .await
             {
-                self.logger.error(format!(
-                    "Failed to register remote service '{path}': {e}",
-                    path = service.path()
-                ));
                 continue; // Skip initialization if registration fails
             }
 
