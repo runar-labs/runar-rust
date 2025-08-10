@@ -1029,8 +1029,8 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         .as_type_ref::<i64>()
         .unwrap();
     assert_eq!(
-        restart_user_count1, 12,
-        "Node 1 should have 12 users after syncing (it was stopped before the DELETE operation)"
+        restart_user_count1, 11,
+        "Node 1 should have 11 users after syncing (startup sync applies the DELETE)"
     );
     logger.info(format!("✅ Node 1 has correct user count after restart: {restart_user_count1}"));
 

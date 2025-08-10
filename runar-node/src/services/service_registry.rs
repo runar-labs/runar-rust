@@ -973,8 +973,17 @@ impl ServiceRegistry {
         for subscription_vec in all_values {
             for (_, _, metadata) in subscription_vec {
                 // Filter out internal services if not included
-                if !include_internal_services && metadata.path.starts_with('$') {
-                    continue;
+                if !include_internal_services {
+                    // metadata.path is a full topic path including network id prefix
+                    if let Ok(tp) = TopicPath::from_full_path(&metadata.path) {
+                        let service_path = tp.service_path();
+                        if service_path.starts_with('$') || INTERNAL_SERVICES.contains(&service_path.as_str()) {
+                            continue;
+                        }
+                    } else if metadata.path.starts_with('$') {
+                        // Fallback: if parsing fails, still try the simple check
+                        continue;
+                    }
                 }
                 result.push(metadata);
             }

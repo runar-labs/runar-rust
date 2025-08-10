@@ -2120,11 +2120,20 @@ impl Node {
 
         // Paths to add
         for path in new_set.difference(&old_set) {
+            // Skip internal topics (services starting with $)
+            let topic_path = TopicPath::from_full_path(path)
+                .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
+            if topic_path.service_path().starts_with('$')
+                || INTERNAL_SERVICES.contains(&topic_path.service_path().as_str())
+            {
+                self.logger.debug(format!(
+                    "Skipping internal remote subscription: {path} for peer: {peer_node_id}"
+                ));
+                continue;
+            }
             self.logger.info(format!(
                 "Adding new remote subscription: {path} for peer: {peer_node_id}"
             ));
-            let topic_path = TopicPath::from_full_path(path)
-                .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?;
             let tp_arc = Arc::new(topic_path.clone());
             // create remote handler same as add_new_peer logic (reuse closure building)
             let transport_arc = self
