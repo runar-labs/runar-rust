@@ -117,10 +117,7 @@ fn create_replicated_sqlite_service(
 
 /// Clean up database files to ensure test isolation
 fn cleanup_database_files() {
-    let logger = Arc::new(Logger::new_root(
-        Component::Custom("test"),
-        "",
-    ));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
     let db_files = vec![
         "./node_1_db",
         "./node_1_db-shm",
@@ -136,7 +133,9 @@ fn cleanup_database_files() {
     for db_file in db_files {
         if Path::new(db_file).exists() {
             if let Err(e) = fs::remove_file(db_file) {
-                logger.info(format!("Warning: Failed to remove database file {db_file}: {e}"));
+                logger.info(format!(
+                    "Warning: Failed to remove database file {db_file}: {e}"
+                ));
             }
         }
     }
@@ -444,7 +443,9 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
         "Both nodes should have the same user count"
     );
     assert_eq!(final_count1, 5, "Both nodes should have 5 users total");
-    logger.info(format!("✅ Final verification: Both nodes have {final_count1} users"));
+    logger.info(format!(
+        "✅ Final verification: Both nodes have {final_count1} users"
+    ));
 
     // Clean up
     node1.stop().await?;
@@ -469,10 +470,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
-    let logger = Arc::new(Logger::new_root(
-        Component::Custom("test"),
-        "",
-    ));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
 
     // Create SQLite services
     //node1 uses a file db becaue it will stop and start again and must retain its data
@@ -588,7 +586,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 
     node2.wait_for_services_to_start().await?;
     let node2_start_sync_duration = start_time.elapsed();
-    logger.info(format!("✅ Node 2 services started and sync completed in {node2_start_sync_duration:?}"));
+    logger.info(format!(
+        "✅ Node 2 services started and sync completed in {node2_start_sync_duration:?}"
+    ));
 
     // Verify that Node 2 has the same data (replication worked)
     logger.info("Verifying replication to Node 2...");
@@ -632,7 +632,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         "Node 2 should have 5 posts after replication"
     );
 
-    logger.info(format!("✅ Node 2 has {user_count2} users and {post_count2} posts (sync successful)"));
+    logger.info(format!(
+        "✅ Node 2 has {user_count2} users and {post_count2} posts (sync successful)"
+    ));
 
     logger.info("Check a specific record after sync...");
     let test_result = node2
@@ -821,7 +823,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         final_count1, 12,
         "Both nodes should have 12 users total (10 initial + 2 post-sync)"
     );
-    logger.info(format!("✅ Final verification: Both nodes have {final_count1} users"));
+    logger.info(format!(
+        "✅ Final verification: Both nodes have {final_count1} users"
+    ));
 
     //lets add a third node to make sure it can sync with the other two
     let node3_config = configs[2].clone();
@@ -984,30 +988,33 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     logger.info("✅ Node 1 started");
-    node1.on(
-        format!(
-            "$registry/peer/{node2_id}/discovered",
-            node2_id = node2.node_id()
-        ),
-        Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(10),
-            include_past: Some(Duration::from_secs(10)),
-        }),
-    ).await??;
-    node1.on(
-        format!(
-            "$registry/peer/{node3_id}/discovered",
-            node3_id = node3.node_id()
-        ),
-        Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(10),
-            include_past: Some(Duration::from_secs(10)),
-        }),
-    ).await??;
+    node1
+        .on(
+            format!(
+                "$registry/peer/{node2_id}/discovered",
+                node2_id = node2.node_id()
+            ),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(10),
+                include_past: Some(Duration::from_secs(10)),
+            }),
+        )
+        .await??;
+    node1
+        .on(
+            format!(
+                "$registry/peer/{node3_id}/discovered",
+                node3_id = node3.node_id()
+            ),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(10),
+                include_past: Some(Duration::from_secs(10)),
+            }),
+        )
+        .await??;
     logger.info("✅ Node 1 connected to node 2 and node 3");
     node1.wait_for_services_to_start().await?;
     logger.info("✅ Node 1 all services started and data is synced");
- 
 
     // Verify that Node 1 has synced with the network and received all changes that happened while it was stopped
     logger.info("Verifying Node 1 has synced with network after restart...");
@@ -1032,7 +1039,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         restart_user_count1, 11,
         "Node 1 should have 11 users after syncing (startup sync applies the DELETE)"
     );
-    logger.info(format!("✅ Node 1 has correct user count after restart: {restart_user_count1}"));
+    logger.info(format!(
+        "✅ Node 1 has correct user count after restart: {restart_user_count1}"
+    ));
 
     // Verify that Node 1 received the UPDATE operation from Node 3 (sync_user2 email update)
     let update_check1 = node1
@@ -1203,7 +1212,9 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         count1, 11,
         "All nodes should have 11 users total (12 initial - 2 deleted + 1 added)"
     );
-    logger.info(format!("✅ All nodes have consistent state: {count1} users each"));
+    logger.info(format!(
+        "✅ All nodes have consistent state: {count1} users each"
+    ));
 
     // Verify specific operations propagated correctly
     // Check that complex_user1 exists on all nodes
@@ -1360,18 +1371,13 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
 
-     let logger = Arc::new(Logger::new_root(
-        Component::Custom("test"),
-        "",
-    ));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
     logger.info("=== Test 3: Event Tables and Ordering ===");
 
     // Create two node configurations
     let configs = create_networked_node_test_config(2)?;
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
-
-    
 
     // Create SQLite services
     let sqlite_service1 =
@@ -1659,12 +1665,9 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 async fn test_mobile_simulator_replication() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(
-        Component::Custom("test"),
-        "",
-    ));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
     logger.info("=== Test 4: Mobile Simulator Replication Test ===");
- 
+
     // Create mobile simulation environment
     logger.info("Creating mobile simulation environment...");
     let (simulator, node1_config) = create_test_environment()?;
@@ -1789,7 +1792,9 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         user_count2, 5,
         "Node 2 should have 5 users after replication"
     );
-    logger.info(format!("✅ Node 2 has {user_count2} users (replication successful)"));
+    logger.info(format!(
+        "✅ Node 2 has {user_count2} users (replication successful)"
+    ));
 
     // Test live replication: Add data to Node 2 and verify it appears on Node 1
     logger.info("Testing live replication from Node 2 to Node 1...");
@@ -1914,7 +1919,9 @@ async fn test_mobile_simulator_replication() -> Result<()> {
         final_count1, 7,
         "Both nodes should have 7 users total (5 initial + 2 live)"
     );
-    logger.info(format!("✅ Final verification: Both nodes have {final_count1} users"));
+    logger.info(format!(
+        "✅ Final verification: Both nodes have {final_count1} users"
+    ));
 
     // Clean up
     node1.stop().await?;
@@ -1928,10 +1935,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 async fn test_high_volume_replication_with_pagination() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(
-        Component::Custom("test"),
-        "",
-    ));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
     logger.info("🧪 Testing high-volume replication with pagination (400 records)...");
 
     // Create Node 1 with 400 records

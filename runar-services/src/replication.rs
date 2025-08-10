@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::Logger;
-use runar_node::AbstractService;
 use runar_node::services::LifecycleContext;
+use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -223,9 +223,7 @@ impl ReplicationManager {
         ));
 
         // Build replication event preserving origin metadata
-        let replication_event = self
-            .replication_event_from_sqlite_event(event)
-            .await?;
+        let replication_event = self.replication_event_from_sqlite_event(event).await?;
 
         if is_local {
             // Local events are already applied to base tables; store for history only
@@ -628,7 +626,11 @@ impl ReplicationManager {
                 .join(", ");
             where_parts.push(format!(
                 "(source_node_id NOT IN ({}))",
-                if not_in_list.is_empty() { "''".to_string() } else { not_in_list }
+                if not_in_list.is_empty() {
+                    "''".to_string()
+                } else {
+                    not_in_list
+                }
             ));
             // Part 2: greater-than clauses per known origin
             if !greater_clauses.is_empty() {
@@ -655,8 +657,7 @@ impl ReplicationManager {
                 .with_value(Value::Text(oc.origin_node_id.clone()))
                 .with_value(Value::Integer(oc.origin_seq));
         }
-        params = params
-            .with_value(Value::Integer(request.page_size as i64));
+        params = params.with_value(Value::Integer(request.page_size as i64));
         if request.from_by_origin.is_empty() {
             params = params.with_value(Value::Integer((request.page * request.page_size) as i64));
         }
@@ -672,8 +673,10 @@ impl ReplicationManager {
             .await
             .map_err(|e| anyhow!("Failed to query events: {e}"))?;
 
-        self.logger
-            .info(format!("Found {} rows for this page before mapping", result.len()));
+        self.logger.info(format!(
+            "Found {} rows for this page before mapping",
+            result.len()
+        ));
 
         // Convert rows to ReplicationEvent objects
         let events: Vec<ReplicationEvent> = result
@@ -761,14 +764,23 @@ impl ReplicationManager {
             (total_count as u32, has_more)
         } else {
             // In origin-filtered mode, client recomputes checkpoints; just indicate more if we filled a page
-            (events.len() as u32, events.len() as u32 == request.page_size)
+            (
+                events.len() as u32,
+                events.len() as u32 == request.page_size,
+            )
         };
 
         let mut origin_min_max: std::collections::BTreeMap<String, (i64, i64)> = Default::default();
         for e in &events {
-            let entry = origin_min_max.entry(e.source_node_id.clone()).or_insert((e.origin_seq, e.origin_seq));
-            if e.origin_seq < entry.0 { entry.0 = e.origin_seq; }
-            if e.origin_seq > entry.1 { entry.1 = e.origin_seq; }
+            let entry = origin_min_max
+                .entry(e.source_node_id.clone())
+                .or_insert((e.origin_seq, e.origin_seq));
+            if e.origin_seq < entry.0 {
+                entry.0 = e.origin_seq;
+            }
+            if e.origin_seq > entry.1 {
+                entry.1 = e.origin_seq;
+            }
         }
         self.logger.info(format!(
             "Returning {} events, total_count={}, has_more={}, origin_ranges={:?}",
@@ -912,7 +924,10 @@ impl ReplicationManager {
                     Some(Value::Integer(i)) => *i,
                     _ => 0,
                 };
-                out.push(OriginCheckpoint { origin_node_id, origin_seq });
+                out.push(OriginCheckpoint {
+                    origin_node_id,
+                    origin_seq,
+                });
             }
             return Ok(out);
         }
@@ -939,7 +954,10 @@ impl ReplicationManager {
                 Some(Value::Integer(i)) => *i,
                 _ => 0,
             };
-            out.push(OriginCheckpoint { origin_node_id, origin_seq });
+            out.push(OriginCheckpoint {
+                origin_node_id,
+                origin_seq,
+            });
         }
         Ok(out)
     }

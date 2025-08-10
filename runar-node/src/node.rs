@@ -844,10 +844,10 @@ impl Node {
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-            PublishOptions {
+                PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
-                retain_for: Some(Duration::from_secs(10)),
+                    retain_for: Some(Duration::from_secs(10)),
                     target: None,
                 },
             )

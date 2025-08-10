@@ -977,7 +977,9 @@ impl ServiceRegistry {
                     // metadata.path is a full topic path including network id prefix
                     if let Ok(tp) = TopicPath::from_full_path(&metadata.path) {
                         let service_path = tp.service_path();
-                        if service_path.starts_with('$') || INTERNAL_SERVICES.contains(&service_path.as_str()) {
+                        if service_path.starts_with('$')
+                            || INTERNAL_SERVICES.contains(&service_path.as_str())
+                        {
                             continue;
                         }
                     } else if metadata.path.starts_with('$') {
