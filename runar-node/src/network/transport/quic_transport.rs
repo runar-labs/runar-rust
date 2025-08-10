@@ -13,6 +13,7 @@ use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
+use dashmap::DashMap;
 
 use crate::network::discovery::{multicast_discovery::PeerInfo, NodeInfo};
 use crate::network::transport::{MessageContext, NetworkError, NetworkMessage, NetworkTransport};
@@ -336,8 +337,8 @@ fn dns_safe_node_id(node_id: &str) -> String {
 struct SharedState {
     peers: PeerMap,
     connection_id_to_peer_id: ConnectionIdToPeerIdMap,
-    dial_backoff: Arc<RwLock<HashMap<String, (u32, Instant)>>>,
-    dial_cancel: Arc<RwLock<HashMap<String, Arc<Notify>>>>,
+    dial_backoff: Arc<DashMap<String, (u32, Instant)>>,
+    dial_cancel: Arc<DashMap<String, Arc<Notify>>>,
 }
 type PeerMap = Arc<RwLock<HashMap<String, PeerState>>>;
 type ConnectionIdToPeerIdMap = Arc<RwLock<HashMap<usize, String>>>;
@@ -550,14 +551,12 @@ impl QuicTransport {
         ));
         // Cancel any pending outbound dial to this peer and reset backoff on successful inbound
         {
-            let mut cancel = self.state.dial_cancel.write().await;
-            if let Some(n) = cancel.remove(peer_node_id) {
+            if let Some((_, n)) = self.state.dial_cancel.remove(peer_node_id) {
                 n.notify_waiters();
             }
         }
         {
-            let mut backoff = self.state.dial_backoff.write().await;
-            backoff.remove(peer_node_id);
+            self.state.dial_backoff.remove(peer_node_id);
         }
         let mut peers = self.state.peers.write().await;
         let existing_opt = peers.get(peer_node_id).cloned();
@@ -905,15 +904,11 @@ impl QuicTransport {
                 self_clone
                     .state
                     .dial_backoff
-                    .write()
-                    .await
                     .remove(&resolved_peer_id);
                 // Cancel any pending dial waits
-                if let Some(n) = self_clone
+                if let Some((_, n)) = self_clone
                     .state
                     .dial_cancel
-                    .write()
-                    .await
                     .remove(&resolved_peer_id)
                 {
                     n.notify_waiters();
@@ -1537,8 +1532,8 @@ impl QuicTransport {
         SharedState {
             peers: Arc::new(RwLock::new(HashMap::new())),
             connection_id_to_peer_id: Arc::new(RwLock::new(HashMap::new())),
-            dial_backoff: Arc::new(RwLock::new(HashMap::new())),
-            dial_cancel: Arc::new(RwLock::new(HashMap::new())),
+            dial_backoff: Arc::new(DashMap::new()),
+            dial_cancel: Arc::new(DashMap::new()),
         }
     }
 }
@@ -1656,8 +1651,8 @@ impl NetworkTransport for QuicTransport {
 
         // Clear in-memory maps
         self.state.connection_id_to_peer_id.write().await.clear();
-        self.state.dial_backoff.write().await.clear();
-        self.state.dial_cancel.write().await.clear();
+        self.state.dial_backoff.clear();
+        self.state.dial_cancel.clear();
 
         // Abort background tasks without awaiting them to prevent potential deadlocks
         self.logger.debug("canceling all remaining tasks");
@@ -1894,10 +1889,8 @@ impl NetworkTransport for QuicTransport {
                 if let Some(n) = self
                     .state
                     .dial_cancel
-                    .read()
-                    .await
                     .get(&peer_node_id)
-                    .cloned()
+                    .map(|e| e.value().clone())
                 {
                     let notified =
                         tokio::time::timeout(Duration::from_millis(50), n.notified()).await;
@@ -1919,8 +1912,8 @@ impl NetworkTransport for QuicTransport {
 
         // Per-peer cancel Notify (created if absent)
         let cancel_notify = {
-            let mut map = self.state.dial_cancel.write().await;
-            map.entry(peer_node_id.clone())
+            self.state.dial_cancel
+                .entry(peer_node_id.clone())
                 .or_insert_with(|| Arc::new(Notify::new()))
                 .clone()
         };
@@ -1930,10 +1923,8 @@ impl NetworkTransport for QuicTransport {
         if let Some((attempts, until)) = self
             .state
             .dial_backoff
-            .read()
-            .await
             .get(&peer_node_id)
-            .cloned()
+            .map(|e| *e.value())
         {
             if now < until {
                 let wait_ms = until.saturating_duration_since(now).as_millis();
@@ -1981,12 +1972,11 @@ impl NetworkTransport for QuicTransport {
                 // Increase backoff for next time
                 // use local non-blocking random; avoid holding rng across await
                 let jitter: u64 = rand::random::<u64>() % 200;
-                let mut guard = self.state.dial_backoff.write().await;
-                let (mut attempts, _until) = guard.get(&peer_node_id).cloned().unwrap_or((0, now));
+                let (mut attempts, _until) = self.state.dial_backoff.get(&peer_node_id).map(|e| *e.value()).unwrap_or((0, now));
                 attempts = attempts.saturating_add(1);
                 let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
                 let delay = Duration::from_millis(base.saturating_add(jitter));
-                guard.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
+                self.state.dial_backoff.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
                 self.logger.debug(format!(
                     "⏫ [backoff-incr] peer={peer_node_id} attempts={attempts} delay_ms={}",
                     delay.as_millis()
@@ -2064,12 +2054,11 @@ impl NetworkTransport for QuicTransport {
                 // If still absent, remove the tentative placeholder and back off
                 self.state.peers.write().await.remove(&peer_node_id);
                 let jitter: u64 = rand::random::<u64>() % 200;
-                let mut guard = self.state.dial_backoff.write().await;
-                let (mut attempts, _until) = guard.get(&peer_node_id).cloned().unwrap_or((0, now));
+                let (mut attempts, _until) = self.state.dial_backoff.get(&peer_node_id).map(|e| *e.value()).unwrap_or((0, now));
                 attempts = attempts.saturating_add(1);
                 let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
                 let delay = Duration::from_millis(base.saturating_add(jitter));
-                guard.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
+                self.state.dial_backoff.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
                 return Err(e);
             }
         };
@@ -2089,9 +2078,9 @@ impl NetworkTransport for QuicTransport {
             .await;
 
         // Reset backoff on success
-        self.state.dial_backoff.write().await.remove(&peer_node_id);
+        self.state.dial_backoff.remove(&peer_node_id);
         // Cancel any outstanding dial waiters (if any)
-        if let Some(n) = self.state.dial_cancel.write().await.remove(&peer_node_id) {
+        if let Some((_, n)) = self.state.dial_cancel.remove(&peer_node_id) {
             n.notify_waiters();
         }
         Ok(())
