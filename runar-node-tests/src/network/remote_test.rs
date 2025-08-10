@@ -29,7 +29,7 @@ use crate::fixtures::math_service::MathService;
 #[tokio::test]
 async fn test_remote_action_call() -> Result<()> {
     // Configure logging to ensure test logs are displayed
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
 
     // Set up logger
@@ -274,7 +274,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
     // Hard timeout to prevent hangs in CI
     tokio::time::timeout(Duration::from_secs(40), async {
         // Configure logging to ensure test logs are displayed
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
         logging_config.apply();
 
         // Set up logger

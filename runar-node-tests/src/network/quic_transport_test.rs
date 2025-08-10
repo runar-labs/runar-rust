@@ -12,7 +12,7 @@ async fn test_dial_cancel_on_inbound_connect(
     use std::sync::Arc;
     use std::time::Duration;
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("dial_cancel_test"), ""));
 
@@ -225,7 +225,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         tokio::time::sleep(Duration::from_secs(5)).await;
         panic!("test_quic_transport timed out");
     });
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("quic_test"), ""));
@@ -949,7 +949,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         panic!("test_quic_duplicate_resolution_simultaneous_dial timed out");
     });
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("dup_test"), ""));
 
@@ -1141,7 +1141,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         panic!("test_quic_lifecycle_callbacks timed out");
     });
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("lifecycle_test"), ""));
 
@@ -1313,7 +1313,7 @@ async fn test_capability_version_bump_across_reconnect(
     });
 
     let logging_config = runar_node::config::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Debug);
+        .with_default_level(runar_node::config::LogLevel::Error);
     logging_config.apply();
     let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
         runar_common::logging::Component::Custom("cap_version_test"),
@@ -1465,7 +1465,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     });
 
     let logging_config = runar_node::config::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Debug);
+        .with_default_level(runar_node::config::LogLevel::Error);
     logging_config.apply();
     let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
         runar_common::logging::Component::Custom("anti_flap_test"),
