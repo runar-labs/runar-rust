@@ -102,7 +102,7 @@ async fn test_registry_service_get_service_info() {
     match timeout(Duration::from_secs(10), async {
         let test_logger = Logger::new_root(Component::Node, "test_name");
 
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
 
         // Create a node with a test network ID
         let config = create_node_test_config()

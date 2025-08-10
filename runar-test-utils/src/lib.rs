@@ -452,7 +452,7 @@ mod tests {
     // Set up logging once for all tests in this module
     fn setup_logging() {
         let logging_config = runar_node::config::LoggingConfig::new()
-            .with_default_level(runar_node::config::LogLevel::Error);
+            .with_default_level(runar_node::config::LogLevel::Warn);
         logging_config.apply();
     }
 
@@ -633,7 +633,7 @@ mod tests {
 
         // Configure logging
         let logging_config = runar_node::config::LoggingConfig::new()
-            .with_default_level(runar_node::config::LogLevel::Error);
+            .with_default_level(runar_node::config::LogLevel::Warn);
         logging_config.apply();
 
         let logger = Arc::new(Logger::new_root(

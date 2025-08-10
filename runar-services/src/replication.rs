@@ -136,29 +136,10 @@ impl ReplicationManager {
             context.info(format!("Service found in the network for: {service_path}"));
         } else {
             // Fallback: attempt remote request once to cover long-delay service add after start
-            context.info(format!(
-                "Running event not observed, trying remote_request once: {service_path}"
-            ));
-            let remote_path = format!(
-                "{service_path}/{action}",
-                action = "replication/get_table_events"
-            );
-            let probe_req = crate::replication::TableEventsRequest {
-                table_name: "__probe__".to_string(),
-                page: 0,
-                page_size: 1,
-                from_timestamp: 0,
-                from_by_origin: Vec::new(),
-            };
-            let res = context
-                .remote_request(&remote_path, Some(ArcValue::new_struct(probe_req)))
-                .await;
-            if res.is_err() {
-                context.info(format!(
-                    "No remote service available for: {service_path}; skipping startup sync"
-                ));
-                return Ok(());
-            }
+            context.warn(format!(
+                "Running event not observed skipping startup sync for: {service_path}"
+            )); 
+            return Ok(()); 
         }
 
         // Request latest state from network for each enabled table

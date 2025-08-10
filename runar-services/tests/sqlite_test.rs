@@ -67,7 +67,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert() {
         //set log to debug
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
 
         // Create a node with a test network ID
         let config = create_node_test_config()

@@ -383,7 +383,7 @@ mod tests {
 
     async fn create_test_context() -> TestContext {
         //set log to debug
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
         logging_config.apply();
 
         let logger = Arc::new(Logger::new_root(Component::Custom("macro_test"), ""));

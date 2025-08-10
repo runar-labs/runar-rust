@@ -64,7 +64,7 @@ impl EchoService {
 async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
     let logging_config = runar_node::config::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Error);
+        .with_default_level(runar_node::config::LogLevel::Warn);
     logging_config.apply();
 
     let node_config = create_node_test_config()

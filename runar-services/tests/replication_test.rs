@@ -63,7 +63,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
     );
 
     // Create test node
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     let config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
@@ -223,7 +223,7 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
     );
 
     // Create test node
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     let config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
@@ -317,7 +317,7 @@ async fn test_replication_event_database_application() -> Result<()> {
     );
 
     // Create test node
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     let config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
@@ -514,7 +514,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
     );
 
     // Create test node
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Error);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     let config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
