@@ -9,6 +9,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use core::fmt;
+use dashmap::DashMap;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use serde::{Deserialize, Serialize};
@@ -81,7 +82,7 @@ impl MulticastMessage {
 /// Multicast-based node discovery implementation
 pub struct MulticastDiscovery {
     options: Arc<RwLock<DiscoveryOptions>>,
-    discovered_nodes: Arc<RwLock<HashMap<String, PeerInfo>>>,
+    discovered_nodes: Arc<DashMap<String, PeerInfo>>,
     // Last-seen for TTL/Lost emission
     last_seen: Arc<RwLock<HashMap<String, std::time::SystemTime>>>,
     // Debounce: last time we emitted an event per peer
@@ -148,7 +149,7 @@ impl MulticastDiscovery {
 
         let instance = Self {
             options: Arc::new(RwLock::new(options)),
-            discovered_nodes: Arc::new(RwLock::new(HashMap::new())),
+            discovered_nodes: Arc::new(DashMap::new()),
             last_seen: Arc::new(RwLock::new(HashMap::new())),
             last_emitted: Arc::new(RwLock::new(HashMap::new())),
             local_node: Arc::new(RwLock::new(Some(local_node))),
@@ -358,7 +359,7 @@ impl MulticastDiscovery {
     /// Start a task that periodically cleans up stale nodes
     fn start_cleanup_task(
         &self,
-        nodes: Arc<RwLock<HashMap<String, PeerInfo>>>,
+        nodes: Arc<DashMap<String, PeerInfo>>,
         ttl: Duration,
     ) -> JoinHandle<()> {
         let logger = self.logger.clone();
@@ -382,7 +383,7 @@ impl MulticastDiscovery {
 
     /// Helper function to clean up stale nodes
     async fn cleanup_stale_nodes(
-        nodes: &Arc<RwLock<HashMap<String, PeerInfo>>>,
+        nodes: &Arc<DashMap<String, PeerInfo>>,
         last_seen: &Arc<RwLock<HashMap<String, std::time::SystemTime>>>,
         listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
         ttl: Duration,
@@ -406,7 +407,7 @@ impl MulticastDiscovery {
             logger.debug(format!(
                 "📉 [discovery] TTL expired for {key}, emitting Lost"
             ));
-            nodes.write().await.remove(&key);
+            nodes.remove(&key);
             last_seen.write().await.remove(&key);
             for listener in &listeners_vec {
                 let fut = listener(DiscoveryEvent::Lost(key.clone()));
@@ -472,7 +473,7 @@ impl MulticastDiscovery {
     async fn process_message(
         message: MulticastMessage,
         src: SocketAddr,
-        nodes: &Arc<RwLock<HashMap<String, PeerInfo>>>,
+        nodes: &Arc<DashMap<String, PeerInfo>>,
         listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
         socket: &Arc<UdpSocket>,
         local_node: &Arc<RwLock<Option<NodeInfo>>>,
@@ -508,16 +509,10 @@ impl MulticastDiscovery {
             logger.debug(format!("Processing announce message from {peer_node_id}"));
 
             // Check if this is a new peer before responding AND notifying
-            let is_new_peer = {
-                let nodes_read = nodes.read().await;
-                !nodes_read.contains_key(&peer_node_id)
-            };
+            let is_new_peer = !nodes.contains_key(&peer_node_id);
 
             // Store the peer info (always refresh)
-            {
-                let mut nodes_write = nodes.write().await;
-                nodes_write.insert(peer_node_id.clone(), peer_info.clone());
-            }
+            nodes.insert(peer_node_id.clone(), peer_info.clone());
 
             // Debounce Updated events per peer
             let mut emit_event = is_new_peer;
@@ -606,8 +601,7 @@ impl MulticastDiscovery {
             // Goodbye: Remove node
             logger.debug(format!("Processing goodbye message from {identifier}"));
             let key = identifier.to_string();
-            let mut nodes_write = nodes.write().await;
-            nodes_write.remove(&key);
+            nodes.remove(&key);
             // Notify listeners Lost
             let event = DiscoveryEvent::Lost(key.clone());
             let listeners_read = listeners.read().await;

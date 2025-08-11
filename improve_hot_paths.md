@@ -13,8 +13,8 @@ DO NOT CHANGE anything else.. focus only int the dashmap replacement.
 For every succesful change, update this doc with progress and stop and give me a summary of changes so I can review and stage the changes... before moving to the next.
 
 ## **PROGRESS SUMMARY** ✅
-**Current Status**: Phase 1.1 (Service Registry) - 3/3 fields completed + Memory Efficiency Complete
-**Next Target**: Network Transport Peer Maps conversion
+**Current Status**: Phase 2.1 (Multicast Discovery) - 1/3 fields completed
+**Next Target**: Complete remaining Multicast Discovery fields, then move to Memory Discovery
 **Completed Fields**:
 - ✅ `dial_backoff` - Converted to DashMap, all tests passing
 - ✅ `dial_cancel` - Converted to DashMap, all tests passing  
@@ -23,8 +23,21 @@ For every succesful change, update this doc with progress and stop and give me a
 - ✅ **Service Registry Service State Maps** - Converted to DashMap, all tests passing ✅
 - ✅ **Service Registry Service Lists** - Converted to DashMap, all tests passing ✅
 - ✅ **Service Registry Remote Peer Subscriptions** - Converted to DashMap, all tests passing ✅
+- ✅ **Multicast Discovery Discovered Nodes** - Converted to DashMap, all tests passing ✅
 
 **Test Results**: All 123 tests in runar-node-tests pass successfully after each conversion
+
+**Latest Conversion**: `discovered_nodes: Arc<RwLock<HashMap<String, PeerInfo>>>` → `Arc<DashMap<String, PeerInfo>>`
+- ✅ Added DashMap import
+- ✅ Updated struct field definition
+- ✅ Updated constructor initialization
+- ✅ Updated function parameter types
+- ✅ Converted all RwLock patterns to DashMap patterns:
+  - `nodes.read().await.contains_key()` → `nodes.contains_key()`
+  - `nodes.write().await.insert()` → `nodes.insert()`
+  - `nodes.write().await.remove()` → `nodes.remove()`
+- ✅ All compilation and clippy checks pass
+- ✅ All 123 tests pass successfully
 
 Refactor requirements
 - Replace `Arc<RwLock<HashMap<K, V>>>` with `Arc<DashMap<K, V2>>` where:
