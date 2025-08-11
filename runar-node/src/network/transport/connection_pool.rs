@@ -100,7 +100,11 @@ impl ConnectionPool {
                 connected_peers.push(entry.key().clone());
             }
         }
-        log_debug!(self.logger, "get_connected_peers -> {}", connected_peers.len());
+        log_debug!(
+            self.logger,
+            "get_connected_peers -> {}",
+            connected_peers.len()
+        );
         connected_peers
     }
 }

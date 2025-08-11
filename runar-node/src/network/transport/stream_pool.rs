@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::network::transport::NetworkError;
 use runar_common::logging::Logger;
-use runar_macros_common::{log_debug};
+use runar_macros_common::log_debug;
 use tokio::sync::RwLock;
 
 /// StreamPool - Manages the reuse of QUIC streams
