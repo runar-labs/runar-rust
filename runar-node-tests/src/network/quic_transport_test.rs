@@ -142,7 +142,7 @@ async fn test_dial_cancel_on_inbound_connect(
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Exactly one side should have a single active connection and requests must work
-        assert!(t1.is_connected(id2.clone()).await || t2.is_connected(id1.clone()).await);
+    assert!(t1.is_connected(id2.clone()).await || t2.is_connected(id1.clone()).await);
 
     // Simple request to verify stable connection
     let topic = runar_node::routing::TopicPath::new("$registry/services/list", "main").unwrap();

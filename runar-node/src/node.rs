@@ -20,10 +20,10 @@ use std::fmt::Debug;
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
 
+use dashmap::DashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{oneshot, RwLock};
-use dashmap::DashMap;
 
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
@@ -99,7 +99,8 @@ impl PeerDirectory {
     }
 
     pub fn mark_connected(&self, peer_id: &str) {
-        let mut entry = self.inner
+        let mut entry = self
+            .inner
             .entry(peer_id.to_string())
             .or_insert_with(PeerRecord::new);
         entry.connected = true;
@@ -112,7 +113,8 @@ impl PeerDirectory {
     }
 
     pub fn set_node_info(&self, peer_id: &str, info: NodeInfo) {
-        let mut entry = self.inner
+        let mut entry = self
+            .inner
             .entry(peer_id.to_string())
             .or_insert_with(PeerRecord::new);
         entry.last_capabilities_version = info.version;
@@ -120,9 +122,7 @@ impl PeerDirectory {
     }
 
     pub fn get_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
-        self.inner
-            .get(peer_id)
-            .and_then(|r| r.node_info.clone())
+        self.inner.get(peer_id).and_then(|r| r.node_info.clone())
     }
 
     pub fn take_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
@@ -1203,11 +1203,12 @@ impl Node {
         // Debounce rapid duplicate announcements only when not connected is false (we already checked not connected),
         // but still avoid spamming connects if multiple events arrive within a very short window.
         {
-            let should_debounce = if let Some(last) = self.discovery_seen_times.get(&discovered_peer_id) {
-                last.elapsed() < Duration::from_millis(150)
-            } else {
-                false
-            };
+            let should_debounce =
+                if let Some(last) = self.discovery_seen_times.get(&discovered_peer_id) {
+                    last.elapsed() < Duration::from_millis(150)
+                } else {
+                    false
+                };
 
             if should_debounce {
                 self.logger
@@ -1215,7 +1216,8 @@ impl Node {
                 // Do not early-return; small delay then continue to connect to ensure reconnection after restart
                 tokio::time::sleep(Duration::from_millis(150)).await;
             } else {
-                self.discovery_seen_times.insert(discovered_peer_id.clone(), Instant::now());
+                self.discovery_seen_times
+                    .insert(discovered_peer_id.clone(), Instant::now());
             }
         }
 
@@ -1535,9 +1537,7 @@ impl Node {
         ));
 
         // Find any pending response handlers
-        if let Some((_, pending_request_sender)) =
-            self.pending_requests.remove(correlation_id)
-        {
+        if let Some((_, pending_request_sender)) = self.pending_requests.remove(correlation_id) {
             self.logger.debug(format!(
                 "Found response handler for correlation ID: {correlation_id}"
             ));
@@ -2608,8 +2608,6 @@ impl Node {
 
         Ok(())
     }
-
-
 }
 
 /// Start networking components

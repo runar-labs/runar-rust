@@ -197,4 +197,3 @@ macro_rules! log_error {
         $crate::runar_log!($logger, Error, $($arg)*);
     }
 }
-

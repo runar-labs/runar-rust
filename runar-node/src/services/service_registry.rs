@@ -238,7 +238,8 @@ impl ServiceRegistry {
             .await
             .set_value(service_topic.clone(), service);
         //TODO understand why we have this duplciation of local_services and local_services_list
-        self.local_services_list.insert(service_topic, service_entry.clone());
+        self.local_services_list
+            .insert(service_topic, service_entry.clone());
 
         Ok(())
     }
@@ -466,11 +467,13 @@ impl ServiceRegistry {
         }
 
         // Map subscription ID to topic path - use Arc::clone for shared data
-        self.subscription_id_to_topic_path.insert(subscription_id.clone(), topic_path.clone());
+        self.subscription_id_to_topic_path
+            .insert(subscription_id.clone(), topic_path.clone());
 
         let service_topic =
             TopicPath::new(&topic_path.service_path(), &topic_path.network_id()).unwrap();
-        self.subscription_id_to_service_topic_path.insert(subscription_id.clone(), service_topic);
+        self.subscription_id_to_service_topic_path
+            .insert(subscription_id.clone(), service_topic);
         Ok(subscription_id)
     }
 
@@ -503,7 +506,8 @@ impl ServiceRegistry {
         }
 
         // Map subscription ID to topic path - use Arc::clone for shared data
-        self.subscription_id_to_topic_path.insert(subscription_id.clone(), topic_path.clone());
+        self.subscription_id_to_topic_path
+            .insert(subscription_id.clone(), topic_path.clone());
 
         Ok(subscription_id)
     }
@@ -615,7 +619,8 @@ impl ServiceRegistry {
             service_topic.clone(),
             state
         ));
-        self.local_service_states.insert(service_topic.as_str().to_string(), state);
+        self.local_service_states
+            .insert(service_topic.as_str().to_string(), state);
         Ok(())
     }
 
@@ -632,7 +637,8 @@ impl ServiceRegistry {
             service_topic.clone(),
             state
         ));
-        self.remote_service_states.insert(service_topic.as_str().to_string(), state);
+        self.remote_service_states
+            .insert(service_topic.as_str().to_string(), state);
         Ok(())
     }
 
@@ -643,12 +649,16 @@ impl ServiceRegistry {
 
     /// Get local service state
     pub async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        self.local_service_states.get(service_path.as_str()).map(|entry| *entry.value())
+        self.local_service_states
+            .get(service_path.as_str())
+            .map(|entry| *entry.value())
     }
 
     /// Get remote service state
     pub async fn get_remote_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
-        self.remote_service_states.get(service_path.as_str()).map(|entry| *entry.value())
+        self.remote_service_states
+            .get(service_path.as_str())
+            .map(|entry| *entry.value())
     }
 
     /// Get metadata for all events under a specific service path
@@ -729,7 +739,10 @@ impl ServiceRegistry {
         ));
 
         // Find the TopicPath associated with the subscription ID
-        let topic_path_option = self.subscription_id_to_topic_path.get(subscription_id).map(|entry| entry.value().clone());
+        let topic_path_option = self
+            .subscription_id_to_topic_path
+            .get(subscription_id)
+            .map(|entry| entry.value().clone());
 
         if let Some(topic_path) = topic_path_option {
             self.logger.debug(format!(
@@ -762,7 +775,8 @@ impl ServiceRegistry {
                 self.subscription_id_to_topic_path.remove(subscription_id);
 
                 // Remove from service topic path map
-                self.subscription_id_to_service_topic_path.remove(subscription_id);
+                self.subscription_id_to_service_topic_path
+                    .remove(subscription_id);
 
                 self.logger.debug(format!(
                     "Successfully unsubscribed from topic: {} with ID: {}",
@@ -797,7 +811,8 @@ impl ServiceRegistry {
         path: &TopicPath,
         sub_id: String,
     ) {
-        let peer_subscriptions = self.remote_peer_subscriptions
+        let peer_subscriptions = self
+            .remote_peer_subscriptions
             .entry(peer_id.to_string())
             .or_default();
         peer_subscriptions.insert(path.as_str().to_string(), sub_id);
@@ -810,9 +825,7 @@ impl ServiceRegistry {
         path: &TopicPath,
         sub_id: String,
     ) {
-        let peer_subscriptions = self.remote_peer_subscriptions
-            .entry(peer_id)
-            .or_default();
+        let peer_subscriptions = self.remote_peer_subscriptions.entry(peer_id).or_default();
         peer_subscriptions.insert(path.as_str().to_string(), sub_id);
     }
 
@@ -825,7 +838,10 @@ impl ServiceRegistry {
         self.remote_peer_subscriptions
             .get(peer_id)
             .and_then(|peer_entry| {
-                peer_entry.value().remove(path.as_str()).map(|(_, sub_id)| sub_id)
+                peer_entry
+                    .value()
+                    .remove(path.as_str())
+                    .map(|(_, sub_id)| sub_id)
             })
     }
 
@@ -834,7 +850,10 @@ impl ServiceRegistry {
         self.remote_peer_subscriptions
             .remove(peer_id)
             .map(|(_, peer_subscriptions)| {
-                peer_subscriptions.into_iter().map(|entry| entry.1).collect()
+                peer_subscriptions
+                    .into_iter()
+                    .map(|entry| entry.1)
+                    .collect()
             })
             .unwrap_or_default()
     }
@@ -847,12 +866,14 @@ impl ServiceRegistry {
         self.remote_peer_subscriptions
             .get(peer_id)
             .map(|peer_entry| {
-                peer_entry.value().iter().map(|path_entry| path_entry.key().clone()).collect()
+                peer_entry
+                    .value()
+                    .iter()
+                    .map(|path_entry| path_entry.key().clone())
+                    .collect()
             })
             .unwrap_or_default()
     }
-
-
 
     pub async fn unsubscribe_remote(&self, subscription_id: &str) -> Result<()> {
         self.logger.debug(format!(
@@ -860,7 +881,10 @@ impl ServiceRegistry {
         ));
 
         // Find the TopicPath associated with the subscription ID
-        let topic_path_option = self.subscription_id_to_topic_path.get(subscription_id).map(|entry| entry.value().clone());
+        let topic_path_option = self
+            .subscription_id_to_topic_path
+            .get(subscription_id)
+            .map(|entry| entry.value().clone());
 
         if let Some(topic_path) = topic_path_option {
             self.logger.debug(format!(

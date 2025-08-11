@@ -271,10 +271,7 @@ impl MulticastDiscovery {
     }
 
     /// Start the announce task for periodically announcing our presence
-    fn start_announce_task(
-        &self,
-        interval: Duration,
-    ) -> JoinHandle<()> {
+    fn start_announce_task(&self, interval: Duration) -> JoinHandle<()> {
         let socket = Arc::clone(&self.socket);
         let multicast_addr = Arc::clone(&self.multicast_addr);
         let local_node = Arc::clone(&self.local_node);
@@ -399,9 +396,12 @@ impl MulticastDiscovery {
 
         // Process the message and emit appropriate events
         match &message {
-            MulticastMessage { announce: Some(peer_info), goodbye: None } => {
+            MulticastMessage {
+                announce: Some(peer_info),
+                goodbye: None,
+            } => {
                 logger.debug("Processing announce message from peer");
-                
+
                 // Emit Discovered event to all listeners
                 let listeners_read = listeners.read().await;
                 for listener in listeners_read.iter() {
@@ -409,9 +409,12 @@ impl MulticastDiscovery {
                     let _ = listener(event).await;
                 }
             }
-            MulticastMessage { announce: None, goodbye: Some(identifier) } => {
+            MulticastMessage {
+                announce: None,
+                goodbye: Some(identifier),
+            } => {
                 logger.debug(format!("Processing goodbye message from {identifier}"));
-                
+
                 // Emit Lost event to all listeners
                 let listeners_read = listeners.read().await;
                 for listener in listeners_read.iter() {

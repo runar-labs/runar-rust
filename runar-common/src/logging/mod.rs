@@ -225,7 +225,10 @@ impl Logger {
                 debug!(
                     "[{}][{}{}{}] {}",
                     self.node_id,
-                    ComponentPrefixDisplay { parent: self.parent_component, component: self.component },
+                    ComponentPrefixDisplay {
+                        parent: self.parent_component,
+                        component: self.component
+                    },
                     MaybeActionDisplay(self.action_path()),
                     MaybeEventDisplay(self.event_path()),
                     args
@@ -260,7 +263,10 @@ impl Logger {
                 info!(
                     "[{}][{}{}{}] {}",
                     self.node_id,
-                    ComponentPrefixDisplay { parent: self.parent_component, component: self.component },
+                    ComponentPrefixDisplay {
+                        parent: self.parent_component,
+                        component: self.component
+                    },
                     MaybeActionDisplay(self.action_path()),
                     MaybeEventDisplay(self.event_path()),
                     args
@@ -278,7 +284,10 @@ impl Logger {
                 info!(
                     "[{}][{}{}{}] {}",
                     self.node_id,
-                    ComponentPrefixDisplay { parent: self.parent_component, component: self.component },
+                    ComponentPrefixDisplay {
+                        parent: self.parent_component,
+                        component: self.component
+                    },
                     MaybeActionDisplay(self.action_path()),
                     MaybeEventDisplay(self.event_path()),
                     msg
@@ -313,7 +322,10 @@ impl Logger {
                 warn!(
                     "[{}][{}{}{}] {}",
                     self.node_id,
-                    ComponentPrefixDisplay { parent: self.parent_component, component: self.component },
+                    ComponentPrefixDisplay {
+                        parent: self.parent_component,
+                        component: self.component
+                    },
                     MaybeActionDisplay(self.action_path()),
                     MaybeEventDisplay(self.event_path()),
                     args
@@ -348,7 +360,10 @@ impl Logger {
                 error!(
                     "[{}][{}{}{}] {}",
                     self.node_id,
-                    ComponentPrefixDisplay { parent: self.parent_component, component: self.component },
+                    ComponentPrefixDisplay {
+                        parent: self.parent_component,
+                        component: self.component
+                    },
                     MaybeActionDisplay(self.action_path()),
                     MaybeEventDisplay(self.event_path()),
                     args

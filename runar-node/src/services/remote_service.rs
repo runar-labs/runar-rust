@@ -299,7 +299,10 @@ impl RemoteService {
     /// INTENTION: Provide a way to identify all actions that this remote service
     /// can handle, to be used during initialization for registering handlers.
     pub fn get_available_actions(&self) -> Vec<String> {
-        self.actions.iter().map(|entry| entry.key().clone()).collect()
+        self.actions
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Initialize the remote service and register its handlers

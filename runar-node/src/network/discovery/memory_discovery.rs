@@ -6,11 +6,11 @@
 
 // Standard library imports
 use anyhow::{anyhow, Result};
+use dashmap::DashMap;
 use runar_common::compact_ids::compact_id;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 use tokio::task::JoinHandle;
-use dashmap::DashMap;
 
 use super::multicast_discovery::PeerInfo;
 // Internal imports
@@ -133,7 +133,7 @@ impl MemoryDiscovery {
                 }
             })
             .collect();
-        
+
         if stale_keys.is_empty() {
             return;
         }
@@ -155,7 +155,7 @@ impl MemoryDiscovery {
     async fn add_node_internal(&self, node_info: NodeInfo) {
         let node_key = compact_id(&node_info.node_public_key);
         let is_new = !self.nodes.contains_key(&node_key);
-        
+
         self.nodes.insert(node_key.clone(), node_info.clone());
 
         self.logger
@@ -185,7 +185,8 @@ impl MemoryDiscovery {
                 self.last_emitted.insert(node_key.clone(), now);
             }
         } else {
-            self.last_emitted.insert(node_key.clone(), SystemTime::now());
+            self.last_emitted
+                .insert(node_key.clone(), SystemTime::now());
         }
         // update last_seen
         self.last_seen.insert(node_key.clone(), SystemTime::now());

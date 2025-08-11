@@ -7,13 +7,13 @@ use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use serde::{Deserialize, Serialize};
 
+use dashmap::DashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
-use dashmap::DashMap;
 
 use crate::network::discovery::{multicast_discovery::PeerInfo, NodeInfo};
 use crate::network::transport::{MessageContext, NetworkError, NetworkMessage, NetworkTransport};
@@ -341,8 +341,6 @@ struct SharedState {
     dial_cancel: Arc<DashMap<String, Arc<Notify>>>,
 }
 
-
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 enum ConnectionRole {
     Initiator,
@@ -558,7 +556,11 @@ impl QuicTransport {
         {
             self.state.dial_backoff.remove(peer_node_id);
         }
-        let existing_opt = self.state.peers.get(peer_node_id).map(|entry| entry.value().clone());
+        let existing_opt = self
+            .state
+            .peers
+            .get(peer_node_id)
+            .map(|entry| entry.value().clone());
         if let Some(existing) = existing_opt {
             self.logger.debug(format!(
                 "🔁 [dup] existing for peer={peer_node_id} existing_id={} init=({},{}) resp=({},{})",
@@ -682,9 +684,9 @@ impl QuicTransport {
             );
             let conn_id = new_state.connection_id;
             self.state.peers.insert(peer_node_id.to_string(), new_state);
-                            self.state
-                    .connection_id_to_peer_id
-                    .insert(conn_id, peer_node_id.to_string());
+            self.state
+                .connection_id_to_peer_id
+                .insert(conn_id, peer_node_id.to_string());
             if let Some(state) = self.state.peers.get(peer_node_id) {
                 let _ = state.value().activation_tx.send(true);
             }
@@ -878,7 +880,10 @@ impl QuicTransport {
                         removed = true;
                     } else {
                         // Re-insert if it wasn't the current connection
-                        self_clone.state.peers.insert(resolved_peer_id.clone(), current);
+                        self_clone
+                            .state
+                            .peers
+                            .insert(resolved_peer_id.clone(), current);
                         self_clone.logger.debug(format!(
                             "(post-grace) connection tasks for old conn_id={connection_id} exited; current conn_id={current_conn_id} remains for peer {resolved_peer_id}"
                         ));
@@ -891,16 +896,9 @@ impl QuicTransport {
             }
             if removed {
                 // Reset backoff so that future dials are allowed promptly after a clean disconnect
-                self_clone
-                    .state
-                    .dial_backoff
-                    .remove(&resolved_peer_id);
+                self_clone.state.dial_backoff.remove(&resolved_peer_id);
                 // Cancel any pending dial waits
-                if let Some((_, n)) = self_clone
-                    .state
-                    .dial_cancel
-                    .remove(&resolved_peer_id)
-                {
+                if let Some((_, n)) = self_clone.state.dial_cancel.remove(&resolved_peer_id) {
                     n.notify_waiters();
                 }
                 self_clone.logger.debug(format!("connection tasks exited for peer_node_id: {resolved_peer_id} - local node_id: {local_node_id}", local_node_id=compact_id(&self_clone.local_node_info.node_public_key)));
@@ -913,10 +911,8 @@ impl QuicTransport {
                     let peer_for_check = resolved_peer_id.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                        let still_disconnected = !self_check
-                            .state
-                            .peers
-                            .contains_key(&peer_for_check);
+                        let still_disconnected =
+                            !self_check.state.peers.contains_key(&peer_for_check);
                         if still_disconnected {
                             let _ = (cb)(peer_for_check.clone(), false, None).await;
                         } else {
@@ -1144,9 +1140,7 @@ impl QuicTransport {
                                 if !kept {
                                     continue;
                                 }
-                                if let Some(state) =
-                                    self.state.peers.get(&peer_node_id)
-                                {
+                                if let Some(state) = self.state.peers.get(&peer_node_id) {
                                     let _ = state.value().activation_tx.send(true);
                                 }
                                 should_send_response = true;
@@ -1382,7 +1376,11 @@ impl QuicTransport {
     ) -> Result<PeerState, NetworkError> {
         let mut attempt: u8 = 0;
         loop {
-            let maybe_peer = self.state.peers.get(peer_node_id).map(|entry| entry.value().clone());
+            let maybe_peer = self
+                .state
+                .peers
+                .get(peer_node_id)
+                .map(|entry| entry.value().clone());
             let peer = match maybe_peer {
                 Some(p) => p,
                 None => {
@@ -1616,7 +1614,9 @@ impl NetworkTransport for QuicTransport {
         // Snapshot and clear peers under a write lock to avoid deadlocks
         self.logger.debug("Closing all connections");
         let connections_to_close: Vec<quinn::Connection> = {
-            let conns = self.state.peers
+            let conns = self
+                .state
+                .peers
                 .iter()
                 .map(|entry| entry.value().connection.as_ref().clone())
                 .collect::<Vec<_>>();
@@ -1885,7 +1885,8 @@ impl NetworkTransport for QuicTransport {
 
         // Per-peer cancel Notify (created if absent)
         let cancel_notify = {
-            self.state.dial_cancel
+            self.state
+                .dial_cancel
                 .entry(peer_node_id.clone())
                 .or_insert_with(|| Arc::new(Notify::new()))
                 .clone()
@@ -1945,11 +1946,18 @@ impl NetworkTransport for QuicTransport {
                 // Increase backoff for next time
                 // use local non-blocking random; avoid holding rng across await
                 let jitter: u64 = rand::random::<u64>() % 200;
-                let (mut attempts, _until) = self.state.dial_backoff.get(&peer_node_id).map(|e| *e.value()).unwrap_or((0, now));
+                let (mut attempts, _until) = self
+                    .state
+                    .dial_backoff
+                    .get(&peer_node_id)
+                    .map(|e| *e.value())
+                    .unwrap_or((0, now));
                 attempts = attempts.saturating_add(1);
                 let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
                 let delay = Duration::from_millis(base.saturating_add(jitter));
-                self.state.dial_backoff.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
+                self.state
+                    .dial_backoff
+                    .insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
                 self.logger.debug(format!(
                     "⏫ [backoff-incr] peer={peer_node_id} attempts={attempts} delay_ms={}",
                     delay.as_millis()
@@ -2024,11 +2032,18 @@ impl NetworkTransport for QuicTransport {
                 // If still absent, remove the tentative placeholder and back off
                 self.state.peers.remove(&peer_node_id);
                 let jitter: u64 = rand::random::<u64>() % 200;
-                let (mut attempts, _until) = self.state.dial_backoff.get(&peer_node_id).map(|e| *e.value()).unwrap_or((0, now));
+                let (mut attempts, _until) = self
+                    .state
+                    .dial_backoff
+                    .get(&peer_node_id)
+                    .map(|e| *e.value())
+                    .unwrap_or((0, now));
                 attempts = attempts.saturating_add(1);
                 let base = 200u64.saturating_mul(2u64.saturating_pow(attempts.min(6)));
                 let delay = Duration::from_millis(base.saturating_add(jitter));
-                self.state.dial_backoff.insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
+                self.state
+                    .dial_backoff
+                    .insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
                 return Err(e);
             }
         };
@@ -2110,8 +2125,10 @@ impl NetworkTransport for QuicTransport {
                 .debug(format!("Updated peer {peer_id} with new node info"));
         }
 
-        self.logger
-            .info(format!("Updated {} peers with new node info", self.state.peers.len()));
+        self.logger.info(format!(
+            "Updated {} peers with new node info",
+            self.state.peers.len()
+        ));
         Ok(())
     }
 
