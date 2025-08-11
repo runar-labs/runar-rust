@@ -176,6 +176,6 @@ We begin at `runar-node/src/node.rs`, then fan out to the registry, transport, d
 - [x] `runar-node/src/network/transport/peer_state.rs`
 - [x] `runar-node/src/network/transport/connection_pool.rs`
 - [x] `runar-node/src/network/transport/stream_pool.rs`
-- [ ] `runar-node/src/network/discovery/*.rs`
-- [ ] `runar-serializer/src/*.rs`
+- [x] `runar-node/src/network/discovery/*.rs`
+- [x] `runar-serializer/src/*.rs`
 

@@ -3596,6 +3596,7 @@ dependencies = [
  "ctor",
  "futures",
  "hex",
+ "log",
  "prost",
  "runar-serializer",
  "runar-serializer-macros",
