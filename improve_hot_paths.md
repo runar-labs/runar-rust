@@ -13,8 +13,8 @@ DO NOT CHANGE anything else.. focus only int the dashmap replacement.
 For every succesful change, update this doc with progress and stop and give me a summary of changes so I can review and stage the changes... before moving to the next.
 
 ## **PROGRESS SUMMARY** ✅
-**Current Status**: Phase 2.2 (Memory Discovery) - COMPLETE ✅
-**Next Target**: Mock Discovery or Remote Service Actions field conversion
+**Current Status**: Phase 2.2 (Discovery Systems) - 3/4 Complete
+**Next Target**: Complete Node Core Peer Directory, then Remote Service Actions
 **Completed Fields**:
 - ✅ `dial_backoff` - Converted to DashMap, all tests passing
 - ✅ `dial_cancel` - Converted to DashMap, all tests passing  
@@ -26,49 +26,18 @@ For every succesful change, update this doc with progress and stop and give me a
 - ✅ **Multicast Discovery** - Already converted to new architecture (no HashMap fields) ✅
 - ✅ **Network Transport Peer Maps** - Already converted to DashMap ✅
 - ✅ **Memory Discovery Node Maps** - Converted to DashMap, all tests passing ✅
+- ✅ **Mock Discovery Node Maps** - Converted to DashMap, all tests passing ✅
 
 **Test Results**: All 125 tests in runar-node-tests pass successfully after each conversion
 
-**Latest Conversion**: Memory Discovery fields converted to DashMap ✅
-- ✅ `nodes: Arc<RwLock<HashMap<String, NodeInfo>>>` → `Arc<DashMap<String, NodeInfo>>`
-- ✅ `last_seen: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>`
-- ✅ `last_emitted: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>`
-- ✅ Updated all methods to use DashMap patterns:
-  - `nodes.read().unwrap().contains_key()` → `nodes.contains_key()`
-  - `nodes.write().unwrap().insert()` → `nodes.insert()`
-  - `nodes.write().unwrap().remove()` → `nodes.remove()`
-  - `nodes.write().unwrap().clear()` → `nodes.clear()`
-- ✅ Updated function parameter types in `cleanup_stale_nodes`
-- ✅ All compilation and clippy checks pass
-- ✅ All 125 tests pass successfully
+**Current Status**: 
+- **Phase 1 (Core Hot Paths)**: 88% Complete (14/16) - Service Registry Complete, Node Core Partially Complete
+- **Phase 2 (Discovery Systems)**: 75% Complete (3/4) - Multicast, Memory & Mock Discovery Complete
+- **Overall Progress**: 20/41+ (49%)
 
-Refactor requirements
-- Replace `Arc<RwLock<HashMap<K, V>>>` with `Arc<DashMap<K, V2>>` where:
-  - Use borrowed lookups (`map.get(key_str)` with `&str`) to avoid allocations.
-  - If values are large or cloned often, store `Arc<V>` in the map to prevent cloning on hits.
-- Do not hold any guard across await points:
-  - Convert guard-held values into owned/Arc before the first `.await`.
- 
-- Keep the hot path minimal:
-  - No opportunistic pruning in the hot path.
-  - Avoid extra cloning/logging on hits; log at debug level sparingly.
-  - Prefer borrowed keys (`&str`) and `DashMap::get` then `entry.value()`; drop the guard immediately.
-
-
-Idioms to follow
-- Before:
-  - `let v = map.read().await.get(key).cloned()`
-- After:
-  - `if let Some(entry) = map.get(key_str) { let v = entry.value().clone(); /* no await */ }`
-- For caching responses:
-  - `response_cache.insert(correlation_id.clone(), (Instant::now(), Arc::new(reply.clone())))`
-  - On hit: `if let Some((ts, cached)) = entry.value(); if now - *ts <= ttl { use cached }`
- 
-
-Acceptance criteria
-- No async locks on hot read paths; no guard held across `await`.
-- Borrowed-key lookups in DashMap; values stored as `Arc<_>` when beneficial.
-- Configurable TTL with periodic prune; no pruning on the hot path. (for caches)
+**Remaining High-Priority Items**:
+1. **Node Core Peer Directory** - `inner: RwLock<HashMap<String, PeerRecord>>` needs conversion
+2. **Remote Service Actions** - `actions: Arc<RwLock<HashMap<String, ActionMetadata>>>` needs conversion
 
 ## **TASK LIST - Hot Path Optimization**
 
@@ -100,7 +69,12 @@ Acceptance criteria
   - [x] Update register_local_service method to use DashMap insert ✅
   - [x] Test: service registration, service listing ✅
 
-#### **1.2 Node Core (`src/node.rs`)** ✅ **COMPLETE**
+- [x] **Remote Peer Subscriptions** - Convert to DashMap ✅
+  - [x] `remote_peer_subscriptions: Arc<RwLock<HashMap<String, HashMap<String, String>>>>` → `Arc<DashMap<String, DashMap<String, String>>>` ✅
+  - [x] Update all nested HashMap operations to use DashMap patterns ✅
+  - [x] Test: remote peer subscription management ✅
+
+#### **1.2 Node Core (`src/node.rs`)** 🔄 **PARTIALLY COMPLETE**
 - [x] **Pending Requests** - Convert to DashMap ✅
   - [x] `pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>` → `Arc<DashMap<String, oneshot::Sender<Result<ArcValue>>>>` ✅
   - [x] Update constructor to use DashMap::new() ✅
@@ -120,6 +94,11 @@ Acceptance criteria
   - [x] Update get_or_create_connect_mutex method to use DashMap::entry().or_insert_with() ✅
   - [x] Eliminate read-then-write race condition pattern ✅
   - [x] Test: All node tests pass, integration tests pass ✅
+
+- [ ] **Peer Directory** - Convert to DashMap
+  - [ ] `inner: RwLock<HashMap<String, PeerRecord>>` → `Arc<DashMap<String, PeerRecord>>`
+  - [ ] Update peer directory operations (is_connected, mark_connected, mark_disconnected, set_node_info, get_node_info, take_node_info)
+  - [ ] Test: peer management, connection state tracking
 
 #### **1.3 Network Transport (`src/network/transport/quic_transport.rs`)** ✅ **COMPLETE**
 - [x] **Peer Maps** - Convert to DashMap ✅
@@ -154,11 +133,11 @@ Acceptance criteria
   - [x] Update in-memory discovery operations ✅
   - [x] Test: memory discovery, node tracking ✅
 
-#### **2.3 Mock Discovery (`src/network/discovery/mock.rs`)** 🔄 **READY**
-- [ ] **Mock Node Maps** - Convert to DashMap
-  - [ ] `nodes: Arc<RwLock<HashMap<String, NodeInfo>>>` → `Arc<DashMap<String, NodeInfo>>`
-  - [ ] Update mock discovery operations
-  - [ ] Test: mock discovery functionality
+#### **2.3 Mock Discovery (`src/network/discovery/mock.rs`)** ✅ **COMPLETE**
+- [x] **Mock Node Maps** - Convert to DashMap ✅
+  - [x] `nodes: Arc<RwLock<HashMap<String, NodeInfo>>>` → `Arc<DashMap<String, NodeInfo>>` ✅
+  - [x] Update mock discovery operations ✅
+  - [x] Test: mock discovery functionality ✅
 
 #### **2.4 Remote Service (`src/services/remote_service.rs`)** 🔄 **READY**
 - [ ] **Action Metadata** - Convert to DashMap
@@ -170,11 +149,6 @@ Acceptance criteria
 **Priority: LOW - These are less frequently accessed**
 
 #### **3.1 Node Configuration (`src/node.rs`)**
-- [ ] **Peer Directory** - Convert to DashMap
-  - [ ] `inner: RwLock<HashMap<String, PeerRecord>>` → `Arc<DashMap<String, PeerRecord>>`
-  - [ ] Update peer directory operations
-  - [ ] Test: peer management, connection state tracking
-
 - [ ] **Service Management** - Convert to DashMap where beneficial
   - [ ] `service_tasks: Arc<RwLock<Vec<ServiceTask>>>` → Evaluate if DashMap needed
   - [ ] `retained_index: Arc<RwLock<crate::routing::PathTrie<String>>>` → Evaluate if DashMap needed
@@ -185,6 +159,12 @@ Acceptance criteria
   - [ ] `endpoint: Arc<RwLock<Option<Endpoint>>>` → Evaluate if DashMap needed
   - [ ] `running: tokio::sync::RwLock<bool>` → Evaluate if DashMap needed
   - [ ] Test: transport lifecycle, endpoint management
+
+#### **3.3 Logging Configuration (`src/config/logging_config.rs`)**
+- [ ] **Component Log Levels** - Evaluate if DashMap needed
+  - [ ] `component_levels: HashMap<ComponentKey, LogLevel>` → Evaluate conversion strategy
+  - [ ] Note: This may not need conversion as it's not a hot path
+  - [ ] Test: logging configuration changes
 
 ### **PHASE 4: PathTrie Optimization (Special Case)**
 **Priority: MEDIUM - These are complex data structures that may need special handling**
@@ -217,10 +197,10 @@ For each completed task, verify:
 
 ### **PROGRESS TRACKING**
 - **Total Tasks**: 45+ individual optimizations
-- **Phase 1 Complete**: 15/15 (100%) - **ALL CORE HOT PATHS COMPLETE** ✅
+- **Phase 1 Complete**: 14/16 (88%) - **Service Registry Complete, Node Core Partially Complete**
 - **Phase 2 Complete**: 2/4 (50%) - **Multicast Discovery & Memory Discovery Complete**
 - **Phase 3 Complete**: 0/8 (0%)
 - **Phase 4 Complete**: 0/6 (0%)
-- **Overall Progress**: 17/41+ (41%)
+- **Overall Progress**: 19/41+ (46%)
 
-**NEXT IMMEDIATE TARGET**: Convert Mock Discovery fields to DashMap
+**NEXT IMMEDIATE TARGET**: Convert Mock Discovery fields to DashMap, then complete Node Core Peer Directory
