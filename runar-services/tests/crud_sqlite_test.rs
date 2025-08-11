@@ -150,11 +150,8 @@ async fn setup_node_with_services() -> Result<Node> {
         encryption: false,
         replication: None,
     };
-    let sqlite_service = SqliteService::new(
-        SQLITE_SERVICE_NAME,
-        SQLITE_SERVICE_PATH,
-        sqlite_config,
-    );
+    let sqlite_service =
+        SqliteService::new(SQLITE_SERVICE_NAME, SQLITE_SERVICE_PATH, sqlite_config);
     node.add_service(sqlite_service).await?;
 
     // Setup CrudSqliteService
@@ -162,7 +159,7 @@ async fn setup_node_with_services() -> Result<Node> {
         CRUD_SERVICE_NAME,
         CRUD_SERVICE_PATH,
         SQLITE_SERVICE_PATH, // store_path should be the *path* of the sqlite service
-        (*app_schema).clone(),           // schema (SqliteSchemaDef, cloned from Arc)
+        (*app_schema).clone(), // schema (SqliteSchemaDef, cloned from Arc)
     );
     node.add_service(crud_service).await?;
 

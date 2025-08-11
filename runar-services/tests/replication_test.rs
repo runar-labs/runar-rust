@@ -45,8 +45,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
     // Create SQLite config with replication enabled
     let sqlite_config = SqliteConfig::new(
         ":memory:", // Use in-memory database for testing
-        schema,
-        false, // No encryption for testing
+        schema, false, // No encryption for testing
     )
     .with_replication(ReplicationConfig {
         enabled_tables: vec!["users".to_string()],
@@ -214,7 +213,8 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
     let sqlite_config = SqliteConfig::new(":memory:", schema, false); // No replication config
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new("test_sqlite_no_repl", "test_sqlite_no_repl", sqlite_config);
+    let sqlite_service =
+        SqliteService::new("test_sqlite_no_repl", "test_sqlite_no_repl", sqlite_config);
 
     // Create test node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
@@ -294,19 +294,19 @@ async fn test_replication_event_database_application() -> Result<()> {
     };
 
     // Create SQLite config with replication enabled
-    let sqlite_config = SqliteConfig::new(":memory:", schema, false).with_replication(
-        ReplicationConfig {
+    let sqlite_config =
+        SqliteConfig::new(":memory:", schema, false).with_replication(ReplicationConfig {
             enabled_tables: vec!["users".to_string()],
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
             startup_sync: false, // Disable startup sync for this test
             event_retention_days: 30,
             wait_remote_service_timeout: 0,
             past_events_window: 0,
-        },
-    );
+        });
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new("test_sqlite_apply", "test_sqlite_apply", sqlite_config);
+    let sqlite_service =
+        SqliteService::new("test_sqlite_apply", "test_sqlite_apply", sqlite_config);
 
     // Create test node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
@@ -489,19 +489,22 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
     };
 
     // Create SQLite config with replication enabled
-    let sqlite_config = SqliteConfig::new(":memory:", schema, false).with_replication(
-        ReplicationConfig {
+    let sqlite_config =
+        SqliteConfig::new(":memory:", schema, false).with_replication(ReplicationConfig {
             enabled_tables: vec!["users".to_string()],
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
             startup_sync: false,
             event_retention_days: 30,
             wait_remote_service_timeout: 0,
             past_events_window: 0,
-        },
-    );
+        });
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new("test_sqlite_mark_processed", "test_sqlite_mark_processed", sqlite_config);
+    let sqlite_service = SqliteService::new(
+        "test_sqlite_mark_processed",
+        "test_sqlite_mark_processed",
+        sqlite_config,
+    );
 
     // Create test node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
