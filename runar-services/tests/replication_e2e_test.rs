@@ -149,7 +149,7 @@ fn cleanup_database_files() {
 #[serial]
 async fn test_basic_replication_between_nodes() -> Result<()> {
     // Configure logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     // Set up logger
@@ -469,7 +469,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
@@ -1370,7 +1370,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_event_tables_and_ordering() -> Result<()> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
@@ -1665,7 +1665,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_mobile_simulator_replication() -> Result<()> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
     logger.info("=== Test 4: Mobile Simulator Replication Test ===");
@@ -1935,7 +1935,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_high_volume_replication_with_pagination() -> Result<()> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
     logger.info("🧪 Testing high-volume replication with pagination (400 records)...");
