@@ -134,3 +134,67 @@ macro_rules! params {
         }
     };
 }
+
+// ============================
+// Logger Macros (zero-overhead when disabled)
+// ============================
+
+/// Core logging macro that checks the log level before formatting.
+///
+/// Usage:
+/// - Positional/explicit args: `runar_log!(logger, Info, "message {}", arg)`
+/// - Implicit capture: `runar_log!(logger, Info, "topic={topic} id={id}")`
+///
+/// When the level is disabled, neither the formatting nor the argument evaluation occurs.
+#[macro_export]
+macro_rules! runar_log {
+    ($logger:expr, Debug, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Debug) {
+            ($logger).debug(format!($($arg)*));
+        }
+    }};
+    ($logger:expr, Info, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Info) {
+            ($logger).info(format!($($arg)*));
+        }
+    }};
+    ($logger:expr, Warn, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Warn) {
+            ($logger).warn(format!($($arg)*));
+        }
+    }};
+    ($logger:expr, Error, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Error) {
+            ($logger).error(format!($($arg)*));
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! rlog_debug {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Debug, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! rlog_info {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Info, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! rlog_warn {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Warn, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! rlog_error {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Error, $($arg)*);
+    }
+}
+

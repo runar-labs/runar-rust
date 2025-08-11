@@ -1,59 +1,74 @@
 # Code Improvement Checklist
 
-## 🚀 Performance & Memory Efficiency (NEW PRIORITY)
+This document defines how we improve core crates with state-of-the-art Rust practices. We proceed one file at a time, with measurable improvements and zero regressions.
 
-### Memory Management
-- [ ] **Reduce excessive cloning** - Use `&str` instead of `String` where possible
-- [ ] **Leverage Arc for shared ownership** - Replace `clone()` with `Arc::clone()` for shared data
-- [ ] **Use references over owned values** - `&var` instead of `var.clone()` in function parameters
-- [ ] **Avoid unnecessary allocations** - Use `Cow<str>`, `&[u8]`, or `&str` instead of owned types
-- [ ] **Batch operations** - Group multiple operations to reduce memory churn
-- [ ] **Reuse buffers** - Don't create new vectors/strings in loops
+## Process and Guardrails
 
-### Arc & Smart Pointer Optimization
-- [ ] **Arc for shared immutable data** - Use `Arc<T>` instead of cloning large structs
-- [ ] **Weak references** - Use `Arc::downgrade()` to prevent circular references
-- [ ] **Arc::clone() vs clone()** - Use `Arc::clone()` for reference counting, not `clone()` for data
-- [ ] **Consider Rc vs Arc** - Use `Rc` for single-threaded scenarios
+- [ ] One file at a time. If an API change impacts other files, change only the minimal impacted surface required for that file. Do not batch unrelated refactors.
+- [ ] After finishing a file: run tests and Clippy, update the Progress section below, and post a short summary.
+- [ ] Commands (strict Clippy, deny warnings):
+  - `cargo check`
+  - `cargo test --all`
+  - `cargo clippy --all-targets --all-features -- -D warnings`
+  - For node crate specifically: `cargo clippy -p runar-node --all-targets --all-features -- -D warnings`
+- [ ] Formatting and error messages must follow Rust idioms, e.g. `format!("PKCS#8 encoding error: {e}")`.
 
-### Variable & Parameter Optimization
-- [ ] **Function parameters** - Use `&T` instead of `T` when ownership transfer isn't needed
-- [ ] **Return values** - Return `&T` or `Arc<T>` instead of cloning
-- [ ] **Loop variables** - Use references in iterators: `for item in &collection`
-- [ ] **Struct fields** - Use `Arc<T>` for large shared data instead of cloning
+## Performance & Memory Efficiency
 
-### Collection & Iterator Efficiency
-- [ ] **Iterator chaining** - Chain operations instead of multiple loops
-- [ ] **Pre-allocate collections** - Use `with_capacity()` when size is known
-- [ ] **Avoid collect()** - Use `for_each()` or `for` loops when possible
-- [ ] **Lazy evaluation** - Use iterators that don't materialize intermediate collections
+### Ownership and Borrowing
+- [ ] Prefer `&str`/`&[u8]`/`&T` over owned `String`/`Vec<u8>`/`T` when ownership is not needed.
+- [ ] Accept `impl AsRef<str>`/`AsRef<[u8]>` on APIs instead of `impl Into<String>` where practical. Return references or `Arc<T>` instead of cloning.
+- [ ] Replace `clone()` on `Arc<T>` with `Arc::clone(&arc)` when not using method syntax.
 
-## 🔧 Code Quality & Correctness
+### Allocation and Copy Reduction
+- [ ] Avoid intermediate allocations in hot paths; use iterators and adapters that do not materialize temporary `Vec`s.
+- [ ] Pre-allocate with `with_capacity` when size is known or can be guessed conservatively.
+- [ ] Use `Cow<'_, str>` for borrowed-or-owned strings at boundaries where copies are sometimes necessary.
+- [ ] Reuse buffers across calls (e.g., arena or thread-local scratch) where safe, or pool via a small wrapper when profiling shows wins.
 
-### Compilation Issues
-- [ ] **Fix all compilation errors** - Ensure `cargo check` passes
-- [ ] **Resolve borrow checker issues** - Fix ownership and lifetime problems
-- [ ] **Handle async/await correctly** - Use proper async patterns
-- [ ] **Fix type mismatches** - Ensure proper type usage
+### Collections
+- [ ] Iterate by reference: `for item in &collection` or map APIs that avoid ownership changes.
+- [ ] Prefer `VecDeque` for FIFO queues, `SmallVec`/`arrayvec` for short fixed upper-bounds, `IndexMap` when deterministic order is needed.
+- [ ] Avoid `collect()` unless you need a materialized collection; prefer `for_each`, `try_for_each`, or streaming.
 
-### Rust Best Practices
-- [ ] **Clippy compliance** - Pass `cargo clippy -- -D warnings`
-- [ ] **Error handling** - Use proper `Result<T, E>` and `Option<T>` patterns
-- [ ] **Memory safety** - Avoid unsafe code unless absolutely necessary
-- [ ] **Documentation** - Add/update doc comments for public APIs
+### Concurrency & Locking
+- [ ] Never hold locks across `await`. Split critical sections or clone cheap state out before awaiting.
+- [ ] Use `tokio::sync::{Mutex,RwLock}` in async code; avoid `std::sync::Mutex/RwLock` on async paths.
+- [ ] Use `DashMap` for highly concurrent maps where appropriate, but prefer storing `Arc<T>` values to avoid large moves.
+- [ ] Keep lock scope minimal and avoid nested locks. Consider `parking_lot` for sync contexts if profiling shows contention.
+- [ ] Choose atomics with the weakest ordering that is correct (often `Relaxed` for simple flags/counters).
 
-### Testing & Validation
-- [ ] **Run tests** - Ensure `cargo test` passes
-- [ ] **Integration tests** - Test cross-crate functionality
-- [ ] **Edge cases** - Consider boundary conditions and error scenarios
-- [ ] **Performance regression** - Verify changes don't significantly impact performance
+### Logging and Errors
+- [ ] Avoid building log strings when the level is disabled; prefer logger APIs that defer formatting (or guard with `is_enabled`).
+- [ ] Use concise, actionable errors. Prefer `{e}` formatting over `{}` with explicit variables: `format!("Failed to parse: {e}")`.
+- [ ] Avoid logging the same error multiple times across layers.
+- [ ] Replace direct `logger.debug/info` calls with `rlog_debug!/rlog_info!/rlog_warn!/rlog_error!` macros to eliminate formatting when disabled.
+- [ ] Audit and correct log levels: prefer `debug` for high-frequency/hot-path tracing; reserve `info` for state transitions or key lifecycle messages; keep `warn/error` as is.
 
-## 📋 Before & After Examples
+### Serialization/Deserialization
+- [ ] Avoid re-serialization of unchanged values; cache or reuse encoded buffers where feasible.
+- [ ] Prefer zero-copy deserialization when libraries permit; avoid unnecessary intermediate `String` conversions.
+- [ ] Pass shared context (e.g., key store, label resolver) by `Arc` to avoid rebuilding per call.
 
-### Memory Efficiency Examples
+## Code Quality & Correctness
 
-#### Before (Inefficient)
+- [ ] Compiler clean: `cargo check` passes.
+- [ ] Clippy clean with `-D warnings` across all targets and features.
+- [ ] Async best practices: no blocking calls in async contexts; use `spawn_blocking` if necessary.
+- [ ] Public APIs documented with clear invariants and error semantics.
+
+## Testing, Validation, and Benchmarking
+
+- [ ] Unit tests: happy-path and edge cases for modified code.
+- [ ] Integration tests across crates remain green.
+- [ ] Add micro-benchmarks for any hot path changed (criterion). Keep flamegraphs to validate improvements.
+- [ ] Add instrumentation (e.g., `tracing`) around hot paths to verify reductions in allocations, lock hold times, and latency.
+
+## Before & After Examples
+
+### Borrowing over ownership
 ```rust
+// Before
 fn process_data(data: String) -> String {
     let mut result = String::new();
     for item in data.split(',') {
@@ -62,49 +77,95 @@ fn process_data(data: String) -> String {
     }
     result
 }
-```
 
-#### After (Efficient)
-```rust
+// After
 fn process_data(data: &str) -> String {
-    data.split(',')
-        .map(|item| item.trim().to_uppercase())
-        .collect::<Vec<_>>()
-        .join(",")
+    let mut out = String::with_capacity(data.len());
+    for (i, item) in data.split(',').map(|s| s.trim()).enumerate() {
+        if i > 0 { out.push(','); }
+        out.push_str(&item.to_uppercase());
+    }
+    out
 }
 ```
 
-#### Before (Excessive Cloning)
+### Avoid cloning large maps
 ```rust
+// Before
 let peers = self.state.peers.clone();
 for (peer_id, peer_state) in peers.iter() {
-    // Use peer_id and peer_state
+    /* ... */
 }
-```
 
-#### After (Reference Usage)
-```rust
+// After
 for entry in self.state.peers.iter() {
     let peer_id = entry.key();
     let peer_state = entry.value();
-    // Use peer_id and peer_state
+    /* ... */
 }
 ```
 
-## 🎯 Implementation Priority
+## File-by-file Plan (start at runar-node/src/node.rs)
 
-1. **Critical**: Fix compilation errors and borrow checker issues
-2. **High**: Reduce excessive cloning and improve memory management
-3. **Medium**: Optimize Arc usage and smart pointer patterns
-4. **Low**: Code style improvements and documentation updates
+We begin at `runar-node/src/node.rs`, then fan out to the registry, transport, discovery, and serializer layers. Each file must reach “Definition of Done” below before moving to the next.
 
-## 📝 Usage Instructions
+### 1) runar-node/src/node.rs
+- Locking and contention
+  - Replace `std::sync::Mutex` in async paths with `tokio::sync::Mutex` (e.g., `keys_manager_mut`).
+  - Avoid holding locks across `await` (audit `start/stop`, networking, and subscription flows).
+  - Evaluate `AtomicBool`/`AtomicI64` orderings; prefer `Relaxed` where applicable.
+- Allocation and cloning
+  - Reduce string allocations in `TopicPath` building; prefer borrowed `&str` and `AsRef<str>` for API surfaces.
+  - Remove double clones in config/setup (e.g., redundant `clone()` on `network_ids`).
+  - Avoid repeated `format!` in hot paths; use structured logging or guard on level.
+- Concurrency
+  - Convert service start fan-out to `FuturesUnordered` or join sets to limit concurrency and track completion.
+  - Review debounce logic to ensure no lost notifications and minimal overhead.
+- Retained events
+  - Ensure pruning is O(k) on expiration and cap memory with clear limits; consider `SmallVec` for tiny histories.
+  - Index operations: ensure wildcard matching uses pre-normalized keys and avoids transient allocations.
+- Networking path
+  - Ensure decoding/encoding avoids intermediate copies; reuse serialization contexts.
+  - Guard outbound calls with timeouts and propagate structured errors without double-logging.
+- API ergonomics
+  - Where feasible, migrate public `impl Into<String>` parameters to `impl AsRef<str>` (cross-crate change; stage carefully).
 
-1. **Before starting**: Review this checklist
-2. **During implementation**: Check off items as you complete them
-3. **Before committing**: Ensure all critical and high-priority items are complete
-4. **After completion**: Run full validation suite (`cargo check`, `cargo clippy`, `cargo test`)
+### 2) runar-node/src/services/service_registry.rs
+- Ensure map keys use canonical topic representations to avoid duplicate allocations.
+- Return references or `Arc<T>` instead of cloning. Ensure handler registration extracts params without temporary `String`s.
+- Audit subscription management to avoid holding locks during callbacks; move work out of critical sections.
 
----
+### 3) Transport (e.g., runar-node/src/network/transport/*.rs)
+- QUIC: reuse connections and streams; ensure backpressure and bounded buffering.
+- Avoid per-request heap allocations; reuse buffers and encode directly into I/O buffers where practical.
+- Ensure connect path is idempotent and coalesces duplicate attempts under load (single-flight).
 
-*This checklist should be reviewed and updated for every file improvement to ensure consistent code quality and performance.*
+### 4) Discovery (runar-node/src/network/discovery/*)
+- Keep debouncing cheap; deduplicate frequent updates; avoid unnecessary clones of peer data.
+- Make all socket operations non-blocking in async contexts; isolate blocking operations in `spawn_blocking` if needed.
+
+### 5) runar-serializer
+- Reuse serialization contexts and key lookups; avoid double encode/decode.
+- Prefer zero-copy paths; avoid converting bytes to `String` unless required.
+
+### 6) Cross-cutting quick wins
+- Replace expensive logging on hot paths with level checks or structured fields.
+- Normalize error creation sites to avoid repeated allocations.
+
+## Definition of Done (per file)
+
+- [ ] Green: `cargo test --all`.
+- [ ] Clean: `cargo clippy --all-targets --all-features -- -D warnings` (and `-p runar-node` when scoped).
+- [ ] No async blocking; no locks held across `await`.
+- [ ] Profiling or micro-bench evidence of neutral or improved performance in targeted hot paths.
+- [ ] Document notable changes and migration notes (if any API surfaces changed).
+- [ ] Logging migrated to `rlog_*` macros where applicable and log level usage audited (debug vs info) in modified areas.
+
+## Progress
+
+- [ ] `runar-node/src/node.rs`
+- [ ] `runar-node/src/services/service_registry.rs`
+- [ ] `runar-node/src/network/transport/*.rs`
+- [ ] `runar-node/src/network/discovery/*.rs`
+- [ ] `runar-serializer/src/*.rs`
+
