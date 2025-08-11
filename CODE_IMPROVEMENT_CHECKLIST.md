@@ -62,6 +62,7 @@ This document defines how we improve core crates with state-of-the-art Rust prac
 - [ ] Clippy clean with `-D warnings` across all targets and features.
 - [ ] Async best practices: no blocking calls in async contexts; use `spawn_blocking` if necessary.
 - [ ] Public APIs documented with clear invariants and error semantics.
+- [ ] Tighten encapsulation: make struct fields private by default; expose only via methods/traits. Avoid `pub(crate)` unless cross-module access is required and justified.
 
 ## Testing, Validation, and Benchmarking
 
