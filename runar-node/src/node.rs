@@ -64,7 +64,7 @@ type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
 // PeerDirectory: single source of truth for known peers
 #[derive(Default)]
 pub struct PeerDirectory {
-    inner: RwLock<HashMap<String, PeerRecord>>, // peer_id -> record
+    inner: Arc<DashMap<String, PeerRecord>>, // peer_id -> record
 }
 
 #[derive(Clone)]
@@ -87,55 +87,46 @@ impl PeerRecord {
 impl PeerDirectory {
     pub fn new() -> Self {
         Self {
-            inner: RwLock::new(HashMap::new()),
+            inner: Arc::new(DashMap::new()),
         }
     }
 
-    pub async fn is_connected(&self, peer_id: &str) -> bool {
+    pub fn is_connected(&self, peer_id: &str) -> bool {
         self.inner
-            .read()
-            .await
             .get(peer_id)
             .map(|r| r.connected)
             .unwrap_or(false)
     }
 
-    pub async fn mark_connected(&self, peer_id: &str) {
-        let mut guard = self.inner.write().await;
-        let entry = guard
+    pub fn mark_connected(&self, peer_id: &str) {
+        let mut entry = self.inner
             .entry(peer_id.to_string())
             .or_insert_with(PeerRecord::new);
         entry.connected = true;
     }
 
-    pub async fn mark_disconnected(&self, peer_id: &str) {
-        if let Some(rec) = self.inner.write().await.get_mut(peer_id) {
+    pub fn mark_disconnected(&self, peer_id: &str) {
+        if let Some(mut rec) = self.inner.get_mut(peer_id) {
             rec.connected = false;
         }
     }
 
-    pub async fn set_node_info(&self, peer_id: &str, info: NodeInfo) {
-        let mut guard = self.inner.write().await;
-        let entry = guard
+    pub fn set_node_info(&self, peer_id: &str, info: NodeInfo) {
+        let mut entry = self.inner
             .entry(peer_id.to_string())
             .or_insert_with(PeerRecord::new);
         entry.last_capabilities_version = info.version;
         entry.node_info = Some(info);
     }
 
-    pub async fn get_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
+    pub fn get_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
         self.inner
-            .read()
-            .await
             .get(peer_id)
             .and_then(|r| r.node_info.clone())
     }
 
-
-
-    pub async fn take_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
-        let mut guard = self.inner.write().await;
-        if let Some(rec) = guard.get_mut(peer_id) {
+    pub fn take_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
+        if let Some(mut rec) = self.inner.get_mut(peer_id) {
             let info = rec.node_info.clone();
             rec.node_info = None;
             return info;
@@ -337,8 +328,8 @@ impl Node {
         Ok(removed)
     }
     /// Public helper for tests: check if Node believes a peer is connected
-    pub async fn is_connected(&self, peer_id: &str) -> bool {
-        self.peer_directory.is_connected(peer_id).await
+    pub fn is_connected(&self, peer_id: &str) -> bool {
+        self.peer_directory.is_connected(peer_id)
     }
     async fn get_or_create_connect_mutex(&self, peer_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.peer_connect_mutexes
@@ -1119,7 +1110,7 @@ impl Node {
                         let node = self_arc_for_conn.clone();
                         Box::pin(async move {
                             if connected {
-                                node.peer_directory.mark_connected(&peer_node_id).await;
+                                node.peer_directory.mark_connected(&peer_node_id);
                             } else {
                                 node.cleanup_disconnected_peer(&peer_node_id).await?;
                             }
@@ -1204,7 +1195,7 @@ impl Node {
 
         // Always allow an idempotent connect attempt. Transport will no-op if already connected
         // and will reconcile duplicates if races occur. This avoids stale state blocking reconnects.
-        if self.peer_directory.is_connected(&discovered_peer_id).await {
+        if self.peer_directory.is_connected(&discovered_peer_id) {
             self.logger
                 .debug(format!("Discovery event for already-connected peer: {discovered_peer_id}; proceeding with idempotent connect to reconcile state"));
         }
@@ -1350,7 +1341,7 @@ impl Node {
         }
 
         // 2) Remove remote services from this peer
-        if let Some(prev_info) = self.peer_directory.take_node_info(peer_node_id).await {
+        if let Some(prev_info) = self.peer_directory.take_node_info(peer_node_id) {
             for service in prev_info.node_metadata.services {
                 let service_tp =
                     crate::routing::TopicPath::new(&service.service_path, &service.network_id)
@@ -1363,7 +1354,7 @@ impl Node {
         }
 
         // 3) Mark as disconnected in the directory
-        self.peer_directory.mark_disconnected(peer_node_id).await;
+        self.peer_directory.mark_disconnected(peer_node_id);
 
         // 4) Publish a local-only event indicating peer removal
         self.publish_with_options(
@@ -1946,7 +1937,7 @@ impl Node {
             "Processing remote capabilities from node {new_peer_node_id}"
         ));
         // Check existing info from directory
-        if let Some(existing_peer) = self.peer_directory.get_node_info(&new_peer_node_id).await {
+        if let Some(existing_peer) = self.peer_directory.get_node_info(&new_peer_node_id) {
             // Idempotency: ignore if version is not newer
             if new_peer.version <= existing_peer.version {
                 return Ok(Vec::new());
@@ -1961,8 +1952,7 @@ impl Node {
                 .await?;
             // replace stored peer info
             self.peer_directory
-                .set_node_info(&new_peer_node_id, new_peer.clone())
-                .await;
+                .set_node_info(&new_peer_node_id, new_peer.clone());
             self.publish_with_options(
                 format!("$registry/peer/{new_peer_node_id}/updated"),
                 Some(ArcValue::new_primitive(new_peer_node_id.clone())),
@@ -1972,9 +1962,8 @@ impl Node {
             Ok(Vec::new())
         } else {
             self.peer_directory
-                .set_node_info(&new_peer_node_id, new_peer.clone())
-                .await;
-            self.peer_directory.mark_connected(&new_peer_node_id).await;
+                .set_node_info(&new_peer_node_id, new_peer.clone());
+            self.peer_directory.mark_connected(&new_peer_node_id);
             let res = self.add_new_peer(new_peer).await;
             self.publish_with_options(
                 format!("$registry/peer/{new_peer_node_id}/discovered"),

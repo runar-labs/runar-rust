@@ -75,7 +75,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
     let id_a = node_a.node_id().to_string();
     let id_b = node_b.node_id().to_string();
     assert!(
-        node_a.is_connected(&id_b).await || node_b.is_connected(&id_a).await,
+        node_a.is_connected(&id_b) || node_b.is_connected(&id_a),
         "expected at least one side to be connected"
     );
     
@@ -88,7 +88,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
     
     // Node A should have cleaned up the disconnected peer
     assert!(
-        !node_a.is_connected(&id_b).await,
+        !node_a.is_connected(&id_b),
         "Node A should have cleaned up disconnected peer B after TTL"
     );
     
@@ -166,7 +166,7 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     let id_a = node_a.node_id().to_string();
     let id_b = node_b.node_id().to_string();
     assert!(
-        node_a.is_connected(&id_b).await || node_b.is_connected(&id_a).await,
+        node_a.is_connected(&id_b) || node_b.is_connected(&id_a),
         "expected at least one side to be connected"
     );
 
@@ -178,7 +178,7 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
 
     // Node A should mark B as disconnected by now
     assert!(
-        !node_a.is_connected(&id_b).await,
+        !node_a.is_connected(&id_b),
         "Node A should have cleaned up disconnected peer B after Lost"
     );
 
@@ -615,7 +615,7 @@ async fn test_node_ttl_cleanup_behavior() -> Result<()> {
     let id_a = node_a.node_id().to_string();
     let id_b = node_b.node_id().to_string();
     assert!(
-        node_a.is_connected(&id_b).await || node_b.is_connected(&id_a).await,
+        node_a.is_connected(&id_b) || node_b.is_connected(&id_a),
         "expected at least one side to be connected"
     );
     
@@ -628,7 +628,7 @@ async fn test_node_ttl_cleanup_behavior() -> Result<()> {
     
     // Node A should have cleaned up the disconnected peer
     assert!(
-        !node_a.is_connected(&id_b).await,
+        !node_a.is_connected(&id_b),
         "Node A should have cleaned up disconnected peer B after TTL"
     );
     

@@ -13,8 +13,8 @@ DO NOT CHANGE anything else.. focus only int the dashmap replacement.
 For every succesful change, update this doc with progress and stop and give me a summary of changes so I can review and stage the changes... before moving to the next.
 
 ## **PROGRESS SUMMARY** ✅
-**Current Status**: Phase 2.2 (Discovery Systems) - 3/4 Complete
-**Next Target**: Complete Node Core Peer Directory, then Remote Service Actions
+**Current Status**: Phase 1 (Core Hot Paths) - 94% Complete
+**Next Target**: Remote Service Actions conversion
 **Completed Fields**:
 - ✅ `dial_backoff` - Converted to DashMap, all tests passing
 - ✅ `dial_cancel` - Converted to DashMap, all tests passing  
@@ -27,17 +27,17 @@ For every succesful change, update this doc with progress and stop and give me a
 - ✅ **Network Transport Peer Maps** - Already converted to DashMap ✅
 - ✅ **Memory Discovery Node Maps** - Converted to DashMap, all tests passing ✅
 - ✅ **Mock Discovery Node Maps** - Converted to DashMap, all tests passing ✅
+- ✅ **Node Core Peer Directory** - Converted to DashMap, all tests passing ✅
 
 **Test Results**: All 125 tests in runar-node-tests pass successfully after each conversion
 
 **Current Status**: 
-- **Phase 1 (Core Hot Paths)**: 88% Complete (14/16) - Service Registry Complete, Node Core Partially Complete
-- **Phase 2 (Discovery Systems)**: 75% Complete (3/4) - Multicast, Memory & Mock Discovery Complete
-- **Overall Progress**: 20/41+ (49%)
+- **Phase 1 (Core Hot Paths)**: 94% Complete (15/16) - Service Registry Complete, Node Core Complete
+- **Phase 2 (Discovery Systems)**: 100% Complete (4/4) - All Discovery Systems Complete
+- **Overall Progress**: 21/41+ (51%)
 
 **Remaining High-Priority Items**:
-1. **Node Core Peer Directory** - `inner: RwLock<HashMap<String, PeerRecord>>` needs conversion
-2. **Remote Service Actions** - `actions: Arc<RwLock<HashMap<String, ActionMetadata>>>` needs conversion
+1. **Remote Service Actions** - `actions: Arc<RwLock<HashMap<String, ActionMetadata>>>` needs conversion
 
 ## **TASK LIST - Hot Path Optimization**
 
@@ -95,10 +95,10 @@ For every succesful change, update this doc with progress and stop and give me a
   - [x] Eliminate read-then-write race condition pattern ✅
   - [x] Test: All node tests pass, integration tests pass ✅
 
-- [ ] **Peer Directory** - Convert to DashMap
-  - [ ] `inner: RwLock<HashMap<String, PeerRecord>>` → `Arc<DashMap<String, PeerRecord>>`
-  - [ ] Update peer directory operations (is_connected, mark_connected, mark_disconnected, set_node_info, get_node_info, take_node_info)
-  - [ ] Test: peer management, connection state tracking
+- [x] **Peer Directory** - Convert to DashMap ✅
+  - [x] `inner: RwLock<HashMap<String, PeerRecord>>` → `Arc<DashMap<String, PeerRecord>>` ✅
+  - [x] Update peer directory operations (is_connected, mark_connected, mark_disconnected, set_node_info, get_node_info, take_node_info) ✅
+  - [x] Test: peer management, connection state tracking ✅
 
 #### **1.3 Network Transport (`src/network/transport/quic_transport.rs`)** ✅ **COMPLETE**
 - [x] **Peer Maps** - Convert to DashMap ✅
