@@ -363,11 +363,9 @@ impl Node {
 
         // Clone fields before moving config
         let default_network_id = config.default_network_id.clone();
-        //stgore this in the node struct.. will be used later features..
-        let network_ids = config.network_ids.clone();
         let networking_enabled = config.network_config.is_some();
 
-        let mut network_ids = network_ids.clone();
+        let mut network_ids = config.network_ids.clone();
         network_ids.push(default_network_id.clone());
         network_ids.dedup();
 
@@ -1004,8 +1002,12 @@ impl Node {
             drop(discovery_guard);
         }
 
-        // Start discovery providers
-        if let Some(discovery_providers) = self.network_discovery_providers.read().await.as_ref() {
+        // Start discovery providers (clone list to avoid holding lock across await)
+        let providers_to_start = {
+            let guard = self.network_discovery_providers.read().await;
+            guard.as_ref().cloned()
+        };
+        if let Some(discovery_providers) = providers_to_start {
             for provider in discovery_providers {
                 provider.start_announcing().await?;
             }
@@ -1334,7 +1336,8 @@ impl Node {
             return Err(anyhow!("Received request message with no payloads"));
         }
 
-        let mut responses: Vec<NetworkMessagePayloadItem> = Vec::new();
+        let mut responses: Vec<NetworkMessagePayloadItem> =
+            Vec::with_capacity(message.payloads.len());
         let local_peer_id = self.node_id.clone();
 
         for payload in &message.payloads {
@@ -2262,13 +2265,14 @@ impl Node {
         let local_node_info = self.get_local_node_info().await?;
         log_info!(self.logger, "Notifying node change - previous version: {previous_version}, new version: {new_version}", previous_version = previous_version, new_version = local_node_info.version);
 
-        // Update discovery providers with new node info
-        if let Some(discovery_providers) = self.network_discovery_providers.read().await.as_ref() {
+        // Update discovery providers with new node info (avoid holding lock across await)
+        let providers_to_update = {
+            let guard = self.network_discovery_providers.read().await;
+            guard.as_ref().cloned()
+        };
+        if let Some(discovery_providers) = providers_to_update {
             for provider in discovery_providers {
-                if let Err(e) = provider
-                    .update_local_node_info(local_node_info.clone())
-                    .await
-                {
+                if let Err(e) = provider.update_local_node_info(local_node_info.clone()).await {
                     log_warn!(self.logger, "Failed to update discovery provider: {e}");
                 }
             }
@@ -2397,9 +2401,12 @@ impl Node {
 
         log_info!(self.logger, "Shutting down network discovery providers");
 
-        //discovery stop all =discovery providers
-        let discovery_guard = self.network_discovery_providers.read().await;
-        if let Some(discovery) = discovery_guard.as_ref() {
+        // Discovery: collect providers first to avoid holding lock during await
+        let providers_to_shutdown = {
+            let guard = self.network_discovery_providers.read().await;
+            guard.as_ref().cloned()
+        };
+        if let Some(discovery) = providers_to_shutdown {
             for provider in discovery {
                 provider.shutdown().await?;
             }
@@ -2407,9 +2414,12 @@ impl Node {
 
         log_info!(self.logger, "Shutting down transport");
 
-        // transport need to be shut down properly
-        let transport_guard = self.network_transport.read().await;
-        if let Some(transport) = transport_guard.as_ref() {
+        // Transport: clone handle first to avoid holding lock during await
+        let transport_to_stop = {
+            let guard = self.network_transport.read().await;
+            guard.as_ref().cloned()
+        };
+        if let Some(transport) = transport_to_stop {
             transport.stop().await?;
         }
 
