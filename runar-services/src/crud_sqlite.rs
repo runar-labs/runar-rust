@@ -113,7 +113,7 @@ impl CrudSqliteService {
         for (field_name, arc_value) in updates.iter_mut() {
             if let Some(col_def) = table_schema.columns.iter().find(|c| c.name == *field_name) {
                 if col_def.data_type == DataType::Boolean {
-                    match arc_value.category {
+                    match arc_value.category() {
                         ValueCategory::Primitive => {
                             if let Ok(int_val_ref) = arc_value.as_type_ref::<i64>() {
                                 let bool_val = *int_val_ref != 0;
@@ -152,7 +152,7 @@ impl CrudSqliteService {
     // Helper function to convert ArcValue to SqliteValue
     // This could potentially be moved to src/sqlite.rs if generally useful
     fn arc_value_to_sqlite_value(av: &mut ArcValue) -> Result<SqliteValue> {
-        match av.category {
+        match av.category() {
             ValueCategory::Null => Ok(SqliteValue::Null),
             ValueCategory::Primitive => {
                 if let Ok(s_val_arc) = av.as_type_ref::<String>() {
@@ -166,9 +166,9 @@ impl CrudSqliteService {
                 } else {
                     Err(anyhow!(
                         "Unsupported primitive type '{}' within ArcValue for SQLite conversion.",
-                        av.value.as_ref().map_or_else(
+                        av.type_name().map_or_else(
                             || "[value was None, inconsistent for Primitive category]".to_string(),
-                            |v| v.type_name().to_string()
+                            |tn| tn.to_string()
                         )
                     ))
                 }
@@ -179,7 +179,7 @@ impl CrudSqliteService {
             }
             _ => Err(anyhow!(
                 "Unsupported ArcValue category {:?} for direct SQLite conversion",
-                av.category
+                av.category()
             )),
         }
     }
@@ -253,36 +253,33 @@ impl CrudSqliteService {
                 .find(|c| &c.name == field_name)
                 .unwrap(); // Assume column exists
             let expected_db_type = &column_def.data_type;
-            let provided_category = arc_value.category; // Access as a field
+            let provided_category = arc_value.category();
 
             let type_match = match (expected_db_type, provided_category) {
-                (DataType::Integer, ValueCategory::Primitive) => arc_value
-                    .value
-                    .as_ref()
-                    .is_some_and(|v| v.type_name() == "i64"),
-                (DataType::Real, ValueCategory::Primitive) => arc_value
-                    .value
-                    .as_ref()
-                    .is_some_and(|v| v.type_name() == "f64"),
-                (DataType::Text, ValueCategory::Primitive) => {
-                    arc_value.value.as_ref().is_some_and(|v| {
-                        let tn = v.type_name();
-                        tn == "String" || tn == "alloc::string::String"
-                    })
+                (DataType::Integer, ValueCategory::Primitive) => {
+                    matches!(arc_value.type_name(), Some("i64"))
                 }
-                (DataType::Boolean, ValueCategory::Primitive) => arc_value
-                    .value
-                    .as_ref()
-                    .is_some_and(|v| v.type_name() == "bool"),
-                (DataType::Blob, ValueCategory::Bytes) => arc_value.value.is_some(), // Ensure value exists for Bytes category
-                (_, ValueCategory::Null) => arc_value.value.is_none(), // Ensure value is None for Null category
+                (DataType::Real, ValueCategory::Primitive) => {
+                    matches!(arc_value.type_name(), Some("f64"))
+                }
+                (DataType::Text, ValueCategory::Primitive) => {
+                    matches!(
+                        arc_value.type_name(),
+                        Some("String") | Some("alloc::string::String")
+                    )
+                }
+                (DataType::Boolean, ValueCategory::Primitive) => {
+                    matches!(arc_value.type_name(), Some("bool"))
+                }
+                (DataType::Blob, ValueCategory::Bytes) => arc_value.has_value(),
+                (_, ValueCategory::Null) => !arc_value.has_value(),
                 _ => false, // All other combinations are mismatches or inconsistent states
             };
 
             if !type_match {
-                let provided_type_name_for_error = arc_value.value.as_ref().map_or_else(
+                let provided_type_name_for_error = arc_value.type_name().map_or_else(
                     || format!("N/A (value is None, category: {provided_category:?})"),
-                    |v| v.type_name().to_string(),
+                    |tn| tn.to_string(),
                 );
                 let error_message = format!(
                     "Type mismatch or inconsistent state for field '{field_name}': schema expects DB type {expected_db_type:?}. Received category {provided_category:?} with specific type '{provided_type_name_for_error}'.",

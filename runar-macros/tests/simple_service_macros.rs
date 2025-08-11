@@ -747,7 +747,7 @@ mod tests {
         let list_result: Vec<HashMap<String, String>> = list_result_arc
             .as_type()
             .expect("Failed to convert to Vec<HashMap<String, String>>");
-        assert_eq!(list_result_arc.category, ValueCategory::List);
+        assert_eq!(list_result_arc.category(), ValueCategory::List);
 
         assert_eq!(list_result.len(), 1);
         assert_eq!(list_result[0].get("key1").unwrap(), "value1");
@@ -899,7 +899,7 @@ mod tests {
             .expect("Failed to call echo_map action");
 
         // Check if the returned ArcValue has the correct category
-        assert_eq!(map_result_arc.category, ValueCategory::Map);
+        assert_eq!(map_result_arc.category(), ValueCategory::Map);
 
         let map_result: HashMap<String, ArcValue> = map_result_arc
             .as_type()
@@ -911,7 +911,7 @@ mod tests {
             "value1"
         );
         assert_eq!(
-            map_result.get("key1").unwrap().category,
+            map_result.get("key1").unwrap().category(),
             ValueCategory::Primitive
         );
         assert_eq!(
@@ -919,7 +919,7 @@ mod tests {
             123
         );
         assert_eq!(
-            map_result.get("key2").unwrap().category,
+            map_result.get("key2").unwrap().category(),
             ValueCategory::Primitive
         );
         assert_eq!(
@@ -932,7 +932,7 @@ mod tests {
             1
         );
         assert_eq!(
-            map_result.get("nested").unwrap().category,
+            map_result.get("nested").unwrap().category(),
             ValueCategory::Map
         );
         assert!(map_result
@@ -952,7 +952,7 @@ mod tests {
                 .unwrap()
                 .get("n_key")
                 .unwrap()
-                .category,
+                .category(),
             ValueCategory::Primitive
         );
 

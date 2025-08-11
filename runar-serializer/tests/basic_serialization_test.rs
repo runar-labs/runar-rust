@@ -9,7 +9,7 @@ use serde_json::{json, Value as JsonValue};
 fn test_primitive_string_serialization() -> Result<()> {
     let original = "hello".to_string();
     let val = ArcValue::new_primitive(original.clone());
-    assert_eq!(val.category, ValueCategory::Primitive);
+    assert_eq!(val.category(), ValueCategory::Primitive);
 
     // Test the new simplified serialization approach
     let serialized = val.serialize(None)?;
@@ -23,7 +23,7 @@ fn test_primitive_string_serialization() -> Result<()> {
 fn test_primitive_i64_serialization() -> Result<()> {
     let original = 42i64;
     let val = ArcValue::new_primitive(original);
-    assert_eq!(val.category, ValueCategory::Primitive);
+    assert_eq!(val.category(), ValueCategory::Primitive);
 
     let serialized = val.serialize(None)?;
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
@@ -36,7 +36,7 @@ fn test_primitive_i64_serialization() -> Result<()> {
 fn test_primitive_bool_serialization() -> Result<()> {
     let original = true;
     let val = ArcValue::new_primitive(original);
-    assert_eq!(val.category, ValueCategory::Primitive);
+    assert_eq!(val.category(), ValueCategory::Primitive);
 
     let serialized = val.serialize(None)?;
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
@@ -52,7 +52,7 @@ fn test_list_serialization() -> Result<()> {
         ArcValue::new_primitive("two".to_string()),
     ];
     let val = ArcValue::new_list(original.clone());
-    assert_eq!(val.category, ValueCategory::List);
+    assert_eq!(val.category(), ValueCategory::List);
 
     let serialized = val.serialize(None)?;
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
@@ -75,7 +75,7 @@ fn test_map_serialization() -> Result<()> {
         ArcValue::new_primitive("value".to_string()),
     );
     let val = ArcValue::new_map(original.clone());
-    assert_eq!(val.category, ValueCategory::Map);
+    assert_eq!(val.category(), ValueCategory::Map);
 
     let serialized = val.serialize(None)?;
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
@@ -93,7 +93,7 @@ fn test_map_serialization() -> Result<()> {
 fn test_bytes_serialization() -> Result<()> {
     let original = vec![1u8, 2, 3];
     let val = ArcValue::new_bytes(original.clone());
-    assert_eq!(val.category, ValueCategory::Bytes);
+    assert_eq!(val.category(), ValueCategory::Bytes);
 
     let serialized = val.serialize(None)?;
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
@@ -106,7 +106,7 @@ fn test_bytes_serialization() -> Result<()> {
 fn test_json_serialization() -> Result<()> {
     let original = json!({"key": "value"});
     let val = ArcValue::new_json(original.clone());
-    assert_eq!(val.category, ValueCategory::Json);
+    assert_eq!(val.category(), ValueCategory::Json);
 
     let serialized = val.serialize(None)?;
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
@@ -118,12 +118,12 @@ fn test_json_serialization() -> Result<()> {
 #[test]
 fn test_null_serialization() -> Result<()> {
     let val = ArcValue::null();
-    assert_eq!(val.category, ValueCategory::Null);
+    assert_eq!(val.category(), ValueCategory::Null);
     assert!(val.is_null());
 
     let serialized = val.serialize(None)?;
     let reconstructed = ArcValue::deserialize(serialized.as_ref(), None)?;
-    assert_eq!(reconstructed.category, ValueCategory::Null);
+    assert_eq!(reconstructed.category(), ValueCategory::Null);
     assert!(reconstructed.is_null());
     Ok(())
 }

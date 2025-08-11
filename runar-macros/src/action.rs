@@ -514,7 +514,7 @@ fn generate_parameter_extractions(params: &[(Ident, Type)], _fn_name_str: &str) 
                         // If direct conversion fails, try to extract from JSON object
                         // This handles cases where a JSON object like {"message": "hello"} is sent
                         // to an action expecting a String parameter named "message"
-                        if params_value.category == runar_serializer::ValueCategory::Json {
+                        if params_value.category() == runar_serializer::ValueCategory::Json {
                             let json_value = params_value.as_json_ref()
                                 .map_err(|err| {
                                     ctx.error(format!("Failed to get JSON value: {}", err));

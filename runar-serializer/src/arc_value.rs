@@ -50,8 +50,8 @@ impl ValueCategory {
 
 #[derive(Clone)]
 pub struct ArcValue {
-    pub category: ValueCategory,
-    pub value: Option<ErasedArc>,
+    category: ValueCategory,
+    value: Option<ErasedArc>,
     serialize_fn: Option<Arc<SerializeFn>>,
     to_json_fn: Option<Arc<ToJsonFn>>,
 }
@@ -111,6 +111,21 @@ impl fmt::Debug for LazyDataWithOffset {
 }
 
 impl ArcValue {
+    /// Category of this value
+    pub fn category(&self) -> ValueCategory {
+        self.category
+    }
+
+    /// Whether this ArcValue currently holds an inner value
+    pub fn has_value(&self) -> bool {
+        self.value.is_some()
+    }
+
+    /// Best-effort type name for the contained value (if present)
+    pub fn type_name(&self) -> Option<&str> {
+        self.value.as_ref().map(|v| v.type_name())
+    }
+
     pub fn null() -> Self {
         Self {
             category: ValueCategory::Null,

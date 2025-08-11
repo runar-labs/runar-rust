@@ -107,7 +107,7 @@ macro_rules! hmap {
 /// use runar_macros::{params, runar_serializer::ArcValue};
 /// let args = params! { "a" => 1.0, "b" => 2.0 };
 /// // `args` is an `ArcValue::Map` containing the provided key/value pairs.
-/// assert_eq!(args.category, ArcValue::Map.category());
+/// assert_eq!(args.category(), ArcValue::Map.category());
 /// ```
 #[macro_export]
 macro_rules! params {

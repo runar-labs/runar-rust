@@ -788,7 +788,7 @@ impl AbstractService for SqliteService {
                             .map_err(|original_error_from_as_type| {
                                 anyhow!(format!(
                                     "Invalid payload type for 'execute_query'. Expected SqlQuery, got {:?}. Original error: {:?}",
-                                    query_arc_value.category, // Use Debug formatting for category
+                                    query_arc_value.category(), // Use Debug formatting for category
                                     original_error_from_as_type
                                 ))
                             })?;
