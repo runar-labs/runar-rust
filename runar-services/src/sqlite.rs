@@ -118,12 +118,18 @@ impl SqliteWorker {
                     log_error!(logger, "{}", err_msg);
                     err_msg
                 })?;
-            log_debug!(logger, "Database key set successfully using provided symmetric key.");
+            log_debug!(
+                logger,
+                "Database key set successfully using provided symmetric key."
+            );
         }
 
         // TODO: Apply any pragmas or initial setup to the connection here if needed
         // E.g., conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
-        log_debug!(logger, "SqliteWorker::new: Connection opened. TODO: Apply pragmas/initial setup if needed.");
+        log_debug!(
+            logger,
+            "SqliteWorker::new: Connection opened. TODO: Apply pragmas/initial setup if needed."
+        );
         Ok(Self {
             connection,
             receiver,
@@ -239,12 +245,22 @@ fn apply_schema_internal(
     // Index Creation DDLs
     for index_def in &schema.indexes {
         if index_def.columns.is_empty() {
-            log_warn!(logger, "Skipping index '{}' for table '{}' as it has no columns defined.", index_def.name, index_def.table_name);
+            log_warn!(
+                logger,
+                "Skipping index '{}' for table '{}' as it has no columns defined.",
+                index_def.name,
+                index_def.table_name
+            );
             continue;
         }
         let unique_str = if index_def.unique { "UNIQUE " } else { "" };
         let columns_list = index_def.columns.join(", ");
-        log_debug!(logger, "Preparing to create index: {} on table {}", index_def.name, index_def.table_name);
+        log_debug!(
+            logger,
+            "Preparing to create index: {} on table {}",
+            index_def.name,
+            index_def.table_name
+        );
         let index_ddl = format!(
             "CREATE {}INDEX IF NOT EXISTS {} ON {} ({});\n",
             unique_str, index_def.name, index_def.table_name, columns_list
@@ -253,7 +269,10 @@ fn apply_schema_internal(
     }
 
     if ddl_batch.is_empty() {
-        log_debug!(logger, "No DDL statements to execute for the provided schema.");
+        log_debug!(
+            logger,
+            "No DDL statements to execute for the provided schema."
+        );
         return Ok(());
     }
 
@@ -316,7 +335,12 @@ fn query_internal(
     let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
         rusqlite_params.iter().map(|b| b.as_ref()).collect();
 
-    log_debug!(logger, "Preparing SQL query: {} with params: {:?}", sql, params);
+    log_debug!(
+        logger,
+        "Preparing SQL query: {} with params: {:?}",
+        sql,
+        params
+    );
     let mut stmt = conn.prepare(sql).map_err(|e| {
         let err_msg = format!("Error preparing statement for SQL '{sql}': {e}");
         log_error!(logger, "{}", err_msg);
@@ -328,7 +352,12 @@ fn query_internal(
         .map(|s| s.to_string())
         .collect();
 
-    log_debug!(logger, "Executing SQL query: {} with params: {:?}", sql, params);
+    log_debug!(
+        logger,
+        "Executing SQL query: {} with params: {:?}",
+        sql,
+        params
+    );
     let rows_iter = stmt
         .query_map(params_from_iter(params_for_iter.into_iter()), |row| {
             let mut map = HashMap::new();
