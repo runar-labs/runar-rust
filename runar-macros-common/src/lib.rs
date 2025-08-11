@@ -150,49 +150,49 @@ macro_rules! params {
 macro_rules! runar_log {
     ($logger:expr, Debug, $($arg:tt)*) => {{
         if ::log::log_enabled!(::log::Level::Debug) {
-            ($logger).debug(format!($($arg)*));
+            ($logger).debug_args(format_args!($($arg)*));
         }
     }};
     ($logger:expr, Info, $($arg:tt)*) => {{
         if ::log::log_enabled!(::log::Level::Info) {
-            ($logger).info(format!($($arg)*));
+            ($logger).info_args(format_args!($($arg)*));
         }
     }};
     ($logger:expr, Warn, $($arg:tt)*) => {{
         if ::log::log_enabled!(::log::Level::Warn) {
-            ($logger).warn(format!($($arg)*));
+            ($logger).warn_args(format_args!($($arg)*));
         }
     }};
     ($logger:expr, Error, $($arg:tt)*) => {{
         if ::log::log_enabled!(::log::Level::Error) {
-            ($logger).error(format!($($arg)*));
+            ($logger).error_args(format_args!($($arg)*));
         }
     }};
 }
 
 #[macro_export]
-macro_rules! rlog_debug {
+macro_rules! log_debug {
     ($logger:expr, $($arg:tt)*) => {
         $crate::runar_log!($logger, Debug, $($arg)*);
     }
 }
 
 #[macro_export]
-macro_rules! rlog_info {
+macro_rules! log_info {
     ($logger:expr, $($arg:tt)*) => {
         $crate::runar_log!($logger, Info, $($arg)*);
     }
 }
 
 #[macro_export]
-macro_rules! rlog_warn {
+macro_rules! log_warn {
     ($logger:expr, $($arg:tt)*) => {
         $crate::runar_log!($logger, Warn, $($arg)*);
     }
 }
 
 #[macro_export]
-macro_rules! rlog_error {
+macro_rules! log_error {
     ($logger:expr, $($arg:tt)*) => {
         $crate::runar_log!($logger, Error, $($arg)*);
     }

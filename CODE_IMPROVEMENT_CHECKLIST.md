@@ -39,11 +39,15 @@ This document defines how we improve core crates with state-of-the-art Rust prac
 - [ ] Choose atomics with the weakest ordering that is correct (often `Relaxed` for simple flags/counters).
 
 ### Logging and Errors
-- [ ] Avoid building log strings when the level is disabled; prefer logger APIs that defer formatting (or guard with `is_enabled`).
+- [ ] Use only logging macros for emission: `log_debug!`, `log_info!`, `log_warn!`, `log_error!`. Do not call `logger.debug/info/warn/error` directly in hot paths.
+- [ ] Macro usage specifics (no ambiguity):
+  - Prefer implicit capture for clarity and speed: `log_debug!(logger, "topic={topic} id={id}");`
+  - Positional formatting is also fine: `log_info!(logger, "started {} services", count);`
+  - For static text, still use the macro: `log_info!(logger, "service started");`
+  - Never write `logger.info(format!(...))` or build `String`s for logs.
+- [ ] Choose correct levels consistently: use `debug` for high-frequency tracing and detailed internals; use `info` for state transitions, lifecycle milestones, or user-visible summaries; keep `warn`/`error` as is for exceptional conditions.
 - [ ] Use concise, actionable errors. Prefer `{e}` formatting over `{}` with explicit variables: `format!("Failed to parse: {e}")`.
 - [ ] Avoid logging the same error multiple times across layers.
-- [ ] Replace direct `logger.debug/info` calls with `rlog_debug!/rlog_info!/rlog_warn!/rlog_error!` macros to eliminate formatting when disabled.
-- [ ] Audit and correct log levels: prefer `debug` for high-frequency/hot-path tracing; reserve `info` for state transitions or key lifecycle messages; keep `warn/error` as is.
 
 ### Serialization/Deserialization
 - [ ] Avoid re-serialization of unchanged values; cache or reuse encoded buffers where feasible.
@@ -159,7 +163,7 @@ We begin at `runar-node/src/node.rs`, then fan out to the registry, transport, d
 - [ ] No async blocking; no locks held across `await`.
 - [ ] Profiling or micro-bench evidence of neutral or improved performance in targeted hot paths.
 - [ ] Document notable changes and migration notes (if any API surfaces changed).
-- [ ] Logging migrated to `rlog_*` macros where applicable and log level usage audited (debug vs info) in modified areas.
+- [ ] Logging migrated to `log_*` macros where applicable and log level usage audited (debug vs info) in modified areas.
 
 ## Progress
 

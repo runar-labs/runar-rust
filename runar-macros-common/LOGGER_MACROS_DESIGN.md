@@ -17,10 +17,10 @@ Goal: Remove `format!` at call sites and avoid any work when a log level is disa
 
 Macros provided:
 - `runar_log!(logger, Debug|Info|Warn|Error, "...", args...)`
-- `rlog_debug!(logger, "...", args...)`
-- `rlog_info!(logger,  "...", args...)`
-- `rlog_warn!(logger,  "...", args...)`
-- `rlog_error!(logger, "...", args...)`
+- `log_debug!(logger, "...", args...)`
+- `log_info!(logger,  "...", args...)`
+- `log_warn!(logger,  "...", args...)`
+- `log_error!(logger, "...", args...)`
 
 These macros accept any expression for `logger` (typically a `&Logger`), and a format string with optional arguments. They do not allocate or format when the respective level is disabled.
 
@@ -33,8 +33,8 @@ logger.info(format!("Starting {} services", services.len()));
 
 After:
 ```rust
-use runar_macros_common::rlog_info;
-rlog_info!(logger, "Starting {} services", services.len());
+use runar_macros_common::log_info;
+log_info!(logger, "Starting {} services", services.len());
 ```
 
 Behavior:
