@@ -167,7 +167,7 @@ pub struct ServiceRegistry {
     remote_service_states: Arc<DashMap<String, ServiceState>>,
 
     /// Mapping of peer node IDs to subscription IDs registered on their behalf
-    remote_peer_subscriptions: Arc<RwLock<HashMap<String, HashMap<String, String>>>>,
+    remote_peer_subscriptions: Arc<DashMap<String, DashMap<String, String>>>,
 
     /// Logger instance
     logger: Arc<Logger>,
@@ -218,7 +218,7 @@ impl ServiceRegistry {
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
             local_service_states: Arc::new(DashMap::new()),
             remote_service_states: Arc::new(DashMap::new()),
-            remote_peer_subscriptions: Arc::new(RwLock::new(HashMap::new())),
+            remote_peer_subscriptions: Arc::new(DashMap::new()),
             logger,
         }
     }
@@ -797,11 +797,10 @@ impl ServiceRegistry {
         path: &TopicPath,
         sub_id: String,
     ) {
-        let mut guard = self.remote_peer_subscriptions.write().await;
-        guard
+        let peer_subscriptions = self.remote_peer_subscriptions
             .entry(peer_id.to_string())
-            .or_default()
-            .insert(path.as_str().to_string(), sub_id);
+            .or_default();
+        peer_subscriptions.insert(path.as_str().to_string(), sub_id);
     }
 
     /// Optimized version that takes ownership of peer_id to avoid cloning
@@ -811,11 +810,10 @@ impl ServiceRegistry {
         path: &TopicPath,
         sub_id: String,
     ) {
-        let mut guard = self.remote_peer_subscriptions.write().await;
-        guard
+        let peer_subscriptions = self.remote_peer_subscriptions
             .entry(peer_id)
-            .or_default()
-            .insert(path.as_str().to_string(), sub_id);
+            .or_default();
+        peer_subscriptions.insert(path.as_str().to_string(), sub_id);
     }
 
     /// Remove a single subscription mapping and return its id (if any)
@@ -824,16 +822,20 @@ impl ServiceRegistry {
         peer_id: &str,
         path: &TopicPath,
     ) -> Option<String> {
-        let mut guard = self.remote_peer_subscriptions.write().await;
-        guard.get_mut(peer_id).and_then(|m| m.remove(path.as_str()))
+        self.remote_peer_subscriptions
+            .get(peer_id)
+            .and_then(|peer_entry| {
+                peer_entry.value().remove(path.as_str()).map(|(_, sub_id)| sub_id)
+            })
     }
 
     /// Return all (path, sub_id) pairs for a peer and clear them (used on peer disconnect)
     pub async fn drain_remote_peer_subscriptions(&self, peer_id: &str) -> Vec<String> {
-        let mut guard = self.remote_peer_subscriptions.write().await;
-        guard
+        self.remote_peer_subscriptions
             .remove(peer_id)
-            .map(|m| m.into_values().collect())
+            .map(|(_, peer_subscriptions)| {
+                peer_subscriptions.into_iter().map(|entry| entry.1).collect()
+            })
             .unwrap_or_default()
     }
 
@@ -842,10 +844,11 @@ impl ServiceRegistry {
         &self,
         peer_id: &str,
     ) -> std::collections::HashSet<String> {
-        let guard = self.remote_peer_subscriptions.read().await;
-        guard
+        self.remote_peer_subscriptions
             .get(peer_id)
-            .map(|m| m.keys().cloned().collect())
+            .map(|peer_entry| {
+                peer_entry.value().iter().map(|path_entry| path_entry.key().clone()).collect()
+            })
             .unwrap_or_default()
     }
 

@@ -1,15 +1,28 @@
 Goal
 Refactor hot-path read/lookup code that currently uses async locks around HashMaps to reduce contention and allocation. Replace Arc<RwLock<HashMap<..>>> with DashMap, remove locks on the read path, and, where applicable, add a short-lived, idempotent replay cache with TTL and a periodic prune task.
 
+BE CAREFUL.. cHANGE ONE FIeld at the time.
+Properly map the Dashmap API to the existing uses of the field you are changing..no trial and error.. no guess. Think from first principles. think wide and think deep.
+Change one field to use DashMap and change all the places that uses the fields. 
+Special attention to places that iterate the field.. places that get a value from it. place that sotre values in it.
+after every field change.. run the tests at runar-node-tests to make sure there are no regressions.
+The common issues with this refacotory is for tests to get stuck (lock). so run the tests with timeout of 45s in the command . currently the tets runs in about 10s (without compilation) and a bit more whenu make change and there is also comulation involved. so 45s shuold be safe..
+DO NOT move to another fields wituot first validating with the test run and making sure no regressions and tests do not lock/get stuck.
+DO NOT CHANGE anything else.. focus only int the dashmap replacement.
+
+For every succesful change, update this doc with progress and stop and give me a summary of changes so I can review and stage the changes... before moving to the next.
+
 ## **PROGRESS SUMMARY** ✅
-**Current Status**: Phase 1.1 (Service Registry) - 2/3 fields completed + Memory Efficiency Complete
-**Next Target**: Service Lists conversion in ServiceRegistry
+**Current Status**: Phase 1.1 (Service Registry) - 3/3 fields completed + Memory Efficiency Complete
+**Next Target**: Network Transport Peer Maps conversion
 **Completed Fields**:
 - ✅ `dial_backoff` - Converted to DashMap, all tests passing
 - ✅ `dial_cancel` - Converted to DashMap, all tests passing  
 - ✅ `connection_id_to_peer_id` - Converted to DashMap, all tests passing
 - ✅ **Service Registry Subscription Maps** - Converted to DashMap + Memory Efficiency Optimizations ✅
 - ✅ **Service Registry Service State Maps** - Converted to DashMap, all tests passing ✅
+- ✅ **Service Registry Service Lists** - Converted to DashMap, all tests passing ✅
+- ✅ **Service Registry Remote Peer Subscriptions** - Converted to DashMap, all tests passing ✅
 
 **Test Results**: All 123 tests in runar-node-tests pass successfully after each conversion
 
