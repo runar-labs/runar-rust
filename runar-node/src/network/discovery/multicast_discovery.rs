@@ -133,7 +133,10 @@ impl MulticastDiscovery {
 
         // Create UDP socket with proper configuration
         let socket = Self::create_multicast_socket(socket_addr, &logger).await?;
-        log_info!(logger, "Successfully created multicast socket with address: {socket_addr}");
+        log_info!(
+            logger,
+            "Successfully created multicast socket with address: {socket_addr}"
+        );
 
         let instance = Self {
             options: Arc::new(RwLock::new(options)),
@@ -222,7 +225,10 @@ impl MulticastDiscovery {
             let local_peer_node_id = if let Some(info) = local_node_guard.as_ref() {
                 compact_id(&info.node_public_key)
             } else {
-                log_error!(logger, "No local node information available for announcement");
+                log_error!(
+                    logger,
+                    "No local node information available for announcement"
+                );
                 return;
             };
             drop(local_node_guard);
@@ -240,7 +246,7 @@ impl MulticastDiscovery {
                                 if let Some(sender_node_id) = message.sender_id() {
                                     if *sender_node_id == local_peer_node_id {
                                         skip = true; // Skip message from self
-                        log_debug!(logger, "Skipping message from self");
+                                        log_debug!(logger, "Skipping message from self");
                                     }
                                 }
                                 if !skip {
@@ -248,16 +254,18 @@ impl MulticastDiscovery {
                                         message,
                                         &local_node,
                                         &listeners,
-                        &logger,
+                                        &logger,
                                     )
                                     .await;
                                 }
                             }
-            Err(e) => log_error!(logger, "Failed to deserialize multicast message: {e}"),
+                            Err(e) => {
+                                log_error!(logger, "Failed to deserialize multicast message: {e}")
+                            }
                         }
                     }
                     Err(e) => {
-        log_error!(logger, "Failed to receive multicast message: {e}");
+                        log_error!(logger, "Failed to receive multicast message: {e}");
                         // Brief pause to avoid tight loop on error
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
@@ -474,7 +482,10 @@ impl NodeDiscovery for MulticastDiscovery {
             }
         };
         let local_peer_node_id = compact_id(&local_info.node_public_key);
-        log_info!(self.logger, "Starting to announce node: {local_peer_node_id}");
+        log_info!(
+            self.logger,
+            "Starting to announce node: {local_peer_node_id}"
+        );
 
         let tx_opt = self.tx.lock().await;
         let tx = match tx_opt.as_ref() {

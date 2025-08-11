@@ -141,7 +141,10 @@ impl MemoryDiscovery {
         }
         let listeners_vec = { listeners.read().unwrap().clone() };
         for key in stale_keys {
-            log_debug!(logger, "[memory_discovery] TTL expired for {key}, emitting Lost");
+            log_debug!(
+                logger,
+                "[memory_discovery] TTL expired for {key}, emitting Lost"
+            );
             nodes.remove(&key);
             last_seen.remove(&key);
             for listener in &listeners_vec {
