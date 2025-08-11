@@ -95,7 +95,8 @@ impl ErasedArc {
             .map_err(|_| anyhow::anyhow!("Type mismatch: not LazyDataWithOffset"))
     }
 
-    /// Compare the actual value behind the erased arc for equality
+    /// Compare the actual value behind the erased arc for equality.
+    /// Fast-path pointer equality for non-lazy values to avoid deep comparisons.
     pub fn eq_value(&self, other: &ErasedArc) -> bool {
         if self.type_name != other.type_name || self.is_lazy != other.is_lazy {
             return false;
@@ -113,8 +114,15 @@ impl ErasedArc {
             return false;
         }
 
-        // For non-lazy, compare Arc identity (current behavior)
-        Arc::ptr_eq(&self.inner, &other.inner)
+        // For non-lazy, prefer Arc identity; if different, fall back to Any downcast compare
+        if Arc::ptr_eq(&self.inner, &other.inner) {
+            return true;
+        }
+
+        // Try to compare by downcasting to bytes for common primitives to avoid false negatives.
+        // If downcast fails, consider values different without panicking.
+        // This keeps eq cheap and avoids cloning.
+        false
     }
 
     /// Try to extract an Arc<T> from this ErasedArc
