@@ -72,7 +72,6 @@ pub struct PeerRecord {
     pub connected: bool,
     pub last_capabilities_version: i64,
     pub node_info: Option<NodeInfo>,
-    pub last_seen_at: Instant,
 }
 
 impl PeerRecord {
@@ -81,7 +80,6 @@ impl PeerRecord {
             connected: false,
             last_capabilities_version: -1,
             node_info: None,
-            last_seen_at: Instant::now(),
         }
     }
 }
@@ -108,7 +106,6 @@ impl PeerDirectory {
             .entry(peer_id.to_string())
             .or_insert_with(PeerRecord::new);
         entry.connected = true;
-        entry.last_seen_at = Instant::now();
     }
 
     pub async fn mark_disconnected(&self, peer_id: &str) {
@@ -124,7 +121,6 @@ impl PeerDirectory {
             .or_insert_with(PeerRecord::new);
         entry.last_capabilities_version = info.version;
         entry.node_info = Some(info);
-        entry.last_seen_at = Instant::now();
     }
 
     pub async fn get_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
@@ -135,13 +131,7 @@ impl PeerDirectory {
             .and_then(|r| r.node_info.clone())
     }
 
-    /// Update only the last_seen timestamp for a peer, if present
-    pub async fn touch(&self, peer_id: &str) {
-        let mut guard = self.inner.write().await;
-        if let Some(rec) = guard.get_mut(peer_id) {
-            rec.last_seen_at = Instant::now();
-        }
-    }
+
 
     pub async fn take_node_info(&self, peer_id: &str) -> Option<NodeInfo> {
         let mut guard = self.inner.write().await;
@@ -944,12 +934,15 @@ impl Node {
 
         self.logger.info("Stopping networking...");
 
-        // Shut down networking if enabled
+        // Stop networking if enabled
         if self.supports_networking {
-            if let Err(e) = self.shutdown_network().await {
-                self.logger
-                    .error(format!("Error shutting down network: {e}"));
-            }
+            self.shutdown_network().await?;
+        }
+
+        // Stop all service tasks
+        let mut service_tasks = self.service_tasks.write().await;
+        for (_, task) in service_tasks.drain(..) {
+            task.abort();
         }
 
         self.logger.info("Node stopped successfully");
@@ -1059,8 +1052,14 @@ impl Node {
             drop(discovery_guard);
         }
 
-        self.logger.info("Networking started successfully");
+        // Start discovery providers
+        if let Some(discovery_providers) = self.network_discovery_providers.read().await.as_ref() {
+            for provider in discovery_providers {
+                provider.start_announcing().await?;
+            }
+        }
 
+        self.logger.info("Networking started successfully");
         Ok(())
     }
 
@@ -1948,9 +1947,8 @@ impl Node {
         ));
         // Check existing info from directory
         if let Some(existing_peer) = self.peer_directory.get_node_info(&new_peer_node_id).await {
-            // Idempotency: ignore if version is not newer, but refresh last_seen.
+            // Idempotency: ignore if version is not newer
             if new_peer.version <= existing_peer.version {
-                self.peer_directory.touch(&new_peer_node_id).await;
                 return Ok(Vec::new());
             }
 
@@ -2621,7 +2619,11 @@ impl Node {
 
         Ok(())
     }
+
+
 }
+
+/// Start networking components
 
 #[async_trait]
 impl NodeDelegate for Node {
