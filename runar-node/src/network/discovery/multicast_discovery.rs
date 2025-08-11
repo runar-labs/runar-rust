@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use core::fmt;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -132,12 +133,7 @@ impl MulticastDiscovery {
 
         // Create UDP socket with proper configuration
         let socket = Self::create_multicast_socket(socket_addr, &logger).await?;
-        logger.info(format!(
-            "Successfully created multicast socket with address: {socket_addr}",
-        ));
-
-        // Create a Network component logger
-        let discovery_logger = logger.with_component(Component::Transporter);
+        log_info!(logger, "Successfully created multicast socket with address: {socket_addr}");
 
         let instance = Self {
             options: Arc::new(RwLock::new(options)),
@@ -147,7 +143,7 @@ impl MulticastDiscovery {
             tx: Arc::new(Mutex::new(None)),
             multicast_addr: Arc::new(Mutex::new(socket_addr)),
             announce_task: Mutex::new(None),
-            logger: discovery_logger,
+            logger: logger.clone(),
         };
 
         // Initialize the tasks
@@ -200,12 +196,13 @@ impl MulticastDiscovery {
         // Create tokio UDP socket
         let udp_socket = UdpSocket::from_std(std_socket)?;
 
-        logger.info(format!(
+        log_info!(
+            logger,
             "Created multicast socket bound to {}:{} and joined multicast group {}",
             Ipv4Addr::UNSPECIFIED,
             port,
             multicast_ip
-        ));
+        );
 
         Ok(udp_socket)
     }
@@ -225,7 +222,7 @@ impl MulticastDiscovery {
             let local_peer_node_id = if let Some(info) = local_node_guard.as_ref() {
                 compact_id(&info.node_public_key)
             } else {
-                logger.error("No local node information available for announcement".to_string());
+                log_error!(logger, "No local node information available for announcement");
                 return;
             };
             drop(local_node_guard);
@@ -243,7 +240,7 @@ impl MulticastDiscovery {
                                 if let Some(sender_node_id) = message.sender_id() {
                                     if *sender_node_id == local_peer_node_id {
                                         skip = true; // Skip message from self
-                                        logger.debug("Skipping message from self".to_string());
+                        log_debug!(logger, "Skipping message from self");
                                     }
                                 }
                                 if !skip {
@@ -251,17 +248,16 @@ impl MulticastDiscovery {
                                         message,
                                         &local_node,
                                         &listeners,
-                                        &logger,
+                        &logger,
                                     )
                                     .await;
                                 }
                             }
-                            Err(e) => logger
-                                .error(format!("Failed to deserialize multicast message: {e}")),
+            Err(e) => log_error!(logger, "Failed to deserialize multicast message: {e}"),
                         }
                     }
                     Err(e) => {
-                        logger.error(format!("Failed to receive multicast message: {e}"));
+        log_error!(logger, "Failed to receive multicast message: {e}");
                         // Brief pause to avoid tight loop on error
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
@@ -306,10 +302,10 @@ impl MulticastDiscovery {
                 match serde_cbor::to_vec(&message) {
                     Ok(data) => {
                         if let Err(e) = socket.send_to(&data, *multicast_addr.lock().await).await {
-                            logger.error(format!("Failed to send announcement: {e}"));
+                            log_error!(logger, "Failed to send announcement: {e}");
                         }
                     }
-                    Err(e) => logger.error(format!("Failed to serialize announcement: {e}")),
+                    Err(e) => log_error!(logger, "Failed to serialize announcement: {e}"),
                 }
             }
         })
@@ -331,7 +327,7 @@ impl MulticastDiscovery {
             let local_node_info = match local_node_guard.as_ref() {
                 Some(info) => info.clone(),
                 None => {
-                    logger.error("No local node information available".to_string());
+                    log_error!(logger, "No local node information available");
                     return;
                 }
             };
@@ -350,16 +346,17 @@ impl MulticastDiscovery {
 
                 match serde_cbor::to_vec(&message) {
                     Ok(data) => {
-                        logger.debug(format!(
+                        log_debug!(
+                            logger,
                             "Sending multicast message to {}, size: {}",
                             target_addr,
                             data.len()
-                        ));
+                        );
                         if let Err(e) = socket.send_to(&data, target_addr).await {
-                            logger.error(format!("Failed to send multicast message: {e}"));
+                            log_error!(logger, "Failed to send multicast message: {e}");
                         }
                     }
-                    Err(e) => logger.error(format!("Failed to serialize multicast message: {e}")),
+                    Err(e) => log_error!(logger, "Failed to serialize multicast message: {e}"),
                 }
             }
         });
@@ -389,7 +386,7 @@ impl MulticastDiscovery {
             let sender_id = compact_id(&announce.public_key);
             let local_id = compact_id(&local_node_info.node_public_key);
             if sender_id == local_id {
-                logger.debug("Ignoring discovery message from self");
+                log_debug!(logger, "Ignoring discovery message from self");
                 return;
             }
         }
@@ -400,7 +397,7 @@ impl MulticastDiscovery {
                 announce: Some(peer_info),
                 goodbye: None,
             } => {
-                logger.debug("Processing announce message from peer");
+                log_debug!(logger, "Processing announce message from peer");
 
                 // Emit Discovered event to all listeners
                 let listeners_read = listeners.read().await;
@@ -413,7 +410,7 @@ impl MulticastDiscovery {
                 announce: None,
                 goodbye: Some(identifier),
             } => {
-                logger.debug(format!("Processing goodbye message from {identifier}"));
+                log_debug!(logger, "Processing goodbye message from {identifier}");
 
                 // Emit Lost event to all listeners
                 let listeners_read = listeners.read().await;
@@ -423,7 +420,7 @@ impl MulticastDiscovery {
                 }
             }
             _ => {
-                logger.debug("Ignoring malformed discovery message");
+                log_debug!(logger, "Ignoring malformed discovery message");
             }
         }
     }
@@ -432,9 +429,10 @@ impl MulticastDiscovery {
 #[async_trait]
 impl NodeDiscovery for MulticastDiscovery {
     async fn init(&self, options: DiscoveryOptions) -> Result<()> {
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Initializing MulticastDiscovery with options: {options:?}"
-        ));
+        );
         // Update options
         *self.options.write().await = options.clone();
 
@@ -458,8 +456,7 @@ impl NodeDiscovery for MulticastDiscovery {
         // Create valid socket address and store it
         let socket_addr = SocketAddr::new(multicast_addr, port);
         *self.multicast_addr.lock().await = socket_addr;
-        self.logger
-            .info(format!("Using multicast address: {socket_addr}"));
+        log_info!(self.logger, "Using multicast address: {socket_addr}");
 
         // Tasks are already initialized in the constructor, no need to duplicate here
 
@@ -477,8 +474,7 @@ impl NodeDiscovery for MulticastDiscovery {
             }
         };
         let local_peer_node_id = compact_id(&local_info.node_public_key);
-        self.logger
-            .info(format!("Starting to announce node: {local_peer_node_id}"));
+        log_info!(self.logger, "Starting to announce node: {local_peer_node_id}");
 
         let tx_opt = self.tx.lock().await;
         let tx = match tx_opt.as_ref() {
@@ -493,7 +489,7 @@ impl NodeDiscovery for MulticastDiscovery {
         };
 
         // Send initial announcement and return Result
-        self.logger.info("Sending initial announcement".to_string());
+        log_info!(self.logger, "Sending initial announcement");
 
         // Create a discovery message from the NodeInfo
         let peer_info = PeerInfo::new(
@@ -523,7 +519,7 @@ impl NodeDiscovery for MulticastDiscovery {
     }
 
     async fn subscribe(&self, listener: DiscoveryListener) -> Result<()> {
-        self.logger.debug("Adding discovery listener".to_string());
+        log_debug!(self.logger, "Adding discovery listener");
         self.listeners.write().await.push(listener);
         Ok(())
     }
@@ -533,19 +529,22 @@ impl NodeDiscovery for MulticastDiscovery {
         *local_node_guard = Some(new_node_info);
         drop(local_node_guard);
 
-        self.logger
-            .debug("Updated local node information for multicast discovery");
+        log_debug!(
+            self.logger,
+            "Updated local node information for multicast discovery"
+        );
         Ok(())
     }
 
     async fn shutdown(&self) -> Result<()> {
-        self.logger
-            .info("Shutting down MulticastDiscovery".to_string());
+        log_info!(self.logger, "Shutting down MulticastDiscovery");
 
         // Stop announcing if we are
         if let Err(e) = self.stop_announcing().await {
-            self.logger
-                .warn(format!("Error stopping announcements during shutdown: {e}"));
+            log_warn!(
+                self.logger,
+                "Error stopping announcements during shutdown: {e}"
+            );
         }
 
         Ok(())

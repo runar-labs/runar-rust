@@ -170,9 +170,12 @@ We begin at `runar-node/src/node.rs`, then fan out to the registry, transport, d
 
 ## Progress
 
-- [ ] `runar-node/src/node.rs`
-- [ ] `runar-node/src/services/service_registry.rs`
-- [ ] `runar-node/src/network/transport/*.rs`
+- [x] `runar-node/src/node.rs`
+- [x] `runar-node/src/services/service_registry.rs`
+- [x] `runar-node/src/network/transport/quic_transport.rs`
+- [x] `runar-node/src/network/transport/peer_state.rs`
+- [x] `runar-node/src/network/transport/connection_pool.rs`
+- [x] `runar-node/src/network/transport/stream_pool.rs`
 - [ ] `runar-node/src/network/discovery/*.rs`
 - [ ] `runar-serializer/src/*.rs`
 

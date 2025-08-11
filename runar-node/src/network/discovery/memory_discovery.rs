@@ -18,6 +18,7 @@ use super::multicast_discovery::PeerInfo;
 use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug, log_info};
 use tokio::time;
 
 /// In-memory node discovery for development and testing
@@ -105,10 +106,11 @@ impl MemoryDiscovery {
 
                 // In memory discovery, periodic announce is a no-op. We notify listeners only
                 // on first-time discovery (see add_node_internal) or after explicit removal.
-                logger.debug(format!(
+                log_debug!(
+                    logger,
                     "Periodic announce for local node: {} (no listener notification)",
                     compact_id(&node_info.node_public_key)
-                ));
+                );
             }
         })
     }
@@ -139,9 +141,7 @@ impl MemoryDiscovery {
         }
         let listeners_vec = { listeners.read().unwrap().clone() };
         for key in stale_keys {
-            logger.debug(format!(
-                "[memory_discovery] TTL expired for {key}, emitting Lost"
-            ));
+            log_debug!(logger, "[memory_discovery] TTL expired for {key}, emitting Lost");
             nodes.remove(&key);
             last_seen.remove(&key);
             for listener in &listeners_vec {
@@ -158,8 +158,7 @@ impl MemoryDiscovery {
 
         self.nodes.insert(node_key.clone(), node_info.clone());
 
-        self.logger
-            .debug(format!("Added node to registry: {node_key}"));
+        log_debug!(self.logger, "Added node to registry: {node_key}");
 
         let peer_info = PeerInfo::new(
             node_info.node_public_key.clone(),
@@ -194,10 +193,11 @@ impl MemoryDiscovery {
         if should_emit {
             let addresses_len = node_info.addresses.len();
             let event_label = if is_new { "Discovered" } else { "Updated" };
-            self.logger.debug(format!(
+            log_debug!(
+                self.logger,
                 "📣 [discovery] provider=memory event={event_label} peer_id={node_key} addresses={addresses_len} debounced={}",
                 !is_new
-            ));
+            );
             let listeners_vec = self.listeners.read().unwrap().clone();
             drop(node_key); // ensure node_key is not used after this point
             for listener in listeners_vec {
@@ -215,9 +215,10 @@ impl MemoryDiscovery {
 #[async_trait]
 impl NodeDiscovery for MemoryDiscovery {
     async fn init(&self, options: DiscoveryOptions) -> Result<()> {
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Initializing MemoryDiscovery with options: {options:?}"
-        ));
+        );
 
         *self.options.write().unwrap() = Some(options.clone());
 
@@ -238,10 +239,11 @@ impl NodeDiscovery for MemoryDiscovery {
             }
         };
 
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Starting to announce node: {}",
             compact_id(&info.node_public_key)
-        ));
+        );
 
         // Get the options
         let options = match &*self.options.read().unwrap() {
@@ -263,7 +265,7 @@ impl NodeDiscovery for MemoryDiscovery {
     }
 
     async fn stop_announcing(&self) -> Result<()> {
-        self.logger.info("Stopping node announcements".to_string());
+        log_info!(self.logger, "Stopping node announcements");
 
         // Stop the announcement task if it exists
         if let Some(task) = self.announce_task.lock().unwrap().take() {
@@ -275,9 +277,10 @@ impl NodeDiscovery for MemoryDiscovery {
         if let Some(info) = local_info_opt {
             let key = compact_id(&info.node_public_key);
             self.nodes.remove(&key);
-            self.logger.debug(format!(
+            log_debug!(
+                self.logger,
                 "Removed local node {key} from registry (emitting Lost)"
-            ));
+            );
 
             let listeners_vec = {
                 let guard = self.listeners.read().unwrap();
@@ -323,8 +326,10 @@ impl NodeDiscovery for MemoryDiscovery {
         *local_node_guard = Some(new_node_info);
         drop(local_node_guard);
 
-        self.logger
-            .debug("Updated local node information for memory discovery");
+        log_debug!(
+            self.logger,
+            "Updated local node information for memory discovery"
+        );
         Ok(())
     }
 

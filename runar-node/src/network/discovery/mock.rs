@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use runar_common::compact_ids::compact_id;
 use std::sync::{Arc, RwLock};
+// no logging macros needed here yet
 
 use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 

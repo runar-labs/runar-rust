@@ -34,6 +34,7 @@ pub struct PeerState {
     last_activity: Mutex<std::time::Instant>,
     logger: Arc<Logger>,
     status_tx: mpsc::Sender<bool>,
+    #[allow(dead_code)]
     status_rx: Mutex<mpsc::Receiver<bool>>,
     /// Optional node information received during handshake
     node_info: RwLock<Option<NodeInfo>>,
