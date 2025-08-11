@@ -71,8 +71,7 @@ impl ConnectionPool {
     /// INTENTION: Clean up resources when a peer is disconnected.
     pub async fn remove_peer(&self, peer_node_id: &String) -> Result<(), NetworkError> {
         if let Some((_, peer_state)) = self.peers.remove(peer_node_id) {
-            let mut connection = peer_state.connection.lock().await;
-            *connection = None;
+            let _ = peer_state.take_connection().await;
         }
         Ok(())
     }
@@ -95,8 +94,7 @@ impl ConnectionPool {
         let mut connected_peers = Vec::new();
         for entry in self.peers.iter() {
             let peer = entry.value();
-            let connection = peer.connection.lock().await;
-            if connection.is_some() {
+            if peer.has_connection().await {
                 connected_peers.push(entry.key().clone());
             }
         }

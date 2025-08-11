@@ -27,19 +27,26 @@ use tokio::sync::{mpsc, Mutex};
 /// manages stream pools, and handles connection health. Only mutable fields are
 /// protected by granular locks for reduced contention.
 pub struct PeerState {
-    pub peer_node_id: String,
-    pub address: String,
-    pub stream_pool: StreamPool,
-    pub connection: Mutex<Option<quinn::Connection>>,
-    pub last_activity: Mutex<std::time::Instant>,
-    pub logger: Arc<Logger>,
-    pub status_tx: mpsc::Sender<bool>,
-    pub status_rx: Mutex<mpsc::Receiver<bool>>,
+    peer_node_id: String,
+    address: String,
+    stream_pool: StreamPool,
+    connection: Mutex<Option<quinn::Connection>>,
+    last_activity: Mutex<std::time::Instant>,
+    logger: Arc<Logger>,
+    status_tx: mpsc::Sender<bool>,
+    status_rx: Mutex<mpsc::Receiver<bool>>,
     /// Optional node information received during handshake
-    pub node_info: RwLock<Option<NodeInfo>>,
+    node_info: RwLock<Option<NodeInfo>>,
 }
 
 impl PeerState {
+    pub async fn take_connection(&self) -> Option<quinn::Connection> {
+        self.connection.lock().await.take()
+    }
+
+    pub async fn has_connection(&self) -> bool {
+        self.connection.lock().await.is_some()
+    }
     /// Create a new PeerState with the specified peer ID and address
     ///
     /// INTENTION: Initialize a new peer state with the given parameters.
@@ -157,8 +164,8 @@ impl PeerState {
             self.peer_node_id
         );
 
-        let mut conn_guard = self.connection.lock().await;
-        if let Some(conn) = conn_guard.as_mut() {
+        let conn_opt = { self.connection.lock().await.clone() };
+        if let Some(conn) = conn_opt {
             log_debug!(
                 self.logger,
                 "✅ [PeerState] Connection available for peer {} - opening new stream",
@@ -234,8 +241,8 @@ impl PeerState {
     ///
     /// INTENTION: Properly clean up resources when disconnecting from a peer.
     pub async fn close_connection(&self) -> Result<(), NetworkError> {
-        let mut conn_guard = self.connection.lock().await;
-        if let Some(conn) = conn_guard.take() {
+        let conn_opt = { self.connection.lock().await.take() };
+        if let Some(conn) = conn_opt {
             conn.close(0u32.into(), b"Connection closed by peer");
             let _ = self.status_tx.send(false).await;
             log_info!(
