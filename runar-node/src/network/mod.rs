@@ -4,8 +4,8 @@
 
 pub mod discovery;
 pub mod network_config;
-pub mod transport;
 pub mod peer_directory;
+pub mod transport;
 
 pub use discovery::{
     DiscoveryListener, DiscoveryOptions, MemoryDiscovery, MulticastDiscovery, NodeDiscovery,
