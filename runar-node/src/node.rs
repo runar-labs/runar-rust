@@ -171,51 +171,51 @@ pub struct Node {
     debounce_notify_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 
     /// Default network id to be used when service are added without a network ID
-    pub(crate) network_id: String,
+    network_id: String,
 
     //network_ids that this node participates in.
-    pub(crate) network_ids: Vec<String>,
+    network_ids: Vec<String>,
 
     /// The node ID for this node
-    pub(crate) node_id: String,
+    node_id: String,
 
-    pub(crate) node_public_key: Vec<u8>,
+    node_public_key: Vec<u8>,
 
     /// Configuration for this node
-    pub(crate) config: Arc<NodeConfig>,
+    config: Arc<NodeConfig>,
 
     /// The service registry for this node
-    pub(crate) service_registry: Arc<ServiceRegistry>,
+    service_registry: Arc<ServiceRegistry>,
 
     // Centralized peer directory (single source of truth)
-    pub(crate) peer_directory: Arc<PeerDirectory>,
+    peer_directory: Arc<PeerDirectory>,
 
     // Per-peer connect guards to avoid concurrent connects
-    pub(crate) peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 
     // Debounce repeated discovery events per peer
-    pub(crate) discovery_seen_times: Arc<DashMap<String, Instant>>,
+    discovery_seen_times: Arc<DashMap<String, Instant>>,
 
     /// Logger instance
-    pub(crate) logger: Arc<Logger>,
+    logger: Arc<Logger>,
 
     /// Flag indicating if the node is running
-    pub(crate) running: AtomicBool,
+    running: AtomicBool,
 
     /// Flag indicating if this node supports networking
     /// This is set when networking is enabled in the config
-    pub(crate) supports_networking: bool,
+    supports_networking: bool,
 
     /// Network transport for connecting to remote nodes
-    pub(crate) network_transport: Arc<RwLock<Option<Arc<dyn NetworkTransport>>>>,
+    network_transport: Arc<RwLock<Option<Arc<dyn NetworkTransport>>>>,
 
-    pub(crate) network_discovery_providers: Arc<RwLock<Option<NodeDiscoveryList>>>,
+    network_discovery_providers: Arc<RwLock<Option<NodeDiscoveryList>>>,
 
     /// Load balancer for selecting remote handlers
-    pub(crate) load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
+    load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
 
     /// Pending requests waiting for responses, keyed by correlation ID
-    pub(crate) pending_requests: Arc<DashMap<String, oneshot::Sender<Result<ArcValue>>>>,
+    pending_requests: Arc<DashMap<String, oneshot::Sender<Result<ArcValue>>>>,
 
     label_resolver: Arc<dyn LabelResolver>,
 
