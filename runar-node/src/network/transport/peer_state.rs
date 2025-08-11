@@ -5,6 +5,7 @@
 use crate::network::discovery::NodeInfo;
 use crate::network::transport::{NetworkError, StreamPool};
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -68,31 +69,20 @@ impl PeerState {
     pub async fn set_node_info(&self, node_info: NodeInfo) {
         let mut info = self.node_info.write().await;
         *info = Some(node_info);
-        self.logger.info(format!(
-            "Node info set for peer {peer_id}",
-            peer_id = self.peer_node_id
-        ));
+        log_info!(self.logger, "Node info set for peer {peer_id}", peer_id=self.peer_node_id);
     }
     /// Set the connection for this peer
     ///
     /// INTENTION: Establish a connection to the peer and update the state.
     pub async fn set_connection(&self, connection: quinn::Connection) {
-        self.logger.info(format!(
-            "🔗 [PeerState] Setting connection for peer {} - Remote: {}",
-            self.peer_node_id,
-            connection.remote_address()
-        ));
+        log_info!(self.logger, "🔗 [PeerState] Setting connection for peer {} - Remote: {}", self.peer_node_id, connection.remote_address());
 
         let mut conn_guard = self.connection.lock().await;
         *conn_guard = Some(connection);
         let mut last = self.last_activity.lock().await;
         *last = std::time::Instant::now();
         let _ = self.status_tx.send(true).await;
-        self.logger.info(format!(
-            "✅ [PeerState] Connection established with peer {} at {}",
-            self.peer_node_id,
-            std::time::Instant::now().elapsed().as_millis()
-        ));
+        log_info!(self.logger, "✅ [PeerState] Connection established with peer {} at {}", self.peer_node_id, std::time::Instant::now().elapsed().as_millis());
     }
 
     /// Check if peer is connected
@@ -102,20 +92,14 @@ impl PeerState {
         let conn_guard = self.connection.lock().await;
         let connected = conn_guard.is_some();
 
-        self.logger.debug(format!(
-            "🔍 [PeerState] Connection check for peer {} - Connected: {}",
-            self.peer_node_id, connected
-        ));
+        log_debug!(self.logger, "🔍 [PeerState] Connection check for peer {} - Connected: {}", self.peer_node_id, connected);
 
         // If we have a connection, also check if it's still alive
         if connected {
             if let Some(conn) = conn_guard.as_ref() {
                 let close_reason = conn.close_reason();
                 if close_reason.is_some() {
-                    self.logger.warn(format!(
-                        "⚠️ [PeerState] Connection to peer {} is closed - Reason: {:?}",
-                        self.peer_node_id, close_reason
-                    ));
+                    log_warn!(self.logger, "⚠️ [PeerState] Connection to peer {} is closed - Reason: {:?}", self.peer_node_id, close_reason);
                     return false;
                 }
             }
@@ -128,50 +112,29 @@ impl PeerState {
     ///
     /// INTENTION: Obtain a QUIC stream for sending data to this peer.
     pub async fn get_send_stream(&self) -> Result<quinn::SendStream, NetworkError> {
-        self.logger.debug(format!(
-            "🔄 [PeerState] Checking for idle stream for peer {}",
-            self.peer_node_id
-        ));
+        log_debug!(self.logger, "🔄 [PeerState] Checking for idle stream for peer {}", self.peer_node_id);
 
         if let Some(stream) = self.stream_pool.get_idle_stream().await {
-            self.logger.debug(format!(
-                "✅ [PeerState] Found idle stream for peer {}",
-                self.peer_node_id
-            ));
+            log_debug!(self.logger, "✅ [PeerState] Found idle stream for peer {}", self.peer_node_id);
             return Ok(stream);
         }
 
-        self.logger.debug(format!(
-            "🆕 [PeerState] No idle stream available - creating new stream for peer {}",
-            self.peer_node_id
-        ));
+        log_debug!(self.logger, "🆕 [PeerState] No idle stream available - creating new stream for peer {}", self.peer_node_id);
 
         let mut conn_guard = self.connection.lock().await;
         if let Some(conn) = conn_guard.as_mut() {
-            self.logger.debug(format!(
-                "✅ [PeerState] Connection available for peer {} - opening new stream",
-                self.peer_node_id
-            ));
+            log_debug!(self.logger, "✅ [PeerState] Connection available for peer {} - opening new stream", self.peer_node_id);
 
             match conn.open_bi().await {
                 Ok((send_stream, _recv_stream)) => {
-                    self.logger.info(format!(
-                        "✅ [PeerState] Opened new bidirectional stream to peer {}",
-                        self.peer_node_id
-                    ));
+                    log_info!(self.logger, "✅ [PeerState] Opened new bidirectional stream to peer {}", self.peer_node_id);
                     Ok(send_stream)
                 }
                 Err(e) => {
-                    self.logger.error(format!(
-                        "❌ [PeerState] Failed to open stream to peer {}: {}",
-                        self.peer_node_id, e
-                    ));
+                    log_error!(self.logger, "❌ [PeerState] Failed to open stream to peer {}: {}", self.peer_node_id, e);
 
                     // Log additional connection state information
-                    self.logger.error(format!(
-                        "🔍 [PeerState] Connection diagnostics for peer {} - Error details: {:?}",
-                        self.peer_node_id, e
-                    ));
+                    log_error!(self.logger, "🔍 [PeerState] Connection diagnostics for peer {} - Error details: {:?}", self.peer_node_id, e);
 
                     Err(NetworkError::ConnectionError(format!(
                         "Failed to open stream: {e}"
@@ -179,10 +142,7 @@ impl PeerState {
                 }
             }
         } else {
-            self.logger.error(format!(
-                "❌ [PeerState] No connection available for peer {} - cannot create stream",
-                self.peer_node_id
-            ));
+            log_error!(self.logger, "❌ [PeerState] No connection available for peer {} - cannot create stream", self.peer_node_id);
             Err(NetworkError::ConnectionError(
                 "Not connected to peer".to_string(),
             ))
@@ -220,8 +180,7 @@ impl PeerState {
         if let Some(conn) = conn_guard.take() {
             conn.close(0u32.into(), b"Connection closed by peer");
             let _ = self.status_tx.send(false).await;
-            self.logger
-                .info(format!("Connection closed with peer {}", self.peer_node_id));
+            log_info!(self.logger, "Connection closed with peer {}", self.peer_node_id);
         }
         let _ = self.stream_pool.clear().await;
         Ok(())

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::network::transport::NetworkError;
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug};
 use tokio::sync::RwLock;
 
 /// StreamPool - Manages the reuse of QUIC streams
@@ -50,7 +51,7 @@ impl StreamPool {
             streams.push(stream);
             Ok(())
         } else {
-            self.logger.debug("Dropping stream: pool is full");
+            log_debug!(self.logger, "Dropping stream: pool is full");
             Ok(())
         }
     }
