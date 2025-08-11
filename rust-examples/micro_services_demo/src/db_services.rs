@@ -199,18 +199,14 @@ pub fn setup_database_services() -> (
     let schema = create_database_schema();
 
     // Setup SqliteService (in-memory for demo)
-    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema.clone(), false);
-    let sqlite_service = SqliteService::new(
-        "sqlite_service".to_string(),
-        "internal_db".to_string(),
-        sqlite_config,
-    );
+    let sqlite_config = SqliteConfig::new(":memory:", schema.clone(), false);
+    let sqlite_service = SqliteService::new("sqlite_service", "internal_db", sqlite_config);
 
     // Setup CrudSqliteService
     let crud_service = runar_services::crud_sqlite::CrudSqliteService::new(
-        "crud_service".to_string(),
-        "crud_db".to_string(),
-        "internal_db".to_string(),
+        "crud_service",
+        "crud_db",
+        "internal_db",
         schema,
     );
 

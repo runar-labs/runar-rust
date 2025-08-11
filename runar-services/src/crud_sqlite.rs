@@ -74,18 +74,18 @@ impl CrudSqliteService {
     /// * `schema` - The schema defining the structure of collections (tables) and their columns.
     /// * `logger` - Logger instance for this service.
     pub fn new(
-        name: String,
-        path: String,
-        store_path: String,
+        name: &str,
+        path: &str,
+        store_path: &str,
         schema: SqliteSchemaDef, // Note: Taking ownership, then wrapping in Arc
     ) -> Self {
         Self {
-            name,
-            path,
+            name: name.to_string(),
+            path: path.to_string(),
             version: "0.0.1".to_string(),
             network_id: None,
             description: "CRUD Service".to_string(),
-            store_path,
+            store_path: store_path.to_string(),
             schema: Arc::new(schema),
         }
     }
@@ -233,8 +233,9 @@ impl CrudSqliteService {
             .as_type_ref::<String>()
             .with_context(|| "Inserted _id must be a string")?;
 
-        let mut column_names: Vec<String> = Vec::new();
-        let mut value_params: Vec<SqliteValue> = Vec::new();
+        let estimated_fields = doc_to_insert.len();
+        let mut column_names: Vec<String> = Vec::with_capacity(estimated_fields);
+        let mut value_params: Vec<SqliteValue> = Vec::with_capacity(estimated_fields);
 
         for (field_name, arc_value) in &mut doc_to_insert {
             // Validate field against schema
@@ -392,8 +393,9 @@ impl CrudSqliteService {
             return Err(anyhow!("Filter cannot be empty for findOne operation."));
         }
 
-        let mut where_clauses: Vec<String> = Vec::new();
-        let mut value_params: Vec<SqliteValue> = Vec::new();
+        let estimated_filters = req.filter.len();
+        let mut where_clauses: Vec<String> = Vec::with_capacity(estimated_filters);
+        let mut value_params: Vec<SqliteValue> = Vec::with_capacity(estimated_filters);
 
         for (field_name, arc_value) in req.filter.clone().iter_mut() {
             if !table_def.columns.iter().any(|c| &c.name == field_name) {

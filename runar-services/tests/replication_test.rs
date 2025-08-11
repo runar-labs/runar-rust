@@ -44,7 +44,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
 
     // Create SQLite config with replication enabled
     let sqlite_config = SqliteConfig::new(
-        ":memory:".to_string(), // Use in-memory database for testing
+        ":memory:", // Use in-memory database for testing
         schema,
         false, // No encryption for testing
     )
@@ -58,11 +58,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
     });
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new(
-        "test_sqlite".to_string(),
-        "test_sqlite".to_string(),
-        sqlite_config,
-    );
+    let sqlite_service = SqliteService::new("test_sqlite", "test_sqlite", sqlite_config);
 
     // Create test node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
@@ -215,14 +211,10 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
     };
 
     // Create SQLite config without replication
-    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema, false); // No replication config
+    let sqlite_config = SqliteConfig::new(":memory:", schema, false); // No replication config
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new(
-        "test_sqlite_no_repl".to_string(),
-        "test_sqlite_no_repl".to_string(),
-        sqlite_config,
-    );
+    let sqlite_service = SqliteService::new("test_sqlite_no_repl", "test_sqlite_no_repl", sqlite_config);
 
     // Create test node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
@@ -302,7 +294,7 @@ async fn test_replication_event_database_application() -> Result<()> {
     };
 
     // Create SQLite config with replication enabled
-    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema, false).with_replication(
+    let sqlite_config = SqliteConfig::new(":memory:", schema, false).with_replication(
         ReplicationConfig {
             enabled_tables: vec!["users".to_string()],
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
@@ -314,11 +306,7 @@ async fn test_replication_event_database_application() -> Result<()> {
     );
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new(
-        "test_sqlite_apply".to_string(),
-        "test_sqlite_apply".to_string(),
-        sqlite_config,
-    );
+    let sqlite_service = SqliteService::new("test_sqlite_apply", "test_sqlite_apply", sqlite_config);
 
     // Create test node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
@@ -501,7 +489,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
     };
 
     // Create SQLite config with replication enabled
-    let sqlite_config = SqliteConfig::new(":memory:".to_string(), schema, false).with_replication(
+    let sqlite_config = SqliteConfig::new(":memory:", schema, false).with_replication(
         ReplicationConfig {
             enabled_tables: vec!["users".to_string()],
             conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
@@ -513,11 +501,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
     );
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new(
-        "test_sqlite_mark_processed".to_string(),
-        "test_sqlite_mark_processed".to_string(),
-        sqlite_config,
-    );
+    let sqlite_service = SqliteService::new("test_sqlite_mark_processed", "test_sqlite_mark_processed", sqlite_config);
 
     // Create test node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);

@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
 
     // Create SQLite config with replication enabled for both tables
     let sqlite_config = SqliteConfig::new(
-        "replication_example.db".to_string(),
+        "replication_example.db",
         schema,
         false, // No encryption for this example
     )
@@ -108,11 +108,7 @@ async fn main() -> Result<()> {
     });
 
     // Create SQLite service
-    let sqlite_service = SqliteService::new(
-        "replication_example".to_string(),
-        "sqlite".to_string(),
-        sqlite_config,
-    );
+    let sqlite_service = SqliteService::new("replication_example", "sqlite", sqlite_config);
 
     // Create and start the node
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);

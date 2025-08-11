@@ -105,8 +105,8 @@ mod tests {
             indexes: vec![], // Ensure all fields of Schema are initialized
         };
 
-        let service_name = "users_db_test".to_string();
-        let service_path = "users_db".to_string();
+        let service_name = "users_db_test";
+        let service_path = "users_db";
 
         // Create a test database guard that will clean up after the test
         let db_guard = TestDbGuard::new();

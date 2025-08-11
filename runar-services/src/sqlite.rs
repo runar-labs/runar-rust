@@ -594,9 +594,9 @@ pub struct SqliteConfig {
 
 impl SqliteConfig {
     /// Create a new SQLite config with path and schema
-    pub fn new(db_path: impl Into<String>, schema: Schema, encryption: bool) -> Self {
+    pub fn new(db_path: &str, schema: Schema, encryption: bool) -> Self {
         Self {
-            db_path: db_path.into(),
+            db_path: db_path.to_string(),
             schema,
             encryption,
             replication: None,
@@ -611,11 +611,11 @@ impl SqliteConfig {
 }
 
 pub struct SqliteService {
-    pub name: String,
-    pub path: String,
-    pub version: String,
-    pub description: String,
-    pub config: SqliteConfig,
+    name: String,
+    path: String,
+    version: String,
+    description: String,
+    config: SqliteConfig,
     worker_tx: Arc<RwLock<Option<mpsc::Sender<SqliteWorkerCommand>>>>,
     network_id: Option<String>,
     /// Optional replication manager
@@ -640,10 +640,10 @@ impl Clone for SqliteService {
 
 impl SqliteService {
     // Common for service constructors
-    pub fn new(name: String, path: String, config: SqliteConfig) -> Self {
+    pub fn new(name: &str, path: &str, config: SqliteConfig) -> Self {
         Self {
-            name,
-            path,
+            name: name.to_string(),
+            path: path.to_string(),
             version: "0.0.1".to_string(),
             description: "SQLite service".to_string(),
             config,
