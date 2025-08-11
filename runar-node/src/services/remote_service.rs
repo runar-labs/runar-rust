@@ -6,9 +6,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::network::transport::{MessageContext, NetworkTransport};
@@ -38,7 +37,7 @@ pub struct RemoteService {
     network_transport: Arc<dyn NetworkTransport>,
 
     /// Service capabilities
-    actions: Arc<RwLock<HashMap<String, ActionMetadata>>>,
+    actions: Arc<DashMap<String, ActionMetadata>>,
 
     /// Logger instance
     logger: Arc<Logger>,
@@ -83,7 +82,7 @@ impl RemoteService {
             network_id, // Derived from service_topic
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
-            actions: Arc::new(RwLock::new(HashMap::new())),
+            actions: Arc::new(DashMap::new()),
             logger: dependencies.logger,
             request_timeout_ms: config.request_timeout_ms,
         }
@@ -147,7 +146,7 @@ impl RemoteService {
 
             // Add actions to the service
             for action in service_metadata.actions {
-                service.add_action(action.name.clone(), action).await?;
+                service.add_action(action.name.clone(), action)?;
             }
             // Add subscriptions to the service
             // for subscription in service_metadata.subscriptions {
@@ -175,8 +174,8 @@ impl RemoteService {
     }
 
     /// Add an action to this remote service
-    pub async fn add_action(&self, action_name: String, metadata: ActionMetadata) -> Result<()> {
-        self.actions.write().await.insert(action_name, metadata);
+    pub fn add_action(&self, action_name: String, metadata: ActionMetadata) -> Result<()> {
+        self.actions.insert(action_name, metadata);
         Ok(())
     }
 
@@ -299,9 +298,8 @@ impl RemoteService {
     ///
     /// INTENTION: Provide a way to identify all actions that this remote service
     /// can handle, to be used during initialization for registering handlers.
-    pub async fn get_available_actions(&self) -> Vec<String> {
-        let actions = self.actions.read().await;
-        actions.keys().cloned().collect()
+    pub fn get_available_actions(&self) -> Vec<String> {
+        self.actions.iter().map(|entry| entry.key().clone()).collect()
     }
 
     /// Initialize the remote service and register its handlers
@@ -310,7 +308,7 @@ impl RemoteService {
     /// action handlers with the provided context.
     pub async fn init(&self, context: crate::services::RemoteLifecycleContext) -> Result<()> {
         // Get available actions
-        let action_names = self.get_available_actions().await;
+        let action_names = self.get_available_actions();
 
         // Register each action handler
         for action_name in action_names {
@@ -333,7 +331,7 @@ impl RemoteService {
     }
 
     pub async fn stop(&self, context: crate::services::RemoteLifecycleContext) -> Result<()> {
-        let action_names = self.get_available_actions().await;
+        let action_names = self.get_available_actions();
 
         for action_name in action_names {
             if let Ok(action_topic_path) = self.service_topic.new_action_topic(&action_name) {
