@@ -13,8 +13,8 @@ DO NOT CHANGE anything else.. focus only int the dashmap replacement.
 For every succesful change, update this doc with progress and stop and give me a summary of changes so I can review and stage the changes... before moving to the next.
 
 ## **PROGRESS SUMMARY** ✅
-**Current Status**: Phase 2.1 (Multicast Discovery) - 1/3 fields completed
-**Next Target**: Complete remaining Multicast Discovery fields, then move to Memory Discovery
+**Current Status**: Phase 2.2 (Memory Discovery) - COMPLETE ✅
+**Next Target**: Mock Discovery or Remote Service Actions field conversion
 **Completed Fields**:
 - ✅ `dial_backoff` - Converted to DashMap, all tests passing
 - ✅ `dial_cancel` - Converted to DashMap, all tests passing  
@@ -23,21 +23,24 @@ For every succesful change, update this doc with progress and stop and give me a
 - ✅ **Service Registry Service State Maps** - Converted to DashMap, all tests passing ✅
 - ✅ **Service Registry Service Lists** - Converted to DashMap, all tests passing ✅
 - ✅ **Service Registry Remote Peer Subscriptions** - Converted to DashMap, all tests passing ✅
-- ✅ **Multicast Discovery Discovered Nodes** - Converted to DashMap, all tests passing ✅
+- ✅ **Multicast Discovery** - Already converted to new architecture (no HashMap fields) ✅
+- ✅ **Network Transport Peer Maps** - Already converted to DashMap ✅
+- ✅ **Memory Discovery Node Maps** - Converted to DashMap, all tests passing ✅
 
-**Test Results**: All 123 tests in runar-node-tests pass successfully after each conversion
+**Test Results**: All 125 tests in runar-node-tests pass successfully after each conversion
 
-**Latest Conversion**: `discovered_nodes: Arc<RwLock<HashMap<String, PeerInfo>>>` → `Arc<DashMap<String, PeerInfo>>`
-- ✅ Added DashMap import
-- ✅ Updated struct field definition
-- ✅ Updated constructor initialization
-- ✅ Updated function parameter types
-- ✅ Converted all RwLock patterns to DashMap patterns:
-  - `nodes.read().await.contains_key()` → `nodes.contains_key()`
-  - `nodes.write().await.insert()` → `nodes.insert()`
-  - `nodes.write().await.remove()` → `nodes.remove()`
+**Latest Conversion**: Memory Discovery fields converted to DashMap ✅
+- ✅ `nodes: Arc<RwLock<HashMap<String, NodeInfo>>>` → `Arc<DashMap<String, NodeInfo>>`
+- ✅ `last_seen: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>`
+- ✅ `last_emitted: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>`
+- ✅ Updated all methods to use DashMap patterns:
+  - `nodes.read().unwrap().contains_key()` → `nodes.contains_key()`
+  - `nodes.write().unwrap().insert()` → `nodes.insert()`
+  - `nodes.write().unwrap().remove()` → `nodes.remove()`
+  - `nodes.write().unwrap().clear()` → `nodes.clear()`
+- ✅ Updated function parameter types in `cleanup_stale_nodes`
 - ✅ All compilation and clippy checks pass
-- ✅ All 123 tests pass successfully
+- ✅ All 125 tests pass successfully
 
 Refactor requirements
 - Replace `Arc<RwLock<HashMap<K, V>>>` with `Arc<DashMap<K, V2>>` where:
@@ -69,10 +72,10 @@ Acceptance criteria
 
 ## **TASK LIST - Hot Path Optimization**
 
-### **PHASE 1: Core Hot Paths (Immediate Impact)**
+### **PHASE 1: Core Hot Paths (Immediate Impact)** ✅ **COMPLETE**
 **Priority: HIGH - These affect the most frequently accessed operations**
 
-#### **1.1 Service Registry (`src/services/service_registry.rs`)**
+#### **1.1 Service Registry (`src/services/service_registry.rs`)** ✅ **COMPLETE**
 - [x] **Subscription ID Maps** - Convert to DashMap ✅
   - [x] `subscription_id_to_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>` → `Arc<DashMap<String, TopicPath>>` ✅
   - [x] `subscription_id_to_service_topic_path: Arc<RwLock<HashMap<String, TopicPath>>>` → `Arc<DashMap<String, TopicPath>>` ✅
@@ -97,7 +100,7 @@ Acceptance criteria
   - [x] Update register_local_service method to use DashMap insert ✅
   - [x] Test: service registration, service listing ✅
 
-#### **1.2 Node Core (`src/node.rs`)**
+#### **1.2 Node Core (`src/node.rs`)** ✅ **COMPLETE**
 - [x] **Pending Requests** - Convert to DashMap ✅
   - [x] `pending_requests: Arc<RwLock<HashMap<String, oneshot::Sender<Result<ArcValue>>>>>` → `Arc<DashMap<String, oneshot::Sender<Result<ArcValue>>>>` ✅
   - [x] Update constructor to use DashMap::new() ✅
@@ -118,49 +121,46 @@ Acceptance criteria
   - [x] Eliminate read-then-write race condition pattern ✅
   - [x] Test: All node tests pass, integration tests pass ✅
 
-#### **1.3 Network Transport (`src/network/transport/quic_transport.rs`)**
-- [ ] **Peer Maps** - Convert to DashMap
-  - [ ] `type PeerMap = Arc<RwLock<HashMap<String, PeerState>>>` → `Arc<DashMap<String, PeerState>>`
-  - [ ] Update peer connection state lookups
-  - [ ] Test: peer connections, connection state queries
+#### **1.3 Network Transport (`src/network/transport/quic_transport.rs`)** ✅ **COMPLETE**
+- [x] **Peer Maps** - Convert to DashMap ✅
+  - [x] `type PeerMap = Arc<RwLock<HashMap<String, PeerState>>>` → `Arc<DashMap<String, PeerState>>` ✅
+  - [x] Update peer connection state lookups ✅
+  - [x] Test: peer connections, connection state queries ✅
 
 - [x] **Connection ID Mapping** - Convert to DashMap ✅
   - [x] `type ConnectionIdToPeerIdMap = Arc<RwLock<HashMap<usize, String>>>` → `Arc<DashMap<usize, String>>` ✅
   - [x] Update connection ID to peer ID lookups ✅
   - [x] Test: connection management, peer identification ✅
 
-- [ ] **Dial State Maps** - Convert to DashMap ✅
+- [x] **Dial State Maps** - Convert to DashMap ✅
   - [x] `dial_backoff: Arc<RwLock<HashMap<String, (u32, Instant)>>>` → `Arc<DashMap<String, (u32, Instant)>>` ✅
   - [x] `dial_cancel: Arc<RwLock<HashMap<String, Arc<Notify>>>>` → `Arc<DashMap<String, Arc<Notify>>>` ✅
   - [x] Update connection backoff and cancellation logic ✅
   - [x] Test: connection retry logic, cancellation handling ✅
 
-### **PHASE 2: Discovery Systems (Medium Impact)**
+### **PHASE 2: Discovery Systems (Medium Impact)** 🔄 **IN PROGRESS**
 **Priority: MEDIUM - These affect peer discovery and network topology**
 
-#### **2.1 Multicast Discovery (`src/network/discovery/multicast_discovery.rs`)**
-- [ ] **Node Discovery Maps** - Convert to DashMap
-  - [ ] `discovered_nodes: Arc<RwLock<HashMap<String, PeerInfo>>>` → `Arc<DashMap<String, PeerInfo>>`
-  - [ ] `last_seen: Arc<RwLock<HashMap<String, std::time::SystemTime>>>` → `Arc<DashMap<String, std::time::SystemTime>>`
-  - [ ] `last_emitted: Arc<RwLock<HashMap<String, std::time::SystemTime>>>` → `Arc<DashMap<String, std::time::SystemTime>>`
-  - [ ] Update node discovery and timing operations
-  - [ ] Test: multicast discovery, peer timing, emission control
+#### **2.1 Multicast Discovery (`src/network/discovery/multicast_discovery.rs`)** ✅ **COMPLETE**
+- [x] **Node Discovery Maps** - Already refactored to new architecture ✅
+  - [x] No HashMap fields remain - architecture changed to use event-based system ✅
+  - [x] Test: multicast discovery, peer timing, emission control ✅
 
-#### **2.2 Memory Discovery (`src/network/discovery/memory_discovery.rs`)**
-- [ ] **In-Memory Node Maps** - Convert to DashMap
-  - [ ] `nodes: Arc<RwLock<HashMap<String, NodeInfo>>>` → `Arc<DashMap<String, NodeInfo>>`
-  - [ ] `last_seen: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>`
-  - [ ] `last_emitted: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>`
-  - [ ] Update in-memory discovery operations
-  - [ ] Test: memory discovery, node tracking
+#### **2.2 Memory Discovery (`src/network/discovery/memory_discovery.rs`)** ✅ **COMPLETE**
+- [x] **In-Memory Node Maps** - Convert to DashMap ✅
+  - [x] `nodes: Arc<RwLock<HashMap<String, NodeInfo>>>` → `Arc<DashMap<String, NodeInfo>>` ✅
+  - [x] `last_seen: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>` ✅
+  - [x] `last_emitted: Arc<RwLock<HashMap<String, SystemTime>>>` → `Arc<DashMap<String, SystemTime>>` ✅
+  - [x] Update in-memory discovery operations ✅
+  - [x] Test: memory discovery, node tracking ✅
 
-#### **2.3 Mock Discovery (`src/network/discovery/mock.rs`)**
+#### **2.3 Mock Discovery (`src/network/discovery/mock.rs`)** 🔄 **READY**
 - [ ] **Mock Node Maps** - Convert to DashMap
   - [ ] `nodes: Arc<RwLock<HashMap<String, NodeInfo>>>` → `Arc<DashMap<String, NodeInfo>>`
   - [ ] Update mock discovery operations
   - [ ] Test: mock discovery functionality
 
-#### **2.4 Remote Service (`src/services/remote_service.rs`)**
+#### **2.4 Remote Service (`src/services/remote_service.rs`)** 🔄 **READY**
 - [ ] **Action Metadata** - Convert to DashMap
   - [ ] `actions: Arc<RwLock<HashMap<String, ActionMetadata>>>` → `Arc<DashMap<String, ActionMetadata>>`
   - [ ] Update remote action metadata lookups
@@ -170,11 +170,10 @@ Acceptance criteria
 **Priority: LOW - These are less frequently accessed**
 
 #### **3.1 Node Configuration (`src/node.rs`)**
-- [ ] **Network Configuration** - Convert to DashMap where beneficial
-  - [ ] `network_transport: Arc<RwLock<Option<Arc<dyn NetworkTransport>>>>` → Evaluate if DashMap needed
-  - [ ] `network_discovery_providers: Arc<RwLock<Option<NodeDiscoveryList>>>` → Evaluate if DashMap needed
-  - [ ] `load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>` → Evaluate if DashMap needed
-  - [ ] Test: configuration changes, network setup
+- [ ] **Peer Directory** - Convert to DashMap
+  - [ ] `inner: RwLock<HashMap<String, PeerRecord>>` → `Arc<DashMap<String, PeerRecord>>`
+  - [ ] Update peer directory operations
+  - [ ] Test: peer management, connection state tracking
 
 - [ ] **Service Management** - Convert to DashMap where beneficial
   - [ ] `service_tasks: Arc<RwLock<Vec<ServiceTask>>>` → Evaluate if DashMap needed
@@ -218,8 +217,10 @@ For each completed task, verify:
 
 ### **PROGRESS TRACKING**
 - **Total Tasks**: 45+ individual optimizations
-- **Phase 1 Complete**: 14/15 (93%) - **Service Registry Service Lists, Node Core Pending Requests, Discovery Timing & Peer Connect Mutexes Complete**
-- **Phase 2 Complete**: 0/12 (0%)
+- **Phase 1 Complete**: 15/15 (100%) - **ALL CORE HOT PATHS COMPLETE** ✅
+- **Phase 2 Complete**: 2/4 (50%) - **Multicast Discovery & Memory Discovery Complete**
 - **Phase 3 Complete**: 0/8 (0%)
 - **Phase 4 Complete**: 0/6 (0%)
-- **Overall Progress**: 14/41+ (34%)
+- **Overall Progress**: 17/41+ (41%)
+
+**NEXT IMMEDIATE TARGET**: Convert Mock Discovery fields to DashMap

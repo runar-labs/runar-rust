@@ -7,10 +7,10 @@
 // Standard library imports
 use anyhow::{anyhow, Result};
 use runar_common::compact_ids::compact_id;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 use tokio::task::JoinHandle;
+use dashmap::DashMap;
 
 use super::multicast_discovery::PeerInfo;
 // Internal imports
@@ -23,7 +23,7 @@ use tokio::time;
 /// In-memory node discovery for development and testing
 pub struct MemoryDiscovery {
     /// Nodes registered with this discovery mechanism, keyed by network_id
-    nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
+    nodes: Arc<DashMap<String, NodeInfo>>,
     /// Node info for the local node
     local_node: Arc<RwLock<Option<NodeInfo>>>,
     /// Options for discovery
@@ -35,9 +35,9 @@ pub struct MemoryDiscovery {
     /// Listeners for discovery events
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>, // DiscoveryListener is now Arc<...>
     /// Last-seen timestamps per peer for TTL/Lost emission
-    last_seen: Arc<RwLock<HashMap<String, SystemTime>>>,
+    last_seen: Arc<DashMap<String, SystemTime>>,
     /// Debounce: last emit time per peer
-    last_emitted: Arc<RwLock<HashMap<String, SystemTime>>>,
+    last_emitted: Arc<DashMap<String, SystemTime>>,
     /// Logger instance
     logger: Logger,
 }
@@ -46,14 +46,14 @@ impl MemoryDiscovery {
     /// Create a new in-memory discovery mechanism
     pub fn new(logger: Logger) -> Self {
         Self {
-            nodes: Arc::new(RwLock::new(HashMap::new())),
+            nodes: Arc::new(DashMap::new()),
             local_node: Arc::new(RwLock::new(None)),
             options: RwLock::new(None),
             cleanup_task: Mutex::new(None),
             announce_task: Mutex::new(None),
             listeners: Arc::new(RwLock::new(Vec::new())),
-            last_seen: Arc::new(RwLock::new(HashMap::new())),
-            last_emitted: Arc::new(RwLock::new(HashMap::new())),
+            last_seen: Arc::new(DashMap::new()),
+            last_emitted: Arc::new(DashMap::new()),
             logger,
         }
     }
@@ -115,23 +115,25 @@ impl MemoryDiscovery {
 
     /// Remove nodes that haven't been seen for a while
     async fn cleanup_stale_nodes(
-        nodes: &Arc<RwLock<HashMap<String, NodeInfo>>>,
-        last_seen: &Arc<RwLock<HashMap<String, SystemTime>>>,
+        nodes: &Arc<DashMap<String, NodeInfo>>,
+        last_seen: &Arc<DashMap<String, SystemTime>>,
         listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
         ttl: Duration,
         _debounce: Duration,
         logger: &Logger,
     ) {
         let now = SystemTime::now();
-        let stale_keys: Vec<String> = {
-            let seen = last_seen.read().unwrap();
-            seen.iter()
-                .filter_map(|(peer_id, ts)| match now.duration_since(*ts) {
+        let stale_keys: Vec<String> = last_seen
+            .iter()
+            .filter_map(|entry| {
+                let (peer_id, ts) = entry.pair();
+                match now.duration_since(*ts) {
                     Ok(elapsed) if elapsed > ttl => Some(peer_id.clone()),
                     _ => None,
-                })
-                .collect()
-        };
+                }
+            })
+            .collect();
+        
         if stale_keys.is_empty() {
             return;
         }
@@ -140,8 +142,8 @@ impl MemoryDiscovery {
             logger.debug(format!(
                 "[memory_discovery] TTL expired for {key}, emitting Lost"
             ));
-            nodes.write().unwrap().remove(&key);
-            last_seen.write().unwrap().remove(&key);
+            nodes.remove(&key);
+            last_seen.remove(&key);
             for listener in &listeners_vec {
                 let fut = listener(DiscoveryEvent::Lost(key.clone()));
                 fut.await;
@@ -152,14 +154,9 @@ impl MemoryDiscovery {
     /// Adds a node to the discovery registry.
     async fn add_node_internal(&self, node_info: NodeInfo) {
         let node_key = compact_id(&node_info.node_public_key);
-        let is_new = {
-            let nodes = self.nodes.read().unwrap();
-            !nodes.contains_key(&node_key)
-        };
-        {
-            let mut nodes = self.nodes.write().unwrap();
-            nodes.insert(node_key.clone(), node_info.clone());
-        }
+        let is_new = !self.nodes.contains_key(&node_key);
+        
+        self.nodes.insert(node_key.clone(), node_info.clone());
 
         self.logger
             .debug(format!("Added node to registry: {node_key}"));
@@ -174,9 +171,8 @@ impl MemoryDiscovery {
         let mut should_emit = is_new;
         if !is_new {
             // debounce Updated
-            let mut emitted = self.last_emitted.write().unwrap();
             let now = SystemTime::now();
-            let last = emitted.get(&node_key).cloned();
+            let last = self.last_emitted.get(&node_key).map(|entry| *entry.value());
             let debounce = self
                 .options
                 .read()
@@ -186,19 +182,13 @@ impl MemoryDiscovery {
                 .unwrap_or(Duration::from_millis(400));
             if last.map(|t| now.duration_since(t).unwrap_or_default() >= debounce) != Some(false) {
                 should_emit = true;
-                emitted.insert(node_key.clone(), now);
+                self.last_emitted.insert(node_key.clone(), now);
             }
         } else {
-            self.last_emitted
-                .write()
-                .unwrap()
-                .insert(node_key.clone(), SystemTime::now());
+            self.last_emitted.insert(node_key.clone(), SystemTime::now());
         }
         // update last_seen
-        self.last_seen
-            .write()
-            .unwrap()
-            .insert(node_key.clone(), SystemTime::now());
+        self.last_seen.insert(node_key.clone(), SystemTime::now());
 
         if should_emit {
             let addresses_len = node_info.addresses.len();
@@ -283,10 +273,7 @@ impl NodeDiscovery for MemoryDiscovery {
         let local_info_opt = { self.local_node.read().unwrap().clone() };
         if let Some(info) = local_info_opt {
             let key = compact_id(&info.node_public_key);
-            {
-                let mut nodes_map = self.nodes.write().unwrap();
-                nodes_map.remove(&key);
-            }
+            self.nodes.remove(&key);
             self.logger.debug(format!(
                 "Removed local node {key} from registry (emitting Lost)"
             ));
@@ -325,7 +312,7 @@ impl NodeDiscovery for MemoryDiscovery {
         }
 
         // Clear all nodes
-        self.nodes.write().unwrap().clear();
+        self.nodes.clear();
 
         Ok(())
     }
