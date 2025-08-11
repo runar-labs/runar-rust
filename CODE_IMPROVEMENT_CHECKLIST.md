@@ -12,6 +12,7 @@ This document defines how we improve core crates with state-of-the-art Rust prac
   - `cargo clippy --all-targets --all-features -- -D warnings`
   - For node crate specifically: `cargo clippy -p runar-node --all-targets --all-features -- -D warnings`
 - [ ] Formatting and error messages must follow Rust idioms, e.g. `format!("PKCS#8 encoding error: {e}")`.
+- [ ] API changes are allowed and encouraged when they improve correctness or performance. If a function can accept references instead of owned values, change the signature and refactor all impacted call sites (across crates if needed). Do not skip improvements due to API breakage concerns.
 
 ## Performance & Memory Efficiency
 
@@ -19,6 +20,7 @@ This document defines how we improve core crates with state-of-the-art Rust prac
 - [ ] Prefer `&str`/`&[u8]`/`&T` over owned `String`/`Vec<u8>`/`T` when ownership is not needed.
 - [ ] Accept `impl AsRef<str>`/`AsRef<[u8]>` on APIs instead of `impl Into<String>` where practical. Return references or `Arc<T>` instead of cloning.
 - [ ] Replace `clone()` on `Arc<T>` with `Arc::clone(&arc)` when not using method syntax.
+- [ ] Proactively migrate function parameters to take references (`&T`, `&str`, `&[u8]`) whenever ownership is unnecessary. Refactor all call sites accordingly; breaking changes are acceptable.
 
 ### Allocation and Copy Reduction
 - [ ] Avoid intermediate allocations in hot paths; use iterators and adapters that do not materialize temporary `Vec`s.

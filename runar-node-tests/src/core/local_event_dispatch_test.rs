@@ -21,7 +21,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
     let counter1_clone = counter1.clone();
     let sub_id1 = node
         .subscribe(
-            "test/event".to_string(),
+            "test/event",
             Arc::new(move |_ctx, data| {
                 let counter = counter1_clone.clone();
                 Box::pin(async move {
@@ -37,7 +37,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
     let counter2_clone = counter2.clone();
     let sub_id2 = node
         .subscribe(
-            "test/event".to_string(),
+            "test/event",
             Arc::new(move |_ctx, data| {
                 let counter = counter2_clone.clone();
                 Box::pin(async move {
@@ -59,8 +59,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
 
     // Publish an event
     let test_data = ArcValue::new_primitive(42.0);
-    node.publish("test/event".to_string(), Some(test_data))
-        .await?;
+    node.publish("test/event", Some(test_data)).await?;
     println!("Event published");
 
     // Give handlers time to execute
@@ -101,7 +100,7 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
 
     let sub_id = node
         .subscribe(
-            "math1/math/added".to_string(),
+            "math1/math/added",
             Arc::new(move |_ctx, data| {
                 let received = received_data_clone.clone();
                 Box::pin(async move {

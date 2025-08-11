@@ -281,7 +281,7 @@ async fn test_node_events() {
 
         // Subscribe to the topic using the node's API
         node.subscribe(
-            topic.clone(),
+            &topic,
             Arc::new(handler),
             Some(runar_node::services::EventRegistrationOptions::default()),
         )
@@ -290,7 +290,7 @@ async fn test_node_events() {
 
         // Publish an event to the topic
         let data = ArcValue::new_primitive("test data".to_string());
-        node.publish(topic, Some(data)).await.unwrap();
+        node.publish(&topic, Some(data)).await.unwrap();
 
         // Small delay to allow async handler to execute
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -397,9 +397,7 @@ async fn test_on_method() {
         );
 
         // Publish the event (should trigger the future)
-        node.publish(topic.to_string(), Some(event_data.clone()))
-            .await
-            .unwrap();
+        node.publish(topic, Some(event_data.clone())).await.unwrap();
 
         // Wait for the event
         let received_data = await_on(future)
@@ -432,7 +430,7 @@ async fn test_on_method() {
         );
 
         // Publish event for context test
-        node.publish(context_topic.to_string(), Some(context_event_data.clone()))
+        node.publish(context_topic, Some(context_event_data.clone()))
             .await
             .unwrap();
 
@@ -461,12 +459,9 @@ async fn test_on_method() {
         );
 
         // Publish event for lifecycle context test
-        node.publish(
-            lifecycle_topic.to_string(),
-            Some(lifecycle_event_data.clone()),
-        )
-        .await
-        .unwrap();
+        node.publish(lifecycle_topic, Some(lifecycle_event_data.clone()))
+            .await
+            .unwrap();
 
         let received_lifecycle_data = lifecycle_future
             .await?
@@ -777,30 +772,21 @@ async fn test_multiple_concurrent_on_calls() {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = node_clone1
-                .publish(
-                    topic1.to_string(),
-                    Some(ArcValue::new_primitive("data1".to_string())),
-                )
+                .publish(topic1, Some(ArcValue::new_primitive("data1".to_string())))
                 .await;
         });
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(200)).await;
             let _ = node_clone2
-                .publish(
-                    topic2.to_string(),
-                    Some(ArcValue::new_primitive("data2".to_string())),
-                )
+                .publish(topic2, Some(ArcValue::new_primitive("data2".to_string())))
                 .await;
         });
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let _ = node_clone3
-                .publish(
-                    topic3.to_string(),
-                    Some(ArcValue::new_primitive("data3".to_string())),
-                )
+                .publish(topic3, Some(ArcValue::new_primitive("data3".to_string())))
                 .await;
         });
 
@@ -890,7 +876,7 @@ async fn test_on_method_timeout_variations() {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
             let _ = node_clone
-                .publish(topic_clone, Some(event_data_clone))
+                .publish(&topic_clone, Some(event_data_clone))
                 .await;
         });
 
@@ -916,7 +902,7 @@ async fn test_on_method_timeout_variations() {
         let _wildcard_pattern = "svc_wild/*";
         let data_w = ArcValue::new_primitive("past_data".to_string());
         // publish with retain_for so it is retained
-        node.publish(wildcard_exact.to_string(), Some(data_w.clone()))
+        node.publish(wildcard_exact, Some(data_w.clone()))
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -930,7 +916,7 @@ async fn test_on_method_timeout_variations() {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let _ = node_clone2
-                .publish(topic_clone2, Some(event_data_clone2))
+                .publish(&topic_clone2, Some(event_data_clone2))
                 .await;
         });
 

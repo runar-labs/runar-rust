@@ -158,7 +158,7 @@ impl LifecycleContext {
             .debug(format!("Making request to processed path: {full_topic}"));
 
         self.node_delegate
-            .remote_request::<P>(full_topic, payload)
+            .remote_request::<P>(&full_topic, payload)
             .await
     }
 
@@ -190,7 +190,7 @@ impl LifecycleContext {
         self.logger.debug(format!(
             "LifecycleContext making request to processed path: {full_topic}"
         ));
-        self.node_delegate.request::<P>(full_topic, payload).await
+        self.node_delegate.request::<P>(&full_topic, payload).await
     }
 
     /// Publish an event from the lifecycle context.
@@ -201,23 +201,19 @@ impl LifecycleContext {
     /// - Full topic with network ID: "network:service/topic" (used as is)
     /// - Topic with service: "service/topic" (current network ID added)
     /// - Simple topic: "topic" (current network ID and service path added)
-    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
-        let topic_string = topic.into();
-        let full_topic = if topic_string.contains(':') {
-            topic_string
-        } else if topic_string.contains('/') {
-            format!("{0}:{1}", self.network_id, topic_string)
+    pub async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()> {
+        let full_topic = if topic.contains(':') {
+            topic.to_string()
+        } else if topic.contains('/') {
+            format!("{0}:{1}", self.network_id, topic)
         } else {
-            format!(
-                "{0}:{1}/{2}",
-                self.network_id, self.service_path, topic_string
-            )
+            format!("{0}:{1}/{2}", self.network_id, self.service_path, topic)
         };
 
         self.logger.debug(format!(
             "LifecycleContext publishing to processed topic: {full_topic}"
         ));
-        self.node_delegate.publish(full_topic, data).await
+        self.node_delegate.publish(&full_topic, data).await
     }
 
     /// Publish an event with options (e.g., retain_for for include_past support)
@@ -243,7 +239,7 @@ impl LifecycleContext {
             "LifecycleContext publishing (with options) to processed topic: {full_topic}"
         ));
         self.node_delegate
-            .publish_with_options(full_topic, data, options)
+            .publish_with_options(&full_topic, data, options)
             .await
     }
 
@@ -270,7 +266,7 @@ impl LifecycleContext {
                 self.network_id, self.service_path, topic_string
             )
         };
-        let handle = self.node_delegate.on(full_topic, options);
+        let handle = self.node_delegate.on(&full_topic, options);
         let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
         inner
     }
@@ -370,11 +366,11 @@ impl LifecycleContext {
     /// detailed metadata about the event for discovery and documentation purposes.
     pub async fn subscribe(
         &self,
-        topic: impl Into<String>,
+        topic: &str,
         callback: EventHandler,
         options: Option<EventRegistrationOptions>,
     ) -> Result<String> {
-        let topic_string = topic.into();
+        let topic_string = topic.to_string();
         let full_topic = if topic_string.contains(':') {
             topic_string
         } else if topic_string.contains('/') {
@@ -387,7 +383,7 @@ impl LifecycleContext {
         };
 
         let delegate = &self.node_delegate;
-        delegate.subscribe(full_topic, callback, options).await
+        delegate.subscribe(&full_topic, callback, options).await
     }
 
     // subscribe without options removed to unify API
@@ -779,21 +775,17 @@ pub trait EventDispatcher: Send + Sync {
 #[async_trait::async_trait]
 pub trait NodeDelegate: Send + Sync {
     /// Process a service request
-    async fn request<P>(
-        &self,
-        path: impl Into<String> + Send,
-        payload: Option<P>,
-    ) -> Result<ArcValue>
+    async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync;
 
     /// Simplified publish for common cases
-    async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()>;
+    async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()>;
 
     /// Subscribe to a topic
     async fn subscribe(
         &self,
-        topic: String,
+        topic: &str,
         callback: EventHandler,
         options: Option<EventRegistrationOptions>, // None means default behavior
     ) -> Result<String>;
@@ -818,11 +810,7 @@ pub trait NodeDelegate: Send + Sync {
     ///
     /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    async fn on(
-        &self,
-        topic: impl Into<String> + Send,
-        options: Option<OnOptions>,
-    ) -> Result<Option<ArcValue>>;
+    async fn on(&self, topic: &str, options: Option<OnOptions>) -> Result<Option<ArcValue>>;
 }
 
 /// Registry Delegate trait for keys service operations

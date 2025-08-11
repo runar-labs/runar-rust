@@ -172,7 +172,7 @@ impl JsNode {
         let node = self.inner.lock().await;
         let payload_av: Option<ArcValue> = payload.map(ArcValue::new_json);
         let resp_arc = node
-            .request(path, payload_av)
+            .request(&path, payload_av)
             .await
             .map_err(anyhow_to_napi_error)?;
 
@@ -184,7 +184,7 @@ impl JsNode {
     pub async fn publish(&self, topic: String, data: Option<JsonValue>) -> napi::Result<()> {
         let node = self.inner.lock().await;
         let data_av = data.map(ArcValue::new_json);
-        node.publish(topic, data_av)
+        node.publish(&topic, data_av)
             .await
             .map_err(anyhow_to_napi_error)
     }

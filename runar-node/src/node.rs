@@ -21,10 +21,10 @@ use std::time::Instant;
 use tokio::time::{sleep, Duration};
 
 use dashmap::DashMap;
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex, RwLock};
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
@@ -369,7 +369,10 @@ impl Node {
         network_ids.push(default_network_id.clone());
         network_ids.dedup();
 
-        log_info!(logger, "Initializing node '{node_id}' in network '{default_network_id}'...");
+        log_info!(
+            logger,
+            "Initializing node '{node_id}' in network '{default_network_id}'..."
+        );
 
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
         let _serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
@@ -475,7 +478,10 @@ impl Node {
         let service_path = service.path();
         let service_name = service.name();
 
-        log_info!(self.logger, "Adding service '{service_name}' to node using path {service_path}");
+        log_info!(
+            self.logger,
+            "Adding service '{service_name}' to node using path {service_path}"
+        );
         log_debug!(self.logger, "network id {default_network_id}");
 
         let registry = Arc::clone(&self.service_registry);
@@ -506,12 +512,15 @@ impl Node {
 
         // Initialize the service using the context
         if let Err(e) = service.init(init_context).await {
-            log_error!(self.logger, "Failed to initialize service: {service_name}, error: {e}");
+            log_error!(
+                self.logger,
+                "Failed to initialize service: {service_name}, error: {e}"
+            );
             registry
                 .update_local_service_state(&service_topic, ServiceState::Error)
                 .await?;
             self.publish_with_options(
-                format!(
+                &format!(
                     "$registry/services/{}/state/error",
                     service_topic.service_path()
                 ),
@@ -530,7 +539,7 @@ impl Node {
             .update_local_service_state(&service_topic, ServiceState::Initialized)
             .await?;
         self.publish_with_options(
-            format!(
+            &format!(
                 "$registry/services/{}/state/initialized",
                 service_topic.service_path()
             ),
@@ -615,7 +624,7 @@ impl Node {
             });
             let subscription_id = node
                 .subscribe(
-                    full_topic.clone(),
+                    &full_topic,
                     Arc::new(move |_context, data| {
                         let tx = tx.clone();
                         Box::pin(async move {
@@ -691,7 +700,10 @@ impl Node {
             }
         }
 
-        log_info!(self.logger, "Node started successfully - it will start all services now");
+        log_info!(
+            self.logger,
+            "Node started successfully - it will start all services now"
+        );
         self.running.store(true, Ordering::SeqCst);
 
         // Start non-internal services in parallel to avoid blocking the loop
@@ -702,7 +714,10 @@ impl Node {
             let service_topic_clone = service_topic.clone();
             let service_entry_clone = service_entry.clone();
             let task = tokio::spawn(async move {
-                log_info!(node_clone.logger, "Starting separate thread to start service: {service_topic_clone}");
+                log_info!(
+                    node_clone.logger,
+                    "Starting separate thread to start service: {service_topic_clone}"
+                );
 
                 // Add timeout to the service start operation
                 match tokio::time::timeout(
@@ -712,10 +727,16 @@ impl Node {
                 .await
                 {
                     Ok(_) => {
-                        log_info!(node_clone.logger, "Service start completed: {service_topic_clone}");
+                        log_info!(
+                            node_clone.logger,
+                            "Service start completed: {service_topic_clone}"
+                        );
                     }
                     Err(_) => {
-                        log_error!(node_clone.logger, "Service start timed out after 30 seconds: {service_topic_clone}");
+                        log_error!(
+                            node_clone.logger,
+                            "Service start timed out after 30 seconds: {service_topic_clone}"
+                        );
                     }
                 }
             });
@@ -757,16 +778,22 @@ impl Node {
 
         // Start the service using the context
         if let Err(e) = service.start(start_context).await {
-            log_error!(self.logger, "Failed to start service: {service_topic}, error: {e}");
+            log_error!(
+                self.logger,
+                "Failed to start service: {service_topic}, error: {e}"
+            );
             if let Err(update_err) = registry
                 .update_local_service_state(service_topic, ServiceState::Error)
                 .await
             {
-                log_error!(self.logger, "Failed to update service state to Error: {update_err}");
+                log_error!(
+                    self.logger,
+                    "Failed to update service state to Error: {update_err}"
+                );
             }
             if let Err(publish_err) = self
                 .publish_with_options(
-                    format!(
+                    &format!(
                         "$registry/services/{}/state/error",
                         service_topic.service_path()
                     ),
@@ -789,12 +816,15 @@ impl Node {
             .update_local_service_state(service_topic, ServiceState::Running)
             .await
         {
-            log_error!(self.logger, "Failed to update service state to Running: {update_err}");
+            log_error!(
+                self.logger,
+                "Failed to update service state to Running: {update_err}"
+            );
         }
 
         if let Err(publish_err) = self
             .publish_with_options(
-                format!(
+                &format!(
                     "$registry/services/{}/state/running",
                     service_topic.service_path()
                 ),
@@ -808,11 +838,20 @@ impl Node {
             )
             .await
         {
-            log_error!(self.logger, "Failed to publish running state: {publish_err}");
+            log_error!(
+                self.logger,
+                "Failed to publish running state: {publish_err}"
+            );
         }
-        log_info!(self.logger, "Published local-only running for local service {service_topic}");
+        log_info!(
+            self.logger,
+            "Published local-only running for local service {service_topic}"
+        );
         if update_node_version {
-            log_info!(self.logger, "Notifying node change for service: {service_topic}");
+            log_info!(
+                self.logger,
+                "Notifying node change for service: {service_topic}"
+            );
             if let Err(notify_err) = self.notify_node_change().await {
                 log_error!(self.logger, "Failed to notify node change: {notify_err}");
             }
@@ -865,7 +904,10 @@ impl Node {
 
             // Stop the service using the context
             if let Err(e) = service.stop(stop_context).await {
-                log_error!(self.logger, "Failed to stop service: {service_topic}, error: {e}");
+                log_error!(
+                    self.logger,
+                    "Failed to stop service: {service_topic}, error: {e}"
+                );
                 continue;
             }
 
@@ -873,7 +915,7 @@ impl Node {
                 .update_local_service_state(&service_topic, ServiceState::Stopped)
                 .await?;
             self.publish_with_options(
-                format!(
+                &format!(
                     "$registry/services/{}/state/stopped",
                     service_topic.service_path()
                 ),
@@ -912,7 +954,10 @@ impl Node {
         log_info!(self.logger, "Starting networking components...");
 
         if !self.supports_networking {
-            log_info!(self.logger, "Networking is disabled, skipping network initialization");
+            log_info!(
+                self.logger,
+                "Networking is disabled, skipping network initialization"
+            );
             return Ok(());
         }
 
@@ -989,7 +1034,10 @@ impl Node {
                     .await?;
 
                 // Start announcing on this provider
-                log_info!(self.logger, "Starting to announce on {provider_type:?} discovery provider");
+                log_info!(
+                    self.logger,
+                    "Starting to announce on {provider_type:?} discovery provider"
+                );
                 discovery_provider.start_announcing().await?;
 
                 discovery_providers.push(discovery_provider);
@@ -1123,7 +1171,10 @@ impl Node {
 
         match provider_config {
             DiscoveryProviderConfig::Multicast(_options) => {
-        log_info!(self.logger, "Creating MulticastDiscovery provider with config options");
+                log_info!(
+                    self.logger,
+                    "Creating MulticastDiscovery provider with config options"
+                );
                 // Use .await to properly wait for the async initialization
                 let discovery = MulticastDiscovery::new(
                     node_info,
@@ -1151,7 +1202,10 @@ impl Node {
 
         let discovered_peer_id = compact_id(&peer_info.public_key);
 
-        log_info!(self.logger, "Discovery listener found node: {discovered_peer_id}");
+        log_info!(
+            self.logger,
+            "Discovery listener found node: {discovered_peer_id}"
+        );
 
         // Always allow an idempotent connect attempt. Transport will no-op if already connected
         // and will reconcile duplicates if races occur. This avoids stale state blocking reconnects.
@@ -1206,11 +1260,18 @@ impl Node {
     ) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
-            log_warn!(self.logger, "Received network message but networking is disabled");
+            log_warn!(
+                self.logger,
+                "Received network message but networking is disabled"
+            );
             return Ok(None);
         }
 
-        log_debug!(self.logger, "Received network message: {}", message.message_type);
+        log_debug!(
+            self.logger,
+            "Received network message: {}",
+            message.message_type
+        );
 
         // Match on message type
         match message.message_type {
@@ -1268,7 +1329,11 @@ impl Node {
             MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
             MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
             _ => {
-                log_warn!(self.logger, "Unknown message type: {}", message.message_type);
+                log_warn!(
+                    self.logger,
+                    "Unknown message type: {}",
+                    message.message_type
+                );
                 Err(anyhow!(
                     "Unknown message type: {message_type}",
                     message_type = message.message_type
@@ -1309,7 +1374,7 @@ impl Node {
 
         // 4) Publish a local-only event indicating peer removal
         self.publish_with_options(
-            format!("$registry/peer/{peer_node_id}/removed"),
+            &format!("$registry/peer/{peer_node_id}/removed"),
             Some(ArcValue::new_primitive(peer_node_id.to_string())),
             PublishOptions::local_only(),
         )
@@ -1325,14 +1390,26 @@ impl Node {
     ) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
-            log_warn!(self.logger, "Received network request but networking is disabled");
+            log_warn!(
+                self.logger,
+                "Received network request but networking is disabled"
+            );
             return Ok(None);
         }
 
-        log_debug!(self.logger, "📥 [Node] Handling network request from {} - Type: {}, Payloads: {}", message.source_node_id, message.message_type, message.payloads.len());
+        log_debug!(
+            self.logger,
+            "📥 [Node] Handling network request from {} - Type: {}, Payloads: {}",
+            message.source_node_id,
+            message.message_type,
+            message.payloads.len()
+        );
 
         if message.payloads.is_empty() {
-            log_error!(self.logger, "❌ [Node] Received request message with no payloads");
+            log_error!(
+                self.logger,
+                "❌ [Node] Received request message with no payloads"
+            );
             return Err(anyhow!("Received request message with no payloads"));
         }
 
@@ -1346,12 +1423,21 @@ impl Node {
             let params_option = if params.is_null() { None } else { Some(params) };
 
             // Process the request locally using extracted topic and params
-            log_debug!(self.logger, "[handle_network_request] will call local_request for path {}", &payload.path);
+            log_debug!(
+                self.logger,
+                "[handle_network_request] will call local_request for path {}",
+                &payload.path
+            );
 
             let topic_path = match TopicPath::from_full_path(&payload.path) {
                 Ok(tp) => tp,
                 Err(e) => {
-                    log_error!(self.logger, "Failed to parse topic path: {} : {}", &payload.path, e);
+                    log_error!(
+                        self.logger,
+                        "Failed to parse topic path: {} : {}",
+                        &payload.path,
+                        e
+                    );
                     continue;
                 }
             };
@@ -1378,7 +1464,13 @@ impl Node {
                     // Serialize the response data
                     let serialized_data = response.serialize(Some(&serialization_context))?;
 
-                    log_info!(self.logger, "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes", message.source_node_id, message.payloads[0].correlation_id, serialized_data.len());
+                    log_info!(
+                        self.logger,
+                        "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
+                        message.source_node_id,
+                        message.payloads[0].correlation_id,
+                        serialized_data.len()
+                    );
 
                     // Create a payload item with the serialized response
                     let response_payload = NetworkMessagePayloadItem {
@@ -1413,7 +1505,12 @@ impl Node {
                     // Serialize the error value
                     let serialized_error = error_value.serialize(Some(&serialization_context))?;
 
-                    log_debug!(self.logger, "📤 [Node] Sending error response - To: {}, Size: {} bytes", message.source_node_id, serialized_error.len());
+                    log_debug!(
+                        self.logger,
+                        "📤 [Node] Sending error response - To: {}, Size: {} bytes",
+                        message.source_node_id,
+                        serialized_error.len()
+                    );
 
                     // Create payload item with serialized error
                     let error_payload = NetworkMessagePayloadItem {
@@ -1448,7 +1545,10 @@ impl Node {
     ) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
-            log_warn!(self.logger, "Received network response but networking is disabled");
+            log_warn!(
+                self.logger,
+                "Received network response but networking is disabled"
+            );
             return Ok(None);
         }
 
@@ -1457,11 +1557,17 @@ impl Node {
         let correlation_id = &payload_item.correlation_id;
 
         // Only process if we have an actual correlation ID
-        log_debug!(self.logger, "Processing response for topic {topic}, correlation ID: {correlation_id}");
+        log_debug!(
+            self.logger,
+            "Processing response for topic {topic}, correlation ID: {correlation_id}"
+        );
 
         // Find any pending response handlers
         if let Some((_, pending_request_sender)) = self.pending_requests.remove(correlation_id) {
-            log_debug!(self.logger, "Found response handler for correlation ID: {correlation_id}");
+            log_debug!(
+                self.logger,
+                "Found response handler for correlation ID: {correlation_id}"
+            );
 
             // Deserialize the payload data
             let payload_data =
@@ -1471,12 +1577,21 @@ impl Node {
             // payload_data is already ArcValue. If the original response was 'None',
             // serializer.deserialize_value should produce ArcValue::null().
             match pending_request_sender.send(Ok(payload_data)) {
-                Ok(_) => log_debug!(self.logger, "Successfully sent response for correlation ID: {correlation_id}"),
-                Err(e) => log_error!(self.logger, "Failed to send response data for correlation ID {correlation_id}: {e:?}"),
+                Ok(_) => log_debug!(
+                    self.logger,
+                    "Successfully sent response for correlation ID: {correlation_id}"
+                ),
+                Err(e) => log_error!(
+                    self.logger,
+                    "Failed to send response data for correlation ID {correlation_id}: {e:?}"
+                ),
             } // Closes match pending_request_sender.send(Ok(payload_data))
         } else {
             // This is the else for `if let Some((_, pending_request_sender))`
-            log_warn!(self.logger, "No response handler found for correlation ID: {correlation_id}");
+            log_warn!(
+                self.logger,
+                "No response handler found for correlation ID: {correlation_id}"
+            );
         } // Closes else block for if let Some
         Ok(None)
     } // Closes async fn handle_network_response
@@ -1488,11 +1603,18 @@ impl Node {
     ) -> Result<Option<NetworkMessage>> {
         // Skip if networking is not enabled
         if !self.supports_networking {
-            log_warn!(self.logger, "Received network event but networking is disabled");
+            log_warn!(
+                self.logger,
+                "Received network event but networking is disabled"
+            );
             return Ok(None);
         }
 
-        log_debug!(self.logger, "Handling network event message_type: {}", message.message_type);
+        log_debug!(
+            self.logger,
+            "Handling network event message_type: {}",
+            message.message_type
+        );
 
         // Process each payload separately
         for payload_item in &message.payloads {
@@ -1583,7 +1705,11 @@ impl Node {
             if let Ok(params) = topic_path.extract_params(&registration_path.action_path()) {
                 // Populate the path_params in the context
                 context.path_params = params;
-                log_debug!(self.logger, "Extracted path parameters: {:?}", context.path_params);
+                log_debug!(
+                    self.logger,
+                    "Extracted path parameters: {:?}",
+                    context.path_params
+                );
             }
 
             // Execute the handler and return result
@@ -1600,15 +1726,14 @@ impl Node {
     /// Apply load balancing when multiple remote handlers are available.
     ///
     /// This is the central request routing mechanism for the Node.
-    pub async fn request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
         let request_payload_av = payload.map(|p| p.into_arc_value());
-        let path_string = path.into();
-        let topic_path = match TopicPath::new(&path_string, &self.network_id) {
+        let topic_path = match TopicPath::new(path, &self.network_id) {
             Ok(tp) => tp,
-            Err(e) => return Err(anyhow!("Failed to parse topic path: {path_string} : {e}",)),
+            Err(e) => return Err(anyhow!("Failed to parse topic path: {path} : {e}",)),
         };
 
         log_debug!(self.logger, "Processing request: {topic_path}");
@@ -1623,7 +1748,12 @@ impl Node {
         // If service state exists, check if it's running
         if let Some(state) = service_state {
             if state != ServiceState::Running {
-                log_debug!(self.logger, "Service {} is in {:?} state, trying remote handlers", topic_path.service_path(), state);
+                log_debug!(
+                    self.logger,
+                    "Service {} is in {:?} state, trying remote handlers",
+                    topic_path.service_path(),
+                    state
+                );
                 // Try remote handlers instead
                 match self
                     .remote_request(topic_path.as_str(), request_payload_av)
@@ -1654,7 +1784,11 @@ impl Node {
             if let Ok(path_params) = topic_path.extract_params(&registration_path.action_path()) {
                 // Populate the path_params in the context
                 context.path_params = path_params;
-                log_debug!(self.logger, "Extracted path parameters: {:?}", context.path_params);
+                log_debug!(
+                    self.logger,
+                    "Extracted path parameters: {:?}",
+                    context.path_params
+                );
             }
 
             // Execute the handler and return result
@@ -1667,19 +1801,14 @@ impl Node {
             .await
     }
 
-    pub async fn remote_request<P>(
-        &self,
-        path: impl Into<String>,
-        payload: Option<P>,
-    ) -> Result<ArcValue>
+    pub async fn remote_request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
         let request_payload_av = payload.map(|p| p.into_arc_value());
-        let path_string = path.into();
-        let topic_path = match TopicPath::new(&path_string, &self.network_id) {
+        let topic_path = match TopicPath::new(path, &self.network_id) {
             Ok(tp) => tp,
-            Err(e) => return Err(anyhow!("Failed to parse topic path: {path_string} : {e}",)),
+            Err(e) => return Err(anyhow!("Failed to parse topic path: {path} : {e}",)),
         };
 
         log_debug!(self.logger, "Processing remote request: {topic_path}");
@@ -1690,7 +1819,12 @@ impl Node {
             .get_remote_action_handlers(&topic_path)
             .await;
         if !remote_handlers.is_empty() {
-            log_debug!(self.logger, "Found {} remote handlers for: {}", remote_handlers.len(), topic_path);
+            log_debug!(
+                self.logger,
+                "Found {} remote handlers for: {}",
+                remote_handlers.len(),
+                topic_path
+            );
 
             // Apply load balancing strategy to select a handler
             let load_balancer = self.load_balancer.read().await;
@@ -1702,7 +1836,13 @@ impl Node {
             // Get the selected handler
             let handler = &remote_handlers[handler_index];
 
-            log_debug!(self.logger, "Selected remote handler {} of {} for: {}", handler_index + 1, remote_handlers.len(), topic_path);
+            log_debug!(
+                self.logger,
+                "Selected remote handler {} of {} for: {}",
+                handler_index + 1,
+                remote_handlers.len(),
+                topic_path
+            );
 
             // Create request context
             let context =
@@ -1723,13 +1863,13 @@ impl Node {
     /// Publish with options - Helper method to implement the publish_with_options functionality
     pub async fn publish_with_options(
         &self,
-        topic: impl Into<String>,
+        topic: &str,
         data: Option<ArcValue>,
         options: PublishOptions,
     ) -> Result<()> {
-        let topic_string = topic.into();
+        let topic_string = topic.to_string();
         // Check for valid topic path
-        let topic_path = match TopicPath::new(&topic_string, &self.network_id) {
+        let topic_path = match TopicPath::new(topic, &self.network_id) {
             Ok(tp) => tp,
             Err(e) => return Err(anyhow!("Invalid topic path: {e}")),
         };
@@ -1750,7 +1890,10 @@ impl Node {
             ));
             // Execute the callback with correct arguments
             if let Err(e) = callback(event_context, data.clone()).await {
-                log_error!(self.logger, "Error in local event handler for {topic_string}: {e}");
+                log_error!(
+                    self.logger,
+                    "Error in local event handler for {topic_string}: {e}"
+                );
             }
         }
 
@@ -1778,7 +1921,13 @@ impl Node {
             let mut idx = self.retained_index.write().await;
             idx.set_value(topic_path.clone(), topic_path.as_str().to_string());
 
-            log_debug!(self.logger, "[retain] topic={} count={} window={:?}", key, deque.len(), retain_for);
+            log_debug!(
+                self.logger,
+                "[retain] topic={} count={} window={:?}",
+                key,
+                deque.len(),
+                retain_for
+            );
         }
 
         // Broadcast to remote nodes if requested and network is available
@@ -1790,7 +1939,10 @@ impl Node {
             for (_subscription_id, callback, _options) in remote_subscribers {
                 // Execute the callback with correct arguments
                 if let Err(e) = callback(data.clone()).await {
-                    log_error!(self.logger, "Error in remote event handler for {topic_string}: {e}");
+                    log_error!(
+                        self.logger,
+                        "Error in remote event handler for {topic_string}: {e}"
+                    );
                 }
             }
         }
@@ -1807,7 +1959,10 @@ impl Node {
         new_peer: NodeInfo,
     ) -> Result<Vec<Arc<RemoteService>>> {
         let new_peer_node_id = compact_id(&new_peer.node_public_key);
-        log_debug!(self.logger, "Processing remote capabilities from node {new_peer_node_id}");
+        log_debug!(
+            self.logger,
+            "Processing remote capabilities from node {new_peer_node_id}"
+        );
         // Check existing info from directory
         if let Some(existing_peer) = self.peer_directory.get_node_info(&new_peer_node_id) {
             // Idempotency: ignore if version is not newer
@@ -1815,7 +1970,11 @@ impl Node {
                 return Ok(Vec::new());
             }
 
-            log_debug!(self.logger, "Node {new_peer_node_id} has new version {new_peer_version}, diffing capabilities", new_peer_version = new_peer.version);
+            log_debug!(
+                self.logger,
+                "Node {new_peer_node_id} has new version {new_peer_version}, diffing capabilities",
+                new_peer_version = new_peer.version
+            );
 
             self.update_peer_capabilities(&existing_peer, &new_peer)
                 .await?;
@@ -1823,7 +1982,7 @@ impl Node {
             self.peer_directory
                 .set_node_info(&new_peer_node_id, new_peer.clone());
             self.publish_with_options(
-                format!("$registry/peer/{new_peer_node_id}/updated"),
+                &format!("$registry/peer/{new_peer_node_id}/updated"),
                 Some(ArcValue::new_primitive(new_peer_node_id.clone())),
                 PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
             )
@@ -1835,7 +1994,7 @@ impl Node {
             self.peer_directory.mark_connected(&new_peer_node_id);
             let res = self.add_new_peer(new_peer).await;
             self.publish_with_options(
-                format!("$registry/peer/{new_peer_node_id}/discovered"),
+                &format!("$registry/peer/{new_peer_node_id}/discovered"),
                 Some(ArcValue::new_primitive(new_peer_node_id.clone())),
                 PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
             )
@@ -1874,7 +2033,10 @@ impl Node {
                 .iter()
                 .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
             {
-                log_info!(self.logger, "Adding new remote service: {service_key} from peer: {peer_node_id}");
+                log_info!(
+                    self.logger,
+                    "Adding new remote service: {service_key} from peer: {peer_node_id}"
+                );
 
                 // Create and register the new remote service (reuse logic from add_new_peer)
                 let transport_arc = self
@@ -1919,9 +2081,13 @@ impl Node {
                             RemoteLifecycleContext::new(&service_topic_path, self.logger.clone())
                                 .with_registry_delegate(registry_delegate);
 
-                    if let Err(e) = service.init(context).await {
-                        log_error!(self.logger, "Failed to initialize remote service '{}': {e}", service.path());
-                    }
+                        if let Err(e) = service.init(context).await {
+                            log_error!(
+                                self.logger,
+                                "Failed to initialize remote service '{}': {e}",
+                                service.path()
+                            );
+                        }
                         self.service_registry
                             .update_remote_service_state(&service_topic_path, ServiceState::Running)
                             .await?;
@@ -1929,7 +2095,7 @@ impl Node {
                         // Publish local-only running state for remote service so local components can await readiness
                         if let Err(publish_err) = self
                             .publish_with_options(
-                                format!(
+                                &format!(
                                     "$registry/services/{}/state/running",
                                     service_topic_path.service_path()
                                 ),
@@ -1941,9 +2107,15 @@ impl Node {
                             )
                             .await
                         {
-                            log_error!(self.logger, "Failed to publish remote service running state: {publish_err}");
+                            log_error!(
+                                self.logger,
+                                "Failed to publish remote service running state: {publish_err}"
+                            );
                         }
-                        log_info!(self.logger, "Published local-only running for remote service {service_topic_path}");
+                        log_info!(
+                            self.logger,
+                            "Published local-only running for remote service {service_topic_path}"
+                        );
                     }
                 }
             }
@@ -1958,7 +2130,10 @@ impl Node {
                 .iter()
                 .find(|s| format!("{}:{}", s.network_id, s.service_path) == *service_key)
             {
-                log_info!(self.logger, "Removing remote service: {service_key} from peer: {peer_node_id}");
+                log_info!(
+                    self.logger,
+                    "Removing remote service: {service_key} from peer: {peer_node_id}"
+                );
                 let service_path =
                     TopicPath::new(&service_metadata.service_path, &service_metadata.network_id)
                         .unwrap();
@@ -1967,7 +2142,10 @@ impl Node {
                     .remove_remote_service(&service_path)
                     .await
                 {
-                    log_warn!(self.logger, "Failed to remove remote service {service_key}: {e}");
+                    log_warn!(
+                        self.logger,
+                        "Failed to remove remote service {service_key}: {e}"
+                    );
                 }
             }
         }
@@ -1994,7 +2172,10 @@ impl Node {
                 TopicPath::from_full_path(path)
                     .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?,
             );
-            log_info!(self.logger, "Adding new remote subscription: {path} for peer: {peer_node_id}");
+            log_info!(
+                self.logger,
+                "Adding new remote subscription: {path} for peer: {peer_node_id}"
+            );
             let tp_arc = topic_path.clone();
             // create remote handler same as add_new_peer logic (reuse closure building)
             let transport_arc = self
@@ -2034,7 +2215,10 @@ impl Node {
 
         // Paths to remove
         for path in old_set.difference(&new_set) {
-            log_info!(self.logger, "Removing remote subscription: {path} for peer: {peer_node_id}");
+            log_info!(
+                self.logger,
+                "Removing remote subscription: {path} for peer: {peer_node_id}"
+            );
             let topic_path = TopicPath::from_full_path(path).unwrap();
             if let Some(sub_id) = self
                 .service_registry
@@ -2049,7 +2233,13 @@ impl Node {
 
     async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
         let capabilities = &node_info.node_metadata;
-        log_info!(self.logger, "Processing {} services and {} subscriptions from node {}", capabilities.services.len(), capabilities.subscriptions.len(), compact_id(&node_info.node_public_key));
+        log_info!(
+            self.logger,
+            "Processing {} services and {} subscriptions from node {}",
+            capabilities.services.len(),
+            capabilities.subscriptions.len(),
+            compact_id(&node_info.node_public_key)
+        );
 
         // Check if capabilities is empty
         if capabilities.services.is_empty() && capabilities.subscriptions.is_empty() {
@@ -2085,7 +2275,10 @@ impl Node {
             match RemoteService::create_from_capabilities(rs_config, rs_dependencies).await {
                 Ok(services) => services,
                 Err(e) => {
-                    log_error!(self.logger, "Failed to create remote services from capabilities: {e}");
+                    log_error!(
+                        self.logger,
+                        "Failed to create remote services from capabilities: {e}"
+                    );
                     return Err(e);
                 }
             };
@@ -2118,7 +2311,11 @@ impl Node {
 
             // Initialize the service - this triggers handler registration via the context
             if let Err(e) = service.init(context).await {
-                log_error!(self.logger, "Failed to initialize remote service '{}' (handler registration): {e}", service.path());
+                log_error!(
+                    self.logger,
+                    "Failed to initialize remote service '{}' (handler registration): {e}",
+                    service.path()
+                );
             }
             self.service_registry
                 .update_remote_service_state(&service_topic_path, ServiceState::Running)
@@ -2127,7 +2324,7 @@ impl Node {
             // Publish local-only running state for remote service so local components can await readiness
             if let Err(publish_err) = self
                 .publish_with_options(
-                    format!(
+                    &format!(
                         "$registry/services/{}/state/running",
                         service_topic_path.service_path()
                     ),
@@ -2138,7 +2335,10 @@ impl Node {
                 )
                 .await
             {
-                log_error!(self.logger, "Failed to publish remote service running state: {publish_err}");
+                log_error!(
+                    self.logger,
+                    "Failed to publish remote service running state: {publish_err}"
+                );
             }
         }
 
@@ -2151,14 +2351,20 @@ impl Node {
                 let topic_path = match TopicPath::from_full_path(&path) {
                     Ok(tp) => Arc::new(tp),
                     Err(e) => {
-                        log_warn!(self.logger, "Failed to parse subscription path '{path}': {e}");
+                        log_warn!(
+                            self.logger,
+                            "Failed to parse subscription path '{path}': {e}"
+                        );
                         continue;
                     }
                 };
 
                 // Skip if our node does not participate in the requested network
                 if !self.network_ids.contains(&topic_path.network_id()) {
-                    log_debug!(self.logger, "Ignoring remote subscription {path} - network id not supported");
+                    log_debug!(
+                        self.logger,
+                        "Ignoring remote subscription {path} - network id not supported"
+                    );
                     continue;
                 }
 
@@ -2213,7 +2419,13 @@ impl Node {
             }
         }
 
-        log_info!(self.logger, "Successfully processed {} remote services and {} remote subscriptions from node {}", remote_services.len(), capabilities.subscriptions.len(), compact_id(&node_info.node_public_key));
+        log_info!(
+            self.logger,
+            "Successfully processed {} remote services and {} remote subscriptions from node {}",
+            remote_services.len(),
+            capabilities.subscriptions.len(),
+            compact_id(&node_info.node_public_key)
+        );
 
         Ok(remote_services)
     }
@@ -2229,11 +2441,17 @@ impl Node {
     pub async fn notify_node_change(&self) -> Result<()> {
         //check if network is en
         if !self.supports_networking {
-        log_debug!(self.logger, "notify_node_change called - network is not available");
+            log_debug!(
+                self.logger,
+                "notify_node_change called - network is not available"
+            );
             return Ok(());
         }
 
-        log_info!(self.logger, "notify_node_change called - it will be debounced for 1 second");
+        log_info!(
+            self.logger,
+            "notify_node_change called - it will be debounced for 1 second"
+        );
 
         let debounce_task = self.debounce_notify_task.clone();
         let this = self.clone();
@@ -2249,7 +2467,10 @@ impl Node {
             sleep(Duration::from_secs(1)).await;
             // Ignore errors from notify_node_change_impl; log if needed
             if let Err(e) = this.notify_node_change_impl().await {
-                log_warn!(this.logger, "notify_node_change_impl failed after debounce: {e}");
+                log_warn!(
+                    this.logger,
+                    "notify_node_change_impl failed after debounce: {e}"
+                );
             }
         });
         // Store the new handle
@@ -2272,7 +2493,10 @@ impl Node {
         };
         if let Some(discovery_providers) = providers_to_update {
             for provider in discovery_providers {
-                if let Err(e) = provider.update_local_node_info(local_node_info.clone()).await {
+                if let Err(e) = provider
+                    .update_local_node_info(local_node_info.clone())
+                    .await
+                {
                     log_warn!(self.logger, "Failed to update discovery provider: {e}");
                 }
             }
@@ -2301,7 +2525,11 @@ impl Node {
         let subscriptions = self.service_registry.get_all_subscriptions(false).await?;
 
         // Log all capabilities collected
-        log_info!(self.logger, "Collected {} services metadata", services.len());
+        log_info!(
+            self.logger,
+            "Collected {} services metadata",
+            services.len()
+        );
         Ok(NodeMetadata {
             services,
             subscriptions,
@@ -2347,7 +2575,10 @@ impl Node {
             // Try to get a real network interface IP address
             if let Ok(ip) = self.get_non_loopback_ip() {
                 address = address.replace("0.0.0.0", &ip);
-                log_debug!(self.logger, "Replaced 0.0.0.0 with network interface IP: {ip}");
+                log_debug!(
+                    self.logger,
+                    "Replaced 0.0.0.0 with network interface IP: {ip}"
+                );
             } else {
                 // Fall back to localhost if we can't get a real IP
                 address = address.replace("0.0.0.0", "127.0.0.1");
@@ -2395,7 +2626,10 @@ impl Node {
     async fn shutdown_network(&self) -> Result<()> {
         // Early return if networking is disabled
         if !self.supports_networking {
-                log_debug!(self.logger, "Network shutdown skipped - networking is disabled");
+            log_debug!(
+                self.logger,
+                "Network shutdown skipped - networking is disabled"
+            );
             return Ok(());
         }
 
@@ -2431,11 +2665,7 @@ impl Node {
 
 #[async_trait]
 impl NodeDelegate for Node {
-    async fn request<P>(
-        &self,
-        path: impl Into<String> + Send,
-        payload: Option<P>,
-    ) -> Result<ArcValue>
+    async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -2443,7 +2673,7 @@ impl NodeDelegate for Node {
         self.request(path, payload).await
     }
 
-    async fn publish(&self, topic: String, data: Option<ArcValue>) -> Result<()> {
+    async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()> {
         // Create default options
         let options = PublishOptions {
             broadcast: true,
@@ -2457,13 +2687,13 @@ impl NodeDelegate for Node {
 
     async fn subscribe(
         &self,
-        topic: String, // This is the service-relative path, e.g., "math_service/numbers"
+        topic: &str, // This is the service-relative path, e.g., "math_service/numbers"
         callback: EventHandler, // Changed to use the type alias
         options: Option<EventRegistrationOptions>, // None-ish when default
     ) -> Result<String> {
         // The `topic` parameter is the service-relative path (e.g., "service_name/event_name").
         // This will be combined with `self.network_id` to form the full TopicPath for registry storage.
-        let topic_path = TopicPath::new(&topic, &self.network_id)
+        let topic_path = TopicPath::new(topic, &self.network_id)
             .map_err(|e| anyhow!(
                 "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'", 
                 network_id=self.network_id
@@ -2471,7 +2701,12 @@ impl NodeDelegate for Node {
 
         let node_started = self.running.load(Ordering::SeqCst);
 
-        log_debug!(self.logger, "Node: subscribe called for topic_path '{}' - node started: {}", topic_path.as_str(), node_started);
+        log_debug!(
+            self.logger,
+            "Node: subscribe called for topic_path '{}' - node started: {}",
+            topic_path.as_str(),
+            node_started
+        );
 
         let subscription_id = self
             .service_registry
@@ -2508,13 +2743,24 @@ impl NodeDelegate for Node {
                 }
             };
 
-            log_debug!(self.logger, "[include_past] matched_keys={} first={}", matched.len(), matched.first().cloned().unwrap_or_default());
+            log_debug!(
+                self.logger,
+                "[include_past] matched_keys={} first={}",
+                matched.len(),
+                matched.first().cloned().unwrap_or_default()
+            );
 
             // Find the newest retained event among matched topics within cutoff
             let mut newest: Option<(std::time::Instant, Option<ArcValue>, String)> = None;
             for key in matched {
                 if let Some(entry) = self.retained_events.get(&key) {
-                    log_debug!(self.logger, "[include_past] considering key={} retained_count={} cutoff={:?}", key, entry.len(), lookback);
+                    log_debug!(
+                        self.logger,
+                        "[include_past] considering key={} retained_count={} cutoff={:?}",
+                        key,
+                        entry.len(),
+                        lookback
+                    );
                     if let Some((ts, data)) = entry.iter().rev().find(|(ts, _)| *ts >= cutoff) {
                         let is_newer = match &newest {
                             None => true,
@@ -2532,12 +2778,20 @@ impl NodeDelegate for Node {
                         .take(3)
                         .map(|kv| kv.key().clone())
                         .collect();
-                    log_debug!(self.logger, "[include_past] no entry for key='{}'; sample_keys={:?}", key, sample);
+                    log_debug!(
+                        self.logger,
+                        "[include_past] no entry for key='{}'; sample_keys={:?}",
+                        key,
+                        sample
+                    );
                 }
             }
 
             if let Some((_ts, data, _key)) = newest.clone() {
-                log_debug!(self.logger, "[include_past] delivering retained event to new subscriber");
+                log_debug!(
+                    self.logger,
+                    "[include_past] delivering retained event to new subscriber"
+                );
                 let event_context = Arc::new(EventContext::new(
                     &topic_path,
                     Arc::new(self.clone()),
@@ -2569,15 +2823,24 @@ impl NodeDelegate for Node {
 
     async fn unsubscribe(&self, subscription_id: &str) -> Result<()> {
         let node_started = self.running.load(Ordering::SeqCst);
-        log_debug!(self.logger, "Unsubscribing from with ID: {subscription_id} - node started: {node_started}");
+        log_debug!(
+            self.logger,
+            "Unsubscribing from with ID: {subscription_id} - node started: {node_started}"
+        );
         // Directly forward to service registry's method
         let registry = self.service_registry.clone();
         match registry.unsubscribe_local(subscription_id).await {
             Ok(_) => {
-                log_debug!(self.logger, "Successfully unsubscribed locally from  with id {subscription_id}");
+                log_debug!(
+                    self.logger,
+                    "Successfully unsubscribed locally from  with id {subscription_id}"
+                );
             }
             Err(e) => {
-                log_error!(self.logger, "Failed to unsubscribe locally from  with id {subscription_id}: {e}");
+                log_error!(
+                    self.logger,
+                    "Failed to unsubscribe locally from  with id {subscription_id}: {e}"
+                );
                 return Err(anyhow!("Failed to unsubscribe locally: {e}"));
             }
         }
@@ -2612,14 +2875,13 @@ impl NodeDelegate for Node {
     /// or Err with timeout message if no event occurs.
     async fn on(
         &self,
-        topic: impl Into<String> + Send,
+        topic: &str,
         options: Option<crate::services::OnOptions>,
     ) -> Result<Option<ArcValue>> {
-        let topic_string: String = topic.into();
-        let full_topic = if topic_string.contains(':') {
-            topic_string
+        let full_topic = if topic.contains(':') {
+            topic.to_string()
         } else {
-            format!("{}:{}", self.network_id, topic_string)
+            format!("{}:{}", self.network_id, topic)
         };
 
         let node = self.clone();
@@ -2635,7 +2897,7 @@ impl NodeDelegate for Node {
             };
             let subscription_id = node
                 .subscribe(
-                    full_topic.clone(),
+                    &full_topic,
                     Arc::new(move |_ctx, data| {
                         let tx = tx.clone();
                         Box::pin(async move {

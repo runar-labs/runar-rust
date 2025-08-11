@@ -865,7 +865,7 @@ impl AbstractService for SqliteService {
                                         ));
 
                                         req_ctx
-                                            .publish(event_path, Some(ArcValue::new_struct(event)))
+                                            .publish(&event_path, Some(ArcValue::new_struct(event)))
                                             .await?;
 
                                         req_ctx.info("✅ SQLite event published successfully");
@@ -995,12 +995,12 @@ impl AbstractService for SqliteService {
 
                 // Subscribe to all operation types for this table
                 context
-                    .subscribe(create_path, event_handler.clone(), None)
+                    .subscribe(&create_path, event_handler.clone(), None)
                     .await?;
                 context
-                    .subscribe(update_path, event_handler.clone(), None)
+                    .subscribe(&update_path, event_handler.clone(), None)
                     .await?;
-                context.subscribe(delete_path, event_handler, None).await?;
+                context.subscribe(&delete_path, event_handler, None).await?;
             }
         }
 

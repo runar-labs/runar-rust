@@ -21,11 +21,11 @@
 
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use uuid::Uuid;
 
 use crate::routing::{PathTrie, TopicPath};
@@ -259,7 +259,12 @@ impl ServiceRegistry {
 
             // Initialize the service - this triggers handler registration via the context
             if let Err(e) = service.stop(context).await {
-                log_error!(self.logger, "Failed to stop remote service '{}' error: {}", service.path(), e);
+                log_error!(
+                    self.logger,
+                    "Failed to stop remote service '{}' error: {}",
+                    service.path(),
+                    e
+                );
             }
         }
 
@@ -283,7 +288,10 @@ impl ServiceRegistry {
         let service_path = service.path().to_string();
         let peer_node_id = service.peer_node_id().clone();
 
-        log_info!(self.logger, "Registering remote service: {service_path} from peer: {peer_node_id}");
+        log_info!(
+            self.logger,
+            "Registering remote service: {service_path} from peer: {peer_node_id}"
+        );
 
         // Add to remote services using PathTrie
         {
@@ -294,7 +302,10 @@ impl ServiceRegistry {
                 // No existing services for this topic
                 services.set_value(service_topic, service);
             } else {
-                log_warn!(self.logger, "Service already exists for topic: {service_topic}");
+                log_warn!(
+                    self.logger,
+                    "Service already exists for topic: {service_topic}"
+                );
                 return false;
             }
         }
@@ -311,7 +322,10 @@ impl ServiceRegistry {
         handler: ActionHandler,
         metadata: Option<ActionMetadata>,
     ) -> Result<()> {
-        log_debug!(self.logger, "Registering local action handler for: {topic_path}");
+        log_debug!(
+            self.logger,
+            "Registering local action handler for: {topic_path}"
+        );
 
         // Store in the new local action handlers trie with the original topic path for parameter extraction
         self.local_action_handlers
@@ -323,7 +337,10 @@ impl ServiceRegistry {
     }
 
     pub async fn remove_remote_action_handler(&self, topic_path: &TopicPath) -> Result<()> {
-        log_debug!(self.logger, "Removing remote action handler for: {topic_path}");
+        log_debug!(
+            self.logger,
+            "Removing remote action handler for: {topic_path}"
+        );
 
         // Remove from remote action handlers trie
         self.remote_action_handlers
@@ -342,7 +359,11 @@ impl ServiceRegistry {
         topic_path: &TopicPath,
         handler: ActionHandler,
     ) -> Result<()> {
-        log_debug!(self.logger, "Registering remote action handler for: {}", topic_path.as_str());
+        log_debug!(
+            self.logger,
+            "Registering remote action handler for: {}",
+            topic_path.as_str()
+        );
 
         // Store the handler in remote_action_handlers using PathTrie
         {
@@ -603,7 +624,12 @@ impl ServiceRegistry {
         service_topic: &TopicPath,
         state: ServiceState,
     ) -> Result<()> {
-        log_debug!(self.logger, "Updating local service state for {}: {:?}", service_topic, state);
+        log_debug!(
+            self.logger,
+            "Updating local service state for {}: {:?}",
+            service_topic,
+            state
+        );
         self.local_service_states
             .insert(service_topic.as_str().to_string(), state);
         Ok(())
@@ -617,7 +643,12 @@ impl ServiceRegistry {
         service_topic: &TopicPath,
         state: ServiceState,
     ) -> Result<()> {
-        log_debug!(self.logger, "Updating remote service state for {}: {:?}", service_topic, state);
+        log_debug!(
+            self.logger,
+            "Updating remote service state for {}: {:?}",
+            service_topic,
+            state
+        );
         self.remote_service_states
             .insert(service_topic.as_str().to_string(), state);
         Ok(())
@@ -716,7 +747,10 @@ impl ServiceRegistry {
     }
 
     pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<()> {
-        log_debug!(self.logger, "Attempting to unsubscribe local subscription ID: {subscription_id}");
+        log_debug!(
+            self.logger,
+            "Attempting to unsubscribe local subscription ID: {subscription_id}"
+        );
 
         // Find the TopicPath associated with the subscription ID
         let topic_path_option = self
@@ -725,7 +759,12 @@ impl ServiceRegistry {
             .map(|entry| entry.value().clone());
 
         if let Some(topic_path) = topic_path_option {
-            log_debug!(self.logger, "Found topic path '{}' for subscription ID: {}", topic_path.as_str(), subscription_id);
+            log_debug!(
+                self.logger,
+                "Found topic path '{}' for subscription ID: {}",
+                topic_path.as_str(),
+                subscription_id
+            );
             let mut trie = self.event_subscriptions.write().await;
             let matches = trie.find_matches(&topic_path);
 
@@ -754,7 +793,12 @@ impl ServiceRegistry {
                 self.subscription_id_to_service_topic_path
                     .remove(subscription_id);
 
-                log_debug!(self.logger, "Successfully unsubscribed from topic: {} with ID: {}", topic_path.as_str(), subscription_id);
+                log_debug!(
+                    self.logger,
+                    "Successfully unsubscribed from topic: {} with ID: {}",
+                    topic_path.as_str(),
+                    subscription_id
+                );
                 Ok(())
             } else {
                 let msg = format!(
@@ -848,7 +892,10 @@ impl ServiceRegistry {
     }
 
     pub async fn unsubscribe_remote(&self, subscription_id: &str) -> Result<()> {
-        log_debug!(self.logger, "Attempting to unsubscribe remote subscription ID: {subscription_id}");
+        log_debug!(
+            self.logger,
+            "Attempting to unsubscribe remote subscription ID: {subscription_id}"
+        );
 
         // Find the TopicPath associated with the subscription ID
         let topic_path_option = self
@@ -857,7 +904,12 @@ impl ServiceRegistry {
             .map(|entry| entry.value().clone());
 
         if let Some(topic_path) = topic_path_option {
-            log_debug!(self.logger, "Found topic path '{}' for subscription ID: {}", topic_path.as_str(), subscription_id);
+            log_debug!(
+                self.logger,
+                "Found topic path '{}' for subscription ID: {}",
+                topic_path.as_str(),
+                subscription_id
+            );
             let mut trie = self.event_subscriptions.write().await;
             let matches = trie.find_matches(&topic_path);
 
@@ -881,7 +933,12 @@ impl ServiceRegistry {
                 }
                 if removed_flag {
                     self.subscription_id_to_topic_path.remove(subscription_id);
-                    log_debug!(self.logger, "Successfully unsubscribed from remote topic: {} with ID: {}", topic_path.as_str(), subscription_id);
+                    log_debug!(
+                        self.logger,
+                        "Successfully unsubscribed from remote topic: {} with ID: {}",
+                        topic_path.as_str(),
+                        subscription_id
+                    );
                     Ok(())
                 } else {
                     let msg = format!(
