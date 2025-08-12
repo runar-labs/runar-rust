@@ -21,9 +21,11 @@ We are currently working on the Rust version, but the plan is to support also Ty
 
 ---
 
-### Quick Example
+### Quick Examples
 
-Runar's declarative macros let you expose functionality with just a few lines of code:
+#### Basic Math Service
+
+Runar's declarative macros let you expose functionality with just a few lines of code. Note that macros are now applied to both the struct and impl blocks:
 
 ```rust
 use anyhow::{anyhow, Result};
@@ -36,14 +38,15 @@ use runar_node::{
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
-pub struct MathService;
-
 #[service(
     name = "Math Service",
     path = "math",
     description = "Simple arithmetic API",
     version = "0.1.0"
 )]
+pub struct MathService;
+
+#[service]
 impl MathService {
     /// Add two numbers and publish the total to `math/added`.
     #[publish(path = "added")]
@@ -55,6 +58,7 @@ impl MathService {
 }
 
 #[derive(Clone)]
+#[service(path = "stats")]
 pub struct StatsService {
     values: Arc<Mutex<Vec<f64>>>,
 }
@@ -67,7 +71,7 @@ impl Default for StatsService {
     }
 }
 
-#[service(path = "stats")]
+#[service]
 impl StatsService {
     /// Record a value
     #[action]
@@ -116,6 +120,141 @@ async fn main() -> Result<()> {
 }
 ```
 
+#### Encrypted Data Service
+
+Here's an example of a service that handles encrypted data using Runar's selective field encryption system:
+
+```rust
+use anyhow::Result;
+use runar_common::{hmap, types::ArcValue};
+use runar_macros::{action, service};
+use runar_node::{
+    services::RequestContext,
+    Node, NodeConfig,
+};
+use runar_serializer::{traits::RunarEncrypt, ArcValue as SerializerArcValue};
+use runar_serializer_macros::Encrypt;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+// Define an encrypted note structure with selective field encryption
+#[derive(Clone, Debug, Serialize, Deserialize, Encrypt)]
+pub struct SecureNote {
+    pub id: String,                    // Plain text - always visible
+    pub title: String,                 // Plain text - always visible
+    #[runar(user)]                     // Encrypted with user's profile key
+    pub content: String,               // Only accessible to the user
+    #[runar(user)]                     // Encrypted with user's profile key  
+    pub tags: Vec<String>,             // Only accessible to the user
+    #[runar(system)]                   // Encrypted with network key
+    pub metadata: String,              // Accessible to network nodes
+    #[runar(system_only)]              // Only accessible to network nodes
+    pub audit_log: String,             // Never accessible to users
+}
+
+#[derive(Clone, Default)]
+#[service(
+    name = "Secure Notes Service",
+    path = "notes",
+    description = "Encrypted notes storage with selective field encryption",
+    version = "0.1.0"
+)]
+pub struct SecureNotesService {
+    notes: HashMap<String, SerializerArcValue>,
+}
+
+#[service]
+impl SecureNotesService {
+    /// Store an encrypted note with selective field encryption
+    #[action]
+    async fn store_note(
+        &self,
+        note: SecureNote,
+        _ctx: &RequestContext,
+    ) -> Result<String> {
+        // The Encrypt derive macro automatically handles encryption
+        // based on the #[runar(label)] attributes on fields
+        let encrypted_note = note.encrypt_with_keystore(
+            &ctx.keystore,
+            &ctx.resolver,
+        )?;
+        
+        // Store the encrypted note
+        let note_id = note.id.clone();
+        self.notes.insert(note_id.clone(), SerializerArcValue::new_struct(encrypted_note));
+        
+        Ok(note_id)
+    }
+
+    /// Retrieve and decrypt a note (access level depends on keystore)
+    #[action]
+    async fn get_note(
+        &self,
+        note_id: String,
+        ctx: &RequestContext,
+    ) -> Result<Option<SecureNote>> {
+        if let Some(encrypted_note) = self.notes.get(&note_id) {
+            // Decrypt based on current keystore access level
+            let encrypted_struct: Arc<SecureNote::Encrypted> = encrypted_note.as_struct_ref()?;
+            let decrypted_note = encrypted_struct.decrypt_with_keystore(&ctx.keystore)?;
+            Ok(Some(decrypted_note))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all note IDs (metadata only)
+    #[action]
+    async fn list_notes(&self, _ctx: &RequestContext) -> Result<Vec<String>> {
+        Ok(self.notes.keys().cloned().collect())
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let config = NodeConfig::new_test_config("secure-notes-node", "default_network");
+    let mut node = Node::new(config).await?;
+
+    node.add_service(SecureNotesService::default()).await?;
+
+    // Create a secure note
+    let note = SecureNote {
+        id: "personal-1".to_string(),
+        title: "My Secret Note".to_string(),
+        content: "This is very sensitive information that will be encrypted".to_string(),
+        tags: vec!["personal".to_string(), "secret".to_string()],
+        metadata: "Created by user".to_string(),
+        audit_log: "User created note at 2024-01-01".to_string(),
+    };
+    
+    // Store the encrypted note
+    let params = ArcValue::new_struct(note);
+    let note_id: String = node.request("notes/store_note", Some(params)).await?;
+    
+    println!("Stored encrypted note with ID: {note_id}");
+    
+    // Retrieve the note (access level depends on keystore)
+    let note_params = ArcValue::new_map(hmap! { "note_id" => note_id });
+    let retrieved_note: Option<SecureNote> = node.request("notes/get_note", Some(note_params)).await?;
+    
+    if let Some(note) = retrieved_note {
+        println!("Retrieved note: {note:?}");
+        // Note: Some fields may be empty depending on keystore access level
+    }
+    
+    Ok(())
+}
+```
+
+**Key Features of Runar's Encryption System:**
+
+- **Selective Field Encryption**: Use `#[runar(label)]` attributes to specify which fields get encrypted
+- **Label-based Access Control**: Different labels (`user`, `system`, `system_only`) provide different access levels
+- **Automatic Encryption/Decryption**: The `Encrypt` derive macro handles all encryption logic
+- **Context-aware Access**: The same encrypted data provides different access levels based on the keystore
+- **Network Transparency**: Works seamlessly in both local and distributed deployments
+
 ### Monolith → Microservices – Local-First, Network-Transparent
 
 Runar routes a request the fastest way possible, deciding at **runtime** whether it can stay in-process or must cross the network:
@@ -155,23 +294,23 @@ Same service implementation, same API call – just a different deployment topol
 
 | Feature | Status | Notes |
 | ------- | ------ | ----- |
-| Declarative service & action macros | ✅ | `runar-macros` crate (`service`, `action`, `publish`, `subscribe`) |
-| Event-driven pub/sub | ✅ | Built into `runar-node` with topic routing |
-| Typed zero-copy serializer (`ArcValue`) | ✅ | Binary & JSON conversion, runtime type registry |
-| Enhanced serialization with field encryption | ✅ | `runar-serializer` with selective field encryption and envelope encryption |
-| Encrypted SQLite storage | ✅ | CRUD service in `runar-services::sqlite` |
-| HTTP REST gateway | ✅ | Axum-based, auto-exposes registered actions |
-| QUIC P2P transport & discovery | ✅ | Secure QUIC + multicast discovery in `runar-node::network` |
-| Key management & encryption | ✅ | Complete PKI system with X.509 certificates, envelope encryption, and mobile key management |
-| Configurable logging/tracing | ✅ | Structured logs via `runar-node::config` |
-| iOS embeddings (FFI) | 🟡 | iOS bindings work-in-progress |
-| Android embeddings (FFI) | 🟡 | Android bindings work-in-progress |
-| Web UI dashboard | 🟡 | Node Setup and Management Screen `node_webui` SPA |
-| Node CLI | ⚪ | Command-line interface for node management |
-| GraphQL & WebSocket gateway | ⚪ | Planned extension of gateway service |
-| Mobile App for Keys management | ⚪ | Planned |
+| Declarative service & action macros | ✓ | `runar-macros` crate (`service`, `action`, `publish`, `subscribe`) |
+| Event-driven pub/sub | ✓ | Built into `runar-node` with topic routing |
+| Typed zero-copy serializer (`ArcValue`) | ✓ | Binary & JSON conversion, runtime type registry |
+| Enhanced serialization with field encryption | ✓ | `runar-serializer` with selective field encryption and envelope encryption |
+| Encrypted SQLite storage | ✓ | CRUD service in `runar-services::sqlite` |
+| HTTP REST gateway | ✓ | Axum-based, auto-exposes registered actions |
+| QUIC P2P transport & discovery | ✓ | Secure QUIC + multicast discovery in `runar-node::network` |
+| Key management & encryption | ✓ | Complete PKI system with X.509 certificates, envelope encryption, and mobile key management |
+| Configurable logging/tracing | ✓ | Structured logs via `runar-node::config` |
+| runar-swift (iOS/macOS) | 🔄 | Full Runar implementation in Swift - 70% complete, work-in-progress |
+| Android embeddings (FFI) | ○ | Planned |
+| Web UI dashboard | 🔄 | Node Setup and Management Screen `node_webui` SPA |
+| Node CLI | ○ | Command-line interface for node management |
+| GraphQL & WebSocket gateway | ○ | Planned extension of gateway service |
+| Mobile App for Keys management | ○ | Planned |
 
-> 🟡 Work-in-progress  |  ⚪ Planned
+> ✓ Complete  |  🔄 Work-in-progress  |  ○ Planned
 
 ---
 
