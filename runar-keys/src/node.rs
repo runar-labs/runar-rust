@@ -6,8 +6,8 @@
 use crate::certificate::{CertificateRequest, CertificateValidator, EcdsaKeyPair, X509Certificate};
 use crate::error::{KeyError, Result};
 use crate::mobile::{EnvelopeEncryptedData, NetworkKeyMessage, NodeCertificateMessage, SetupToken};
-use p384::elliptic_curve::sec1::ToEncodedPoint;
 use p384::ecdsa::SigningKey;
+use p384::elliptic_curve::sec1::ToEncodedPoint;
 use pkcs8::DecodePrivateKey;
 use rand::RngCore;
 use runar_common::compact_ids::compact_id;

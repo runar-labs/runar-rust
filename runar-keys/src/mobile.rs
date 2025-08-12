@@ -6,8 +6,8 @@
 use crate::certificate::{
     CertificateAuthority, CertificateValidator, EcdsaKeyPair, X509Certificate,
 };
-use crate::error::{KeyError, Result};
 use crate::derivation::derive_agreement_from_master;
+use crate::error::{KeyError, Result};
 use p384::elliptic_curve::sec1::ToEncodedPoint;
 use p384::SecretKey as P384SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
@@ -211,17 +211,14 @@ impl MobileKeyManager {
 
     /// Get the user root public key
     pub fn get_user_root_public_key(&self) -> Result<Vec<u8>> {
-        let root_agreement = self
-            .user_root_agreement
-            .as_ref()
-            .ok_or_else(|| KeyError::KeyNotFound("User root agreement key not initialized".to_string()))?;
-        Ok(
-            root_agreement
-                .public_key()
-                .to_encoded_point(false)
-                .as_bytes()
-                .to_vec(),
-        )
+        let root_agreement = self.user_root_agreement.as_ref().ok_or_else(|| {
+            KeyError::KeyNotFound("User root agreement key not initialized".to_string())
+        })?;
+        Ok(root_agreement
+            .public_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec())
     }
 
     /// Derive a user profile key from the root key using HKDF.
@@ -306,10 +303,15 @@ impl MobileKeyManager {
             &profile_signing.signing_key().to_bytes(),
             b"runar-v1:profile:agreement",
         )?;
-        let public_key = profile_agreement.public_key().to_encoded_point(false).as_bytes().to_vec();
+        let public_key = profile_agreement
+            .public_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
         let pid = compact_id(&public_key);
         self.user_profile_keys.insert(pid.clone(), profile_signing);
-        self.user_profile_agreements.insert(pid.clone(), profile_agreement);
+        self.user_profile_agreements
+            .insert(pid.clone(), profile_agreement);
         self.label_to_pid.insert(label.to_string(), pid.clone());
 
         self.logger.info(format!(
@@ -322,7 +324,11 @@ impl MobileKeyManager {
     pub fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
         // Check both network_data_keys and network_public_keys
         if let Some(network_key) = self.network_data_keys.get(network_id) {
-            Ok(network_key.public_key().to_encoded_point(false).as_bytes().to_vec())
+            Ok(network_key
+                .public_key()
+                .to_encoded_point(false)
+                .as_bytes()
+                .to_vec())
         } else if let Some(network_public_key) = self.network_public_keys.get(network_id) {
             Ok(network_public_key.clone())
         } else {
@@ -335,7 +341,11 @@ impl MobileKeyManager {
     /// Generate a network data key for envelope encryption and return the network ID (compact Base64 public key)
     pub fn generate_network_data_key(&mut self) -> Result<String> {
         let network_key = P384SecretKey::random(&mut rand::thread_rng());
-        let public_key = network_key.public_key().to_encoded_point(false).as_bytes().to_vec();
+        let public_key = network_key
+            .public_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
         let network_id = compact_id(&public_key);
 
         self.network_data_keys
@@ -430,7 +440,8 @@ impl MobileKeyManager {
                 KeyError::KeyNotFound(format!("Envelope key not found for profile: {profile_id}"))
             })?;
 
-        let envelope_key = self.decrypt_key_with_agreement(encrypted_envelope_key, profile_agreement)?;
+        let envelope_key =
+            self.decrypt_key_with_agreement(encrypted_envelope_key, profile_agreement)?;
         self.decrypt_with_symmetric_key(&envelope_data.encrypted_data, &envelope_key)
     }
 
@@ -580,8 +591,10 @@ impl MobileKeyManager {
         })?;
 
         // Use our agreement key for ECDH
-        let shared_secret =
-            diffie_hellman(agreement_secret.to_nonzero_scalar(), ephemeral_public.as_affine());
+        let shared_secret = diffie_hellman(
+            agreement_secret.to_nonzero_scalar(),
+            ephemeral_public.as_affine(),
+        );
         let shared_secret_bytes = shared_secret.raw_secret_bytes();
 
         // Derive encryption key using HKDF-SHA-384
@@ -728,7 +741,9 @@ impl MobileKeyManager {
         let network_private_key = network_key
             .to_pkcs8_der()
             .map(|d| d.as_bytes().to_vec())
-            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to encode network key: {e}")))?;
+            .map_err(|e| {
+                KeyError::InvalidKeyFormat(format!("Failed to encode network key: {e}"))
+            })?;
         let encrypted_network_key =
             self.encrypt_key_with_ecdsa(&network_private_key, node_public_key)?;
 
@@ -817,10 +832,9 @@ impl MobileKeyManager {
         self.logger.debug(format!(
             "Decrypting message from node ({encrypted_message_len} bytes)"
         ));
-        let root_agreement = self
-            .user_root_agreement
-            .as_ref()
-            .ok_or_else(|| KeyError::KeyNotFound("User root agreement key not initialized".to_string()))?;
+        let root_agreement = self.user_root_agreement.as_ref().ok_or_else(|| {
+            KeyError::KeyNotFound("User root agreement key not initialized".to_string())
+        })?;
         self.decrypt_key_with_agreement(encrypted_message, root_agreement)
     }
 

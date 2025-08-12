@@ -16,9 +16,8 @@ pub fn derive_agreement_from_master(ikm: &[u8], label: &[u8]) -> Result<P384Secr
             info.extend_from_slice(counter.to_string().as_bytes());
         }
         let mut candidate = [0u8; 48];
-        hk.expand(&info, &mut candidate).map_err(|e| {
-            KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}"))
-        })?;
+        hk.expand(&info, &mut candidate)
+            .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
         match P384SecretKey::from_slice(&candidate) {
             Ok(sk) => return Ok(sk),
             Err(_) => {
@@ -28,5 +27,3 @@ pub fn derive_agreement_from_master(ikm: &[u8], label: &[u8]) -> Result<P384Secr
         }
     }
 }
-
-
