@@ -230,7 +230,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
             ParsedExtension::BasicConstraints(bc) => {
                 has_basic_constraints = true;
                 assert!(ext.critical, "BasicConstraints must be critical");
-                assert!(bc.ca == false, "Leaf must be notCA");
+                assert!(!bc.ca, "Leaf must be notCA");
             }
             ParsedExtension::KeyUsage(ku) => {
                 has_key_usage = true;
