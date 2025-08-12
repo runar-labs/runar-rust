@@ -21,8 +21,9 @@ pub type ToJsonFn = fn(&[u8]) -> Result<JsonValue>;
 /// Global, thread-safe map: PlainTypeId -> decrypt function.
 static STRUCT_REGISTRY: Lazy<DashMap<TypeId, DecryptFn>> = Lazy::new(DashMap::new);
 
-/// Global, thread-safe map: Type name string -> JSON conversion function.
-static JSON_REGISTRY: Lazy<DashMap<String, ToJsonFn>> = Lazy::new(DashMap::new);
+/// Global, thread-safe map: Type name (&'static str) -> JSON conversion function.
+/// Using &'static str avoids per-registration heap allocations.
+static JSON_REGISTRY: Lazy<DashMap<&'static str, ToJsonFn>> = Lazy::new(DashMap::new);
 
 /// Register a decryptor for `Plain` using the encrypted representation `Enc`.
 ///
@@ -71,10 +72,10 @@ where
         serde_json::to_value(&value).map_err(anyhow::Error::from)
     }
 
-    let type_name = std::any::type_name::<T>();
+    let type_name: &'static str = std::any::type_name::<T>();
     let func = to_json_impl::<T>;
 
-    JSON_REGISTRY.insert(type_name.to_string(), func);
+    JSON_REGISTRY.insert(type_name, func);
 }
 
 /// Attempt to decrypt the payload into `T` using the registered decryptor.
@@ -83,14 +84,18 @@ pub fn try_decrypt_into<T>(bytes: &[u8], ks: &Arc<KeyStore>) -> Result<T>
 where
     T: 'static + Send + Sync,
 {
-    let func = STRUCT_REGISTRY.get(&TypeId::of::<T>()).ok_or_else(|| {
-        anyhow::anyhow!(
-            "No decryptor registered for type {}",
-            std::any::type_name::<T>()
-        )
-    })?;
+    // Minimize time under the map lock: copy out the function pointer, then drop guard.
+    let decrypt_fn: DecryptFn = {
+        let entry = STRUCT_REGISTRY.get(&TypeId::of::<T>()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "No decryptor registered for type {}",
+                std::any::type_name::<T>()
+            )
+        })?;
+        *entry.value()
+    };
 
-    let any_plain = (func.value())(bytes, ks)?;
+    let any_plain = (decrypt_fn)(bytes, ks)?;
     // Downcast into the concrete type we need.
     any_plain.downcast::<T>().map(|boxed| *boxed).map_err(|_| {
         anyhow::anyhow!(
@@ -103,6 +108,7 @@ where
 /// Get a JSON conversion function for a type name.
 /// Returns None if no converter is registered for the type name.
 pub fn get_json_converter(type_name: &str) -> Option<ToJsonFn> {
+    // DashMap supports borrowed lookups; this avoids allocating a String key
     JSON_REGISTRY.get(type_name).map(|entry| *entry.value())
 }
 

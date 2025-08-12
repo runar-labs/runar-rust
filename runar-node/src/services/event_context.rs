@@ -159,8 +159,8 @@ impl EventContext {
     /// - Full path with network ID: "network:service/topic" (used as is)
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
-    pub async fn publish(&self, topic: impl Into<String>, data: Option<ArcValue>) -> Result<()> {
-        let topic_string = topic.into();
+    pub async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()> {
+        let topic_string = topic.to_string();
 
         // Process the topic based on its format
         let full_topic = if topic_string.contains(':') {
@@ -184,7 +184,7 @@ impl EventContext {
 
         self.logger
             .debug(format!("Publishing to processed topic: {full_topic}"));
-        self.node_delegate.publish(full_topic, data).await
+        self.node_delegate.publish(&full_topic, data).await
     }
 
     pub async fn remote_request<P>(
@@ -221,7 +221,7 @@ impl EventContext {
             .debug(format!("Making request to processed path: {full_path}"));
 
         self.node_delegate
-            .remote_request::<P>(full_path, payload)
+            .remote_request::<P>(&full_path, payload)
             .await
     }
 
@@ -235,11 +235,11 @@ impl EventContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P>(&self, path: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let path_string = path.into();
+        let path_string = path.to_string();
 
         // Process the path based on its format
         let full_path = if path_string.contains(':') {
@@ -264,7 +264,7 @@ impl EventContext {
         self.logger
             .debug(format!("Making request to processed path: {full_path}"));
 
-        self.node_delegate.request::<P>(full_path, payload).await
+        self.node_delegate.request::<P>(&full_path, payload).await
     }
 
     /// Wait for an event to occur with a timeout

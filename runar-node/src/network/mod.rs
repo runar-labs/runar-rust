@@ -4,6 +4,7 @@
 
 pub mod discovery;
 pub mod network_config;
+pub mod peer_directory;
 pub mod transport;
 
 pub use discovery::{

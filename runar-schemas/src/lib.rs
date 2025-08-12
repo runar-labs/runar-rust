@@ -584,7 +584,7 @@ mod tests {
 
         // Convert JSON to ArcValue using from_json
         let arc_value = ArcValue::new_json(json_service_metadata.clone());
-        assert_eq!(arc_value.category, runar_serializer::ValueCategory::Json);
+        assert_eq!(arc_value.category(), runar_serializer::ValueCategory::Json);
 
         // Convert ArcValue back to JSON to verify the conversion
         let back_to_json = arc_value.to_json()?;
@@ -634,7 +634,7 @@ mod tests {
         println!("✅ JSON to ArcValue conversion test passed!");
         println!("   - JSON structure preserved in ArcValue");
         println!("   - Roundtrip JSON conversion successful");
-        println!("   - ArcValue category: {:?}", arc_value.category);
+        println!("   - ArcValue category: {:?}", arc_value.category());
 
         // Let's also test a simpler case with a basic FieldSchema from JSON
         let json_field_schema = serde_json::json!({

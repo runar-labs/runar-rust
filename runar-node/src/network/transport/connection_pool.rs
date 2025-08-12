@@ -5,6 +5,7 @@
 use crate::network::transport::{NetworkError, PeerState};
 use dashmap::DashMap;
 use runar_common::logging::Logger;
+use runar_macros_common::log_debug;
 use std::sync::Arc;
 
 /// ConnectionPool - Manages active connections
@@ -20,8 +21,8 @@ use std::sync::Arc;
 ///
 /// INTENTION: Use DashMap for concurrent peer map access; PeerState is now granularly locked.
 pub struct ConnectionPool {
-    pub peers: DashMap<String, Arc<PeerState>>,
-    pub logger: Arc<Logger>,
+    peers: DashMap<String, Arc<PeerState>>,
+    logger: Arc<Logger>,
 }
 
 impl ConnectionPool {
@@ -70,8 +71,7 @@ impl ConnectionPool {
     /// INTENTION: Clean up resources when a peer is disconnected.
     pub async fn remove_peer(&self, peer_node_id: &String) -> Result<(), NetworkError> {
         if let Some((_, peer_state)) = self.peers.remove(peer_node_id) {
-            let mut connection = peer_state.connection.lock().await;
-            *connection = None;
+            let _ = peer_state.take_connection().await;
         }
         Ok(())
     }
@@ -94,11 +94,15 @@ impl ConnectionPool {
         let mut connected_peers = Vec::new();
         for entry in self.peers.iter() {
             let peer = entry.value();
-            let connection = peer.connection.lock().await;
-            if connection.is_some() {
+            if peer.has_connection().await {
                 connected_peers.push(entry.key().clone());
             }
         }
+        log_debug!(
+            self.logger,
+            "get_connected_peers -> {}",
+            connected_peers.len()
+        );
         connected_peers
     }
 }

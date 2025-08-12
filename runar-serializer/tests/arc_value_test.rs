@@ -25,7 +25,7 @@ struct TestProfile {
 fn test_primitive_string() -> Result<()> {
     let original = "hello".to_string();
     let val = ArcValue::new_primitive(original.clone());
-    assert_eq!(val.category, ValueCategory::Primitive);
+    assert_eq!(val.category(), ValueCategory::Primitive);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -42,7 +42,7 @@ fn test_primitive_string() -> Result<()> {
 fn test_primitive_i64() -> Result<()> {
     let original = 42i64;
     let val = ArcValue::new_primitive(original);
-    assert_eq!(val.category, ValueCategory::Primitive);
+    assert_eq!(val.category(), ValueCategory::Primitive);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -59,7 +59,7 @@ fn test_primitive_i64() -> Result<()> {
 fn test_primitive_bool() -> Result<()> {
     let original = true;
     let val = ArcValue::new_primitive(original);
-    assert_eq!(val.category, ValueCategory::Primitive);
+    assert_eq!(val.category(), ValueCategory::Primitive);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -72,7 +72,7 @@ fn test_primitive_bool() -> Result<()> {
 fn test_primitive_f64() -> Result<()> {
     let original = std::f64::consts::PI;
     let val = ArcValue::new_primitive(original);
-    assert_eq!(val.category, ValueCategory::Primitive);
+    assert_eq!(val.category(), ValueCategory::Primitive);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -88,7 +88,7 @@ fn test_list() -> Result<()> {
         ArcValue::new_primitive("two".to_string()),
     ];
     let val = ArcValue::new_list(original.clone());
-    assert_eq!(val.category, ValueCategory::List);
+    assert_eq!(val.category(), ValueCategory::List);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -110,7 +110,7 @@ fn test_map() -> Result<()> {
         ArcValue::new_primitive("value".to_string()),
     );
     let val = ArcValue::new_map(original.clone());
-    assert_eq!(val.category, ValueCategory::Map);
+    assert_eq!(val.category(), ValueCategory::Map);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -127,7 +127,7 @@ fn test_map() -> Result<()> {
 fn test_bytes() -> Result<()> {
     let original = vec![1u8, 2, 3];
     let val = ArcValue::new_bytes(original.clone());
-    assert_eq!(val.category, ValueCategory::Bytes);
+    assert_eq!(val.category(), ValueCategory::Bytes);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -140,7 +140,7 @@ fn test_bytes() -> Result<()> {
 fn test_json() -> Result<()> {
     let original = json!({"key": "value"});
     let val = ArcValue::new_json(original.clone());
-    assert_eq!(val.category, ValueCategory::Json);
+    assert_eq!(val.category(), ValueCategory::Json);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -156,7 +156,7 @@ fn test_struct() -> Result<()> {
         b: "test".to_string(),
     };
     let val = ArcValue::new_struct(original.clone());
-    assert_eq!(val.category, ValueCategory::Struct);
+    assert_eq!(val.category(), ValueCategory::Struct);
 
     let ser = val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
@@ -217,7 +217,7 @@ fn test_new_json() -> Result<()> {
     });
 
     let val = ArcValue::new_json(json_val.clone());
-    assert_eq!(val.category, ValueCategory::Json);
+    assert_eq!(val.category(), ValueCategory::Json);
 
     let back_to_json = val.to_json()?;
     assert_eq!(back_to_json, json_val);
@@ -227,12 +227,12 @@ fn test_new_json() -> Result<()> {
 #[test]
 fn test_null() -> Result<()> {
     let null_val = ArcValue::null();
-    assert_eq!(null_val.category, ValueCategory::Null);
+    assert_eq!(null_val.category(), ValueCategory::Null);
     assert!(null_val.is_null());
 
     let ser = null_val.serialize(None)?;
     let de = ArcValue::deserialize(&ser, None)?;
-    assert_eq!(de.category, ValueCategory::Null);
+    assert_eq!(de.category(), ValueCategory::Null);
     assert!(de.is_null());
     Ok(())
 }
@@ -260,12 +260,12 @@ fn test_as_typed_map_ref() -> Result<()> {
 
     // Wrap the HashMap in ArcValue using new_map
     let arc_value = ArcValue::new_map(profiles);
-    assert_eq!(arc_value.category, ValueCategory::Map);
+    assert_eq!(arc_value.category(), ValueCategory::Map);
 
     // Serialize and deserialize
     let bytes = arc_value.serialize(None)?;
     let deserialized = ArcValue::deserialize(&bytes, None)?;
-    assert_eq!(deserialized.category, ValueCategory::Map);
+    assert_eq!(deserialized.category(), ValueCategory::Map);
 
     // Get the map as ArcValue first
     let map_arc = deserialized.as_map_ref()?;
@@ -273,10 +273,10 @@ fn test_as_typed_map_ref() -> Result<()> {
 
     // Verify we can access individual ArcValues and their categories
     let user1_arc = map_arc.get("user1").expect("user1 not found");
-    assert_eq!(user1_arc.category, ValueCategory::Struct);
+    assert_eq!(user1_arc.category(), ValueCategory::Struct);
 
     let user2_arc = map_arc.get("user2").expect("user2 not found");
-    assert_eq!(user2_arc.category, ValueCategory::Struct);
+    assert_eq!(user2_arc.category(), ValueCategory::Struct);
 
     // Demonstrate the concept: we can extract typed values from individual ArcValues
     // (This would work if struct deserialization was fully implemented)

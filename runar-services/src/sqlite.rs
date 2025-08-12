@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_node::services::{EventContext, LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
@@ -99,7 +100,7 @@ impl SqliteWorker {
     ) -> Result<Self, String> {
         let connection = Connection::open(db_path.clone()).map_err(|e| {
             let err_msg = format!("Failed to open SQLite connection to '{db_path}': {e}");
-            logger.error(&err_msg);
+            log_error!(logger, "{}", err_msg);
             err_msg
         })?;
 
@@ -114,16 +115,20 @@ impl SqliteWorker {
                 .pragma_update(None, "key", &hex_key)
                 .map_err(|e| {
                     let err_msg = format!("Failed to set database key: {e}");
-                    logger.error(&err_msg);
+                    log_error!(logger, "{}", err_msg);
                     err_msg
                 })?;
-            logger.debug("Database key set successfully using provided symmetric key.");
+            log_debug!(
+                logger,
+                "Database key set successfully using provided symmetric key."
+            );
         }
 
         // TODO: Apply any pragmas or initial setup to the connection here if needed
         // E.g., conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").map_err(|e| e.to_string())?;
-        logger.debug(
-            "SqliteWorker::new: Connection opened. TODO: Apply pragmas/initial setup if needed.",
+        log_debug!(
+            logger,
+            "SqliteWorker::new: Connection opened. TODO: Apply pragmas/initial setup if needed."
         );
         Ok(Self {
             connection,
@@ -143,16 +148,16 @@ impl SqliteWorker {
                 return; // Early exit if we can't signal readiness
             }
         }
-        self.logger.info("SqliteWorker started processing loop.");
+        log_info!(self.logger, "SqliteWorker started processing loop.");
         while let Some(command) = self.receiver.recv().await {
             match command {
                 SqliteWorkerCommand::ApplySchema { schema, reply_to } => {
-                    self.logger.debug("Processing ApplySchema command");
+                    log_debug!(self.logger, "Processing ApplySchema command");
                     let res = apply_schema_internal(&self.connection, &schema, &self.logger);
                     let _ = reply_to.send(res); // Ignore error if receiver dropped
                 }
                 SqliteWorkerCommand::Execute { query, reply_to } => {
-                    self.logger.debug("Processing Execute command");
+                    log_debug!(self.logger, "Processing Execute command");
                     let res = execute_internal(
                         &self.connection,
                         &query.statement,
@@ -162,7 +167,7 @@ impl SqliteWorker {
                     let _ = reply_to.send(res);
                 }
                 SqliteWorkerCommand::Query { query, reply_to } => {
-                    self.logger.debug("Processing Query command");
+                    log_debug!(self.logger, "Processing Query command");
                     let res = query_internal(
                         &self.connection,
                         &query.statement,
@@ -172,13 +177,13 @@ impl SqliteWorker {
                     let _ = reply_to.send(res);
                 }
                 SqliteWorkerCommand::Shutdown { reply_to } => {
-                    self.logger.info("SqliteWorker received Shutdown command.");
+                    log_info!(self.logger, "SqliteWorker received Shutdown command.");
                     let _ = reply_to.send(Ok(()));
                     break; // Exit the loop to terminate the worker
                 }
             }
         }
-        self.logger.info("SqliteWorker finished.");
+        log_info!(self.logger, "SqliteWorker finished.");
     }
 }
 
@@ -188,7 +193,7 @@ fn apply_schema_internal(
     schema: &Schema,
     logger: &Arc<Logger>,
 ) -> Result<(), String> {
-    logger.info("Applying schema...");
+    log_info!(logger, "Applying schema...");
     // This function generates DDL for tables and indexes based on the provided schema.
     // It aims for idempotency using IF NOT EXISTS.
     // Limitations: Does not yet handle composite primary keys, foreign keys, complex column constraints (DEFAULT, CHECK, etc.)
@@ -228,7 +233,7 @@ fn apply_schema_internal(
 
         // TODO: Extend TableDefinition to support composite PRIMARY KEY, table-level UNIQUE, CHECK, FOREIGN KEY constraints
         // and update DDL generation here.
-        logger.debug(format!("Preparing to create table: {}", table_def.name));
+        log_debug!(logger, "Preparing to create table: {}", table_def.name);
         let table_ddl = format!(
             "CREATE TABLE IF NOT EXISTS {} ({});\n",
             table_def.name,
@@ -240,18 +245,22 @@ fn apply_schema_internal(
     // Index Creation DDLs
     for index_def in &schema.indexes {
         if index_def.columns.is_empty() {
-            logger.warn(format!(
+            log_warn!(
+                logger,
                 "Skipping index '{}' for table '{}' as it has no columns defined.",
-                index_def.name, index_def.table_name
-            ));
+                index_def.name,
+                index_def.table_name
+            );
             continue;
         }
         let unique_str = if index_def.unique { "UNIQUE " } else { "" };
         let columns_list = index_def.columns.join(", ");
-        logger.debug(format!(
+        log_debug!(
+            logger,
             "Preparing to create index: {} on table {}",
-            index_def.name, index_def.table_name
-        ));
+            index_def.name,
+            index_def.table_name
+        );
         let index_ddl = format!(
             "CREATE {}INDEX IF NOT EXISTS {} ON {} ({});\n",
             unique_str, index_def.name, index_def.table_name, columns_list
@@ -260,13 +269,16 @@ fn apply_schema_internal(
     }
 
     if ddl_batch.is_empty() {
-        logger.debug("No DDL statements to execute for the provided schema.");
+        log_debug!(
+            logger,
+            "No DDL statements to execute for the provided schema."
+        );
         return Ok(());
     }
 
     conn.execute_batch(&ddl_batch).map_err(|e| {
         let err_msg = format!("Failed to apply schema batch: {e}. DDL:\n{ddl_batch}");
-        logger.error(&err_msg);
+        log_error!(logger, "{}", err_msg);
         err_msg
     })
 }
@@ -278,7 +290,7 @@ fn execute_internal(
     params: &Params, // Changed: Now takes &Params
     logger: &Arc<Logger>,
 ) -> Result<usize, String> {
-    logger.debug(format!("Executing SQL: {sql}"));
+    log_debug!(logger, "Executing SQL: {}", sql);
 
     let rusqlite_params_results: Result<Vec<Box<dyn ToSql + Send + Sync>>, String> =
         params.values.iter().map(value_to_to_sql).collect(); // Changed: uses value_to_to_sql
@@ -287,11 +299,11 @@ fn execute_internal(
         Ok(rusqlite_params) => {
             let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
                 rusqlite_params.iter().map(|b| b.as_ref()).collect();
-            logger.debug(format!("Executing SQL: {sql} with params: {params:?}"));
+            log_debug!(logger, "Executing SQL: {} with params: {:?}", sql, params);
             conn.execute(sql, params_from_iter(params_for_iter))
                 .map_err(|e| {
                     let err_msg = format!("Failed to execute SQL '{sql}': {e}");
-                    logger.error(&err_msg);
+                    log_error!(logger, "{}", err_msg);
                     err_msg
                 })
         }
@@ -323,12 +335,15 @@ fn query_internal(
     let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
         rusqlite_params.iter().map(|b| b.as_ref()).collect();
 
-    logger.debug(format!(
-        "Preparing SQL query: {sql} with params: {params:?}",
-    ));
+    log_debug!(
+        logger,
+        "Preparing SQL query: {} with params: {:?}",
+        sql,
+        params
+    );
     let mut stmt = conn.prepare(sql).map_err(|e| {
         let err_msg = format!("Error preparing statement for SQL '{sql}': {e}");
-        logger.error(&err_msg);
+        log_error!(logger, "{}", err_msg);
         err_msg
     })?;
     let column_names: Vec<String> = stmt
@@ -337,9 +352,12 @@ fn query_internal(
         .map(|s| s.to_string())
         .collect();
 
-    logger.debug(format!(
-        "Executing SQL query: {sql} with params: {params:?}",
-    ));
+    log_debug!(
+        logger,
+        "Executing SQL query: {} with params: {:?}",
+        sql,
+        params
+    );
     let rows_iter = stmt
         .query_map(params_from_iter(params_for_iter.into_iter()), |row| {
             let mut map = HashMap::new();
@@ -350,7 +368,7 @@ fn query_internal(
         })
         .map_err(|e| {
             let err_msg = format!("Error executing query '{sql}': {e}");
-            logger.error(&err_msg);
+            log_error!(logger, "{}", err_msg);
             err_msg
         })?;
 
@@ -358,7 +376,7 @@ fn query_internal(
         .collect::<RusqliteResult<Vec<HashMap<String, Value>>>>()
         .map_err(|e| {
             let err_msg = format!("Error collecting query results for '{sql}': {e}");
-            logger.error(&err_msg);
+            log_error!(logger, "{}", err_msg);
             err_msg
         })
 }
@@ -576,9 +594,9 @@ pub struct SqliteConfig {
 
 impl SqliteConfig {
     /// Create a new SQLite config with path and schema
-    pub fn new(db_path: impl Into<String>, schema: Schema, encryption: bool) -> Self {
+    pub fn new(db_path: &str, schema: Schema, encryption: bool) -> Self {
         Self {
-            db_path: db_path.into(),
+            db_path: db_path.to_string(),
             schema,
             encryption,
             replication: None,
@@ -593,11 +611,11 @@ impl SqliteConfig {
 }
 
 pub struct SqliteService {
-    pub name: String,
-    pub path: String,
-    pub version: String,
-    pub description: String,
-    pub config: SqliteConfig,
+    name: String,
+    path: String,
+    version: String,
+    description: String,
+    config: SqliteConfig,
     worker_tx: Arc<RwLock<Option<mpsc::Sender<SqliteWorkerCommand>>>>,
     network_id: Option<String>,
     /// Optional replication manager
@@ -622,10 +640,10 @@ impl Clone for SqliteService {
 
 impl SqliteService {
     // Common for service constructors
-    pub fn new(name: String, path: String, config: SqliteConfig) -> Self {
+    pub fn new(name: &str, path: &str, config: SqliteConfig) -> Self {
         Self {
-            name,
-            path,
+            name: name.to_string(),
+            path: path.to_string(),
             version: "0.0.1".to_string(),
             description: "SQLite service".to_string(),
             config,
@@ -788,7 +806,7 @@ impl AbstractService for SqliteService {
                             .map_err(|original_error_from_as_type| {
                                 anyhow!(format!(
                                     "Invalid payload type for 'execute_query'. Expected SqlQuery, got {:?}. Original error: {:?}",
-                                    query_arc_value.category, // Use Debug formatting for category
+                                    query_arc_value.category(), // Use Debug formatting for category
                                     original_error_from_as_type
                                 ))
                             })?;
@@ -865,7 +883,7 @@ impl AbstractService for SqliteService {
                                         ));
 
                                         req_ctx
-                                            .publish(event_path, Some(ArcValue::new_struct(event)))
+                                            .publish(&event_path, Some(ArcValue::new_struct(event)))
                                             .await?;
 
                                         req_ctx.info("✅ SQLite event published successfully");
@@ -995,12 +1013,12 @@ impl AbstractService for SqliteService {
 
                 // Subscribe to all operation types for this table
                 context
-                    .subscribe(create_path, event_handler.clone(), None)
+                    .subscribe(&create_path, event_handler.clone(), None)
                     .await?;
                 context
-                    .subscribe(update_path, event_handler.clone(), None)
+                    .subscribe(&update_path, event_handler.clone(), None)
                     .await?;
-                context.subscribe(delete_path, event_handler, None).await?;
+                context.subscribe(&delete_path, event_handler, None).await?;
             }
         }
 

@@ -104,17 +104,16 @@ fn create_replicated_sqlite_service(
     startup_sync: bool,
 ) -> SqliteService {
     let schema = create_test_schema();
-    let config =
-        SqliteConfig::new(db_path.to_string(), schema, false).with_replication(ReplicationConfig {
-            enabled_tables: vec!["users".to_string(), "posts".to_string()],
-            conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
-            startup_sync, // Enable startup sync for this test
-            event_retention_days: 30,
-            wait_remote_service_timeout: 25,
-            past_events_window: 10,
-        });
+    let config = SqliteConfig::new(db_path, schema, false).with_replication(ReplicationConfig {
+        enabled_tables: vec!["users".to_string(), "posts".to_string()],
+        conflict_resolution: ConflictResolutionStrategy::LastWriteWins,
+        startup_sync, // Enable startup sync for this test
+        event_retention_days: 30,
+        wait_remote_service_timeout: 25,
+        past_events_window: 10,
+    });
 
-    SqliteService::new(name.to_string(), path.to_string(), config)
+    SqliteService::new(name, path, config)
 }
 
 /// Clean up database files to ensure test isolation

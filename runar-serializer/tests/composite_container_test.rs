@@ -42,7 +42,7 @@ fn test_hashmap_of_profiles_roundtrip() -> Result<()> {
 
     // Test deserialization
     let de = ArcValue::deserialize(&bytes, None)?;
-    assert_eq!(de.category, runar_serializer::ValueCategory::Map);
+    assert_eq!(de.category(), runar_serializer::ValueCategory::Map);
 
     // Extract typed HashMap using as_typed_map_ref
     let typed_profiles: HashMap<String, Arc<TestProfile>> = de.as_typed_map_ref()?;
@@ -98,7 +98,7 @@ fn test_nested_composite_structures() -> Result<()> {
     // Test serialization and deserialization
     let bytes = av.serialize(None)?;
     let de = ArcValue::deserialize(&bytes, None)?;
-    assert_eq!(de.category, runar_serializer::ValueCategory::Map);
+    assert_eq!(de.category(), runar_serializer::ValueCategory::Map);
 
     // Extract the nested structure
     let typed_nested: HashMap<String, Arc<Vec<ArcValue>>> = de.as_typed_map_ref()?;
@@ -171,7 +171,7 @@ fn test_mixed_content_containers() -> Result<()> {
     // Test serialization and deserialization
     let bytes = av.serialize(None)?;
     let de = ArcValue::deserialize(&bytes, None)?;
-    assert_eq!(de.category, runar_serializer::ValueCategory::Map);
+    assert_eq!(de.category(), runar_serializer::ValueCategory::Map);
 
     // Extract the map
     let typed_map: Arc<HashMap<String, ArcValue>> = de.as_map_ref()?;
@@ -231,7 +231,7 @@ fn test_vec_of_profiles_roundtrip() -> Result<()> {
 
     // Test deserialization
     let de = ArcValue::deserialize(&bytes, None)?;
-    assert_eq!(de.category, runar_serializer::ValueCategory::List);
+    assert_eq!(de.category(), runar_serializer::ValueCategory::List);
 
     // Extract typed Vec using as_typed_list_ref
     let typed_profiles: Vec<Arc<TestProfile>> = de.as_typed_list_ref()?;

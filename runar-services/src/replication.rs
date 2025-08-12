@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug, log_info};
 use runar_node::services::LifecycleContext;
 use runar_node::{AbstractService, ServiceState};
 use runar_serializer::{ArcValue, Plain};
@@ -219,10 +220,13 @@ impl ReplicationManager {
 
     // Handles incoming ephemeral events from SQLite operations
     pub async fn handle_sqlite_event(&self, event: SqliteEvent, is_local: bool) -> Result<()> {
-        self.logger.debug(format!(
-            "Handling SQLite event: table={}, operation={}, is_local={}",
-            event.table, event.operation, is_local
-        ));
+        log_debug!(
+            self.logger,
+            "Handling SQLite event: table={} operation={} is_local={}",
+            event.table,
+            event.operation,
+            is_local
+        );
 
         // Build replication event preserving origin metadata
         let replication_event = self.replication_event_from_sqlite_event(event).await?;
@@ -230,11 +234,11 @@ impl ReplicationManager {
         if is_local {
             // Local events are already applied to base tables; store for history only
             self.store_event(&replication_event, true).await?;
-            self.logger.debug("Local event stored (processed=true)");
+            log_debug!(self.logger, "Local event stored (processed=true)");
         } else {
             // Remote events: idempotent store + apply
             self.process_replication_event(replication_event).await?;
-            self.logger.debug("Remote event stored/applied if new");
+            log_debug!(self.logger, "Remote event stored/applied if new");
         }
 
         Ok(())
@@ -242,10 +246,11 @@ impl ReplicationManager {
 
     // Processes incoming replication events from other nodes
     pub async fn process_replication_event(&self, event: ReplicationEvent) -> Result<()> {
-        self.logger.debug(format!(
+        log_debug!(
+            self.logger,
             "Processing replication event on node {}",
             self.node_id
-        ));
+        );
         // Idempotent ingest in a transaction:
         // 1) Try to insert the event row first (OR IGNORE semantics via SQL)
         // 2) If inserted, apply SQL to base table; otherwise skip (already applied)
@@ -597,13 +602,14 @@ impl ReplicationManager {
     ) -> Result<TableEventsResponse> {
         let event_table_name = format!("{}{EVENT_TABLE_SUFFIX}", request.table_name);
 
-        self.logger.info(format!(
-            "Querying events from {}: page={}, page_size={}, from_by_origin={} entries",
+        log_info!(
+            self.logger,
+            "Querying events from {}: page={} page_size={} from_by_origin={} entries",
             event_table_name,
             request.page,
             request.page_size,
             request.from_by_origin.len()
-        ));
+        );
 
         // Build base query: support from_by_origin filtering if provided
         // Important: When filtering by origins, we do NOT use OFFSET based on `page`,
@@ -674,10 +680,11 @@ impl ReplicationManager {
             .await
             .map_err(|e| anyhow!("Failed to query events: {e}"))?;
 
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Found {} rows for this page before mapping",
             result.len()
-        ));
+        );
 
         // Convert rows to ReplicationEvent objects
         let events: Vec<ReplicationEvent> = result
@@ -725,14 +732,15 @@ impl ReplicationManager {
                     },
                 };
 
-                self.logger.debug(format!(
-                    "Event: id={}, table={}, operation={}, source={}, timestamp={}",
+                log_debug!(
+                    self.logger,
+                    "Event: id={} table={} operation={} source={} timestamp={}",
                     event.id,
                     event.table_name,
                     event.operation_type,
                     event.source_node_id,
                     event.timestamp
-                ));
+                );
 
                 event
             })
@@ -783,13 +791,14 @@ impl ReplicationManager {
                 entry.1 = e.origin_seq;
             }
         }
-        self.logger.info(format!(
-            "Returning {} events, total_count={}, has_more={}, origin_ranges={:?}",
+        log_info!(
+            self.logger,
+            "Returning {} events, total_count={} has_more={} origin_ranges={:?}",
             events.len(),
             total_count,
             has_more,
             origin_min_max
-        ));
+        );
 
         Ok(TableEventsResponse {
             events,

@@ -161,7 +161,7 @@ fn test_encryption_in_arcvalue() -> Result<()> {
 
     // Create ArcValue with struct
     let val = ArcValue::new_struct(profile.clone());
-    assert_eq!(val.category, ValueCategory::Struct);
+    assert_eq!(val.category(), ValueCategory::Struct);
 
     // Create serialization context
     let context = SerializationContext {

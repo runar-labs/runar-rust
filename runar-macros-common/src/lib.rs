@@ -107,7 +107,7 @@ macro_rules! hmap {
 /// use runar_macros::{params, runar_serializer::ArcValue};
 /// let args = params! { "a" => 1.0, "b" => 2.0 };
 /// // `args` is an `ArcValue::Map` containing the provided key/value pairs.
-/// assert_eq!(args.category, ArcValue::Map.category());
+/// assert_eq!(args.category(), ArcValue::Map.category());
 /// ```
 #[macro_export]
 macro_rules! params {
@@ -133,4 +133,67 @@ macro_rules! params {
             ArcValue::new_map(map)
         }
     };
+}
+
+// ============================
+// Logger Macros (zero-overhead when disabled)
+// ============================
+
+/// Core logging macro that checks the log level before formatting.
+///
+/// Usage:
+/// - Positional/explicit args: `runar_log!(logger, Info, "message {}", arg)`
+/// - Implicit capture: `runar_log!(logger, Info, "topic={topic} id={id}")`
+///
+/// When the level is disabled, neither the formatting nor the argument evaluation occurs.
+#[macro_export]
+macro_rules! runar_log {
+    ($logger:expr, Debug, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Debug) {
+            ($logger).debug_args(format_args!($($arg)*));
+        }
+    }};
+    ($logger:expr, Info, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Info) {
+            ($logger).info_args(format_args!($($arg)*));
+        }
+    }};
+    ($logger:expr, Warn, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Warn) {
+            ($logger).warn_args(format_args!($($arg)*));
+        }
+    }};
+    ($logger:expr, Error, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Error) {
+            ($logger).error_args(format_args!($($arg)*));
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! log_debug {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Debug, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! log_info {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Info, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! log_warn {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Warn, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! log_error {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Error, $($arg)*);
+    }
 }

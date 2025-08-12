@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -50,8 +51,8 @@ impl ValueCategory {
 
 #[derive(Clone)]
 pub struct ArcValue {
-    pub category: ValueCategory,
-    pub value: Option<ErasedArc>,
+    category: ValueCategory,
+    value: Option<ErasedArc>,
     serialize_fn: Option<Arc<SerializeFn>>,
     to_json_fn: Option<Arc<ToJsonFn>>,
 }
@@ -111,6 +112,21 @@ impl fmt::Debug for LazyDataWithOffset {
 }
 
 impl ArcValue {
+    /// Category of this value
+    pub fn category(&self) -> ValueCategory {
+        self.category
+    }
+
+    /// Whether this ArcValue currently holds an inner value
+    pub fn has_value(&self) -> bool {
+        self.value.is_some()
+    }
+
+    /// Best-effort type name for the contained value (if present)
+    pub fn type_name(&self) -> Option<&str> {
+        self.value.as_ref().map(|v| v.type_name())
+    }
+
     pub fn null() -> Self {
         Self {
             category: ValueCategory::Null,
@@ -270,41 +286,43 @@ impl ArcValue {
             return Err(anyhow!("Invalid type name length"));
         }
         let type_name_bytes = &bytes[3..3 + type_name_len];
-        let type_name = String::from_utf8(type_name_bytes.to_vec())?;
+        let type_name = std::str::from_utf8(type_name_bytes)
+            .map_err(|e| anyhow!("Invalid UTF-8 in type name: {e}"))?
+            .to_string();
 
         let data_start = 3 + type_name_len;
         let data_bytes = &bytes[data_start..];
 
         match category {
             ValueCategory::Primitive => {
-                // Eagerly deserialize primitives
-                let bytes = if is_encrypted {
-                    decrypt_bytes(
+                // Eagerly deserialize primitives without unnecessary copies
+                let bytes_cow: Cow<[u8]> = if is_encrypted {
+                    Cow::Owned(decrypt_bytes(
                         data_bytes,
                         keystore
                             .as_ref()
                             .ok_or(anyhow!("Keystore required for decryption"))?,
-                    )?
+                    )?)
                 } else {
-                    data_bytes.to_vec()
+                    Cow::Borrowed(data_bytes)
                 };
 
                 // Try to deserialize as different primitive types based on type_name
                 match type_name.as_str() {
                     "alloc::string::String" => {
-                        let value: String = serde_cbor::from_slice(&bytes)?;
+                        let value: String = serde_cbor::from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
                     "i64" => {
-                        let value: i64 = serde_cbor::from_slice(&bytes)?;
+                        let value: i64 = serde_cbor::from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
                     "f64" => {
-                        let value: f64 = serde_cbor::from_slice(&bytes)?;
+                        let value: f64 = serde_cbor::from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
                     "bool" => {
-                        let value: bool = serde_cbor::from_slice(&bytes)?;
+                        let value: bool = serde_cbor::from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
                     _ => Err(anyhow!("Unknown primitive type: {}", type_name)),
@@ -312,17 +330,17 @@ impl ArcValue {
             }
             ValueCategory::Bytes => {
                 // Bytes can also be eagerly deserialized
-                let bytes = if is_encrypted {
-                    decrypt_bytes(
+                if is_encrypted {
+                    let decrypted = decrypt_bytes(
                         data_bytes,
                         keystore
                             .as_ref()
                             .ok_or(anyhow!("Keystore required for decryption"))?,
-                    )?
+                    )?;
+                    Ok(ArcValue::new_bytes(decrypted))
                 } else {
-                    data_bytes.to_vec()
-                };
-                Ok(ArcValue::new_bytes(bytes))
+                    Ok(ArcValue::new_bytes(data_bytes.to_vec()))
+                }
             }
             _ => {
                 // For complex types (List, Map, Struct, Json), create lazy structure
@@ -384,11 +402,11 @@ impl ArcValue {
                 return Err(anyhow!("No serialize function available"));
             }?;
 
-            let data = ks.encrypt_with_envelope(
-                &bytes,
-                Some(network_id),
-                vec![profile_public_key.as_ref().unwrap_or(&vec![]).clone()],
-            )?;
+            let recipients: Vec<Vec<u8>> = match profile_public_key.as_ref() {
+                Some(pk) => vec![pk.clone()],
+                None => Vec::new(),
+            };
+            let data = ks.encrypt_with_envelope(&bytes, Some(network_id), recipients)?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);
@@ -401,6 +419,8 @@ impl ArcValue {
                 return Err(anyhow!("No serialize function available"));
             }?;
             let is_encrypted_byte = 0x00;
+            // Pre-allocate to avoid growth during pushes
+            buf.reserve_exact(3 + type_name_bytes.len() + bytes.len());
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);
             buf.extend_from_slice(type_name_bytes);
@@ -1024,14 +1044,14 @@ fn to_json_number(inner: &ErasedArc, type_name: &str) -> Result<JsonValue> {
             let value = inner.as_arc::<f32>()?;
             Ok(JsonValue::Number(
                 serde_json::Number::from_f64(*value as f64)
-                    .ok_or_else(|| anyhow!("Invalid f32 value for JSON: {}", *value))?,
+                    .ok_or_else(|| anyhow!("Invalid f32 value for JSON: {value}"))?,
             ))
         }
         "f64" => {
             let value = inner.as_arc::<f64>()?;
             Ok(JsonValue::Number(
                 serde_json::Number::from_f64(*value)
-                    .ok_or_else(|| anyhow!("Invalid f64 value for JSON: {}", *value))?,
+                    .ok_or_else(|| anyhow!("Invalid f64 value for JSON: {value}"))?,
             ))
         }
         _ => Err(anyhow!("Unsupported number type: {}", type_name)),

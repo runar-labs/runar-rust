@@ -4,16 +4,17 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use runar_common::compact_ids::compact_id;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+// no logging macros needed here yet
 
 use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
 
 /// A mock implementation of NodeDiscovery that stores nodes in memory
 pub struct MockNodeDiscovery {
     /// Known nodes
-    nodes: Arc<RwLock<HashMap<String, NodeInfo>>>,
+    nodes: Arc<DashMap<String, NodeInfo>>,
     /// Listeners for discovery events
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>, // DiscoveryListener is now Arc<...>
 }
@@ -28,7 +29,7 @@ impl MockNodeDiscovery {
     /// Create a new mock discovery instance
     pub fn new() -> Self {
         Self {
-            nodes: Arc::new(RwLock::new(HashMap::new())),
+            nodes: Arc::new(DashMap::new()),
             listeners: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -36,13 +37,13 @@ impl MockNodeDiscovery {
     /// Add a test node to the discovery service
     pub fn add_test_node(&self, node_info: NodeInfo) {
         let key = compact_id(&node_info.node_public_key);
-        self.nodes.write().unwrap().insert(key, node_info);
+        self.nodes.insert(key, node_info);
     }
 
     /// Clear all nodes
     pub fn clear_nodes(&self) {
-        let keys: Vec<String> = self.nodes.read().unwrap().keys().cloned().collect();
-        self.nodes.write().unwrap().clear();
+        let keys: Vec<String> = self.nodes.iter().map(|entry| entry.key().clone()).collect();
+        self.nodes.clear();
         // Emit Lost for all cleared nodes
         let listeners = {
             let guard = self.listeners.read().unwrap();
@@ -61,7 +62,7 @@ impl MockNodeDiscovery {
     /// Helper to add nodes for testing
     pub async fn add_mock_node(&self, node_info: NodeInfo) {
         let key = compact_id(&node_info.node_public_key);
-        self.nodes.write().unwrap().insert(key, node_info.clone());
+        self.nodes.insert(key, node_info.clone());
         // Notify listeners
         let peer_info = crate::network::discovery::PeerInfo {
             public_key: node_info.node_public_key.clone(),
@@ -80,7 +81,7 @@ impl MockNodeDiscovery {
     /// Helper to remove a node and emit Lost (testing)
     pub async fn remove_mock_node(&self, node_public_key: Vec<u8>) {
         let key = compact_id(&node_public_key);
-        self.nodes.write().unwrap().remove(&key);
+        self.nodes.remove(&key);
         let listeners = {
             let guard = self.listeners.read().unwrap();
             guard.iter().cloned().collect::<Vec<_>>()
@@ -112,7 +113,7 @@ impl NodeDiscovery for MockNodeDiscovery {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        self.nodes.write().unwrap().clear();
+        self.nodes.clear();
         Ok(())
     }
 
