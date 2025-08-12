@@ -32,6 +32,7 @@ use crate::routing::TopicPath;
 use crate::services::service_registry::{EventHandler, RemoteEventHandler};
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, FieldSchema};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
@@ -114,22 +115,22 @@ impl LifecycleContext {
 
     /// Helper method to log debug level message
     pub fn debug(&self, message: impl Into<String>) {
-        self.logger.debug(message);
+        log_debug!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log info level message
     pub fn info(&self, message: impl Into<String>) {
-        self.logger.info(message);
+        log_info!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log warning level message
     pub fn warn(&self, message: impl Into<String>) {
-        self.logger.warn(message);
+        log_warn!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log error level message
     pub fn error(&self, message: impl Into<String>) {
-        self.logger.error(message);
+        log_error!(self.logger, "{}", message.into());
     }
 
     pub async fn remote_request<P>(

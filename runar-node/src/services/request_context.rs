@@ -18,6 +18,7 @@ use crate::services::NodeDelegate;
 use crate::services::{EventRegistrationOptions, PublishOptions};
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
 
@@ -150,7 +151,7 @@ impl RequestContext {
     /// INTENTION: Provide a convenient way to log debug messages with the
     /// context's logger, without having to access the logger directly.
     pub fn debug(&self, message: impl Into<String>) {
-        self.logger.debug(message);
+        log_debug!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log info level message
@@ -158,7 +159,7 @@ impl RequestContext {
     /// INTENTION: Provide a convenient way to log info messages with the
     /// context's logger, without having to access the logger directly.
     pub fn info(&self, message: impl Into<String>) {
-        self.logger.info(message);
+        log_info!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log warning level message
@@ -166,7 +167,7 @@ impl RequestContext {
     /// INTENTION: Provide a convenient way to log warning messages with the
     /// context's logger, without having to access the logger directly.
     pub fn warn(&self, message: impl Into<String>) {
-        self.logger.warn(message);
+        log_warn!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log error level message
@@ -174,7 +175,7 @@ impl RequestContext {
     /// INTENTION: Provide a convenient way to log error messages with the
     /// context's logger, without having to access the logger directly.
     pub fn error(&self, message: impl Into<String>) {
-        self.logger.error(message);
+        log_error!(self.logger, "{}", message.into());
     }
 
     /// Publish an event
@@ -272,18 +273,18 @@ impl RequestContext {
 
     pub async fn remote_request<P>(
         &self,
-        path: impl Into<String>,
+        path: impl AsRef<str>,
         payload: Option<P>,
     ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let path_string = path.into();
+        let path_string = path.as_ref();
 
         // Process the path based on its format
         let full_path = if path_string.contains(':') {
             // Already has network ID, use as is
-            path_string
+            path_string.to_string()
         } else if path_string.contains('/') {
             // Has service/action but no network ID
             format!(
@@ -322,12 +323,12 @@ impl RequestContext {
     where
         P: AsArcValue + Send + Sync,
     {
-        let path_string = path.to_string();
+        let path_string = path;
 
         // Process the path based on its format
         let full_path = if path_string.contains(':') {
             // Already has network ID, use as is
-            path_string
+            path_string.to_string()
         } else if path_string.contains('/') {
             // Has service/action but no network ID
             format!(
