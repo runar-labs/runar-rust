@@ -958,7 +958,7 @@ impl ServiceRegistry {
             let msg = format!(
                 "No topic path found mapping to remote subscription ID: {subscription_id}. Cannot unsubscribe."
             );
-            self.logger.warn(msg.clone());
+            log_warn!(self.logger, "{}", msg);
             Err(anyhow!(msg))
         }
     }

@@ -218,8 +218,7 @@ impl EventContext {
             )
         };
 
-        self.logger
-            .debug(format!("Making request to processed path: {full_path}"));
+        log_debug!(self.logger, "Making request to processed path: {full_path}");
 
         self.node_delegate
             .remote_request::<P>(&full_path, payload)
@@ -262,8 +261,7 @@ impl EventContext {
             )
         };
 
-        self.logger
-            .debug(format!("Making request to processed path: {full_path}"));
+        log_debug!(self.logger, "Making request to processed path: {full_path}");
 
         self.node_delegate.request::<P>(&full_path, payload).await
     }

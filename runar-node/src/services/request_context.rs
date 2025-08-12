@@ -224,8 +224,7 @@ impl RequestContext {
             )
         };
 
-        self.logger
-            .debug(format!("Publishing to processed topic: {full_topic}"));
+        log_debug!(self.logger, "Publishing to processed topic: {full_topic}");
         self.node_delegate.publish(&full_topic, data).await
     }
 
@@ -264,8 +263,7 @@ impl RequestContext {
             )
         };
 
-        self.logger
-            .debug(format!("Publishing (with options) to: {full_topic}"));
+        log_debug!(self.logger, "Publishing (with options) to: {full_topic}");
         self.node_delegate
             .publish_with_options(&full_topic, data, options)
             .await
@@ -345,8 +343,7 @@ impl RequestContext {
             )
         };
 
-        self.logger
-            .debug(format!("Making request to processed path: {full_path}"));
+        log_debug!(self.logger, "Making request to processed path: {full_path}");
 
         self.node_delegate.request::<P>(&full_path, payload).await
     }
