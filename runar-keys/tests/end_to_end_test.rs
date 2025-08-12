@@ -218,6 +218,67 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         parsed_cert.validity().not_after
     );
 
+    // Validate critical extensions and signature algorithm
+    use x509_parser::extensions::ParsedExtension;
+    let mut has_basic_constraints = false;
+    let mut has_key_usage = false;
+    let mut has_eku = false;
+    let mut leaf_ski: Option<Vec<u8>> = None;
+    let mut leaf_aki: Option<Vec<u8>> = None;
+    for ext in parsed_cert.extensions() {
+        match &ext.parsed_extension() {
+            ParsedExtension::BasicConstraints(bc) => {
+                has_basic_constraints = true;
+                assert!(ext.critical, "BasicConstraints must be critical");
+                assert!(bc.ca == false, "Leaf must be notCA");
+            }
+            ParsedExtension::KeyUsage(ku) => {
+                has_key_usage = true;
+                assert!(ext.critical, "KeyUsage must be critical");
+                assert!(
+                    ku.digital_signature(),
+                    "KeyUsage must include digitalSignature"
+                );
+                assert!(
+                    !ku.key_encipherment(),
+                    "KeyUsage must not include keyEncipherment for ECDSA"
+                );
+            }
+            ParsedExtension::ExtendedKeyUsage(eku) => {
+                has_eku = true;
+                assert!(eku.server_auth, "EKU must include serverAuth");
+                assert!(eku.client_auth, "EKU must include clientAuth");
+            }
+            ParsedExtension::SubjectKeyIdentifier(ski) => {
+                leaf_ski = Some(ski.0.to_vec());
+            }
+            ParsedExtension::AuthorityKeyIdentifier(aki) => {
+                if let Some(keyid) = &aki.key_identifier {
+                    leaf_aki = Some(keyid.0.to_vec());
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        has_basic_constraints,
+        "Leaf certificate must have BasicConstraints"
+    );
+    assert!(has_key_usage, "Leaf certificate must have KeyUsage");
+    assert!(has_eku, "Leaf certificate must have ExtendedKeyUsage");
+    // SKI must be present and typically 20 bytes (SHA-1 key identifier)
+    assert!(leaf_ski.is_some(), "Leaf certificate must have SKI");
+    if let Some(ref ski_bytes) = leaf_ski {
+        assert_eq!(ski_bytes.len(), 20, "Leaf SKI should be 20 bytes");
+    }
+
+    // Signature algorithm must be ECDSA with SHA-384 (1.2.840.10045.4.3.3)
+    assert_eq!(
+        parsed_cert.signature_algorithm.algorithm.to_id_string(),
+        "1.2.840.10045.4.3.3",
+        "Leaf signature algorithm must be ECDSA-SHA384"
+    );
+
     // ==============================================
     // 2. PUBLIC KEY EXTRACTION AND VALIDATION
     // ==============================================
@@ -323,6 +384,44 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("      ✅ ECDSA P-384 public key format and length");
     println!("      ✅ PKCS#8 private key structure");
     println!("      ✅ Certificate subject validation");
+
+    // Validate CA certificate profile
+    let ca_cert_der = &quic_certs[1];
+    let (_, ca_cert) = x509_parser::certificate::X509Certificate::from_der(ca_cert_der.as_ref())
+        .expect("Failed to parse CA certificate");
+    use x509_parser::extensions::ParsedExtension as CaParsedExt;
+    let mut ca_has_bc = false;
+    let mut ca_has_ku = false;
+    let mut ca_ski: Option<Vec<u8>> = None;
+    for ext in ca_cert.extensions() {
+        match &ext.parsed_extension() {
+            CaParsedExt::BasicConstraints(bc) => {
+                ca_has_bc = true;
+                assert!(ext.critical, "CA BasicConstraints must be critical");
+                assert!(bc.ca, "CA certificate must be CA=true");
+                assert_eq!(bc.path_len_constraint, Some(0), "CA pathLen should be 0");
+            }
+            CaParsedExt::KeyUsage(ku) => {
+                ca_has_ku = true;
+                assert!(ext.critical, "CA KeyUsage must be critical");
+                assert!(ku.key_cert_sign(), "CA must have keyCertSign");
+                assert!(ku.crl_sign(), "CA must have cRLSign");
+            }
+            CaParsedExt::SubjectKeyIdentifier(ski) => {
+                ca_ski = Some(ski.0.to_vec());
+            }
+            _ => {}
+        }
+    }
+    assert!(ca_has_bc, "CA certificate must have BasicConstraints");
+    assert!(ca_has_ku, "CA certificate must have KeyUsage");
+
+    // AKI of leaf must match SKI of CA
+    if let (Some(aki), Some(ca_ski_bytes)) = (leaf_aki, ca_ski) {
+        assert_eq!(aki, ca_ski_bytes, "Leaf AKI must match CA SKI");
+    } else {
+        panic!("Missing AKI (leaf) or SKI (CA)");
+    }
 
     // ==========================================
     // ENHANCED KEY MANAGEMENT FEATURES
@@ -695,5 +794,70 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   • Storage encryption: ✅");
     println!("   • State persistence: ✅");
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_negative_csr_cn_mismatch_rejected() -> Result<()> {
+    let mobile_logger = create_test_logger("mobile-neg-cn");
+    let mut mobile = MobileKeyManager::new(mobile_logger)?;
+    let node_logger = create_test_logger("node-neg-cn");
+    let mut node = NodeKeyManager::new(node_logger)?;
+
+    // Generate valid setup token
+    let token = node.generate_csr()?;
+
+    // Tamper node_id so CN won't match
+    let mut bad_token = token.clone();
+    bad_token.node_id = "BADNODEIDXYZ".into();
+
+    let res = mobile.process_setup_token(&bad_token);
+    assert!(res.is_err(), "Expected CN mismatch to be rejected");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_negative_tampered_csr_signature_rejected() -> Result<()> {
+    let mobile_logger = create_test_logger("mobile-neg-csr");
+    let mut mobile = MobileKeyManager::new(mobile_logger)?;
+    let node_logger = create_test_logger("node-neg-csr");
+    let mut node = NodeKeyManager::new(node_logger)?;
+
+    let mut token = node.generate_csr()?;
+    // Flip one byte in csr_der to break signature
+    if let Some(b) = token.csr_der.get_mut(0) {
+        *b ^= 0xFF;
+    }
+
+    let res = mobile.process_setup_token(&token);
+    assert!(res.is_err(), "Expected tampered CSR to be rejected");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_negative_ecies_wrong_recipient_fails() -> Result<()> {
+    let logger = create_test_logger("neg-ecies");
+    let node = NodeKeyManager::new(logger.clone())?;
+    let other_node = NodeKeyManager::new(create_test_logger("neg-ecies-other"))?;
+
+    // Encrypt a message for other_node's public key
+    let msg = b"secret";
+    let ct = node.encrypt_message_for_mobile(msg, &other_node.get_node_public_key())?;
+
+    // Attempt to decrypt with node (wrong recipient)
+    let res = node.decrypt_message_from_mobile(&ct);
+    assert!(res.is_err(), "Decrypting with wrong recipient should fail");
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_negative_ecies_short_payload_fails() -> Result<()> {
+    let logger = create_test_logger("neg-short");
+    let node = NodeKeyManager::new(logger)?;
+
+    // Shorter than 97 bytes (P-384 uncompressed pubkey)
+    let ct = vec![0u8; 10];
+    let res = node.decrypt_message_from_mobile(&ct);
+    assert!(res.is_err(), "Short ECIES payload should fail to decrypt");
     Ok(())
 }

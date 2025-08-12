@@ -405,9 +405,15 @@ impl CertificateAuthority {
             })?;
 
         cert_builder
-            .append_extension(KeyUsage::new().digital_signature().build().map_err(|e| {
-                KeyError::CertificateError(format!("Failed to build KeyUsage ext: {e}"))
-            })?)
+            .append_extension(
+                KeyUsage::new()
+                    .digital_signature()
+                    .critical()
+                    .build()
+                    .map_err(|e| {
+                        KeyError::CertificateError(format!("Failed to build KeyUsage ext: {e}"))
+                    })?,
+            )
             .map_err(|e| {
                 KeyError::CertificateError(format!("Failed to append KeyUsage ext: {e}"))
             })?;

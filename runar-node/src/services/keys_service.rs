@@ -6,9 +6,9 @@
 //
 // This service provides access to service metadata like states, actions, events, etc.
 // through standard request paths like:
-// - internal/registry/services/list
-// - internal/registry/services/{service_path}
-// - internal/registry/services/{service_path}/state
+// - $registry/services/list
+// - $registry/services/{service_path}
+// - $registry/services/{service_path}/state
 
 use anyhow::Result;
 use async_trait::async_trait;
