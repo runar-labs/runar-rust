@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use runar_common::logging::Logger;
 use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage};
+use runar_macros_common::{log_debug, log_error, log_info};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -33,16 +34,17 @@ impl SetupServer {
     pub async fn wait_for_setup_data(&self) -> Result<SetupData> {
         let address = format!("{}:{}", self.ip, self.port);
 
-        self.logger
-            .info(format!("Starting setup server on {address}"));
+        log_info!(self.logger, "Starting setup server on {address}");
 
         // Create TCP listener
         let listener = TcpListener::bind(&address)
             .await
             .with_context(|| format!("Failed to bind to {address}"))?;
 
-        self.logger
-            .info("Setup server started - waiting for mobile device connection...");
+        log_info!(
+            self.logger,
+            "Setup server started - waiting for mobile device connection..."
+        );
 
         // Convert to stream for easier handling
         let mut stream = TcpListenerStream::new(listener);
@@ -50,25 +52,23 @@ impl SetupServer {
         while let Some(stream_result) = stream.next().await {
             match stream_result {
                 Ok(socket) => {
-                    self.logger.info("Mobile device connected");
+                    log_info!(self.logger, "Mobile device connected");
 
                     // Handle the connection
                     match self.handle_connection(socket).await {
                         Ok(setup_data) => {
-                            self.logger.info("Setup data received successfully");
+                            log_info!(self.logger, "Setup data received successfully");
                             return Ok(setup_data);
                         }
                         Err(e) => {
-                            self.logger
-                                .error(format!("Failed to handle connection: {e}"));
+                            log_error!(self.logger, "Failed to handle connection: {e}");
                             // Continue waiting for another connection
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    self.logger
-                        .error(format!("Failed to accept connection: {e}"));
+                    log_error!(self.logger, "Failed to accept connection: {e}");
                     return Err(anyhow::anyhow!("Failed to accept connection: {}", e));
                 }
             }
@@ -78,14 +78,16 @@ impl SetupServer {
     }
 
     async fn handle_connection(&self, socket: TcpStream) -> Result<SetupData> {
-        self.logger.debug("Handling mobile device connection");
+        log_debug!(self.logger, "Handling mobile device connection");
 
         // Read both certificate and network key messages from the socket
         let certificate_message = self.read_certificate_message(&socket).await?;
         let network_key_message = self.read_network_key_message(&socket).await?;
 
-        self.logger
-            .info("Certificate and network key messages received and parsed successfully");
+        log_info!(
+            self.logger,
+            "Certificate and network key messages received and parsed successfully"
+        );
 
         Ok(SetupData {
             certificate_message,
@@ -149,8 +151,7 @@ impl SetupServer {
             return Err(anyhow::anyhow!("Invalid message length: 0"));
         }
 
-        self.logger
-            .debug(format!("Reading message of {message_length} bytes"));
+        log_debug!(self.logger, "Reading message of {message_length} bytes");
 
         // Read the actual message - ensure complete read
         let mut message_bytes = vec![0u8; message_length];
@@ -194,7 +195,7 @@ impl SetupServer {
         let message: T =
             bincode::deserialize(&message_bytes).context("Failed to deserialize message")?;
 
-        self.logger.debug("Message deserialized successfully");
+        log_debug!(self.logger, "Message deserialized successfully");
 
         Ok(message)
     }

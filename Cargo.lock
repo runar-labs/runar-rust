@@ -3304,6 +3304,7 @@ dependencies = [
  "qrcode",
  "runar-keys",
  "runar_common",
+ "runar_macros_common",
  "runar_node",
  "serde",
  "serde_json",

@@ -7,11 +7,11 @@
 //! - Configuration storage
 
 use anyhow::{Context, Result};
-use runar_common::{compact_ids::compact_id, logging::Logger};
-use runar_keys::{
-    mobile::{NodeCertificateMessage, SetupToken},
-    NodeKeyManager,
-};
+use runar_common::compact_ids::compact_id;
+use runar_common::logging::Logger;
+use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
+use runar_keys::node::NodeKeyManager;
+use runar_macros_common::{log_debug, log_info};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -64,7 +64,7 @@ impl InitCommand {
     }
 
     pub async fn run(&self, force: bool) -> Result<()> {
-        self.logger.info("Starting Runar node initialization...");
+        log_info!(self.logger, "Starting Runar node initialization...");
 
         // Check if config already exists
         if NodeConfig::exists(&self.config_dir) && !force {
@@ -74,47 +74,57 @@ impl InitCommand {
         }
 
         if force {
-            self.logger
-                .info("Force flag specified - will re-initialize existing configuration");
+            log_info!(
+                self.logger,
+                "Force flag specified - will re-initialize existing configuration"
+            );
         }
 
         // Step 1: Generate node keys and CSR
-        self.logger
-            .info("Step 1: Generating node keys and certificate signing request...");
+        log_info!(
+            self.logger,
+            "Step 1: Generating node keys and certificate signing request..."
+        );
         let (mut node_key_manager, _setup_token) = self.generate_node_keys()?;
 
         // Step 2: Create temporary setup configuration
-        self.logger
-            .info("Step 2: Creating temporary setup configuration...");
+        log_info!(
+            self.logger,
+            "Step 2: Creating temporary setup configuration..."
+        );
         let setup_config = self.create_setup_config(&node_key_manager)?;
 
         // Step 3: Generate QR code
-        self.logger
-            .info("Step 3: Generating QR code for mobile setup...");
+        log_info!(
+            self.logger,
+            "Step 3: Generating QR code for mobile setup..."
+        );
         self.generate_qr_code(&_setup_token, &setup_config)?;
 
         // Step 4: Start setup server and wait for mobile
-        self.logger
-            .info("Step 4: Starting setup server and waiting for mobile device...");
+        log_info!(
+            self.logger,
+            "Step 4: Starting setup server and waiting for mobile device..."
+        );
         let setup_data = self
             .wait_for_mobile_setup(&_setup_token, &setup_config)
             .await?;
 
         // Step 5: Install certificate
-        self.logger.info("Step 5: Installing certificate...");
+        log_info!(self.logger, "Step 5: Installing certificate...");
         self.install_certificate(&mut node_key_manager, setup_data.certificate_message)?;
 
         // Step 6: Install network key
-        self.logger.info("Step 6: Installing network key...");
+        log_info!(self.logger, "Step 6: Installing network key...");
         let network_id = setup_data.network_key_message.network_id.clone();
         self.install_network_key(&mut node_key_manager, setup_data.network_key_message)?;
 
         // Step 7: Save configuration and keys
-        self.logger.info("Step 7: Saving configuration and keys...");
+        log_info!(self.logger, "Step 7: Saving configuration and keys...");
         self.save_configuration(&setup_config, &node_key_manager, &network_id)?;
 
         // Step 8: Complete initialization
-        self.logger.info("Step 8: Initialization complete!");
+        log_info!(self.logger, "Step 8: Initialization complete!");
         self.print_success_message(&setup_config);
 
         Ok(())
@@ -133,10 +143,12 @@ impl InitCommand {
         let node_public_key = node_key_manager.get_node_public_key();
         let node_id = compact_id(&node_public_key);
 
-        self.logger
-            .info(format!("Node identity created: {node_id}"));
-        self.logger
-            .debug(format!("Node public key: {}", compact_id(&node_public_key)));
+        log_info!(self.logger, "Node identity created: {node_id}");
+        log_debug!(
+            self.logger,
+            "Node public key: {}",
+            compact_id(&node_public_key)
+        );
 
         Ok((node_key_manager, _setup_token))
     }
@@ -147,14 +159,16 @@ impl InitCommand {
         // Create temporary setup config with unique keys name for OS key store
         let setup_config = SetupConfig::new(compact_id(&node_public_key));
 
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Setup configuration created with keys name: {}",
             setup_config.get_keys_name()
-        ));
-        self.logger.debug(format!(
+        );
+        log_debug!(
+            self.logger,
             "Setup server will be available at: {}",
             setup_config.get_setup_server_address()
-        ));
+        );
 
         Ok(setup_config)
     }
@@ -231,7 +245,7 @@ impl InitCommand {
             .await
             .context("Failed to receive setup data from mobile device")?;
 
-        self.logger.info("Setup data received from mobile device");
+        log_info!(self.logger, "Setup data received from mobile device");
 
         Ok(setup_data)
     }
@@ -246,7 +260,7 @@ impl InitCommand {
             .context("Failed to install certificate")?;
 
         let status = node_key_manager.get_certificate_status();
-        self.logger.info(format!("Certificate status: {status:?}"));
+        log_info!(self.logger, "Certificate status: {status:?}");
 
         if status != runar_keys::node::CertificateStatus::Valid {
             return Err(anyhow::anyhow!(
@@ -255,20 +269,20 @@ impl InitCommand {
             ));
         }
 
-        self.logger.info("Certificate installed successfully");
+        log_info!(self.logger, "Certificate installed successfully");
         Ok(())
     }
 
     fn install_network_key(
         &self,
         node_key_manager: &mut NodeKeyManager,
-        network_key_message: runar_keys::mobile::NetworkKeyMessage,
+        network_key_message: NetworkKeyMessage,
     ) -> Result<()> {
         node_key_manager
             .install_network_key(network_key_message)
             .context("Failed to install network key")?;
 
-        self.logger.info("Network key installed successfully");
+        log_info!(self.logger, "Network key installed successfully");
         Ok(())
     }
 
@@ -310,14 +324,13 @@ impl InitCommand {
             .store_node_keys(setup_config.get_keys_name(), &serialized_state)
             .context("Failed to store node keys in OS key store")?;
 
-        self.logger
-            .info(format!("Configuration saved to {:?}", self.config_dir));
-        self.logger.info(format!(
+        log_info!(self.logger, "Configuration saved to {:?}", self.config_dir);
+        log_info!(
+            self.logger,
             "Node keys stored securely in OS key store: {}",
             setup_config.get_keys_name()
-        ));
-        self.logger
-            .info(format!("Default network ID: {network_id}"));
+        );
+        log_info!(self.logger, "Default network ID: {network_id}");
 
         Ok(())
     }
