@@ -1659,7 +1659,10 @@ impl NetworkTransport for QuicTransport {
             peer_state.connection.close(0u32.into(), b"disconnect");
             log_info!(self.logger, "Disconnected from peer: {node_id}");
         } else {
-            log_warn!(self.logger, "Attempted to disconnect from unknown peer: {node_id}");
+            log_warn!(
+                self.logger,
+                "Attempted to disconnect from unknown peer: {node_id}"
+            );
         }
         Ok(())
     }

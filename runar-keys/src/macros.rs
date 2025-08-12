@@ -36,5 +36,3 @@ macro_rules! log_error {
         }
     }}
 }
-
-

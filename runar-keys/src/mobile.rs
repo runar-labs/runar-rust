@@ -8,12 +8,12 @@ use crate::certificate::{
 };
 use crate::derivation::derive_agreement_from_master;
 use crate::error::{KeyError, Result};
+use crate::{log_debug, log_error, log_info};
 use p384::elliptic_curve::sec1::ToEncodedPoint;
 use p384::SecretKey as P384SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
-use crate::{log_debug, log_error, log_info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -171,7 +171,10 @@ impl MobileKeyManager {
         self.network_public_keys
             .insert(network_id.clone(), network_public_key.to_vec());
 
-        log_info!(self.logger, "Network public key installed with ID: {network_id}");
+        log_info!(
+            self.logger,
+            "Network public key installed with ID: {network_id}"
+        );
         Ok(())
     }
 
@@ -192,7 +195,10 @@ impl MobileKeyManager {
         )?;
         self.user_root_key = Some(root_key);
         self.user_root_agreement = Some(agreement_secret);
-        log_info!(self.logger, "User root key initialized (private key secured on mobile)");
+        log_info!(
+            self.logger,
+            "User root key initialized (private key secured on mobile)"
+        );
 
         // Return the agreement public key bytes for ECIES recipients
         let agr_pub = self
@@ -346,7 +352,10 @@ impl MobileKeyManager {
 
         self.network_data_keys
             .insert(network_id.clone(), network_key);
-        log_info!(self.logger, "Network data key generated with ID: {network_id}");
+        log_info!(
+            self.logger,
+            "Network data key generated with ID: {network_id}"
+        );
 
         Ok(network_id)
     }
@@ -742,7 +751,10 @@ impl MobileKeyManager {
             self.encrypt_key_with_ecdsa(&network_private_key, node_public_key)?;
 
         let node_id = compact_id(node_public_key);
-        log_info!(self.logger, "Network key encrypted for node {node_id} with ECIES");
+        log_info!(
+            self.logger,
+            "Network key encrypted for node {node_id} with ECIES"
+        );
 
         Ok(NetworkKeyMessage {
             network_id: network_id.to_string(),
@@ -813,14 +825,20 @@ impl MobileKeyManager {
         node_public_key: &[u8],
     ) -> Result<Vec<u8>> {
         let message_len = message.len();
-        log_debug!(self.logger, "Encrypting message for node ({message_len} bytes)");
+        log_debug!(
+            self.logger,
+            "Encrypting message for node ({message_len} bytes)"
+        );
         self.encrypt_key_with_ecdsa(message, node_public_key)
     }
 
     /// Decrypt a message from a node using the user's root key (ECIES)
     pub fn decrypt_message_from_node(&self, encrypted_message: &[u8]) -> Result<Vec<u8>> {
         let encrypted_message_len = encrypted_message.len();
-        log_debug!(self.logger, "Decrypting message from node ({encrypted_message_len} bytes)");
+        log_debug!(
+            self.logger,
+            "Decrypting message from node ({encrypted_message_len} bytes)"
+        );
         let root_agreement = self.user_root_agreement.as_ref().ok_or_else(|| {
             KeyError::KeyNotFound("User root agreement key not initialized".to_string())
         })?;

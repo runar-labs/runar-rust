@@ -135,15 +135,15 @@ impl LifecycleContext {
 
     pub async fn remote_request<P>(
         &self,
-        topic: impl Into<String>,
+        topic: impl AsRef<str>,
         payload: Option<P>,
     ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             // Treat as service/action path
             format!("{0}:{1}", self.network_id, topic_string)
@@ -172,13 +172,13 @@ impl LifecycleContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (current network ID added)
     /// - Simple action: "action" (current network ID and service path added - calls own service)
-    pub async fn request<P>(&self, topic: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, topic: impl AsRef<str>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
@@ -220,13 +220,13 @@ impl LifecycleContext {
     /// Publish an event with options (e.g., retain_for for include_past support)
     pub async fn publish_with_options(
         &self,
-        topic: impl Into<String>,
+        topic: impl AsRef<str>,
         data: Option<ArcValue>,
         options: PublishOptions,
     ) -> Result<()> {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
@@ -253,12 +253,12 @@ impl LifecycleContext {
     /// or Err with timeout message if no event occurs.
     pub async fn on(
         &self,
-        topic: impl Into<String>,
+        topic: impl AsRef<str>,
         options: Option<OnOptions>,
     ) -> Result<Option<ArcValue>> {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
