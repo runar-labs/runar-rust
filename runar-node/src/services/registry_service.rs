@@ -18,6 +18,7 @@ use crate::routing::TopicPath;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::{AbstractService, ServiceState};
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug, log_error, log_info};
 use runar_serializer::ArcValue;
 
 /// Registry Info Service - provides information about registered services without holding state
@@ -50,14 +51,15 @@ impl RegistryService {
     fn extract_service_path(&self, ctx: &RequestContext) -> Result<String> {
         // Look for the path parameter that was extracted during template matching
         if let Some(path) = ctx.path_params.get("service_path") {
-            ctx.logger
-                .debug(format!("Using service_path '{path}' from path parameters"));
+            log_debug!(
+                ctx.logger,
+                "Using service_path '{path}' from path parameters"
+            );
             return Ok(path.clone());
         }
 
         // If we get here, we couldn't find the target service path
-        ctx.logger
-            .error("Missing required 'service_path' parameter");
+        log_error!(ctx.logger, "Missing required 'service_path' parameter");
         Err(anyhow!("Missing required 'service_path' parameter"))
     }
 
@@ -65,9 +67,10 @@ impl RegistryService {
     async fn register_list_services_action(&self, context: &LifecycleContext) -> Result<()> {
         let self_clone = self.clone();
         // Add debug to see what is registered
-        context
-            .logger
-            .debug("Registering list_services handler with path: services/list");
+        log_debug!(
+            context.logger,
+            "Registering list_services handler with path: services/list"
+        );
         context
             .register_action(
                 "services/list",
@@ -81,7 +84,7 @@ impl RegistryService {
                 }),
             )
             .await?;
-        context.logger.debug("Registered services/list action");
+        log_debug!(context.logger, "Registered services/list action");
         Ok(())
     }
 
@@ -90,9 +93,10 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context
-            .logger
-            .debug("Registering service_info handler with path: services/{service_path}");
+        log_debug!(
+            context.logger,
+            "Registering service_info handler with path: services/{{service_path}}"
+        );
 
         context
             .register_action(
@@ -108,9 +112,10 @@ impl RegistryService {
             )
             .await?;
 
-        context
-            .logger
-            .debug("Registered services/{service_path} action");
+        log_debug!(
+            context.logger,
+            "Registered services/{{service_path}} action"
+        );
         Ok(())
     }
 
@@ -119,9 +124,10 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context
-            .logger
-            .debug("Registering service_state handler with path: services/{service_path}/state");
+        log_debug!(
+            context.logger,
+            "Registering service_state handler with path: services/{{service_path}}/state"
+        );
 
         context
             .register_action(
@@ -138,9 +144,10 @@ impl RegistryService {
             )
             .await?;
 
-        context
-            .logger
-            .debug("Registered services/{service_path}/state action");
+        log_debug!(
+            context.logger,
+            "Registered services/{{service_path}}/state action"
+        );
         Ok(())
     }
 
@@ -149,9 +156,10 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context
-            .logger
-            .debug("Registering pause handler with path: services/{service_path}/pause");
+        log_debug!(
+            context.logger,
+            "Registering pause handler with path: services/{{service_path}}/pause"
+        );
 
         context
             .register_action(
@@ -163,9 +171,10 @@ impl RegistryService {
             )
             .await?;
 
-        context
-            .logger
-            .debug("Registered services/{service_path}/pause action");
+        log_debug!(
+            context.logger,
+            "Registered services/{{service_path}}/pause action"
+        );
         Ok(())
     }
 
@@ -174,9 +183,10 @@ impl RegistryService {
         let self_clone = self.clone();
 
         // Add debug to see what is registered
-        context
-            .logger
-            .debug("Registering resume handler with path: services/{service_path}/resume");
+        log_debug!(
+            context.logger,
+            "Registering resume handler with path: services/{{service_path}}/resume"
+        );
 
         context
             .register_action(
@@ -188,9 +198,10 @@ impl RegistryService {
             )
             .await?;
 
-        context
-            .logger
-            .debug("Registered services/{service_path}/resume action");
+        log_debug!(
+            context.logger,
+            "Registered services/{{service_path}}/resume action"
+        );
         Ok(())
     }
 
@@ -200,7 +211,7 @@ impl RegistryService {
         _params: ArcValue,
         ctx: RequestContext,
     ) -> Result<ArcValue> {
-        ctx.logger.debug("Listing all services");
+        log_debug!(ctx.logger, "Listing all services");
 
         // Get all service metadata directly
         let service_metadata = self
@@ -247,8 +258,7 @@ impl RegistryService {
         {
             Ok(ArcValue::new_struct(service_metadata.clone()))
         } else {
-            ctx.logger
-                .debug(format!("Service '{actual_service_path}' not found"));
+            log_debug!(ctx.logger, "Service '{actual_service_path}' not found");
             Ok(ArcValue::null())
         }
     }
@@ -268,9 +278,10 @@ impl RegistryService {
         let network_id_string = ctx.network_id().clone();
         let service_topic = TopicPath::new_service(&network_id_string, &service_path);
 
-        ctx.logger.debug(format!(
+        log_debug!(
+            ctx.logger,
             "Getting service state for '{service_path}' (is_local: {is_local})"
-        ));
+        );
 
         // Get service state based on is_local parameter
         let service_state = if is_local {
@@ -286,9 +297,10 @@ impl RegistryService {
         match service_state {
             Some(state) => Ok(ArcValue::new_struct(state)),
             None => {
-                ctx.logger.debug(format!(
+                log_debug!(
+                    ctx.logger,
                     "Service '{service_path}' not found (param is_local: {is_local})"
-                ));
+                );
                 Ok(ArcValue::new_struct(ServiceState::Unknown))
             }
         }
@@ -328,12 +340,10 @@ impl RegistryService {
                 )
                 .await?;
 
-            ctx.logger
-                .info(format!("Service '{service_path}' paused successfully"));
+            log_info!(ctx.logger, "Service '{service_path}' paused successfully");
             Ok(ArcValue::new_struct(ServiceState::Paused))
         } else {
-            ctx.logger
-                .debug(format!("Service '{service_path}' not found"));
+            log_debug!(ctx.logger, "Service '{service_path}' not found");
             Ok(ArcValue::null())
         }
     }
@@ -372,12 +382,10 @@ impl RegistryService {
                 )
                 .await?;
 
-            ctx.logger
-                .info(format!("Service '{service_path}' resumed successfully"));
+            log_info!(ctx.logger, "Service '{service_path}' resumed successfully");
             Ok(ArcValue::new_struct(ServiceState::Running))
         } else {
-            ctx.logger
-                .debug(format!("Service '{service_path}' not found"));
+            log_debug!(ctx.logger, "Service '{service_path}' not found");
             Ok(ArcValue::null())
         }
     }
@@ -413,57 +421,61 @@ impl AbstractService for RegistryService {
     /// following the path template pattern for consistent parameter extraction.
     /// Each path template defines a specific API endpoint with parameters.
     async fn init(&self, context: LifecycleContext) -> Result<()> {
-        context.logger.info("Initializing Registry Service");
+        log_info!(context.logger, "Initializing Registry Service");
 
         // Register all actions with their template patterns
-        context
-            .logger
-            .debug("Registering Registry Service action handlers");
+        log_debug!(
+            context.logger,
+            "Registering Registry Service action handlers"
+        );
 
         // Services list does not require parameters
         self.register_list_services_action(&context).await?;
-        context
-            .logger
-            .debug("Registered handler for listing all services");
+        log_debug!(
+            context.logger,
+            "Registered handler for listing all services"
+        );
 
         // Service info uses the {service_path} parameter
         self.register_service_info_action(&context).await?;
-        context
-            .logger
-            .debug("Registered handler for service info with path parameter");
+        log_debug!(
+            context.logger,
+            "Registered handler for service info with path parameter"
+        );
 
         // Service state also uses the {service_path} parameter
         self.register_service_state_action(&context).await?;
-        context
-            .logger
-            .debug("Registered handler for service state with path parameter");
+        log_debug!(
+            context.logger,
+            "Registered handler for service state with path parameter"
+        );
 
         // Pause service uses the {service_path} parameter
         self.register_pause_action(&context).await?;
-        context
-            .logger
-            .debug("Registered handler for pause service with path parameter");
+        log_debug!(
+            context.logger,
+            "Registered handler for pause service with path parameter"
+        );
 
         // Resume service uses the {service_path} parameter
         self.register_resume_action(&context).await?;
-        context
-            .logger
-            .debug("Registered handler for resume service with path parameter");
+        log_debug!(
+            context.logger,
+            "Registered handler for resume service with path parameter"
+        );
 
-        context
-            .logger
-            .info("Registry Service initialization complete");
+        log_info!(context.logger, "Registry Service initialization complete");
 
         Ok(())
     }
 
     async fn start(&self, context: LifecycleContext) -> Result<()> {
-        context.logger.info("Starting Registry Service");
+        log_info!(context.logger, "Starting Registry Service");
         Ok(())
     }
 
     async fn stop(&self, context: LifecycleContext) -> Result<()> {
-        context.logger.info("Stopping Registry Service");
+        log_info!(context.logger, "Stopping Registry Service");
         Ok(())
     }
 }

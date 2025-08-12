@@ -2678,6 +2678,18 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "primeorder",
+ "sha2",
+]
+
+[[package]]
+name = "p384"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe42f1670a52a47d448f14b6a5c61dd78fce51856e68edaa38f7ae3a46b8d6b6"
+dependencies = [
+ "ecdsa",
+ "elliptic-curve",
+ "primeorder",
  "serdect",
  "sha2",
 ]
@@ -2911,7 +2923,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
 dependencies = [
  "elliptic-curve",
- "serdect",
 ]
 
 [[package]]
@@ -3293,6 +3304,7 @@ dependencies = [
  "qrcode",
  "runar-keys",
  "runar_common",
+ "runar_macros_common",
  "runar_node",
  "serde",
  "serde_json",
@@ -3344,8 +3356,9 @@ dependencies = [
  "ecdsa",
  "hex",
  "hkdf",
+ "log",
  "openssl",
- "p256",
+ "p384",
  "pkcs8",
  "prost",
  "rand 0.8.5",

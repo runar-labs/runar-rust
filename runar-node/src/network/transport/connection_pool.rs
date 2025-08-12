@@ -62,14 +62,14 @@ impl ConnectionPool {
     /// Get an existing peer state if it exists
     ///
     /// INTENTION: Retrieve the state for a specific peer connection.
-    pub fn get_peer(&self, peer_node_id: &String) -> Option<Arc<PeerState>> {
+    pub fn get_peer(&self, peer_node_id: &str) -> Option<Arc<PeerState>> {
         self.peers.get(peer_node_id).map(|entry| entry.clone())
     }
 
     /// Remove a peer from the connection pool
     ///
     /// INTENTION: Clean up resources when a peer is disconnected.
-    pub async fn remove_peer(&self, peer_node_id: &String) -> Result<(), NetworkError> {
+    pub async fn remove_peer(&self, peer_node_id: &str) -> Result<(), NetworkError> {
         if let Some((_, peer_state)) = self.peers.remove(peer_node_id) {
             let _ = peer_state.take_connection().await;
         }
@@ -79,7 +79,7 @@ impl ConnectionPool {
     /// Check if a peer is connected
     ///
     /// INTENTION: Determine if we have an active connection to a specific peer.
-    pub async fn is_peer_connected(&self, peer_node_id: &String) -> bool {
+    pub async fn is_peer_connected(&self, peer_node_id: &str) -> bool {
         if let Some(peer_state) = self.get_peer(peer_node_id) {
             peer_state.is_connected().await
         } else {

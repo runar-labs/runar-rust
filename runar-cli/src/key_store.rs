@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use keyring::Entry;
 use runar_common::logging::Logger;
+use runar_macros_common::log_info;
 use std::sync::Arc;
 
 /// OS Key Store for secure key storage
@@ -33,9 +34,10 @@ impl OsKeyStore {
             .set_password(&base64::engine::general_purpose::STANDARD.encode(serialized_state))
             .with_context(|| format!("Failed to store keys in OS key store: {keys_name}"))?;
 
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Node keys stored securely in OS key store: {keys_name}"
-        ));
+        );
 
         Ok(())
     }
@@ -59,9 +61,10 @@ impl OsKeyStore {
             .decode(&encoded_state)
             .with_context(|| format!("Failed to decode keys from OS key store: {keys_name}"))?;
 
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Node keys retrieved from OS key store: {keys_name}"
-        ));
+        );
 
         Ok(serialized_state)
     }

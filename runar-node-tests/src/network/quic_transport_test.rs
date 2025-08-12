@@ -142,7 +142,7 @@ async fn test_dial_cancel_on_inbound_connect(
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Exactly one side should have a single active connection and requests must work
-    assert!(t1.is_connected(id2.clone()).await || t2.is_connected(id1.clone()).await);
+    assert!(t1.is_connected(&id2).await || t2.is_connected(&id1).await);
 
     // Simple request to verify stable connection
     let topic = runar_node::routing::TopicPath::new("$registry/services/list", "main").unwrap();
@@ -194,7 +194,7 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        _network_id: Option<&String>,
+        _network_id: Option<&str>,
         _profile_public_keys: Vec<Vec<u8>>,
     ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
         Ok(runar_keys::mobile::EnvelopeEncryptedData {
@@ -630,8 +630,8 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // Bounded wait loop to allow duplicate-resolution/handshake to settle
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let (t1_connected, t2_connected) = loop {
-        let t1 = transport1.is_connected(node2_id.clone()).await;
-        let t2 = transport2.is_connected(node1_id.clone()).await;
+        let t1 = transport1.is_connected(&node2_id).await;
+        let t2 = transport2.is_connected(&node1_id).await;
         if t1 && t2 {
             break (t1, t2);
         }
@@ -718,7 +718,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
 
     // Reconfirm connectivity just before request; attempt idempotent reconnect if needed
     if !sender_transport
-        .is_connected(compact_id(&receiver_info.node_public_key))
+        .is_connected(&compact_id(&receiver_info.node_public_key))
         .await
     {
         let peer_info = PeerInfo::new(
@@ -729,7 +729,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         loop {
             if sender_transport
-                .is_connected(compact_id(&receiver_info.node_public_key))
+                .is_connected(&compact_id(&receiver_info.node_public_key))
                 .await
             {
                 break;
@@ -855,8 +855,8 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     }
 
     // Check connection status
-    let a_connected_to_b = transport1.is_connected(node2_id.clone()).await;
-    let b_connected_to_a = transport2.is_connected(node1_id.clone()).await;
+    let a_connected_to_b = transport1.is_connected(&node2_id).await;
+    let b_connected_to_a = transport2.is_connected(&node1_id).await;
 
     logger.info("\n CONNECTION STATUS:");
     logger.info(format!("  - Node 1 → Node 2: {a_connected_to_b}"));
@@ -1604,7 +1604,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
     // Allow duplicate-resolution to settle
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if t1.is_connected(node2_id.clone()).await && t2.is_connected(node1_id.clone()).await {
+        if t1.is_connected(&node2_id).await && t2.is_connected(&node1_id).await {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -1614,7 +1614,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
     }
 
     assert!(
-        t1.is_connected(node2_id.clone()).await && t2.is_connected(node1_id.clone()).await,
+        t1.is_connected(&node2_id).await && t2.is_connected(&node1_id).await,
         "both directions should be connected after simultaneous dial"
     );
 
@@ -1928,7 +1928,7 @@ async fn test_capability_version_bump_across_reconnect(
         )
         .await?;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !t1.is_connected(id2.clone()).await || !t2.is_connected(id1.clone()).await {
+    while !t1.is_connected(&id2).await || !t2.is_connected(&id1).await {
         if tokio::time::Instant::now() >= deadline {
             break;
         }
@@ -1956,7 +1956,7 @@ async fn test_capability_version_bump_across_reconnect(
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Basic check: still connected both ways
-    assert!(t1.is_connected(id2.clone()).await && t2.is_connected(id1.clone()).await);
+    assert!(t1.is_connected(&id2).await && t2.is_connected(&id1).await);
 
     t1.stop().await?;
     t2.stop().await?;
@@ -2125,7 +2125,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
 
     // Allow final settling
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert!(t1.is_connected(id2.clone()).await && t2.is_connected(id1.clone()).await);
+    assert!(t1.is_connected(&id2).await && t2.is_connected(&id1).await);
 
     // Verify no flapping: exactly one Up per side, and no Down
     let ev1 = ev1.lock().await.clone();

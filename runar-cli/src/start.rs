@@ -4,13 +4,15 @@
 //! that were created during initialization.
 
 use anyhow::{Context, Result};
+
 use runar_common::logging::{Component, Logger};
-use runar_keys::NodeKeyManager;
-use runar_node::{Node, NodeConfig as RunarNodeConfig};
+use runar_keys::node::NodeKeyManager;
+use runar_macros_common::log_info;
+use runar_node::{Node, NodeConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::config::NodeConfig;
+use crate::config::NodeConfig as CliNodeConfig;
 use crate::key_store::OsKeyStore;
 
 pub struct StartCommand {
@@ -24,17 +26,22 @@ impl StartCommand {
     }
 
     pub async fn run(&self, config_path: Option<PathBuf>) -> Result<()> {
-        self.logger.info("Starting Runar node...");
+        log_info!(self.logger, "Starting Runar node...");
 
         // Load configuration
         let config = self.load_configuration(config_path)?;
-        self.logger
-            .info(format!("Loaded configuration for node: {}", config.node_id));
+        log_info!(
+            self.logger,
+            "Loaded configuration for node: {}",
+            config.node_id
+        );
 
         // Load node keys from OS key store
         let node_key_manager = self.load_node_keys(&config)?;
-        self.logger
-            .info("Node keys loaded successfully from OS key store");
+        log_info!(
+            self.logger,
+            "Node keys loaded successfully from OS key store"
+        );
 
         // Create Runar node configuration using production constructor
         let runar_config = self.create_runar_config(&config, &node_key_manager)?;
@@ -44,12 +51,12 @@ impl StartCommand {
             .await
             .context("Failed to create Runar node")?;
 
-        self.logger.info("Runar node created successfully");
+        log_info!(self.logger, "Runar node created successfully");
 
         // Start the node
         node.start().await.context("Failed to start Runar node")?;
 
-        self.logger.info("Runar node started successfully");
+        log_info!(self.logger, "Runar node started successfully");
         println!("🚀 Runar node is now running!");
         println!("📋 Node Information:");
         println!("   • Node ID: {}", config.node_id);
@@ -65,16 +72,16 @@ impl StartCommand {
         Ok(())
     }
 
-    fn load_configuration(&self, config_path: Option<PathBuf>) -> Result<NodeConfig> {
+    fn load_configuration(&self, config_path: Option<PathBuf>) -> Result<CliNodeConfig> {
         let config_dir = config_path
             .map(|p| p.parent().unwrap_or(&self.config_dir).to_path_buf())
             .unwrap_or(self.config_dir.clone());
 
-        NodeConfig::load(&config_dir)
+        CliNodeConfig::load(&config_dir)
             .with_context(|| format!("Failed to load configuration from {config_dir:?}"))
     }
 
-    fn load_node_keys(&self, config: &NodeConfig) -> Result<NodeKeyManager> {
+    fn load_node_keys(&self, config: &CliNodeConfig) -> Result<NodeKeyManager> {
         // Load the serialized node state from OS key store
         let key_store = OsKeyStore::new(self.logger.clone());
 
@@ -105,19 +112,20 @@ impl StartCommand {
         let node_key_manager = NodeKeyManager::from_state(node_state, key_logger)
             .context("Failed to create node key manager from state")?;
 
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Node keys loaded from OS key store: {}",
             config.keys_name
-        ));
+        );
 
         Ok(node_key_manager)
     }
 
     fn create_runar_config(
         &self,
-        config: &NodeConfig,
+        config: &CliNodeConfig,
         node_key_manager: &NodeKeyManager,
-    ) -> Result<RunarNodeConfig> {
+    ) -> Result<NodeConfig> {
         // Export the current state for the Runar node
         let node_state = node_key_manager.export_state();
         let serialized_state = bincode::serialize(&node_state)
@@ -125,7 +133,7 @@ impl StartCommand {
 
         // Create Runar node configuration using production constructor
         let mut runar_config =
-            RunarNodeConfig::new(config.node_id.clone(), config.default_network_id.clone());
+            NodeConfig::new(config.node_id.clone(), config.default_network_id.clone());
         runar_config = runar_config
             .with_additional_networks(config.network_ids.clone())
             .with_request_timeout(config.request_timeout_ms)
@@ -141,13 +149,12 @@ impl StartCommand {
             .await
             .context("Failed to create shutdown signal handler")?;
 
-        self.logger
-            .info("Shutdown signal received - stopping node...");
+        log_info!(self.logger, "Shutdown signal received - stopping node...");
 
         // Stop the node gracefully
         node.stop().await.context("Failed to stop Runar node")?;
 
-        self.logger.info("Runar node stopped successfully");
+        log_info!(self.logger, "Runar node stopped successfully");
         println!("🛑 Runar node stopped");
 
         Ok(())

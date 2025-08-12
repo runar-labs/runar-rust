@@ -16,6 +16,7 @@ use crate::services::abstract_service::AbstractService;
 use crate::services::service_registry::EventHandler;
 use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 
 // No direct key-store or label resolver – encryption handled by transport layer
@@ -97,10 +98,11 @@ impl RemoteService {
         config: CreateRemoteServicesConfig,
         dependencies: RemoteServiceDependencies,
     ) -> Result<Vec<Arc<RemoteService>>> {
-        dependencies.logger.info(format!(
+        log_info!(
+            dependencies.logger,
             "Creating RemoteServices from {} service metadata entries",
             config.services.len()
-        ));
+        );
 
         // The transport is guaranteed to be available via the dependency injection contract.
 
@@ -115,10 +117,11 @@ impl RemoteService {
             ) {
                 Ok(path) => path,
                 Err(e) => {
-                    dependencies.logger.error(format!(
+                    log_error!(
+                        dependencies.logger,
                         "Invalid service path '{path}': {e}",
                         path = service_metadata.service_path
-                    ));
+                    );
                     continue;
                 }
             };
@@ -157,9 +160,10 @@ impl RemoteService {
         }
 
         let service_count = remote_services.len();
-        dependencies
-            .logger
-            .info(format!("Created {service_count} RemoteService instances"));
+        log_info!(
+            dependencies.logger,
+            "Created {service_count} RemoteService instances"
+        );
         Ok(remote_services)
     }
 
@@ -192,10 +196,11 @@ impl RemoteService {
                 // Generate a unique event ID
                 let event_id = Uuid::new_v4().to_string();
 
-                service_clone.logger.debug(format!(
+                log_debug!(
+                    service_clone.logger,
                     "🚀 [RemoteService] Starting remote event - Event: {event_path_clone}, Event ID: {event_id}, Target: {}",
                     service_clone.peer_node_id
-                ));
+                );
 
                 // Create the event topic path
                 let event_topic_path = match service_clone
@@ -204,9 +209,10 @@ impl RemoteService {
                 {
                     Ok(path) => path,
                     Err(e) => {
-                        service_clone.logger.error(format!(
+                        log_error!(
+                            service_clone.logger,
                             "Failed to create event topic path for {event_path_clone}: {e}"
-                        ));
+                        );
                         return Err(anyhow::anyhow!("Invalid event topic path: {e}"));
                     }
                 };
@@ -222,15 +228,17 @@ impl RemoteService {
                     .await
                 {
                     Ok(_) => {
-                        logger.info(format!(
+                        log_info!(
+                            logger,
                             "✅ [RemoteService] Event published successfully - ID: {event_id}"
-                        ));
+                        );
                         Ok(())
                     }
                     Err(e) => {
-                        logger.error(format!(
+                        log_error!(
+                            logger,
                             "❌ [RemoteService] Remote event failed {event_id}: {e}"
-                        ));
+                        );
                         Err(anyhow::anyhow!("Remote event error: {e}"))
                     }
                 }
@@ -264,9 +272,10 @@ impl RemoteService {
                 // Generate a unique request ID
                 let request_id = Uuid::new_v4().to_string();
 
-                logger.debug(format!(
+                log_debug!(
+                    logger,
                     "🚀 [RemoteService] Starting remote request - Action: {action}, Request ID: {request_id}, Target: {peer_node_id}"
-                ));
+                );
 
                 let profile_public_key = request_context.user_profile_public_key;
 
@@ -278,15 +287,17 @@ impl RemoteService {
                     .await
                 {
                     Ok(response) => {
-                        logger.info(format!(
+                        log_info!(
+                            logger,
                             "✅ [RemoteService] Response received successfully - ID: {request_id}"
-                        ));
+                        );
                         Ok(response)
                     }
                     Err(e) => {
-                        logger.error(format!(
+                        log_error!(
+                            logger,
                             "❌ [RemoteService] Remote request failed {request_id}: {e}"
-                        ));
+                        );
                         Err(anyhow::anyhow!("Remote service error: {e}"))
                     }
                 }
@@ -323,10 +334,11 @@ impl RemoteService {
                     .register_remote_action_handler(&action_topic_path, handler)
                     .await?;
             } else {
-                self.logger.warn(format!(
+                log_warn!(
+                    self.logger,
                     "Failed to create topic path for action: {}/{action_name}",
                     self.service_topic
-                ));
+                );
             }
         }
 
@@ -342,10 +354,11 @@ impl RemoteService {
                     .remove_remote_action_handler(&action_topic_path)
                     .await?;
             } else {
-                self.logger.warn(format!(
+                log_warn!(
+                    self.logger,
                     "Failed to create topic path for action: {}/{action_name}",
                     self.service_topic
-                ));
+                );
             }
         }
 
@@ -380,28 +393,31 @@ impl AbstractService for RemoteService {
 
     async fn init(&self, _context: LifecycleContext) -> Result<()> {
         // Remote services don't need initialization since they're just proxies
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Initialized remote service proxy for {service_topic}",
             service_topic = self.service_topic
-        ));
+        );
         Ok(())
     }
 
     async fn start(&self, _context: LifecycleContext) -> Result<()> {
         // Remote services don't need to be started
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Started remote service proxy for {service_topic}",
             service_topic = self.service_topic
-        ));
+        );
         Ok(())
     }
 
     async fn stop(&self, _context: LifecycleContext) -> Result<()> {
         // Remote services don't need to be stopped
-        self.logger.info(format!(
+        log_info!(
+            self.logger,
             "Stopped remote service proxy for {service_topic}",
             service_topic = self.service_topic
-        ));
+        );
         Ok(())
     }
 }

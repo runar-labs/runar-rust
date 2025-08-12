@@ -38,6 +38,7 @@ tokio-util = "0.7"
 runar_common = { path = "../runar-common" }
 runar-keys = { path = "../runar-keys" }
 runar_node = { path = "../runar-node" }
+runar_macros_common = { path = "../runar-macros-common" }
 
 # Logging
 log = "0.4"

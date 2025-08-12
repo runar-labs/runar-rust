@@ -32,6 +32,7 @@ use crate::routing::TopicPath;
 use crate::services::service_registry::{EventHandler, RemoteEventHandler};
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, FieldSchema};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
@@ -114,35 +115,35 @@ impl LifecycleContext {
 
     /// Helper method to log debug level message
     pub fn debug(&self, message: impl Into<String>) {
-        self.logger.debug(message);
+        log_debug!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log info level message
     pub fn info(&self, message: impl Into<String>) {
-        self.logger.info(message);
+        log_info!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log warning level message
     pub fn warn(&self, message: impl Into<String>) {
-        self.logger.warn(message);
+        log_warn!(self.logger, "{}", message.into());
     }
 
     /// Helper method to log error level message
     pub fn error(&self, message: impl Into<String>) {
-        self.logger.error(message);
+        log_error!(self.logger, "{}", message.into());
     }
 
     pub async fn remote_request<P>(
         &self,
-        topic: impl Into<String>,
+        topic: impl AsRef<str>,
         payload: Option<P>,
     ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             // Treat as service/action path
             format!("{0}:{1}", self.network_id, topic_string)
@@ -171,13 +172,13 @@ impl LifecycleContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (current network ID added)
     /// - Simple action: "action" (current network ID and service path added - calls own service)
-    pub async fn request<P>(&self, topic: impl Into<String>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, topic: impl AsRef<str>, payload: Option<P>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
@@ -219,13 +220,13 @@ impl LifecycleContext {
     /// Publish an event with options (e.g., retain_for for include_past support)
     pub async fn publish_with_options(
         &self,
-        topic: impl Into<String>,
+        topic: impl AsRef<str>,
         data: Option<ArcValue>,
         options: PublishOptions,
     ) -> Result<()> {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
@@ -252,12 +253,12 @@ impl LifecycleContext {
     /// or Err with timeout message if no event occurs.
     pub async fn on(
         &self,
-        topic: impl Into<String>,
+        topic: impl AsRef<str>,
         options: Option<OnOptions>,
     ) -> Result<Option<ArcValue>> {
-        let topic_string = topic.into();
+        let topic_string = topic.as_ref();
         let full_topic = if topic_string.contains(':') {
-            topic_string
+            topic_string.to_string()
         } else if topic_string.contains('/') {
             format!("{0}:{1}", self.network_id, topic_string)
         } else {
@@ -431,14 +432,14 @@ impl ServiceRequest {
     /// INTENTION: Create a service request using the service path and action name.
     /// This method will construct the appropriate TopicPath and initialize the request.
     pub fn new(
-        service_path: impl Into<String>,
-        action_or_event: impl Into<String>,
+        service_path: impl AsRef<str>,
+        action_or_event: impl AsRef<str>,
         data: ArcValue,
         context: Arc<RequestContext>,
     ) -> Self {
         // Create a path string combining service path and action
-        let service_path_string = service_path.into();
-        let action_or_event_string = action_or_event.into();
+        let service_path_string = service_path.as_ref();
+        let action_or_event_string = action_or_event.as_ref();
         let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method
@@ -473,14 +474,14 @@ impl ServiceRequest {
     /// INTENTION: Create a service request where the data parameter is optional.
     /// If no data is provided, ValueType::Null will be used.
     pub fn new_with_optional(
-        service_path: impl Into<String>,
-        action_or_event: impl Into<String>,
+        service_path: impl AsRef<str>,
+        action_or_event: impl AsRef<str>,
         data: Option<ArcValue>,
         context: Arc<RequestContext>,
     ) -> Self {
         // Create a TopicPath from the service path and action
-        let service_path_string = service_path.into();
-        let action_or_event_string = action_or_event.into();
+        let service_path_string = service_path.as_ref();
+        let action_or_event_string = action_or_event.as_ref();
         let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method

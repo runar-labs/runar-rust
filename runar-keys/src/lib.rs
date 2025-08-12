@@ -2,12 +2,12 @@
 //!
 //! A robust, standards-compliant certificate management system for the Runar network.
 //! This implementation replaces the existing custom certificate system with proper
-//! X.509 certificates and a unified ECDSA P-256 cryptographic foundation.
+//! X.509 certificates and a unified ECDSA P-384 cryptographic foundation.
 //!
 //! ## Key Features
 //!
 //! - **Standard X.509 Certificates**: Full compliance with PKI standards
-//! - **Unified Cryptography**: Single ECDSA P-256 algorithm throughout
+//! - **Unified Cryptography**: Single ECDSA P-384 algorithm throughout
 //! - **Proper CA Hierarchy**: Mobile CA signs all node certificates
 //! - **QUIC Compatibility**: Certificates work seamlessly with QUIC transport
 //! - **Production Quality**: Comprehensive validation and error handling
@@ -21,9 +21,12 @@
 //! ```
 
 pub mod certificate;
+pub mod derivation;
 pub mod error;
 pub mod mobile;
 pub mod node;
+#[macro_use]
+mod macros;
 
 // Re-export key types for convenience
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
@@ -42,7 +45,7 @@ pub trait EnvelopeCrypto: Send + Sync {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&String>,
+        network_id: Option<&str>,
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData>;
 

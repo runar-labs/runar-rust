@@ -421,10 +421,15 @@ impl ReplicationManager {
     async fn store_event(&self, event: &ReplicationEvent, processed: bool) -> Result<()> {
         let event_table_name = format!("{}{}", event.table_name, EVENT_TABLE_SUFFIX);
 
-        self.logger.debug(format!(
+        log_debug!(
+            self.logger,
             "Storing replication event: id={}, table={}, operation={}, origin_seq={}, processed={}",
-            event.id, event.table_name, event.operation_type, event.origin_seq, processed
-        ));
+            event.id,
+            event.table_name,
+            event.operation_type,
+            event.origin_seq,
+            processed
+        );
 
         let data_json = event.data.to_json()?;
         let data_json_str = serde_json::to_string(&data_json)?;
@@ -452,8 +457,10 @@ impl ReplicationManager {
             .await
             .map_err(|e| anyhow!("Failed to store event: {e}"))?;
 
-        self.logger
-            .debug(format!("Replication event stored in {event_table_name}"));
+        log_debug!(
+            self.logger,
+            "Replication event stored in {event_table_name}"
+        );
         Ok(())
     }
 
@@ -461,10 +468,14 @@ impl ReplicationManager {
     async fn store_event_or_ignore(&self, event: &ReplicationEvent) -> Result<usize> {
         let event_table_name = format!("{}{}", event.table_name, EVENT_TABLE_SUFFIX);
 
-        self.logger.debug(format!(
+        log_debug!(
+            self.logger,
             "Storing replication event (OR IGNORE): id={}, table={}, operation={}, origin_seq={}",
-            event.id, event.table_name, event.operation_type, event.origin_seq
-        ));
+            event.id,
+            event.table_name,
+            event.operation_type,
+            event.origin_seq
+        );
 
         let data_json = event.data.to_json()?;
         let data_json_str = serde_json::to_string(&data_json)?;
@@ -497,17 +508,19 @@ impl ReplicationManager {
     }
 
     async fn apply_event_to_database(&self, event: &ReplicationEvent) -> Result<()> {
-        self.logger.debug(format!(
+        log_debug!(
+            self.logger,
             "Applying replication event to database: id={}, table={}, operation={}",
-            event.id, event.table_name, event.operation_type
-        ));
+            event.id,
+            event.table_name,
+            event.operation_type
+        );
 
         // Parse the event data back into ArcValue
         // let event_data: ArcValue = serde_json::from_str(event.data)
         //     .map_err(|e| anyhow!("Failed to parse event data: {e}"))?;
 
-        self.logger
-            .debug(format!("Parsed event data: {:?}", event.data));
+        log_debug!(self.logger, "Parsed event data: {:?}", event.data);
 
         // Extract the SQL query from the event data
         // The event data should contain the original SqlQuery that was executed
@@ -522,8 +535,7 @@ impl ReplicationManager {
             }
         }
 
-        self.logger
-            .debug(format!("Executing SQL query: {}", sql_query.statement));
+        log_debug!(self.logger, "Executing SQL query: {}", sql_query.statement);
 
         // Execute the SQL query against the database
         let result = self
@@ -535,8 +547,7 @@ impl ReplicationManager {
             .await
             .map_err(|e| anyhow!("Failed to execute replicated SQL query: {e}"))?;
 
-        self.logger
-            .debug(format!("SQL query executed successfully: {result:?}"));
+        log_debug!(self.logger, "SQL query executed successfully: {result:?}");
 
         Ok(())
     }
