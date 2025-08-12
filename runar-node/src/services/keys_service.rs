@@ -111,7 +111,10 @@ impl AbstractService for KeysService {
 
         // Register symmetric key action
         self.register_ensure_symmetric_key_action(&context).await?;
-        log_debug!(context.logger, "Registered handler for ensure_symmetric_key action");
+        log_debug!(
+            context.logger,
+            "Registered handler for ensure_symmetric_key action"
+        );
 
         log_info!(context.logger, "Keys Service initialization complete");
 
