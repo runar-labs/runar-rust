@@ -6,7 +6,8 @@
 use crate::certificate::{CertificateRequest, CertificateValidator, EcdsaKeyPair, X509Certificate};
 use crate::error::{KeyError, Result};
 use crate::mobile::{EnvelopeEncryptedData, NetworkKeyMessage, NodeCertificateMessage, SetupToken};
-use p256::ecdsa::SigningKey;
+use p384::elliptic_curve::sec1::ToEncodedPoint;
+use p384::ecdsa::SigningKey;
 use pkcs8::DecodePrivateKey;
 use rand::RngCore;
 use runar_common::compact_ids::compact_id;
@@ -74,8 +75,17 @@ impl NodeKeyManager {
         // Generate node identity key pair
         let node_key_pair = EcdsaKeyPair::new()?;
 
-        // Generate node storage key for local encryption
-        let storage_key = Self::generate_storage_key();
+        // Derive node storage key (HKDF-SHA-384 from node identity master)
+        let storage_key = {
+            use hkdf::Hkdf;
+            use sha2::Sha384;
+            let ikm = node_key_pair.signing_key().to_bytes();
+            let hk = Hkdf::<Sha384>::new(Some(b"RunarKeyDerivationSalt/v1"), ikm.as_slice());
+            let mut key = [0u8; 32];
+            hk.expand(b"runar-v1:node-identity:storage", &mut key)
+                .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
+            key.to_vec()
+        };
 
         let node_public_key = node_key_pair.public_key_bytes();
         let node_public_key_str = compact_id(&node_public_key);
@@ -109,13 +119,7 @@ impl NodeKeyManager {
         compact_id(&self.node_key_pair.public_key_bytes())
     }
 
-    /// Generate a 32-byte storage key for local file encryption
-    fn generate_storage_key() -> Vec<u8> {
-        use rand::RngCore;
-        let mut storage_key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut storage_key);
-        storage_key.to_vec()
-    }
+    // Removed random storage key generator; storage keys are derived via HKDF from the node master key
 
     /// Get the node storage key for local encryption
     pub fn get_storage_key(&self) -> &[u8] {
@@ -282,11 +286,11 @@ impl NodeKeyManager {
         recipient_public_key_bytes: &[u8],
     ) -> Result<Vec<u8>> {
         use hkdf::Hkdf;
-        use p256::ecdh::EphemeralSecret;
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
-        use p256::PublicKey;
+        use p384::ecdh::EphemeralSecret;
+        use p384::elliptic_curve::sec1::ToEncodedPoint;
+        use p384::PublicKey;
         use rand::thread_rng;
-        use sha2::Sha256;
+        use sha2::Sha384;
 
         // Generate ephemeral key pair for ECDH
         let ephemeral_secret = EphemeralSecret::random(&mut thread_rng());
@@ -302,16 +306,16 @@ impl NodeKeyManager {
         let shared_secret = ephemeral_secret.diffie_hellman(&recipient_public_key);
         let shared_secret_bytes = shared_secret.raw_secret_bytes();
 
-        // Derive encryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes.as_slice());
+        // Derive encryption key using HKDF-SHA-384
+        let hk = Hkdf::<Sha384>::new(None, shared_secret_bytes.as_slice());
         let mut encryption_key = [0u8; 32];
-        hk.expand(b"runar-key-encryption", &mut encryption_key)
+        hk.expand(b"runar-v1:ecies:envelope-key", &mut encryption_key)
             .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
 
         // Encrypt the data using AES-GCM
         let encrypted_data = self.encrypt_with_symmetric_key(data, &encryption_key)?;
 
-        // Return ephemeral public key + encrypted data
+        // Return ephemeral public key (97 bytes uncompressed) + encrypted data
         let ephemeral_public_bytes = ephemeral_public.to_encoded_point(false);
         let mut result = ephemeral_public_bytes.as_bytes().to_vec();
         result.extend_from_slice(&encrypted_data);
@@ -325,37 +329,37 @@ impl NodeKeyManager {
         key_pair: &EcdsaKeyPair,
     ) -> Result<Vec<u8>> {
         use hkdf::Hkdf;
-        use p256::ecdh::diffie_hellman;
-        use p256::PublicKey;
-        use p256::SecretKey;
-        use sha2::Sha256;
+        use p384::ecdh::diffie_hellman;
+        use p384::PublicKey;
+        use p384::SecretKey;
+        use sha2::Sha384;
 
-        // Extract ephemeral public key (65 bytes uncompressed) and encrypted data
-        if encrypted_data.len() < 65 {
+        // Extract ephemeral public key (97 bytes uncompressed) and encrypted data
+        if encrypted_data.len() < 97 {
             return Err(KeyError::DecryptionError(
                 "Encrypted data too short for ECIES".to_string(),
             ));
         }
 
-        let ephemeral_public_bytes = &encrypted_data[..65];
-        let encrypted_payload = &encrypted_data[65..];
+        let ephemeral_public_bytes = &encrypted_data[..97];
+        let encrypted_payload = &encrypted_data[97..];
 
         // Reconstruct ephemeral public key
         let ephemeral_public = PublicKey::from_sec1_bytes(ephemeral_public_bytes).map_err(|e| {
             KeyError::DecryptionError(format!("Failed to parse ephemeral public key: {e}"))
         })?;
 
-        // Use the ECDSA signing key bytes to create a SecretKey for ECDH
+        // Use the ECDSA signing key bytes to create a SecretKey for ECDH (temporary until separation)
         let secret_key = SecretKey::from_bytes(&key_pair.signing_key().to_bytes())
             .map_err(|e| KeyError::DecryptionError(format!("Failed to create SecretKey: {e}")))?;
         let shared_secret =
             diffie_hellman(secret_key.to_nonzero_scalar(), ephemeral_public.as_affine());
         let shared_secret_bytes = shared_secret.raw_secret_bytes();
 
-        // Derive encryption key using HKDF
-        let hk = Hkdf::<Sha256>::new(None, shared_secret_bytes);
+        // Derive encryption key using HKDF-SHA-384
+        let hk = Hkdf::<Sha384>::new(None, shared_secret_bytes);
         let mut encryption_key = [0u8; 32];
-        hk.expand(b"runar-key-encryption", &mut encryption_key)
+        hk.expand(b"runar-v1:ecies:envelope-key", &mut encryption_key)
             .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
 
         // Decrypt the data using AES-GCM
@@ -375,8 +379,18 @@ impl NodeKeyManager {
 
         self.certificate_status = CertificateStatus::Pending;
 
+        // Derive agreement from node master and include public part in token
+        let agreement = crate::derivation::derive_agreement_from_master(
+            &self.node_key_pair.signing_key().to_bytes(),
+            b"runar-v1:node-identity:agreement",
+        )?;
         Ok(SetupToken {
             node_public_key,
+            node_agreement_public_key: agreement
+                .public_key()
+                .to_encoded_point(false)
+                .as_bytes()
+                .to_vec(),
             csr_der,
             node_id,
         })
@@ -625,7 +639,7 @@ impl NodeKeyManager {
 
     /// Sign data with the node's private key
     pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        use p256::ecdsa::{signature::Signer, Signature};
+        use p384::ecdsa::{signature::Signer, Signature};
 
         let signature: Signature = self.node_key_pair.signing_key().sign(data);
         Ok(signature.to_der().as_bytes().to_vec())
@@ -645,7 +659,7 @@ impl NodeKeyManager {
         let peer_public_key = peer_cert.public_key()?;
 
         // Verify the signature
-        use p256::ecdsa::{signature::Verifier, Signature};
+        use p384::ecdsa::{signature::Verifier, Signature};
 
         let sig = Signature::from_der(signature).map_err(|e| {
             KeyError::CertificateValidationError(format!("Invalid signature format: {e}"))

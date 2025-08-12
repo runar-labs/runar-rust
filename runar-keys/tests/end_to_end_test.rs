@@ -36,13 +36,13 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let mobile_logger = create_test_logger("mobile-e2e");
     let mut mobile_keys_manager = MobileKeyManager::new(mobile_logger)?;
 
-    // Generate user root key - now returns only the public key
+    // Generate user root agreement public key for ECIES
     let user_root_public_key = mobile_keys_manager
         .initialize_user_root_key()
         .expect("Failed to generate user root key");
     assert_eq!(
         user_root_public_key.len(),
-        65, // ECDSA P-256 uncompressed public key
+        97, // ECDSA P-384 uncompressed public key (0x04 + 48 + 48)
         "User root key should have a valid public key"
     );
 
@@ -54,7 +54,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Create a user owned and managed CA
     let user_ca_public_key = mobile_keys_manager.get_ca_public_key();
-    assert_eq!(user_ca_public_key.len(), 33); // ECDSA P-256 compressed
+    assert_eq!(user_ca_public_key.len(), 49); // ECDSA P-384 compressed
     println!(
         "   ✅ User CA public key: {}",
         compact_id(&user_ca_public_key)
@@ -233,11 +233,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         "Certificate should use ECDSA algorithm for QUIC compatibility"
     );
 
-    // Validate public key length - ECDSA P-256 uncompressed public key
+    // Validate public key length - ECDSA P-384 uncompressed public key
     assert_eq!(
         cert_public_key_bytes.len(),
-        65, // ECDSA P-256 uncompressed format (0x04 + 32 bytes X + 32 bytes Y)
-        "ECDSA P-256 public key should be 65 bytes (uncompressed format)"
+        97, // ECDSA P-384 uncompressed format (0x04 + 48 bytes X + 48 bytes Y)
+        "ECDSA P-384 public key should be 97 bytes (uncompressed format)"
     );
 
     println!(
@@ -267,11 +267,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("      - ECDSA public key format: uncompressed (0x04 prefix)");
     println!(
         "      - X coordinate: {}",
-        hex::encode(&cert_public_key_bytes[1..33])
+        hex::encode(&cert_public_key_bytes[1..49])
     );
     println!(
         "      - Y coordinate: {}",
-        hex::encode(&cert_public_key_bytes[33..65])
+        hex::encode(&cert_public_key_bytes[49..97])
     );
 
     // Validate that the private key can be parsed by rustls
@@ -320,7 +320,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     println!("   🎉 QUIC CERTIFICATE VALIDATION COMPLETE!");
     println!("      ✅ X.509 certificate structure");
-    println!("      ✅ ECDSA P-256 public key format and length");
+    println!("      ✅ ECDSA P-384 public key format and length");
     println!("      ✅ PKCS#8 private key structure");
     println!("      ✅ Certificate subject validation");
 

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Core cryptographic libraries
-p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "serde", "ecdh"] }
+p384 = { version = "0.13", features = ["ecdsa", "pkcs8", "serde", "ecdh"] }
 ecdsa = "0.16"
 pkcs8 = { version = "0.10", features = ["std"] }
 rand = "0.8"
