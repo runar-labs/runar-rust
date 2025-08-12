@@ -17,6 +17,7 @@ use std::sync::Arc;
 use crate::services::{KeysDelegate, LifecycleContext, RequestContext};
 use crate::AbstractService;
 use runar_common::logging::Logger;
+use runar_macros_common::{log_debug, log_info};
 use runar_serializer::ArcValue;
 
 /// Registry Info Service - provides information about registered services without holding state
@@ -58,9 +59,7 @@ impl KeysService {
                 }),
             )
             .await?;
-        context
-            .logger
-            .debug("Registered ensure_symmetric_key action");
+        log_debug!(context.logger, "Registered ensure_symmetric_key action");
         Ok(())
     }
 
@@ -70,7 +69,7 @@ impl KeysService {
         key_name: String,
         ctx: RequestContext,
     ) -> Result<ArcValue> {
-        ctx.logger.debug("ensure_symmetric_key");
+        log_debug!(ctx.logger, "ensure_symmetric_key");
         self.keys_delegate.ensure_symmetric_key(&key_name).await
     }
 }
@@ -105,31 +104,27 @@ impl AbstractService for KeysService {
     /// following the path template pattern for consistent parameter extraction.
     /// Each path template defines a specific API endpoint with parameters.
     async fn init(&self, context: LifecycleContext) -> Result<()> {
-        context.logger.info("Initializing keys Service");
+        log_info!(context.logger, "Initializing keys Service");
 
         // Register all actions with their template patterns
-        context
-            .logger
-            .debug("Registering keys Service action handlers");
+        log_debug!(context.logger, "Registering keys Service action handlers");
 
         // Register symmetric key action
         self.register_ensure_symmetric_key_action(&context).await?;
-        context
-            .logger
-            .debug("Registered handler for ensure_symmetric_key action");
+        log_debug!(context.logger, "Registered handler for ensure_symmetric_key action");
 
-        context.logger.info("Keys Service initialization complete");
+        log_info!(context.logger, "Keys Service initialization complete");
 
         Ok(())
     }
 
     async fn start(&self, context: LifecycleContext) -> Result<()> {
-        context.logger.info("Starting keys Service");
+        log_info!(context.logger, "Starting keys Service");
         Ok(())
     }
 
     async fn stop(&self, context: LifecycleContext) -> Result<()> {
-        context.logger.info("Stopping keys Service");
+        log_info!(context.logger, "Stopping keys Service");
         Ok(())
     }
 }

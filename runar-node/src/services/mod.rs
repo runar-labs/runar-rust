@@ -432,14 +432,14 @@ impl ServiceRequest {
     /// INTENTION: Create a service request using the service path and action name.
     /// This method will construct the appropriate TopicPath and initialize the request.
     pub fn new(
-        service_path: impl Into<String>,
-        action_or_event: impl Into<String>,
+        service_path: impl AsRef<str>,
+        action_or_event: impl AsRef<str>,
         data: ArcValue,
         context: Arc<RequestContext>,
     ) -> Self {
         // Create a path string combining service path and action
-        let service_path_string = service_path.into();
-        let action_or_event_string = action_or_event.into();
+        let service_path_string = service_path.as_ref();
+        let action_or_event_string = action_or_event.as_ref();
         let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method
@@ -474,14 +474,14 @@ impl ServiceRequest {
     /// INTENTION: Create a service request where the data parameter is optional.
     /// If no data is provided, ValueType::Null will be used.
     pub fn new_with_optional(
-        service_path: impl Into<String>,
-        action_or_event: impl Into<String>,
+        service_path: impl AsRef<str>,
+        action_or_event: impl AsRef<str>,
         data: Option<ArcValue>,
         context: Arc<RequestContext>,
     ) -> Self {
         // Create a TopicPath from the service path and action
-        let service_path_string = service_path.into();
-        let action_or_event_string = action_or_event.into();
+        let service_path_string = service_path.as_ref();
+        let action_or_event_string = action_or_event.as_ref();
         let path_string = format!("{service_path_string}/{action_or_event_string}");
 
         // Parse the path using the context's network_id method
