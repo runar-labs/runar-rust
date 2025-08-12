@@ -406,7 +406,7 @@ impl ArcValue {
                 Some(pk) => vec![pk.clone()],
                 None => Vec::new(),
             };
-            let data = ks.encrypt_with_envelope(&bytes, Some(network_id), recipients)?;
+            let data = ks.encrypt_with_envelope(&bytes, Some(network_id.as_str()), recipients)?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);

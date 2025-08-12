@@ -10,9 +10,6 @@
 use log::{debug, error, info, warn};
 use std::fmt::{self, Arguments, Display, Formatter};
 
-// Include macros submodule
-pub mod macros;
-
 /// Predefined components for logging categorization
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Component {

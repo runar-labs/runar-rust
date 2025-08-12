@@ -25,6 +25,8 @@ pub mod derivation;
 pub mod error;
 pub mod mobile;
 pub mod node;
+#[macro_use]
+mod macros;
 
 // Re-export key types for convenience
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
@@ -43,7 +45,7 @@ pub trait EnvelopeCrypto: Send + Sync {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&String>,
+        network_id: Option<&str>,
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData>;
 

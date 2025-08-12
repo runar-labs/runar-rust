@@ -194,7 +194,7 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        _network_id: Option<&String>,
+        _network_id: Option<&str>,
         _profile_public_keys: Vec<Vec<u8>>,
     ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
         Ok(runar_keys::mobile::EnvelopeEncryptedData {
