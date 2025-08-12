@@ -64,38 +64,107 @@ type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
 
 use crate::network::peer_directory::PeerDirectory;
 
-/// Node Configuration
+/// Configuration for a Runar Node instance.
 ///
-/// INTENTION: Provide configuration options for a Node instance
+/// This struct provides all the configuration options needed to create and configure
+/// a Node. It uses the builder pattern for easy configuration.
+///
+/// # Examples
+///
+/// ```rust
+/// use runar_node::{NodeConfig, network::network_config::NetworkConfig};
+///
+/// // Basic configuration
+/// let config = NodeConfig::new("my-node", "my-network");
+///
+/// // Advanced configuration with networking
+/// let config = NodeConfig::new("my-node", "my-network")
+///     .with_network_config(NetworkConfig::default())
+///     .with_request_timeout(5000)
+///     .with_additional_networks(vec!["backup-network".to_string()]);
+/// ```
+///
+/// # Default Values
+///
+/// - `request_timeout_ms`: 30000 (30 seconds)
+/// - `logging_config`: Info level logging
+/// - `network_config`: None (networking disabled)
+/// - `network_ids`: Empty (only default network)
+///
+/// # Security Note
+///
+/// The `key_manager_state` must be provided via `with_key_manager_state()` for production use.
+/// This contains the node's cryptographic credentials and should be stored securely.
 #[derive(Clone, Debug)]
 pub struct NodeConfig {
-    /// Node ID (required) - Builder method will either use provided ID or generate one
+    /// Unique identifier for this node.
+    /// 
+    /// This ID is used for service discovery, routing, and network identification.
+    /// Must be unique within the network.
     pub node_id: String,
 
-    /// Primary network ID this node belongs to
+    /// Primary network identifier this node belongs to.
+    /// 
+    /// All services registered without a specific network ID will use this as their default.
+    /// This is the main network for peer discovery and service communication.
     pub default_network_id: String,
 
-    /// Additional network IDs this node participates in
+    /// Additional network IDs this node participates in.
+    /// 
+    /// Allows the node to be part of multiple networks simultaneously.
+    /// Services can be registered to specific networks or use the default.
     pub network_ids: Vec<String>,
 
-    /// Network configuration (None = no networking features)
+    /// Network configuration for peer-to-peer communication.
+    /// 
+    /// If `None`, networking features are disabled and the node operates in local-only mode.
+    /// When provided, enables peer discovery, remote service calls, and distributed features.
     pub network_config: Option<NetworkConfig>,
 
-    /// Logging configuration options
+    /// Logging configuration for the node and its services.
+    /// 
+    /// Controls log levels, output format, and logging destinations.
+    /// If `None`, default Info-level logging is applied.
     pub logging_config: Option<LoggingConfig>,
 
+    /// Serialized key manager state containing node credentials.
+    /// 
+    /// This field is private and must be set via `with_key_manager_state()`.
+    /// Contains the node's cryptographic keys and certificates.
     key_manager_state: Option<Vec<u8>>,
 
-    //FIX: move this to the network config.. local sercvies shuold not have timeout checks.
-    /// Request timeout in milliseconds
+    /// Request timeout in milliseconds for all service requests.
+    /// 
+    /// This timeout applies to both local and remote service calls.
+    /// Default is 30 seconds (30000ms).
     pub request_timeout_ms: u64,
 }
 
 impl NodeConfig {
-    /// Create a new production configuration with the specified node ID and network ID
+    /// Create a new Node configuration with the specified node ID and network ID.
     ///
-    /// This constructor is for production use and expects the key manager state
-    /// to be provided separately via with_key_manager_state().
+    /// This constructor creates a basic configuration suitable for development and testing.
+    /// For production use, you must call `with_key_manager_state()` to provide the node's
+    /// cryptographic credentials.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - Unique identifier for this node
+    /// * `default_network_id` - Primary network this node belongs to
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::NodeConfig;
+///
+/// // Basic configuration
+/// let config = NodeConfig::new("my-node", "my-network");
+///
+/// // Production configuration requires key manager state
+/// let serialized_keys = vec![1, 2, 3, 4]; // Example key data
+/// let config = NodeConfig::new("my-node", "my-network")
+///     .with_key_manager_state(serialized_keys);
+/// ```
     pub fn new(node_id: impl Into<String>, default_network_id: impl Into<String>) -> Self {
         Self {
             node_id: node_id.into(),
@@ -108,31 +177,111 @@ impl NodeConfig {
         }
     }
 
-    /// Add network configuration
+    /// Add network configuration to enable peer-to-peer communication.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Network configuration including transport settings and discovery options
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::{NodeConfig, network::network_config::NetworkConfig};
+///
+/// let config = NodeConfig::new("my-node", "my-network")
+///     .with_network_config(NetworkConfig::default());
+/// ```
     pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
         self.network_config = Some(config);
         self
     }
 
-    /// Add logging configuration
+    /// Configure logging behavior for the node and its services.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Logging configuration specifying levels, format, and destinations
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::{NodeConfig, config::LoggingConfig};
+///
+/// let config = NodeConfig::new("my-node", "my-network")
+///     .with_logging_config(LoggingConfig::default_info());
+/// ```
     pub fn with_logging_config(mut self, config: LoggingConfig) -> Self {
         self.logging_config = Some(config);
         self
     }
 
-    /// Add additional network IDs
+    /// Add additional network IDs for multi-network participation.
+    ///
+    /// This allows the node to participate in multiple networks simultaneously.
+    /// Services can be registered to specific networks or use the default network.
+    ///
+    /// # Arguments
+    ///
+    /// * `network_ids` - Vector of additional network identifiers
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::NodeConfig;
+///
+/// let config = NodeConfig::new("my-node", "my-network")
+///     .with_additional_networks(vec!["backup".to_string(), "testing".to_string()]);
+/// ```
     pub fn with_additional_networks(mut self, network_ids: Vec<String>) -> Self {
         self.network_ids = network_ids;
         self
     }
 
-    /// Set the request timeout in milliseconds
+    /// Set the request timeout for all service requests.
+    ///
+    /// This timeout applies to both local and remote service calls.
+    /// The default is 30 seconds (30000ms).
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout_ms` - Timeout in milliseconds
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::NodeConfig;
+///
+/// let config = NodeConfig::new("my-node", "my-network")
+///     .with_request_timeout(5000); // 5 second timeout
+/// ```
     pub fn with_request_timeout(mut self, timeout_ms: u64) -> Self {
         self.request_timeout_ms = timeout_ms;
         self
     }
 
-    /// Set the key manager state from serialized bytes
+    /// Set the serialized key manager state for production use.
+    ///
+    /// This method is required for production deployments. The key manager state
+    /// contains the node's cryptographic credentials and must be provided securely.
+    ///
+    /// # Arguments
+    ///
+    /// * `key_state_bytes` - Serialized key manager state
+    ///
+    /// # Security Note
+    ///
+    /// The key manager state contains sensitive cryptographic material and should
+    /// be stored securely and transmitted over secure channels.
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::NodeConfig;
+///
+/// let secure_key_bytes = vec![1, 2, 3, 4]; // Example key data
+/// let config = NodeConfig::new("my-node", "my-network")
+///     .with_key_manager_state(secure_key_bytes);
+/// ```
     pub fn with_key_manager_state(mut self, key_state_bytes: Vec<u8>) -> Self {
         self.key_manager_state = Some(key_state_bytes);
         self
@@ -157,11 +306,79 @@ impl std::fmt::Display for NodeConfig {
     }
 }
 
-/// The Node is the main entry point for the application
+/// The main runtime for the Runar system.
 ///
-/// INTENTION: Provide a high-level interface for services to communicate
-/// with each other, for registering and discovering services, and for
-/// managing the lifecycle of services.
+/// The Node is the central coordinator that manages services, handles networking,
+/// and provides the communication infrastructure for distributed applications.
+///
+/// # Key Responsibilities
+///
+/// - **Service Management**: Register, start, stop, and manage service lifecycles
+/// - **Request Routing**: Route requests to appropriate services based on topic paths
+/// - **Event Publishing**: Handle publish/subscribe patterns for loose coupling
+/// - **Network Coordination**: Manage peer connections and remote service discovery
+/// - **Load Balancing**: Distribute requests across multiple service instances
+///
+/// # Lifecycle
+///
+/// 1. **Creation**: Node is created with configuration
+/// 2. **Service Registration**: Services are added via `add_service()`
+/// 3. **Startup**: `start()` initializes all services and networking
+/// 4. **Operation**: Services handle requests and publish events
+/// 5. **Shutdown**: Graceful shutdown of all services and connections
+///
+/// # Examples
+///
+/// ```rust
+/// use runar_node::{Node, NodeConfig};
+/// use runar_node::AbstractService;
+///
+/// // Define a simple service for the example
+/// #[derive(Clone)]
+/// struct MyService;
+///
+/// impl MyService {
+///     fn new() -> Self { Self }
+/// }
+///
+/// #[async_trait::async_trait]
+/// impl AbstractService for MyService {
+///     fn name(&self) -> &str { "MyService" }
+///     fn version(&self) -> &str { "1.0.0" }
+///     fn path(&self) -> &str { "my-service" }
+///     fn description(&self) -> &str { "Example service" }
+///     fn network_id(&self) -> Option<String> { None }
+///     fn set_network_id(&mut self, _network_id: String) {}
+///     async fn init(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+///     async fn start(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+///     async fn stop(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+/// }
+///
+/// // Example of how to use a node (conceptual)
+/// async fn example_usage() -> anyhow::Result<()> {
+///     // Note: This example shows the concept but would need proper
+///     // key manager state to actually create a Node instance.
+///     
+///     // let config = NodeConfig::new("my-node", "my-network");
+///     // let mut node = Node::new(config).await?;
+///     // 
+///     // Add services
+///     // node.add_service(MyService::new()).await?;
+///     // 
+///     // Start the node
+///     // node.start().await?;
+///     // 
+///     // Make requests (note: this would require the service to have action handlers)
+///     // let result: String = node.request("my-service/action", None).await?;
+///     
+///     Ok(())
+/// }
+/// ```
+///
+/// # Thread Safety
+///
+/// The Node is designed to be shared across multiple threads and async tasks.
+/// All public methods are safe to call concurrently.
 pub struct Node {
     /// Debounce state for notify_node_change.
     ///
@@ -266,14 +483,51 @@ impl Node {
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
     }
-    /// Create a new Node with the given configuration
+    /// Create a new Node with the given configuration.
     ///
-    /// INTENTION: Initialize a new Node with the specified configuration, setting up
-    /// all the necessary components and internal state. This is the primary
+    /// This constructor initializes a new Node instance with the specified configuration,
+    /// setting up all necessary components and internal state. This is the primary
     /// entry point for creating a Node instance.
     ///
-    /// This constructor does not start services - call start() separately
-    /// after registering services.
+    /// # Arguments
+    ///
+    /// * `config` - Node configuration including network settings and credentials
+    ///
+    /// # Returns
+    ///
+    /// Returns a new Node instance ready for service registration and startup.
+    ///
+    /// # Important Notes
+    ///
+    /// - **Services are not started**: Call `start()` separately after registering services
+    /// - **Key manager state required**: Production configurations must include cryptographic credentials
+    /// - **Networking disabled by default**: Enable networking via `NetworkConfig` in the configuration
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::{Node, NodeConfig};
+///
+/// // Example of how to create a node (conceptual)
+/// async fn example_usage() -> anyhow::Result<()> {
+///     // Note: This example shows the concept but would need proper
+///     // key manager state to actually create a Node instance.
+///     
+///     // let config = NodeConfig::new("my-node", "my-network");
+///     // let _node = Node::new(config).await?;
+///     // 
+///     // Node is ready but services aren't started yet
+///     
+///     Ok(())
+/// }
+/// ```
+    ///
+    /// # Errors
+    ///
+    /// This method will return an error if:
+    /// - The configuration is invalid
+    /// - Key manager state cannot be deserialized
+    /// - Internal components fail to initialize
     pub async fn new(config: NodeConfig) -> Result<Self> {
         let node_id = config.node_id.clone();
         let logger = Arc::new(Logger::new_root(Component::Node, &node_id));
@@ -381,17 +635,81 @@ impl Node {
         Ok(node)
     }
 
-    /// Add a service to this node
+    /// Add a service to this node.
     ///
-    /// 1: validate service path    
-    /// 2: create topic path
-    /// 3: create service entry
-    /// 4: register service
-    /// 5: update service state to initialized
+    /// This method registers a service with the node, making its actions available
+    /// for requests and allowing it to receive events. The service is initialized
+    /// but not started - services are started when the node is started.
     ///
-    /// INTENTION: Register a service with this node, making its actions available
-    /// for requests and allowing it to receive events. This method initializes the
-    /// service but does not start it - services are started when the node is started.
+    /// # Arguments
+    ///
+    /// * `service` - The service to register, must implement `AbstractService`
+    ///
+    /// # Process
+    ///
+    /// 1. Validates the service path and creates a topic path
+    /// 2. Initializes the service with a lifecycle context
+    /// 3. Creates a service entry and registers it with the service registry
+    /// 4. Updates the service state to `Initialized`
+    /// 5. If the node is already running, starts the service immediately
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::{Node, NodeConfig};
+/// use runar_node::AbstractService;
+///
+/// // Define a simple service for the example
+/// #[derive(Clone)]
+/// struct MyService;
+///
+/// impl MyService {
+///     fn new() -> Self { Self }
+/// }
+///
+/// #[async_trait::async_trait]
+/// impl AbstractService for MyService {
+///     fn name(&self) -> &str { "MyService" }
+///     fn version(&self) -> &str { "1.0.0" }
+///     fn path(&self) -> &str { "my-service" }
+///     fn description(&self) -> &str { "Example service" }
+///     fn network_id(&self) -> Option<String> { None }
+///     fn set_network_id(&mut self, _network_id: String) {}
+///     async fn init(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+///     async fn start(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+///     async fn stop(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+/// }
+///
+/// // Example of how to add a service (conceptual)
+/// async fn example_usage() -> anyhow::Result<()> {
+///     // Note: This example shows the concept but would need proper
+///     // key manager state to actually create a Node instance.
+///     
+///     // let mut config = NodeConfig::new("my-node", "my-network");
+///     // let mut node = Node::new(config).await?;
+///     // 
+///     // Add a service
+///     // let service = MyService::new();
+///     // node.add_service(service).await?;
+///     // 
+///     // Start the node to start all services
+///     // node.start().await?;
+///     
+///     Ok(())
+/// }
+/// ```
+    ///
+    /// # Errors
+    ///
+    /// This method will return an error if:
+    /// - The service path is invalid
+    /// - Service initialization fails
+    /// - The service registry cannot register the service
+    ///
+    /// # Network ID Handling
+    ///
+    /// If the service doesn't specify a network ID, it will use the node's default network.
+    /// Services can be registered to specific networks for multi-network deployments.
     pub async fn add_service<S: AbstractService + 'static>(
         &mut self,
         mut service: S,
@@ -510,16 +828,62 @@ impl Node {
         &self.node_id
     }
 
-    /// Wait for an event to occur with a timeout (hot subscription)
+    /// Wait for an event to occur with a timeout (hot subscription).
     ///
-    /// INTENTION: Begin listening as soon as this method is called, avoiding races where
-    /// a one-shot event might fire before a future is awaited. Returns a JoinHandle that
-    /// resolves when the event occurs or times out.
+    /// This method begins listening immediately when called, avoiding races where
+    /// a one-shot event might fire before the future is awaited. It returns a
+    /// `JoinHandle` that resolves when the event occurs or times out.
     ///
-    /// Handles different topic formats:
-    /// - Full topic with network ID: "network:service/topic" (used as is)
-    /// - Topic with service: "service/topic" (default network ID added)
-    /// - Simple topic: "topic" (default network ID and service path added)
+    /// # Arguments
+    ///
+    /// * `topic` - The topic to listen for events on
+    /// * `options` - Optional configuration for the subscription
+    ///
+    /// # Topic Format Handling
+    ///
+    /// The method automatically handles different topic formats:
+    /// - **Full topic with network ID**: `"network:service/topic"` (used as-is)
+    /// - **Topic with service**: `"service/topic"` (default network ID added)
+    /// - **Simple topic**: `"topic"` (default network ID and service path added)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `JoinHandle<Result<Option<ArcValue>>>` that resolves to:
+    /// - `Ok(Some(data))` when an event is received
+    /// - `Ok(None)` if the channel is closed
+    /// - `Err(_)` if a timeout occurs or other error
+    ///
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::{Node, NodeConfig};
+/// use std::time::Duration;
+///
+/// // Example of how to use the on() method (conceptual)
+/// async fn example_usage() -> anyhow::Result<()> {
+///     // Note: This example shows the concept but would need a running node
+///     // with services to actually work. The on() method is typically used
+///     // after the node is started and services are running.
+///     
+///     // Wait for an event with default 5-second timeout
+///     // let handle = node.on("my-service/event", None);
+///     
+///     // Wait for the event
+///     // match handle.await? {
+///     //     Ok(Some(data)) => println!("Received event: {data:?}"),
+///     //     Ok(None) => println!("Channel closed"),
+///     //     Err(e) => println!("Error: {e}"),
+///     // }
+///     
+///     Ok(())
+/// }
+/// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - The subscription is created immediately to avoid race conditions
+    /// - The subscription is automatically cleaned up after the event is received
+    /// - This method is optimized for one-shot event waiting
     pub fn on(
         &self,
         topic: impl Into<String>,
@@ -582,17 +946,81 @@ impl Node {
         })
     }
 
-    /// Start the Node and all registered services
+    /// Start the Node and all registered services.
     ///
-    /// INTENTION: Initialize the Node's internal systems and start all registered services.
-    /// This method:
+    /// This method initializes the Node's internal systems and starts all registered services.
+    /// It's safe to call multiple times - subsequent calls are ignored if the node is already running.
+    ///
+    /// # Process
+    ///
     /// 1. Checks if the Node is already started to ensure idempotency
-    /// 2. Get all local services from the registry
-    /// 3. Initialize and start each service
-    /// 4. Update service state to running
-    /// 5. Start networking if enabled
+    /// 2. Retrieves all local services from the registry
+    /// 3. Initializes and starts each service in parallel
+    /// 4. Updates service states to `Running`
+    /// 5. Starts networking if enabled in the configuration
+    /// 6. Begins peer discovery and service advertisement
     ///
-    /// When network functionality is added, this will also advertise services to the network.
+    /// # Examples
+///
+/// ```rust
+/// use runar_node::{Node, NodeConfig};
+/// use runar_node::AbstractService;
+///
+/// // Define a simple service for the example
+/// #[derive(Clone)]
+/// struct MyService;
+///
+/// impl MyService {
+///     fn new() -> Self { Self }
+/// }
+///
+/// #[async_trait::async_trait]
+/// impl AbstractService for MyService {
+///     fn name(&self) -> &str { "MyService" }
+///     fn version(&self) -> &str { "1.0.0" }
+///     fn path(&self) -> &str { "my-service" }
+///     fn description(&self) -> &str { "Example service" }
+///     fn network_id(&self) -> Option<String> { None }
+///     fn set_network_id(&mut self, _network_id: String) {}
+///     async fn init(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+///     async fn start(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+///     async fn stop(&self, _context: runar_node::services::LifecycleContext) -> anyhow::Result<()> { Ok(()) }
+/// }
+///
+/// // Example of how to start a node (conceptual)
+/// async fn example_usage() -> anyhow::Result<()> {
+///     // Note: This example shows the concept but would need proper
+///     // key manager state to actually create a Node instance.
+///     
+///     // let mut config = NodeConfig::new("my-node", "my-network");
+///     // let mut node = Node::new(config).await?;
+///     // 
+///     // Add services first
+///     // node.add_service(MyService::new()).await?;
+///     // 
+///     // Then start the node
+///     // node.start().await?;
+///     // 
+///     // Node is now running and ready to handle requests
+///     
+///     Ok(())
+/// }
+/// ```
+    ///
+    /// # Errors
+    ///
+    /// This method will return an error if:
+    /// - Any service fails to start
+    /// - Networking fails to initialize (if enabled)
+    /// - Internal system components fail to start
+    ///
+    /// # Networking
+    ///
+    /// If networking is enabled in the configuration, this method will:
+    /// - Start the network transport layer
+    /// - Begin peer discovery
+    /// - Advertise local services to the network
+    /// - Accept incoming connections from peers
     pub async fn start(&self) -> Result<()> {
         log_info!(self.logger, "Starting node...");
 

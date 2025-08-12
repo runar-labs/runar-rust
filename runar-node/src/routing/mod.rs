@@ -1,60 +1,165 @@
 // Routing Module
 //
-// INTENTION:
 // This module provides the core routing components for the node's service architecture,
 // establishing the message addressing and topic-based communication system. It defines
 // how services are addressed, discovered, and how messages are routed between them.
 //
-// ARCHITECTURAL PRINCIPLES:
-// 1. Path-based Addressing - Services are addressed using hierarchical paths
-// 2. Topic-based Communication - Events use topics for publish-subscribe pattern
-// 3. Separation of Concerns - Routing is separate from service implementation
-// 4. Deterministic Resolution - Path resolution follows consistent rules
-// 5. Network Isolation - Routing respects network boundaries
+// ## Architectural Principles
+//
+// 1. **Path-based Addressing** - Services are addressed using hierarchical paths
+// 2. **Topic-based Communication** - Events use topics for publish-subscribe pattern
+// 3. **Separation of Concerns** - Routing is separate from service implementation
+// 4. **Deterministic Resolution** - Path resolution follows consistent rules
+// 5. **Network Isolation** - Routing respects network boundaries
+//
+// ## Overview
 //
 // The routing system is a foundational layer that enables the service architecture
-// to function in a decentralized, loosely-coupled manner.
+// to function in a decentralized, loosely-coupled manner. It provides:
+//
+// - **Topic Paths**: Hierarchical addressing for services and events
+// - **Wildcard Matching**: Pattern-based subscription and routing
+// - **Template Parameters**: Dynamic path segments for flexible routing
+// - **Network Isolation**: Multi-network support with proper boundaries
+//
+// ## Key Concepts
+//
+// - **Topic Path**: A hierarchical path like `"network:service/action"` or `"service/event"`
+// - **Path Segment**: Individual components of a path (literal, wildcard, or template)
+// - **Wildcard Matching**: Support for `*` (single segment) and `>` (multi-segment) patterns
+// - **Template Parameters**: Dynamic segments like `{user_id}` for flexible routing
+//
+// ## Examples
+//
+// ```rust
+// use runar_node::routing::TopicPath;
+//
+// // Create a topic path
+// let path = TopicPath::new("math/add", "my-network")?;
+//
+// // Check if a path matches a pattern
+// let pattern = TopicPath::new("math/*", "my-network")?;
+// assert!(pattern.matches(&path));
+//
+// // Use template parameters
+// let template = TopicPath::new("users/{user_id}/profile", "my-network")?;
+// let params = template.extract_parameters("users/123/profile")?;
+// assert_eq!(params.get("user_id"), Some("123"));
+// ```
 
 use anyhow::Result;
 use std::fmt;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
-/// Type of a path, indicating what kind of resource is being addressed
+/// Type of a path, indicating what kind of resource is being addressed.
 ///
-/// INTENTION: Clearly distinguish between different types of routing targets
-/// to ensure proper handling of each type. This enables the system to apply
+/// This enum clearly distinguishes between different types of routing targets
+/// to ensure proper handling of each type. It enables the system to apply
 /// different routing rules and validations based on the path type.
+///
+/// # Examples
+///
+/// ```rust
+/// use runar_node::routing::PathType;
+///
+/// let path_type = PathType::Action;
+/// match path_type {
+///     PathType::Service => {
+///         // Handle service discovery and registration
+///     }
+///     PathType::Action => {
+///         // Handle request routing to service actions
+///     }
+///     PathType::Event => {
+///         // Handle event publishing and subscription
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathType {
-    /// A path to a service - used for service discovery and registration
+    /// A path to a service - used for service discovery and registration.
+    /// 
+    /// Service paths identify the service itself, not specific actions or events.
+    /// Example: `"math"` or `"auth"` for service-level operations.
     Service,
-    /// A path to an action on a service - used for request routing
+    
+    /// A path to an action on a service - used for request routing.
+    /// 
+    /// Action paths identify specific operations that can be performed on a service.
+    /// Example: `"math/add"` or `"auth/login"` for specific actions.
     Action,
-    /// A path to an event - used for event routing
+    
+    /// A path to an event - used for event routing.
+    /// 
+    /// Event paths identify events that can be published or subscribed to.
+    /// Example: `"math/result"` or `"auth/logout"` for event notifications.
     Event,
 }
 
-/// Represents a single segment in a path, which can be a literal or a wildcard
+/// Represents a single segment in a path, which can be a literal, wildcard, or template parameter.
 ///
-/// INTENTION: Allow paths to include wildcard patterns for flexible topic matching
-/// in the publish-subscribe system. This enables powerful pattern-based subscriptions.
+/// This enum allows paths to include wildcard patterns and template parameters for flexible
+/// topic matching in the publish-subscribe system. This enables powerful pattern-based
+/// subscriptions and dynamic routing.
+///
+/// # Examples
+///
+/// ```rust
+/// use runar_node::routing::PathSegment;
+///
+/// // Literal segments
+/// let segment = PathSegment::Literal("math".to_string());
+///
+/// // Template parameters
+/// let segment = PathSegment::Template("user_id".to_string());
+///
+/// // Wildcards
+/// let single = PathSegment::SingleWildcard;  // *
+/// let multi = PathSegment::MultiWildcard;   // >
+/// ```
+///
+/// # Wildcard Rules
+///
+/// - **Single Wildcard (`*`)**: Matches exactly one segment
+/// - **Multi Wildcard (`>`)**: Matches one or more segments to the end (must be last)
+///
+/// # Template Parameters
+///
+/// Template parameters use `{name}` syntax and can be extracted from matching paths.
+/// The braces are stripped when creating the segment for easier access.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathSegment {
-    /// A literal string segment (e.g., "services", "auth", "login")
+    /// A literal string segment (e.g., "services", "auth", "login").
+    /// 
+    /// Literal segments must match exactly for a path to be considered a match.
+    /// They represent fixed components in the path hierarchy.
     Literal(String),
 
-    /// A template parameter segment (e.g., "{service_path}", "{user_id}")
-    /// Stores the parameter name without the braces for easier access
+    /// A template parameter segment (e.g., "{service_path}", "{user_id}").
+    /// 
+    /// Template parameters match any segment and store the matched value for later use.
+    /// The parameter name is stored without the braces for easier access.
+    /// Example: `"{user_id}"` becomes `Template("user_id")`.
     Template(String),
 
-    /// A single-segment wildcard (*) - matches any single segment
-    /// Example: "services/*/state" matches "services/math/state" but not "services/auth/user/state"
+    /// A single-segment wildcard (`*`) - matches any single segment.
+    /// 
+    /// Single wildcards match exactly one path segment. They provide flexibility
+    /// while maintaining predictable matching behavior.
+    /// 
+    /// Example: `"services/*/state"` matches `"services/math/state"` but not
+    /// `"services/auth/user/state"`.
     SingleWildcard,
 
-    /// A multi-segment wildcard (>) - matches one or more segments to the end
-    /// Example: "services/>" matches "services/math", "services/auth/login", etc.
-    /// Must be the last segment in a pattern.
+    /// A multi-segment wildcard (`>`) - matches one or more segments to the end.
+    /// 
+    /// Multi wildcards match one or more path segments from their position to the
+    /// end of the path. They must be the last segment in a pattern.
+    /// 
+    /// Example: `"services/>"` matches `"services/math"`, `"services/auth/login"`, etc.
+    /// 
+    /// **Note**: Multi wildcards must be the last segment in a path pattern.
     MultiWildcard,
 }
 
