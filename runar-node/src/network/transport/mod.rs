@@ -306,10 +306,10 @@ pub trait NetworkTransport: Send + Sync {
     async fn stop(&self) -> Result<(), NetworkError>;
 
     /// Disconnect from a remote node
-    async fn disconnect(&self, node_id: String) -> Result<(), NetworkError>;
+    async fn disconnect(&self, node_id: &str) -> Result<(), NetworkError>;
 
     /// Check if connected to a specific node
-    async fn is_connected(&self, node_id: String) -> bool;
+    async fn is_connected(&self, node_id: &str) -> bool;
 
     /// Perform an RPC request/response exchange (pattern A). The transport
     /// opens a fresh bidirectional stream, writes the request, finishes the

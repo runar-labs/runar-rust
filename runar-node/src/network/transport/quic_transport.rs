@@ -1652,23 +1652,20 @@ impl NetworkTransport for QuicTransport {
         Ok(())
     }
 
-    async fn disconnect(&self, node_id: String) -> Result<(), NetworkError> {
+    async fn disconnect(&self, node_id: &str) -> Result<(), NetworkError> {
         // Remove peer from the peers map
-        if let Some((_, peer_state)) = self.state.peers.remove(&node_id) {
+        if let Some((_, peer_state)) = self.state.peers.remove(node_id) {
             // Close the connection gracefully
             peer_state.connection.close(0u32.into(), b"disconnect");
             log_info!(self.logger, "Disconnected from peer: {node_id}");
         } else {
-            log_warn!(
-                self.logger,
-                "Attempted to disconnect from unknown peer: {node_id}"
-            );
+            log_warn!(self.logger, "Attempted to disconnect from unknown peer: {node_id}");
         }
         Ok(())
     }
 
-    async fn is_connected(&self, peer_node_id: String) -> bool {
-        self.state.peers.contains_key(&peer_node_id)
+    async fn is_connected(&self, peer_node_id: &str) -> bool {
+        self.state.peers.contains_key(peer_node_id)
     }
 
     async fn request(
