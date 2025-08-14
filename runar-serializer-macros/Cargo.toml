@@ -10,7 +10,7 @@ homepage = "https://github.com/runar-labs/runar-rust"
 documentation = "https://docs.rs/runar-serializer-macros"
 readme = "README.md"
 keywords = ["proc-macro", "serde", "encryption"]
-categories = ["development-tools::procedural-macro"]
+categories = ["development-tools"]
 rust-version = "1.70"
 
 [lib]
