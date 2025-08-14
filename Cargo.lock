@@ -3700,7 +3700,7 @@ dependencies = [
  "prost",
  "runar-serializer",
  "runar-serializer-macros",
- "runar_common 0.1.0",
+ "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "runar_macros",
  "runar_macros_common",
  "runar_node",
