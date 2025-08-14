@@ -7,6 +7,11 @@ authors = ["Runar Team"]
 license = "MIT"
 keywords = ["p2p", "encryption", "micro-services"]
 categories = ["development-tools"]
+repository = "https://github.com/runar-labs/runar-rust"
+homepage = "https://github.com/runar-labs/runar-rust"
+documentation = "https://docs.rs/runar_node"
+readme = "README.md"
+rust-version = "1.70"
 
 [dependencies]
 dashmap = "5"
@@ -27,11 +32,11 @@ ctor = "0.2"
 
 # Local dependencies
 runar_common = "0.1"
-runar-keys = { path = "../runar-keys" }
-runar-serializer = { path = "../runar-serializer" }
-runar-serializer-macros = { path = "../runar-serializer-macros" }
-runar-schemas = { path = "../runar-schemas" }
-runar_macros_common = { path = "../runar-macros-common" }
+runar-keys = { version = "0.1", path = "../runar-keys" }
+runar-serializer = { version = "0.1", path = "../runar-serializer" }
+runar-serializer-macros = { version = "0.1", path = "../runar-serializer-macros" }
+runar-schemas = { version = "0.1", path = "../runar-schemas" }
+runar_macros_common = { version = "0.1", path = "../runar-macros-common" }
 
 
 # Network dependencies
@@ -64,6 +69,17 @@ futures = "0.3"
 [features]
 default = []
  
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
 
 [dev-dependencies]
 tokio-test = "0.4"
