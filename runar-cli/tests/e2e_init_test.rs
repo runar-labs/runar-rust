@@ -75,7 +75,7 @@ impl MobileSimulator {
 
         let qr_bytes = hex::decode(qr_code_string).context("Failed to decode QR code string")?;
 
-        let full_setup_token: FullSetupToken = bincode::deserialize(&qr_bytes)
+        let full_setup_token: FullSetupToken = serde_cbor::from_slice(&qr_bytes)
             .context("Failed to deserialize setup token from QR code")?;
 
         self.logger.info(format!(
@@ -211,12 +211,12 @@ impl MobileSimulator {
 
         self.logger.info("📱 Mobile: Connected to setup server");
 
-        // Serialize the certificate message
-        let cert_bytes = bincode::serialize(&certificate_message)
+        // Serialize the certificate message (CBOR)
+        let cert_bytes = serde_cbor::to_vec(&certificate_message)
             .context("Failed to serialize certificate message")?;
 
-        // Serialize the network key message
-        let network_bytes = bincode::serialize(&network_key_message)
+        // Serialize the network key message (CBOR)
+        let network_bytes = serde_cbor::to_vec(&network_key_message)
             .context("Failed to serialize network key message")?;
 
         // Send the certificate message first
@@ -291,7 +291,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     };
 
     let setup_token_bytes =
-        bincode::serialize(&full_setup_token).context("Failed to serialize setup token")?;
+        serde_cbor::to_vec(&full_setup_token).context("Failed to serialize setup token")?;
 
     let _qr_code = qrcode::QrCode::new(&setup_token_bytes).context("Failed to generate QR code")?;
 
@@ -409,7 +409,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
 
     let node_state = node_key_manager.export_state();
     let serialized_state =
-        bincode::serialize(&node_state).context("Failed to serialize node state")?;
+        serde_cbor::to_vec(&node_state).context("Failed to serialize node state")?;
 
     let keys_path = config_dir.join("node_keys.bin");
     std::fs::write(&keys_path, &serialized_state)
@@ -440,7 +440,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     let loaded_serialized_state = std::fs::read(&keys_path)
         .with_context(|| format!("Failed to read node keys from {keys_path:?}"))?;
 
-    let loaded_node_state = bincode::deserialize(&loaded_serialized_state)
+    let loaded_node_state = serde_cbor::from_slice(&loaded_serialized_state)
         .context("Failed to deserialize node state")?;
 
     let loaded_node_key_manager = NodeKeyManager::from_state(loaded_node_state, logger.clone())

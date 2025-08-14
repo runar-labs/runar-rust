@@ -191,9 +191,9 @@ impl SetupServer {
             ));
         }
 
-        // Deserialize the message
+        // Deserialize the message (CBOR)
         let message: T =
-            bincode::deserialize(&message_bytes).context("Failed to deserialize message")?;
+            serde_cbor::from_slice(&message_bytes).context("Failed to deserialize CBOR message")?;
 
         log_debug!(self.logger, "Message deserialized successfully");
 

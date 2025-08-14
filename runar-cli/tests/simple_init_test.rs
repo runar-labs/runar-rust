@@ -95,7 +95,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     };
 
     let setup_token_bytes =
-        bincode::serialize(&full_setup_token).context("Failed to serialize setup token")?;
+        serde_cbor::to_vec(&full_setup_token).context("Failed to serialize setup token")?;
 
     let _qr_code = qrcode::QrCode::new(&setup_token_bytes).context("Failed to generate QR code")?;
 
@@ -153,7 +153,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
 
     let node_state = node_key_manager.export_state();
     let serialized_state =
-        bincode::serialize(&node_state).context("Failed to serialize node state")?;
+        serde_cbor::to_vec(&node_state).context("Failed to serialize node state")?;
 
     let keys_path = config_dir.join("node_keys.bin");
     std::fs::write(&keys_path, &serialized_state)
@@ -182,7 +182,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     let loaded_serialized_state = std::fs::read(&keys_path)
         .with_context(|| format!("Failed to read node keys from {keys_path:?}"))?;
 
-    let loaded_node_state = bincode::deserialize(&loaded_serialized_state)
+    let loaded_node_state = serde_cbor::from_slice(&loaded_serialized_state)
         .context("Failed to deserialize node state")?;
 
     let loaded_node_key_manager = NodeKeyManager::from_state(loaded_node_state, logger.clone())
