@@ -19,7 +19,7 @@ use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private};
 use openssl::x509::extension::{
     AuthorityKeyIdentifier, BasicConstraints as OpenSslBasicConstraints, ExtendedKeyUsage,
-    KeyUsage, SubjectKeyIdentifier,
+    KeyUsage, SubjectAlternativeName, SubjectKeyIdentifier,
 };
 use openssl::x509::{X509Builder, X509NameBuilder, X509Req, X509};
 
@@ -463,6 +463,29 @@ impl CertificateAuthority {
 
         // Sign & return
         let ca_pkey = self.ca_key_pair_to_openssl_pkey()?;
+        // Add SAN DNS equal to CSR's CN (if present)
+        {
+            let mut cn_value: Option<String> = None;
+            for entry in req.subject_name().entries() {
+                if entry.object().nid() == Nid::COMMONNAME {
+                    if let Ok(data) = entry.data().as_utf8() {
+                        cn_value = Some(data.to_string());
+                        break;
+                    }
+                }
+            }
+            if let Some(cn) = cn_value {
+                let subject_ctx = cert_builder.x509v3_context(None, None);
+                let san = SubjectAlternativeName::new()
+                    .dns(&cn)
+                    .build(&subject_ctx)
+                    .map_err(|e| KeyError::CertificateError(format!("Failed to build SAN: {e}")))?;
+                cert_builder.append_extension(san).map_err(|e| {
+                    KeyError::CertificateError(format!("Failed to append SAN: {e}"))
+                })?;
+            }
+        }
+
         cert_builder
             .sign(&ca_pkey, MessageDigest::sha256())
             .map_err(|e| KeyError::CertificateError(format!("Failed to sign certificate: {e}")))?;

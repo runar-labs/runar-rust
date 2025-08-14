@@ -732,7 +732,7 @@ impl MobileKeyManager {
     pub fn create_network_key_message(
         &self,
         network_id: &str,
-        node_public_key: &[u8],
+        node_agreement_public_key: &[u8],
     ) -> Result<NetworkKeyMessage> {
         let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
             KeyError::KeyNotFound(format!(
@@ -740,17 +740,12 @@ impl MobileKeyManager {
             ))
         })?;
 
-        // Encrypt the network's private key for the node (agreement key encoded as PKCS#8)
-        let network_private_key = network_key
-            .to_pkcs8_der()
-            .map(|d| d.as_bytes().to_vec())
-            .map_err(|e| {
-                KeyError::InvalidKeyFormat(format!("Failed to encode network key: {e}"))
-            })?;
+        // Encrypt the raw 32-byte scalar for the node's agreement public key
+        let network_scalar = network_key.to_bytes().to_vec();
         let encrypted_network_key =
-            self.encrypt_key_with_ecdsa(&network_private_key, node_public_key)?;
+            self.encrypt_key_with_ecdsa(&network_scalar, node_agreement_public_key)?;
 
-        let node_id = compact_id(node_public_key);
+        let node_id = compact_id(node_agreement_public_key);
         log_info!(
             self.logger,
             "Network key encrypted for node {node_id} with ECIES"
@@ -822,14 +817,14 @@ impl MobileKeyManager {
     pub fn encrypt_message_for_node(
         &self,
         message: &[u8],
-        node_public_key: &[u8],
+        node_agreement_public_key: &[u8],
     ) -> Result<Vec<u8>> {
         let message_len = message.len();
         log_debug!(
             self.logger,
             "Encrypting message for node ({message_len} bytes)"
         );
-        self.encrypt_key_with_ecdsa(message, node_public_key)
+        self.encrypt_key_with_ecdsa(message, node_agreement_public_key)
     }
 
     /// Decrypt a message from a node using the user's root key (ECIES)

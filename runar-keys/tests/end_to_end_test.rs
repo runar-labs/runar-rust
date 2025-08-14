@@ -142,7 +142,10 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let serialized_cert_msg =
         bincode::serialize(&cert_message).expect("Failed to serialize certificate message");
     let encrypted_cert_msg = mobile_keys_manager
-        .encrypt_message_for_node(&serialized_cert_msg, &node_public_key_from_token)
+        .encrypt_message_for_node(
+            &serialized_cert_msg,
+            &setup_token_mobile.node_agreement_public_key,
+        )
         .expect("Failed to encrypt certificate message for node");
 
     // Node side - receives the encrypted certificate message, decrypts, and installs it.
@@ -436,9 +439,9 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   ✅ Network data key generated with ID: {network_id}");
 
     // Create network key message for the node
-    // Use the actual network_id (public key) and node's public key
+    // Use the actual network_id (public key) and node's agreement public key
     let network_key_message = mobile_keys_manager
-        .create_network_key_message(&network_id, &node_public_key_from_token)
+        .create_network_key_message(&network_id, &setup_token_mobile.node_agreement_public_key)
         .expect("Failed to create network key message");
 
     // The sensitive part of the network_key_message (the key itself) is already encrypted.

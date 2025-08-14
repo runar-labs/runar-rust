@@ -315,8 +315,9 @@ async fn test_multiple_network_scenario() -> Result<()> {
     // Distribute network keys to all nodes for each network
     for network_id in &network_ids {
         for node in &mut nodes {
+            let token = node.generate_csr()?;
             let network_key_msg =
-                mobile.create_network_key_message(network_id, &node.get_node_public_key())?;
+                mobile.create_network_key_message(network_id, &token.node_agreement_public_key)?;
             node.install_network_key(network_key_msg)?;
         }
     }
@@ -491,8 +492,9 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     // Set up network key on node BEFORE creating envelope
     println!("   Installing network key on node for network1: {network1_id}");
+    let token = node.generate_csr()?;
     let network_key_msg =
-        mobile.create_network_key_message(&network1_key, &node.get_node_public_key())?;
+        mobile.create_network_key_message(&network1_key, &token.node_agreement_public_key)?;
     node.install_network_key(network_key_msg)?;
     println!("   ✅ Network key installed on node");
 
