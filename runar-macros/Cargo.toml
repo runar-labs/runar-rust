@@ -10,7 +10,7 @@ homepage = "https://github.com/runar-labs/runar-rust"
 documentation = "https://docs.rs/runar_macros"
 readme = "README.md"
 keywords = ["proc-macro", "macro", "service", "rpc"]
-categories = ["development-tools::procedural-macro"]
+categories = ["development-tools"]
 rust-version = "1.70"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
