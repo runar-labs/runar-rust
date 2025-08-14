@@ -3338,36 +3338,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runar-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.21.7",
- "clap",
- "dirs",
- "env_logger 0.10.2",
- "futures-util",
- "hex",
- "image",
- "keyring",
- "log",
- "qrcode",
- "runar-keys",
- "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "runar_macros_common",
- "runar_node",
- "serde",
- "serde_cbor",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "runar-gateway"
 version = "0.1.0"
 dependencies = [
@@ -3536,6 +3506,36 @@ dependencies = [
  "serde_cbor",
  "serde_json",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "runar_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.21.7",
+ "clap",
+ "dirs",
+ "env_logger 0.10.2",
+ "futures-util",
+ "hex",
+ "image",
+ "keyring",
+ "log",
+ "qrcode",
+ "runar-keys",
+ "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "runar_macros_common",
+ "runar_node",
+ "serde",
+ "serde_cbor",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tokio-util",
  "uuid",
 ]
 

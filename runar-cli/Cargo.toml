@@ -1,5 +1,5 @@
 [package]
-name = "runar-cli"
+name = "runar_cli"
 version = "0.1.0"
 edition = "2021"
 description = "Runar CLI for node initialization and management"
