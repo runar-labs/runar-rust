@@ -2399,12 +2399,12 @@ dependencies = [
  "runar-keys",
  "runar-schemas",
  "runar-serializer",
- "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_macros_common",
  "runar_node",
  "runar_services",
+ "runar_test_utils",
  "serde",
  "serde_json",
  "tokio",
@@ -3381,10 +3381,10 @@ dependencies = [
  "reqwest",
  "runar-schemas",
  "runar-serializer",
- "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_node",
+ "runar_test_utils",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3436,10 +3436,10 @@ dependencies = [
  "runar-keys",
  "runar-schemas",
  "runar-serializer",
- "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros_common",
  "runar_node",
+ "runar_test_utils",
  "rustls 0.23.28",
  "serde",
  "serde_cbor",
@@ -3463,9 +3463,9 @@ dependencies = [
  "napi-derive",
  "once_cell",
  "runar-serializer",
- "runar_test_utils",
  "runar_common 0.1.0",
  "runar_node",
+ "runar_test_utils",
  "serde",
  "serde_json",
  "tokio",
@@ -3514,22 +3514,6 @@ dependencies = [
  "quote",
  "serde_cbor",
  "syn 2.0.104",
-]
-
-[[package]]
-name = "runar_test_utils"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "runar-keys",
- "runar-serializer",
- "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "runar_node",
- "serde",
- "tokio",
- "tokio-test",
- "uuid",
 ]
 
 [[package]]
@@ -3629,10 +3613,10 @@ dependencies = [
  "rand 0.8.5",
  "runar-schemas",
  "runar-serializer",
- "runar_test_utils",
  "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "runar_macros_common",
  "runar_node",
+ "runar_test_utils",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3680,9 +3664,9 @@ dependencies = [
  "runar-schemas",
  "runar-serializer",
  "runar-serializer-macros",
- "runar_test_utils",
  "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "runar_macros_common",
+ "runar_test_utils",
  "rustls 0.23.28",
  "rustls-native-certs 0.6.3",
  "rustls-pemfile",
@@ -3716,11 +3700,11 @@ dependencies = [
  "prost",
  "runar-serializer",
  "runar-serializer-macros",
- "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_macros_common",
  "runar_node",
+ "runar_test_utils",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3728,6 +3712,22 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "runar_test_utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "runar-keys",
+ "runar-serializer",
+ "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "runar_node",
+ "serde",
+ "tokio",
+ "tokio-test",
  "uuid",
 ]
 
@@ -4273,11 +4273,11 @@ dependencies = [
  "async-trait",
  "runar-schemas",
  "runar-serializer",
- "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_macros_common",
  "runar_node",
+ "runar_test_utils",
  "serde_json",
  "tokio",
 ]
