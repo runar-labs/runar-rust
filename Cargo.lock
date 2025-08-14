@@ -3338,34 +3338,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runar-gateway"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "ctor",
- "futures",
- "prost",
- "prost-derive",
- "reqwest",
- "runar-schemas",
- "runar-serializer",
- "runar_common 0.1.0",
- "runar_macros",
- "runar_node",
- "runar_test_utils",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tower-http 0.5.2",
- "uuid",
-]
-
-[[package]]
 name = "runar-keys"
 version = "0.1.0"
 dependencies = [
@@ -3590,6 +3562,34 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "runar_gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "ctor",
+ "futures",
+ "prost",
+ "prost-derive",
+ "reqwest",
+ "runar-schemas",
+ "runar-serializer",
+ "runar_common 0.1.0",
+ "runar_macros",
+ "runar_node",
+ "runar_test_utils",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower-http 0.5.2",
  "uuid",
 ]
 
