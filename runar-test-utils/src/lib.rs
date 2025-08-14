@@ -55,7 +55,7 @@ pub fn create_test_node_keys(
         .expect("Failed to process setup token");
 
     let network_key_message = mobile_keys_manager
-        .create_network_key_message(default_network_id, &node_public_key)
+        .create_network_key_message(default_network_id, &setup_token.node_agreement_public_key)
         .expect("Failed to create network key message");
 
     node_keys_manager
@@ -265,7 +265,7 @@ impl MobileSimulator {
         // Install network key from master using the existing network ID
         let network_key_message = master_key_manager.create_network_key_message(
             &self.master.network_id,
-            &node_key_manager.get_node_public_key(),
+            &setup_token.node_agreement_public_key,
         )?;
         node_key_manager.install_network_key(network_key_message)?;
 
