@@ -225,29 +225,11 @@ impl MobileKeyManager {
             .to_vec())
     }
 
-    /// Derive a user profile key from the root key using HKDF.
+    /// Derive a user profile agreement key from the root key using HKDF-SHA-256.
     ///
-    /// This implementation follows these steps:
-    /// 1.  The secret scalar bytes of the user *root* key are used as the
-    ///     Input Key Material (IKM) for HKDF-SHA-256. Using the raw scalar
-    ///     avoids the variability and additional metadata present in the
-    ///     PKCS#8 representation previously used.
-    /// 2.  A domain-separated `info` string (`"runar-profile-{profile_id}"`)
-    ///     is supplied to HKDF to ensure every profile receives a unique key
-    ///     tied to the caller-supplied identifier.
-    /// 3.  HKDF expands to 32 bytes. These bytes are interpreted as a P-256
-    ///     scalar.  If the candidate scalar is *not* in the valid field range
-    ///     (i.e. ≥ n or zero) we derive a new candidate by appending an
-    ///     incrementing counter to the `info` string.  The probability of
-    ///     requiring multiple attempts is negligible but this guarantees a
-    ///     correct result in constant time.
-    /// 4.  The resulting scalar is converted into an `EcdsaKeyPair` which is
-    ///     cached so subsequent calls for the same `profile_id` return the
-    ///     exact same key without additional computation.
-    ///
-    /// This approach is deterministic, collision-resistant, and ensures strong
-    /// cryptographic separation between the root and profile keys while
-    /// remaining compatible with the system-wide ECDSA P-256 algorithm.
+    /// - IKM: raw 32-byte scalar of the user root signing key
+    /// - info: "runar-v1:profile:agreement:{label}[:{counter}]"
+    /// - output: 32-byte scalar interpreted as P-256 SecretKey (with rejection sampling)
     pub fn derive_user_profile_key(&mut self, label: &str) -> Result<Vec<u8>> {
         // Fast-path: if we already derived a key for this label return it.
         if let Some(pid) = self.label_to_pid.get(label) {
@@ -258,7 +240,6 @@ impl MobileKeyManager {
         }
 
         use hkdf::Hkdf;
-        use p256::ecdsa::SigningKey;
         use sha2::Sha256;
 
         // Ensure the root key exists.
@@ -267,53 +248,39 @@ impl MobileKeyManager {
             .as_ref()
             .ok_or_else(|| KeyError::KeyNotFound("User root key not initialized".to_string()))?;
 
-        // Extract the raw 32-byte scalar of the root private key.
-        // This is a stable representation suitable for HKDF input.
+        // Extract the raw 32-byte scalar of the root private key as IKM
         let root_scalar_bytes = root_key.signing_key().to_bytes();
 
-        // Derive a profile-specific private scalar using HKDF-SHA-256.
+        // Derive a profile-specific agreement scalar using HKDF-SHA-256 with rejection sampling
         let hk = Hkdf::<Sha256>::new(
             Some(b"RunarKeyDerivationSalt/v1"),
             root_scalar_bytes.as_slice(),
         );
-
-        // Attempt to create a valid P-256 signing key from the HKDF output.
-        // If the candidate scalar is out of range (rare) retry with a counter
-        // in the info field until success.
         let mut counter: u32 = 0;
-        let signing_key = loop {
+        let profile_agreement = loop {
             let info = if counter == 0 {
-                format!("runar-v1:profile:signing:{label}")
+                format!("runar-v1:profile:agreement:{label}")
             } else {
-                format!("runar-v1:profile:signing:{label}:{counter}")
+                format!("runar-v1:profile:agreement:{label}:{counter}")
             };
-
             let mut candidate_bytes = [0u8; 32];
             hk.expand(info.as_bytes(), &mut candidate_bytes)
                 .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
-
-            match SigningKey::from_bytes((&candidate_bytes).into()) {
+            match P256SecretKey::from_slice(&candidate_bytes) {
                 Ok(sk) => break sk,
                 Err(_) => {
-                    counter += 1;
-                    continue; // try again with different info string
+                    counter = counter.saturating_add(1);
+                    continue;
                 }
             }
         };
-
-        // Store signing + agreement; public identity for profile is agreement public key
-        let profile_signing = EcdsaKeyPair::from_signing_key(signing_key);
-        let profile_agreement = derive_agreement_from_master(
-            &profile_signing.signing_key().to_bytes(),
-            b"runar-v1:profile:agreement",
-        )?;
         let public_key = profile_agreement
             .public_key()
             .to_encoded_point(false)
             .as_bytes()
             .to_vec();
         let pid = compact_id(&public_key);
-        self.user_profile_keys.insert(pid.clone(), profile_signing);
+        // Signing key not required for profile; store only agreement
         self.user_profile_agreements
             .insert(pid.clone(), profile_agreement);
         self.label_to_pid.insert(label.to_string(), pid.clone());
