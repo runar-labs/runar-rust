@@ -5,8 +5,15 @@ edition = "2021"
 description = "Common macros for the Runar system"
 authors = ["Runar Team"]
 license = "MIT"
+repository = "https://github.com/runar-labs/runar-rust"
+homepage = "https://github.com/runar-labs/runar-rust"
+documentation = "https://docs.rs/runar_macros_common"
+readme = "README.md"
+keywords = ["macro", "logging", "map"]
+categories = ["development-tools"]
+rust-version = "1.70"
 
 [dependencies]
-runar-serializer = { path = "../runar-serializer" }
+runar-serializer = { version = "0.1", path = "../runar-serializer" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0" 
