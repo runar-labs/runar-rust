@@ -11,7 +11,7 @@ runar_common = { path = "../runar-common" }
 runar-keys = { path = "../runar-keys" }
 runar_node = { path = "../runar-node" }
 runar-serializer = { path = "../runar-serializer" }
-runar_test_utils = { path = "../runar_test_utils" }
+runar_test_utils = { path = "../runar-test-utils" }
 runar_macros = { path = "../runar-macros" }
 runar_macros_common = { path = "../runar-macros-common" }
 runar-schemas = { path = "../runar-schemas" }

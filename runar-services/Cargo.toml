@@ -33,7 +33,7 @@ tempfile = "3.10"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "test-util"] }
 runar_common = { path = "../runar-common", features = ["abstract_service"] }
 runar_macros = { path = "../runar-macros" }
-runar_test_utils = { path = "../runar_test_utils" }
+runar_test_utils = { path = "../runar-test-utils" }
 serde_json = "1.0"
 runar_macros_common = { path = "../runar-macros-common" }
 serial_test = "2.0"

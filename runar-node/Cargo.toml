@@ -84,7 +84,7 @@ targets = [
 [dev-dependencies]
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
-runar_test_utils = { path = "../runar_test_utils" }
+runar_test_utils = { path = "../runar-test-utils" }
 
 
 
