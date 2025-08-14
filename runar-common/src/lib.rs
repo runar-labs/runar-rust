@@ -14,11 +14,13 @@ pub use service_info::ServiceInfo;
 
 /// Utility module for compact ID encoding
 pub mod compact_ids {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use data_encoding::BASE32HEX_NOPAD;
     use sha2::{Digest, Sha256};
 
-    /// Generate a compact node ID from public key bytes using SHA-256 hash
-    /// Takes the first 16 bytes (128 bits) of the SHA-256 hash for a compact representation
+    /// Generate a DNS-safe compact ID from public key bytes using SHA-256 hash.
+    /// - Input: SEC1/X9.63 uncompressed (65 bytes)
+    /// - Truncate: first 16 bytes of SHA-256 hash
+    /// - Encode: Base32hex (no padding), lowercase (26 chars)
     pub fn compact_id(public_key: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(public_key);
@@ -26,6 +28,7 @@ pub mod compact_ids {
 
         // Take first 16 bytes (128 bits) for compact representation
         let compact_hash = &hash_result[..16];
-        URL_SAFE_NO_PAD.encode(compact_hash)
+        // Base32hex no padding, lowercase
+        BASE32HEX_NOPAD.encode(compact_hash).to_lowercase()
     }
 }

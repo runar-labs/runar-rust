@@ -184,9 +184,9 @@ impl InitCommand {
             server_address: setup_config.get_setup_server_address(),
         };
 
-        // Serialize the full setup token
+        // Serialize the full setup token (CBOR)
         let setup_token_bytes =
-            bincode::serialize(&full_setup_token).context("Failed to serialize setup token")?;
+            serde_cbor::to_vec(&full_setup_token).context("Failed to serialize setup token")?;
 
         // Generate QR code
         let qr_code =
@@ -316,7 +316,7 @@ impl InitCommand {
         // Export and save node state to OS key store
         let node_state = node_key_manager.export_state();
         let serialized_state =
-            bincode::serialize(&node_state).context("Failed to serialize node state")?;
+            serde_cbor::to_vec(&node_state).context("Failed to serialize node state")?;
 
         // Store keys securely in OS key store
         let key_store = OsKeyStore::new(self.logger.clone());

@@ -617,7 +617,7 @@ fn test_symmetric_key_management() {
 
     // Verify node ID is derived from public key
     assert!(!node_id.is_empty());
-    assert_eq!(node_id.len(), 22);
+    assert_eq!(node_id.len(), 26);
 
     // Test storage key access
     let storage_key = node_manager.get_storage_key();

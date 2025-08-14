@@ -3343,7 +3343,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
- "bincode",
  "clap",
  "dirs",
  "env_logger 0.10.2",
@@ -3358,6 +3357,7 @@ dependencies = [
  "runar_macros_common",
  "runar_node",
  "serde",
+ "serde_cbor",
  "serde_json",
  "tempfile",
  "tokio",
@@ -3564,6 +3564,7 @@ dependencies = [
  "base64 0.21.7",
  "bincode",
  "chrono",
+ "data-encoding",
  "env_logger 0.10.2",
  "lazy_static",
  "log",

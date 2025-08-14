@@ -101,9 +101,9 @@ impl StartCommand {
                 )
             })?;
 
-        // Deserialize the node state
-        let node_state =
-            bincode::deserialize(&serialized_state).context("Failed to deserialize node state")?;
+        // Deserialize the node state (CBOR)
+        let node_state = serde_cbor::from_slice(&serialized_state)
+            .context("Failed to deserialize node state")?;
 
         // Create logger for the key manager
         let key_logger = Arc::new(Logger::new_root(Component::Keys, &config.node_id));
@@ -128,7 +128,7 @@ impl StartCommand {
     ) -> Result<NodeConfig> {
         // Export the current state for the Runar node
         let node_state = node_key_manager.export_state();
-        let serialized_state = bincode::serialize(&node_state)
+        let serialized_state = serde_cbor::to_vec(&node_state)
             .context("Failed to serialize node state for Runar config")?;
 
         // Create Runar node configuration using production constructor

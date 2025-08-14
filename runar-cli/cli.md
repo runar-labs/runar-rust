@@ -25,7 +25,7 @@ let csr_setup_token = nodeKeys.generate_csr().expect("Failed to generate setup t
 let full_setup_token ...
 
 let setup_token_bytes =
-    bincode::serialize(&full_setup_token).expect("Failed to serialize setup token");
+    serde_cbor::to_vec(&full_setup_token).expect("Failed to serialize setup token");
 
 // The encrypted token is then encoded (e.g., into a QR code).
 let setup_token_str = hex::encode(setup_token_bytes);
@@ -44,7 +44,7 @@ let decrypted_cert_msg_bytes = node
     .expect("Failed to decrypt certificate message from mobile");
 
 let deserialized_cert_msg: NodeCertificateMessage =
-    bincode::deserialize(&decrypted_cert_msg_bytes)
+    serde_cbor::from_slice(&decrypted_cert_msg_bytes)
         .expect("Failed to deserialize certificate message");
 
 // 4 - (node side) - received the certificate message, validates it, and stores it
@@ -59,7 +59,7 @@ so we need to save the credentials to the OS key store
 let node_state = nodeKeys.export_state();
   
 let serialized_node_state =
-        bincode::serialize(&node_state).expect("Failed to serialize node state");
+        serde_cbor::to_vec(&node_state).expect("Failed to serialize node state");
 
 
 //geneate the keys_name -> -runnar_{unique UUID}  to be used to store the keys in the OS key store and save the keys_name in a config file in the .runar folder   
