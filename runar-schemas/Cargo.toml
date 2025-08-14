@@ -1,16 +1,35 @@
 [package]
 name = "runar-schemas"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
+version = "0.1.0"
+edition = "2021"
+authors = ["Runar Team"]
 description = "Protobuf schema types for Runar (ServiceMetadata, etc.)"
-license.workspace = true
+license = "MIT"
+repository = "https://github.com/runar-labs/runar-rust"
+homepage = "https://github.com/runar-labs/runar-rust"
+documentation = "https://docs.rs/runar-schemas"
+readme = "README.md"
+keywords = ["schema", "metadata", "rpc"]
+categories = ["data-structures"]
+rust-version = "1.70"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 prost = { version = "0.12", default-features = false, features = ["std", "derive"] }
-runar-serializer = { path = "../runar-serializer" }
-runar-serializer-macros = { path = "../runar-serializer-macros" }
-anyhow = { workspace = true } 
+runar-serializer = { version = "0.1", path = "../runar-serializer" }
+runar-serializer-macros = { version = "0.1", path = "../runar-serializer-macros" }
+anyhow = "1.0" 
 ctor = "0.2"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]

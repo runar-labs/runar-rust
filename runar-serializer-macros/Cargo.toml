@@ -2,9 +2,16 @@
 name = "runar-serializer-macros"
 version = "0.1.0"
 edition = "2021"
-authors.workspace = true
+authors = ["Runar Team"]
 description = "Derive macros for runar-serializer"
-license.workspace = true
+license = "MIT"
+repository = "https://github.com/runar-labs/runar-rust"
+homepage = "https://github.com/runar-labs/runar-rust"
+documentation = "https://docs.rs/runar-serializer-macros"
+readme = "README.md"
+keywords = ["proc-macro", "serde", "encryption"]
+categories = ["development-tools::procedural-macro"]
+rust-version = "1.70"
 
 [lib]
 proc-macro = true
@@ -14,5 +21,5 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 serde_cbor = "0.11"
-anyhow = { workspace = true } 
+anyhow = "1.0" 
 ctor = "0.2" 

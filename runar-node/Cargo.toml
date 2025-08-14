@@ -26,7 +26,7 @@ once_cell = "1"
 ctor = "0.2"
 
 # Local dependencies
-runar_common = { path = "../runar-common" }
+runar_common = "0.1"
 runar-keys = { path = "../runar-keys" }
 runar-serializer = { path = "../runar-serializer" }
 runar-serializer-macros = { path = "../runar-serializer-macros" }

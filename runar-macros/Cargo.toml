@@ -5,6 +5,13 @@ edition = "2021"
 description = "Procedural macros for the Runar Node system"
 authors = ["Runar Team"]
 license = "MIT"
+repository = "https://github.com/runar-labs/runar-rust"
+homepage = "https://github.com/runar-labs/runar-rust"
+documentation = "https://docs.rs/runar_macros"
+readme = "README.md"
+keywords = ["proc-macro", "macro", "service", "rpc"]
+categories = ["development-tools::procedural-macro"]
+rust-version = "1.70"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -12,7 +19,7 @@ license = "MIT"
 proc-macro = true
 
 [features]
-default = ["node_implementation"]
+default = []
 node_implementation = ["dep:runar_node", "dep:tokio"]
 distributed_slice = ["node_implementation", "dep:linkme"]
 
@@ -20,20 +27,20 @@ distributed_slice = ["node_implementation", "dep:linkme"]
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
-runar-schemas = { path = "../runar-schemas" }
+runar-schemas = { version = "0.1", path = "../runar-schemas" }
 rand = "0.8"
 darling = "0.20"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 async-trait = "0.1"
-runar_common = { path = "../runar-common" }
+runar_common = "0.1"
 inventory = "0.3"
 once_cell = "1.8"
 ctor = "0.2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Optional dependencies
-runar_node = { path = "../runar-node", optional = true }
+runar_node = { version = "0.1", path = "../runar-node", optional = true }
 linkme = { version = "0.3", optional = true }
 anyhow = "1.0"
 futures = "0.3.31"
@@ -44,11 +51,11 @@ serde_json = "1.0"
 chrono = "0.4"
 tempfile = "3.8"
 tokio = { version = "1.32", features = ["full"] }
-runar-test-utils = { path = "../runar-test-utils" }
-runar_macros_common = { path = "../runar-macros-common" }
+runar-test-utils = { version = "0.1", path = "../runar-test-utils" }
+runar_macros_common = { version = "0.1", path = "../runar-macros-common" }
 prost = "0.12"
 prost-derive = "0.12"
-runar-serializer = { path = "../runar-serializer" }
+runar-serializer = { version = "0.1", path = "../runar-serializer" }
 
 # Binary for macro expansion debugging
 [[bin]]
@@ -60,6 +67,18 @@ required-features = ["node_implementation"]
 version = "1.32"
 features = ["full"]
 optional = true
+
+[package.metadata.docs.rs]
+all-features = false
+rustdoc-args = ["--cfg", "docsrs"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 anyhow = "1.0"
