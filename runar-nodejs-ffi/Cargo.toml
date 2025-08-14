@@ -17,7 +17,7 @@ napi-derive = "2.16.0"
 # Local Runar crates
 runar_node = { path = "../runar-node" }
 runar_common = { path = "../runar-common" }
-runar-test-utils = { path = "../runar-test-utils" }
+runar_test_utils = { path = "../runar_test_utils" }
 runar-serializer = { path = "../runar-serializer" }
 
 # Utilities

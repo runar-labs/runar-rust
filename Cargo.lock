@@ -2399,7 +2399,7 @@ dependencies = [
  "runar-keys",
  "runar-schemas",
  "runar-serializer",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_macros_common",
@@ -3381,7 +3381,7 @@ dependencies = [
  "reqwest",
  "runar-schemas",
  "runar-serializer",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_node",
@@ -3436,7 +3436,7 @@ dependencies = [
  "runar-keys",
  "runar-schemas",
  "runar-serializer",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros_common",
  "runar_node",
@@ -3463,7 +3463,7 @@ dependencies = [
  "napi-derive",
  "once_cell",
  "runar-serializer",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0",
  "runar_node",
  "serde",
@@ -3517,7 +3517,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "runar-test-utils"
+name = "runar_test_utils"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3629,7 +3629,7 @@ dependencies = [
  "rand 0.8.5",
  "runar-schemas",
  "runar-serializer",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "runar_macros_common",
  "runar_node",
@@ -3680,7 +3680,7 @@ dependencies = [
  "runar-schemas",
  "runar-serializer",
  "runar-serializer-macros",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "runar_macros_common",
  "rustls 0.23.28",
@@ -3716,7 +3716,7 @@ dependencies = [
  "prost",
  "runar-serializer",
  "runar-serializer-macros",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_macros_common",
@@ -4273,7 +4273,7 @@ dependencies = [
  "async-trait",
  "runar-schemas",
  "runar-serializer",
- "runar-test-utils",
+ "runar_test_utils",
  "runar_common 0.1.0",
  "runar_macros",
  "runar_macros_common",

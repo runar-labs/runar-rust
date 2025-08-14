@@ -1,4 +1,4 @@
-runar-test-utils
+runar_test_utils
 =================
 
 Test helpers for Runar crates: quick key setup, node configs, and a lightweight
@@ -9,7 +9,7 @@ Install
 
 ```toml
 [dev-dependencies]
-runar-test-utils = "0.1"
+runar_test_utils = "0.1"
 ```
 
 Quick start

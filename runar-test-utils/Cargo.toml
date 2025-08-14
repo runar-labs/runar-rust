@@ -1,5 +1,5 @@
 [package]
-name = "runar-test-utils"
+name = "runar_test_utils"
 version = "0.1.0"
 edition = "2021"
 description = "Test utilities for Runar crates"
@@ -7,7 +7,7 @@ authors = ["Runar Team"]
 license = "MIT"
 repository = "https://github.com/runar-labs/runar-rust"
 homepage = "https://github.com/runar-labs/runar-rust"
-documentation = "https://docs.rs/runar-test-utils"
+documentation = "https://docs.rs/runar_test_utils"
 readme = "README.md"
 rust-version = "1.70"
 

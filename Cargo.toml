@@ -13,7 +13,7 @@ members = [
     "runar-serializer",
     "runar-nodejs-ffi",
     "runar-cli", 
-    "runar-test-utils",
+    "runar_test_utils",
     "runar-node-tests",
     "runar-schemas",
     "runar-transport-tests",
