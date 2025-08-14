@@ -326,7 +326,10 @@ async fn test_e2e_cli_initialization() -> Result<()> {
 
     // Generate network key for the node
     let network_id = mobile.generate_network_data_key()?;
-    let network_key_message = mobile.create_network_key_message(&network_id, &node_public_key)?;
+    let network_key_message = mobile.create_network_key_message(
+        &network_id,
+        &parsed_setup_token.setup_token.node_agreement_public_key,
+    )?;
     println!("   ✅ Network key generated:");
     println!("      Network ID: {network_id}");
 

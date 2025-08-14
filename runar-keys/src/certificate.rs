@@ -1,7 +1,7 @@
 //! Certificate operations and X.509 certificate management
 //!
 //! This module provides the core certificate authority functionality and
-//! certificate validation using standard X.509 certificates and ECDSA P-384.
+//! certificate validation using standard X.509 certificates and ECDSA P-256.
 
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
@@ -19,18 +19,18 @@ use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private};
 use openssl::x509::extension::{
     AuthorityKeyIdentifier, BasicConstraints as OpenSslBasicConstraints, ExtendedKeyUsage,
-    KeyUsage, SubjectKeyIdentifier,
+    KeyUsage, SubjectAlternativeName, SubjectKeyIdentifier,
 };
 use openssl::x509::{X509Builder, X509NameBuilder, X509Req, X509};
 
 // Cryptographic support
-use p384::ecdsa::{signature::Verifier, Signature, SigningKey, VerifyingKey};
-use p384::EncodedPoint;
+use p256::ecdsa::{signature::Verifier, Signature, SigningKey, VerifyingKey};
+use p256::EncodedPoint;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey};
 
 use crate::error::{KeyError, Result};
 
-/// ECDSA P-384 key pair for unified cryptographic operations
+/// ECDSA P-256 key pair for unified cryptographic operations
 #[derive(Debug, Clone)]
 pub struct EcdsaKeyPair {
     signing_key: SigningKey,
@@ -38,7 +38,7 @@ pub struct EcdsaKeyPair {
 }
 
 impl EcdsaKeyPair {
-    /// Generate a new ECDSA P-384 key pair
+    /// Generate a new ECDSA P-256 key pair
     pub fn new() -> Result<Self> {
         let signing_key = SigningKey::random(&mut rand::thread_rng());
         let verifying_key = VerifyingKey::from(&signing_key);
@@ -194,18 +194,18 @@ impl X509Certificate {
         let public_key_info = parsed.public_key();
         let public_key_bytes = &public_key_info.subject_public_key.data;
 
-        // Validate it's an uncompressed ECDSA P-384 point
-        if public_key_bytes.len() != 97 || public_key_bytes[0] != 0x04 {
+        // Validate it's an uncompressed ECDSA P-256 point
+        if public_key_bytes.len() != 65 || public_key_bytes[0] != 0x04 {
             return Err(KeyError::InvalidKeyFormat(
-                "Invalid ECDSA P-384 public key in certificate".to_string(),
+                "Invalid ECDSA P-256 public key in certificate".to_string(),
             ));
         }
 
         // Extract coordinates
-        let x_bytes: [u8; 48] = public_key_bytes[1..49]
+        let x_bytes: [u8; 32] = public_key_bytes[1..33]
             .try_into()
             .map_err(|_| KeyError::InvalidKeyFormat("Invalid X coordinate".to_string()))?;
-        let y_bytes: [u8; 48] = public_key_bytes[49..97]
+        let y_bytes: [u8; 32] = public_key_bytes[33..65]
             .try_into()
             .map_err(|_| KeyError::InvalidKeyFormat("Invalid Y coordinate".to_string()))?;
 
@@ -463,8 +463,31 @@ impl CertificateAuthority {
 
         // Sign & return
         let ca_pkey = self.ca_key_pair_to_openssl_pkey()?;
+        // Add SAN DNS equal to CSR's CN (if present)
+        {
+            let mut cn_value: Option<String> = None;
+            for entry in req.subject_name().entries() {
+                if entry.object().nid() == Nid::COMMONNAME {
+                    if let Ok(data) = entry.data().as_utf8() {
+                        cn_value = Some(data.to_string());
+                        break;
+                    }
+                }
+            }
+            if let Some(cn) = cn_value {
+                let subject_ctx = cert_builder.x509v3_context(None, None);
+                let san = SubjectAlternativeName::new()
+                    .dns(&cn)
+                    .build(&subject_ctx)
+                    .map_err(|e| KeyError::CertificateError(format!("Failed to build SAN: {e}")))?;
+                cert_builder.append_extension(san).map_err(|e| {
+                    KeyError::CertificateError(format!("Failed to append SAN: {e}"))
+                })?;
+            }
+        }
+
         cert_builder
-            .sign(&ca_pkey, MessageDigest::sha384())
+            .sign(&ca_pkey, MessageDigest::sha256())
             .map_err(|e| KeyError::CertificateError(format!("Failed to sign certificate: {e}")))?;
         let cert_der = cert_builder.build().to_der().map_err(|e| {
             KeyError::CertificateError(format!("Failed to serialize certificate DER: {e}"))
@@ -641,7 +664,7 @@ impl CertificateAuthority {
 
         // Sign
         builder
-            .sign(&ca_pkey, MessageDigest::sha384())
+            .sign(&ca_pkey, MessageDigest::sha256())
             .map_err(|e| {
                 KeyError::CertificateError(format!("Failed to sign CA certificate: {e}"))
             })?;
@@ -740,8 +763,8 @@ impl CertificateRequest {
     pub fn create(key_pair: &EcdsaKeyPair, subject: &str) -> Result<Vec<u8>> {
         let mut params = CertificateParams::new(vec![]);
 
-        // Use ECDSA P-384 with SHA-384
-        params.alg = &rcgen::PKCS_ECDSA_P384_SHA384;
+        // Use ECDSA P-256 with SHA-256
+        params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
 
         // Parse subject DN properly
         let mut distinguished_name = rcgen::DistinguishedName::new();

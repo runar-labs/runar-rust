@@ -36,7 +36,7 @@ pub enum KeyError {
     Pkcs8Error(#[from] pkcs8::Error),
 
     #[error("ECDSA error: {0}")]
-    EcdsaError(#[from] p384::ecdsa::Error),
+    EcdsaError(#[from] p256::ecdsa::Error),
 
     #[error("OpenSSL error: {0}")]
     OpenSslError(#[from] openssl::error::ErrorStack),

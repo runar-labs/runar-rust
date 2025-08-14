@@ -50,44 +50,44 @@ use runar_serializer_macros::Plain;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Plain)]
 pub enum ServiceState {
     /// Service is created but not initialized.
-    /// 
+    ///
     /// This is the initial state after service creation. The service
     /// exists but hasn't been set up for operation yet.
     Created,
-    
+
     /// Service has been initialized and is ready to start.
-    /// 
+    ///
     /// The service has completed its setup phase and registered
     /// its action handlers. It's ready to begin active operations.
     Initialized,
-    
+
     /// Service is running and actively handling requests.
-    /// 
+    ///
     /// This is the normal operational state. The service is fully
     /// functional and can handle requests, publish events, and
     /// perform its intended operations.
     Running,
-    
+
     /// Service has been stopped and is no longer operational.
-    /// 
+    ///
     /// The service has been gracefully shut down and has released
     /// all its resources. It cannot handle requests in this state.
     Stopped,
-    
+
     /// Service has been paused and is temporarily inactive.
-    /// 
+    ///
     /// The service is in a suspended state where it maintains
     /// its resources but doesn't handle requests. It can be resumed.
     Paused,
-    
+
     /// Service has encountered an error and cannot operate.
-    /// 
+    ///
     /// The service has failed during initialization, startup, or
     /// operation. It requires intervention to recover or restart.
     Error,
-    
+
     /// Service state is unknown or indeterminate.
-    /// 
+    ///
     /// This state indicates that the service's current status
     /// cannot be determined. It may indicate a system issue.
     Unknown,

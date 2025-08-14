@@ -79,19 +79,19 @@ use std::hash::{Hash, Hasher};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathType {
     /// A path to a service - used for service discovery and registration.
-    /// 
+    ///
     /// Service paths identify the service itself, not specific actions or events.
     /// Example: `"math"` or `"auth"` for service-level operations.
     Service,
-    
+
     /// A path to an action on a service - used for request routing.
-    /// 
+    ///
     /// Action paths identify specific operations that can be performed on a service.
     /// Example: `"math/add"` or `"auth/login"` for specific actions.
     Action,
-    
+
     /// A path to an event - used for event routing.
-    /// 
+    ///
     /// Event paths identify events that can be published or subscribed to.
     /// Example: `"math/result"` or `"auth/logout"` for event notifications.
     Event,
@@ -131,34 +131,34 @@ pub enum PathType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathSegment {
     /// A literal string segment (e.g., "services", "auth", "login").
-    /// 
+    ///
     /// Literal segments must match exactly for a path to be considered a match.
     /// They represent fixed components in the path hierarchy.
     Literal(String),
 
     /// A template parameter segment (e.g., "{service_path}", "{user_id}").
-    /// 
+    ///
     /// Template parameters match any segment and store the matched value for later use.
     /// The parameter name is stored without the braces for easier access.
     /// Example: `"{user_id}"` becomes `Template("user_id")`.
     Template(String),
 
     /// A single-segment wildcard (`*`) - matches any single segment.
-    /// 
+    ///
     /// Single wildcards match exactly one path segment. They provide flexibility
     /// while maintaining predictable matching behavior.
-    /// 
+    ///
     /// Example: `"services/*/state"` matches `"services/math/state"` but not
     /// `"services/auth/user/state"`.
     SingleWildcard,
 
     /// A multi-segment wildcard (`>`) - matches one or more segments to the end.
-    /// 
+    ///
     /// Multi wildcards match one or more path segments from their position to the
     /// end of the path. They must be the last segment in a pattern.
-    /// 
+    ///
     /// Example: `"services/>"` matches `"services/math"`, `"services/auth/login"`, etc.
-    /// 
+    ///
     /// **Note**: Multi wildcards must be the last segment in a path pattern.
     MultiWildcard,
 }
