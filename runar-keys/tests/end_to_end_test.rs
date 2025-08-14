@@ -42,7 +42,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         .expect("Failed to generate user root key");
     assert_eq!(
         user_root_public_key.len(),
-        97, // ECDSA P-384 uncompressed public key (0x04 + 48 + 48)
+        65, // ECDSA P-256 uncompressed public key (0x04 + 32 + 32)
         "User root key should have a valid public key"
     );
 
@@ -54,7 +54,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // Create a user owned and managed CA
     let user_ca_public_key = mobile_keys_manager.get_ca_public_key();
-    assert_eq!(user_ca_public_key.len(), 49); // ECDSA P-384 compressed
+    assert_eq!(user_ca_public_key.len(), 33); // ECDSA P-256 compressed
     println!(
         "   ✅ User CA public key: {}",
         compact_id(&user_ca_public_key)
@@ -272,11 +272,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         assert_eq!(ski_bytes.len(), 20, "Leaf SKI should be 20 bytes");
     }
 
-    // Signature algorithm must be ECDSA with SHA-384 (1.2.840.10045.4.3.3)
+    // Signature algorithm must be ECDSA with SHA-256 (1.2.840.10045.4.3.2)
     assert_eq!(
         parsed_cert.signature_algorithm.algorithm.to_id_string(),
-        "1.2.840.10045.4.3.3",
-        "Leaf signature algorithm must be ECDSA-SHA384"
+        "1.2.840.10045.4.3.2",
+        "Leaf signature algorithm must be ECDSA-SHA256"
     );
 
     // ==============================================
@@ -294,11 +294,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         "Certificate should use ECDSA algorithm for QUIC compatibility"
     );
 
-    // Validate public key length - ECDSA P-384 uncompressed public key
+    // Validate public key length - ECDSA P-256 uncompressed public key
     assert_eq!(
         cert_public_key_bytes.len(),
-        97, // ECDSA P-384 uncompressed format (0x04 + 48 bytes X + 48 bytes Y)
-        "ECDSA P-384 public key should be 97 bytes (uncompressed format)"
+        65, // ECDSA P-256 uncompressed format (0x04 + 32 bytes X + 32 bytes Y)
+        "ECDSA P-256 public key should be 65 bytes (uncompressed format)"
     );
 
     println!(
@@ -328,11 +328,11 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("      - ECDSA public key format: uncompressed (0x04 prefix)");
     println!(
         "      - X coordinate: {}",
-        hex::encode(&cert_public_key_bytes[1..49])
+        hex::encode(&cert_public_key_bytes[1..33])
     );
     println!(
         "      - Y coordinate: {}",
-        hex::encode(&cert_public_key_bytes[49..97])
+        hex::encode(&cert_public_key_bytes[33..65])
     );
 
     // Validate that the private key can be parsed by rustls
@@ -381,7 +381,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     println!("   🎉 QUIC CERTIFICATE VALIDATION COMPLETE!");
     println!("      ✅ X.509 certificate structure");
-    println!("      ✅ ECDSA P-384 public key format and length");
+    println!("      ✅ ECDSA P-256 public key format and length");
     println!("      ✅ PKCS#8 private key structure");
     println!("      ✅ Certificate subject validation");
 
@@ -855,7 +855,7 @@ async fn test_negative_ecies_short_payload_fails() -> Result<()> {
     let logger = create_test_logger("neg-short");
     let node = NodeKeyManager::new(logger)?;
 
-    // Shorter than 97 bytes (P-384 uncompressed pubkey)
+    // Shorter than 65 bytes (P-256 uncompressed pubkey)
     let ct = vec![0u8; 10];
     let res = node.decrypt_message_from_mobile(&ct);
     assert!(res.is_err(), "Short ECIES payload should fail to decrypt");

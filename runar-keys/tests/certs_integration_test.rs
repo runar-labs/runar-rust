@@ -204,7 +204,7 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     // For this demo, we'll verify signatures manually since peer validation is simplified
     // Extract public keys and verify signatures directly
     let node1_public_key = node1_cert.public_key()?;
-    use p384::ecdsa::{signature::Verifier, Signature};
+    use p256::ecdsa::{signature::Verifier, Signature};
 
     let sig1 = Signature::from_der(&node1_signature)?;
     node1_public_key.verify(test_data, &sig1)?;
