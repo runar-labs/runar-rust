@@ -3353,7 +3353,7 @@ dependencies = [
  "log",
  "qrcode",
  "runar-keys",
- "runar_common 0.1.0",
+ "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "runar_macros_common",
  "runar_node",
  "serde",
