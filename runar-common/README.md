@@ -1,64 +1,65 @@
-# Runar Common
+Runar Common
+============
 
-Runar Common is a shared utility library for the Runar ecosystem, providing common functionality used across various Runar components. This library serves as the foundation for consistent implementations and shared code across the Runar project.
+Common traits and utilities shared across the Runar stack.
 
-## Features
+What’s inside
+-------------
 
-- **Error Handling**: Standardized error types and handling mechanisms
-- **Serialization Utilities**: Common serialization and deserialization helpers
-- **Data Structures**: Reusable data structures optimized for Runar's use cases
-- **Async Utilities**: Helpers for working with asynchronous code
-- **Cryptography**: Basic cryptographic functions and utilities
-- **Config Management**: Configuration handling and validation
-- **Testing Utilities**: Common testing infrastructure and mocks
+- Structured logging with component and node-id context
+- Lightweight error utilities (re-exports of `anyhow` and `thiserror`)
+- DNS-safe compact ID generator
 
-## Usage
+Install
+-------
 
-Add runar_common to your Cargo.toml:
+Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-runar_common = { git = "https://github.com/runar-labs/rust-mono", package = "runar_common" }
+runar_common = "0.1"
 ```
 
-### Basic Example
+Logging
+-------
 
 ```rust
-use runar_common::error::Result;
-use runar_common::config::Configuration;
+use runar_common::logging::{Component, Logger};
 
-fn main() -> Result<()> {
-    // Use common utilities
-    let config = Configuration::from_file("config.toml")?;
-    
-    // Access configuration values
-    let value = config.get("some.nested.key").unwrap_or_default();
-    
-    println!("Config value: {}", value);
-    Ok(())
+let root = Logger::new_root(Component::Node, "node-123");
+let svc = root.with_component(Component::Service);
+svc.info("service started");
+svc.warn("doing work");
+svc.error("something went wrong");
+```
+
+Compact IDs
+-----------
+
+```rust
+use runar_common::compact_ids::compact_id;
+
+let public_key_bytes: [u8; 65] = [0u8; 65];
+let id = compact_id(&public_key_bytes);
+assert_eq!(id.len(), 26);
+assert!(id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+```
+
+Errors
+------
+
+```rust
+use runar_common::errors::{Result, anyhow};
+
+fn do_work() -> Result<()> {
+    // ...
+    Err(anyhow!("failure"))
 }
 ```
 
-## Structure
+License
+-------
 
-The library is organized into several modules:
+MIT. See `LICENSE`.
 
-- `error`: Error types and result aliases
-- `utils`: General utility functions
-- `crypto`: Cryptographic utilities
-- `config`: Configuration management
-- `serialization`: Serialization helpers
-- `testing`: Testing utilities
 
-## Contributing
-
-When adding functionality to Runar Common, ensure that:
-
-1. The functionality is needed by multiple components in the Runar ecosystem
-2. It follows the established patterns and conventions
-3. It is well-tested and documented
-4. It doesn't introduce unnecessary dependencies
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.

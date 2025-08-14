@@ -1,16 +1,20 @@
-// runar_common/src/lib.rs
-//
-// Common traits and utilities for the Runar P2P stack
+//! Runar Common
+//!
+//! Common traits and utilities for the Runar P2P stack.
+//!
+//! This crate provides:
+//! - Component-based structured logging with node ID context
+//! - Lightweight error utilities
+//! - DNS-safe compact ID generation
+//!
+//! See the crate [README](https://github.com/runar-labs/runar-rust/tree/main/runar-common) for usage examples.
 
 // Export modules
 pub mod errors;
 pub mod logging;
-pub mod service_info;
-pub mod utils;
 
 // Re-export traits and types at the root level
 pub use logging::{Component, Logger, LoggingContext};
-pub use service_info::ServiceInfo;
 
 /// Utility module for compact ID encoding
 pub mod compact_ids {

@@ -5,7 +5,7 @@ edition = "2021"
 description = "Runar Node implementation"
 authors = ["Runar Team"]
 license = "MIT"
-keywords = ["p2p", "encryption"]
+keywords = ["p2p", "encryption", "micro-services"]
 categories = ["development-tools"]
 
 [dependencies]

@@ -2,9 +2,31 @@
 name = "runar_common"
 version = "0.1.0"
 edition = "2021"
-authors = ["Runar Team"]
-description = "Common traits and utilities for the Runar P2P stack"
+authors = ["Rafael Almeida - rafael@iswe.co.nz"]
+description = "Common traits and utilities for the Runar framework"
 license = "MIT"
+keywords = ["p2p", "encryption", "micro-services"]
+categories = ["development-tools"]
+readme = "README.md"
+repository = "https://github.com/runar-labs/runar-rust"
+homepage = "https://github.com/runar-labs/runar-rust"
+documentation = "https://docs.rs/runar_common"
+rust-version = "1.70"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[package.metadata.release]
+allow-branch = ["main"]
+tag-prefix = "runar_common-"
+tag-name = "{{version}}"
+pre-release-replacements = []
+
+[package.metadata.crates-io]
+categories = ["development-tools"]
+keywords = ["p2p", "encryption", "micro-services"]
 
 [features]
 default = []
