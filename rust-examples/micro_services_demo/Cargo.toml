@@ -12,7 +12,7 @@ futures = "0.3"
 async-trait = "0.1"
 ctor = "0.2"
 
-runar_common = { path = "../../runar-common" }
+runar_common = "0.1"
 runar_macros = { path = "../../runar-macros" }
 runar_node = { path = "../../runar-node" }
 runar_test_utils = { path = "../../runar-test-utils" }

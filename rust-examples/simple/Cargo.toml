@@ -8,7 +8,7 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 runar_node = { path = "../../runar-node" }
 runar_macros = { path = "../../runar-macros" }
-runar_common = { path = "../../runar-common" }
+runar_common = "0.1"
 runar_test_utils = { path = "../../runar-test-utils" }
 async-trait = "0.1"
 runar-serializer = { path = "../../runar-serializer" }

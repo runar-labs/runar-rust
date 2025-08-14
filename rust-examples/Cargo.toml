@@ -7,7 +7,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0"
-runar_common = { path = "../runar-common" }
+runar_common = "0.1"
 runar-keys = { path = "../runar-keys" }
 runar_node = { path = "../runar-node" }
 runar-serializer = { path = "../runar-serializer" }
