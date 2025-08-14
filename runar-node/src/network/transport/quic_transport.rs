@@ -782,20 +782,22 @@ impl QuicTransport {
         ));
         server_config.transport_config(transport_config.clone());
 
-        let mut rustls_client_config = rustls::ClientConfig::builder()
+        let mut rustls_client = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NodeIdServerNameVerifier))
-            .with_no_client_auth();
-        rustls_client_config.alpn_protocols = vec![b"runar".to_vec()];
+            .with_client_auth_cert(certs.clone(), key.clone_key())
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!(
+                    "Failed to create rustls client config: {e}"
+                ))
+            })?;
+        // Set ALPN to match Swift transporter
+        rustls_client.alpn_protocols = vec![b"runar".to_vec()];
 
         let mut client_config = ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config).map_err(
-                |e| {
-                    NetworkError::ConfigurationError(format!(
-                        "Failed to convert rustls config: {e}"
-                    ))
-                },
-            )?,
+            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client).map_err(|e| {
+                NetworkError::ConfigurationError(format!("Failed to convert rustls config: {e}"))
+            })?,
         ));
 
         // Apply the transport config to client
