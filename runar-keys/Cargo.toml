@@ -39,7 +39,7 @@ hex = "0.4"
 base64 = "0.21"  # For compact Base64 URL-safe encoding of public keys
 
 # Logging framework
-runar_common = "0.1"
+runar_common = { path = "../runar-common" }
 log = "0.4"
 
 # Error handling

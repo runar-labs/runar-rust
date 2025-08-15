@@ -39,10 +39,10 @@ futures-util = "0.3"
 tokio-util = "0.7"
 
 # Local dependencies
-runar_common = "0.1"
-runar-keys = { version = "0.1", path = "../runar-keys" }
-runar_node = { version = "0.1", path = "../runar-node" }
-runar_macros_common = { version = "0.1", path = "../runar-macros-common" }
+runar_common = { path = "../runar-common" }
+runar-keys = { path = "../runar-keys" }
+runar_node = { path = "../runar-node" }
+runar_macros_common = { path = "../runar-macros-common" }
 
 # Logging
 log = "0.4"

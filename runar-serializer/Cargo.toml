@@ -14,7 +14,7 @@ categories = ["encoding"]
 rust-version = "1.70"
 
 [dependencies]
-runar_common = "0.1"
+runar_common = { path = "../runar-common" }
 runar-keys = { version = "0.1", path = "../runar-keys" }
 runar-serializer-macros = { version = "0.1", path = "../runar-serializer-macros" }
 anyhow = "1.0"

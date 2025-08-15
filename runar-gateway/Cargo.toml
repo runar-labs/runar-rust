@@ -21,20 +21,20 @@ serde_json = "1.0" # Added for crud_sqlite.rs
 uuid = { version = "1.8", features = ["v4", "serde"] } # Added for crud_sqlite.rs
 futures = "0.3"
 tokio = { version = "1.37", features = ["sync", "rt", "macros", "rt-multi-thread"] }
-runar_common = { version = "0.1", path = "../runar-common", features = ["abstract_service"] }
-runar_node = { version = "0.1", path = "../runar-node" }
+runar_common = { path = "../runar-common", features = ["abstract_service"] }
+runar_node = { path = "../runar-node" }
 axum = { version = "0.7", features = ["macros", "json"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
-runar-serializer = { version = "0.1", path = "../runar-serializer" }
-runar-schemas = { version = "0.1", path = "../runar-schemas" }
+runar-serializer = { path = "../runar-serializer" }
+runar-schemas = { path = "../runar-schemas" }
 ctor = "0.2" 
 
 [dev-dependencies]
 tempfile = "3.10"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "test-util"] }
-runar_common = { version = "0.1", path = "../runar-common", features = ["abstract_service"] }
-runar_macros = { version = "0.1", path = "../runar-macros" }
-runar_test_utils = { version = "0.1", path = "../runar-test-utils" }
+runar_common = { path = "../runar-common", features = ["abstract_service"] }
+runar_macros = { path = "../runar-macros" }
+runar_test_utils = { path = "../runar-test-utils" }
 serde_json = "1.0"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 # These are required for integration tests in tests/rusqlite_examples.rs
