@@ -250,12 +250,7 @@ impl MulticastDiscovery {
                                     }
                                 }
                                 if !skip {
-                                    Self::process_message(
-                                        message, 
-                                        &listeners,
-                                        &logger,
-                                    )
-                                    .await;
+                                    Self::process_message(message, &listeners, &logger).await;
                                 }
                             }
                             Err(e) => {
@@ -373,10 +368,10 @@ impl MulticastDiscovery {
     /// Process a received multicast message
     #[allow(clippy::too_many_arguments)]
     async fn process_message(
-        message: MulticastMessage, 
+        message: MulticastMessage,
         listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
         logger: &Logger,
-    ) {       
+    ) {
         // Process the message and emit appropriate events
         match &message {
             MulticastMessage {
@@ -481,10 +476,7 @@ impl NodeDiscovery for MulticastDiscovery {
         log_info!(self.logger, "Sending initial announcement");
 
         // Create a discovery message from the NodeInfo
-        let peer_info = PeerInfo::new(
-            local_info.public_key.clone(),
-            local_info.addresses.clone(),
-        );
+        let peer_info = PeerInfo::new(local_info.public_key.clone(), local_info.addresses.clone());
 
         tx.send(MulticastMessage {
             announce: Some(peer_info),

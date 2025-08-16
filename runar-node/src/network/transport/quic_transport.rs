@@ -1,6 +1,6 @@
+use runar_schemas::NodeInfo;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{net::SocketAddr, sync::Arc};
-use runar_schemas::NodeInfo;
 use tokio::sync::watch;
 
 use async_trait::async_trait;
@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
 
-use crate::network::discovery::{multicast_discovery::PeerInfo};
+use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::transport::{MessageContext, NetworkError, NetworkMessage, NetworkTransport};
 use crate::routing::TopicPath;
 use runar_serializer::{ArcValue, SerializationContext};
@@ -190,7 +190,10 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_peer_disconnected_callback(mut self, callback: super::PeerDisconnectedCallback) -> Self {
+    pub fn with_peer_disconnected_callback(
+        mut self,
+        callback: super::PeerDisconnectedCallback,
+    ) -> Self {
         self.peer_disconnected_callback = Some(callback);
         self
     }
@@ -291,7 +294,7 @@ impl Clone for QuicTransportOptions {
             one_way_message_handler: None, // OneWayMessageHandler doesn't implement Clone
             //connection_callback: self.connection_callback.clone(),
             peer_connected_callback: self.peer_connected_callback.clone(),
-            peer_disconnected_callback: self.peer_disconnected_callback.clone(), 
+            peer_disconnected_callback: self.peer_disconnected_callback.clone(),
             logger: self.logger.clone(),
             keystore: self.keystore.clone(),
             label_resolver: self.label_resolver.clone(),
@@ -745,7 +748,6 @@ impl QuicTransport {
         let peer_connected_callback = options.peer_connected_callback.take();
         let peer_disconnected_callback = options.peer_disconnected_callback.take();
 
-       
         let cache_ttl = options.response_cache_ttl();
         Ok(Self {
             local_node_info: Arc::new(RwLock::new(local_node_info)),
@@ -754,7 +756,7 @@ impl QuicTransport {
             endpoint: Arc::new(RwLock::new(None)),
             logger: Arc::new(logger),
             message_handler,
-            one_way_message_handler, 
+            one_way_message_handler,
             peer_connected_callback,
             peer_disconnected_callback,
             peer_connect_mutexes: Arc::new(DashMap::new()),
@@ -876,7 +878,7 @@ impl QuicTransport {
             }
             let resolved_peer_id = if needs_to_correlate_peer_id {
                 let connection_id = conn.stable_id();
-                match self_clone 
+                match self_clone
                     .state
                     .connection_id_to_peer_id
                     .get(&connection_id)
@@ -922,7 +924,10 @@ impl QuicTransport {
                 if let Some((_, n)) = self_clone.state.dial_cancel.remove(&resolved_peer_id) {
                     n.notify_waiters();
                 }
-                log_debug!(self_clone.logger, "connection tasks exited for peer_node_id: {resolved_peer_id}");
+                log_debug!(
+                    self_clone.logger,
+                    "connection tasks exited for peer_node_id: {resolved_peer_id}"
+                );
 
                 // Grace period: avoid flapping during duplicate-connection resolution.
                 // Only emit on_down if the peer remains absent after a short delay.
@@ -1051,7 +1056,13 @@ impl QuicTransport {
         }
     }
 
-    async fn handle_handshake(&self, conn: Arc<quinn::Connection>, send: &mut quinn::SendStream, msg: NetworkMessage, needs_to_correlate_peer_id: bool) -> Result<(), NetworkError> {
+    async fn handle_handshake(
+        &self,
+        conn: Arc<quinn::Connection>,
+        send: &mut quinn::SendStream,
+        msg: NetworkMessage,
+        needs_to_correlate_peer_id: bool,
+    ) -> Result<(), NetworkError> {
         self.logger
             .debug("🔍 [bi_accept_loop] Processing handshake message");
 
@@ -1059,10 +1070,9 @@ impl QuicTransport {
         let mut should_send_response = false;
         let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
         if let Some(payload) = msg.payloads.first() {
-            let hs: HandshakeData =
-                serde_cbor::from_slice(&payload.value_bytes)
+            let hs: HandshakeData = serde_cbor::from_slice(&payload.value_bytes)
                 .map_err(|e| NetworkError::MessageError(format!("failed to decode cbor: {e}")))?;
-             
+
             let peer_node_id = msg.source_node_id.clone();
             let node_info = hs.node_info;
             let node_info_version = node_info.version;
@@ -1137,7 +1147,6 @@ impl QuicTransport {
                     .insert(conn.stable_id(), peer_node_id);
             }
         }
-       
 
         // Send handshake response only if this connection is the surviving winner
         if should_send_response {
@@ -1211,7 +1220,8 @@ impl QuicTransport {
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
 
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
-                self.handle_handshake(conn.clone(), &mut send, msg, needs_to_correlate_peer_id).await?;
+                self.handle_handshake(conn.clone(), &mut send, msg, needs_to_correlate_peer_id)
+                    .await?;
                 continue;
             }
 
@@ -1270,7 +1280,9 @@ impl QuicTransport {
                         .collect();
 
                     let error_msg = NetworkMessage {
-                        source_node_id: compact_id(&self.local_node_info.read().await.node_public_key),
+                        source_node_id: compact_id(
+                            &self.local_node_info.read().await.node_public_key,
+                        ),
                         destination_node_id: source_node_id,
                         message_type: super::MESSAGE_TYPE_RESPONSE,
                         payloads: error_payloads,
@@ -1369,14 +1381,15 @@ impl QuicTransport {
         // Parse responder handshake (prefer v2), fall back to v1 NodeInfo
         let mut responder_nonce: u64 = 0;
         if let Some(payload) = reply.payloads.first() {
-            let hs = serde_cbor::from_slice::<HandshakeData>(&payload.value_bytes).map_err(|e| {
-                log_error!(
-                    self.logger,
-                    "❌ [handshake_outbound] Failed to parse HandshakeData: {e}"
-                );
-                NetworkError::MessageError(e.to_string())
-            })?; 
-            responder_nonce = hs.nonce;  
+            let hs =
+                serde_cbor::from_slice::<HandshakeData>(&payload.value_bytes).map_err(|e| {
+                    log_error!(
+                        self.logger,
+                        "❌ [handshake_outbound] Failed to parse HandshakeData: {e}"
+                    );
+                    NetworkError::MessageError(e.to_string())
+                })?;
+            responder_nonce = hs.nonce;
             if let Some(connected_callback) = &self.peer_connected_callback {
                 (connected_callback)(peer_id.to_string(), hs.node_info).await;
             }
@@ -1384,7 +1397,6 @@ impl QuicTransport {
 
         //send to node to handle handshake response and store peer node info
         // let _ = (self.message_handler)(reply).await;
- 
 
         Ok(responder_nonce)
     }
@@ -1541,10 +1553,7 @@ impl QuicTransport {
 #[async_trait]
 impl NetworkTransport for QuicTransport {
     async fn start(self: Arc<Self>) -> Result<(), NetworkError> {
-        log_info!(
-            self.logger,
-            "Starting QUIC transport"
-        );
+        log_info!(self.logger, "Starting QUIC transport");
 
         if self.running.load(Ordering::SeqCst) {
             return Ok(());
@@ -1614,10 +1623,7 @@ impl NetworkTransport for QuicTransport {
     }
 
     async fn stop(&self) -> Result<(), NetworkError> {
-        log_info!(
-            self.logger,
-            "Stopping QUIC transport",
-        );
+        log_info!(self.logger, "Stopping QUIC transport",);
 
         {
             if !self.running.load(Ordering::SeqCst) {

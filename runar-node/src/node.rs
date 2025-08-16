@@ -469,7 +469,7 @@ impl Node {
         }
         Ok(removed)
     }
-    
+
     /// Create a new Node with the given configuration.
     ///
     /// This constructor initializes a new Node instance with the specified configuration,
@@ -1466,14 +1466,18 @@ impl Node {
                     });
 
                 let self_arc_for_callback = self_arc.clone();
-                let peer_connected_callback: crate::network::transport::PeerConnectedCallback = Arc::new(
-                    move |peer_node_id: String, peer_node_info: NodeInfo| {
+                let peer_connected_callback: crate::network::transport::PeerConnectedCallback =
+                    Arc::new(move |peer_node_id: String, peer_node_info: NodeInfo| {
                         let node = self_arc_for_callback.clone();
                         Box::pin(async move {
-                            node.handle_peer_connected(peer_node_id, peer_node_info).await; 
+                            let res = node
+                                .handle_peer_connected(peer_node_id, peer_node_info)
+                                .await;
+                            if let Err(e) = res {
+                                log_error!(node.logger, "Failed to handle peer connected: {e}");
+                            }
                         })
-                    }
-                );
+                    });
 
                 let self_arc_for_callback = self_arc.clone();
                 let peer_disconnected_callback: crate::network::transport::PeerDisconnectedCallback = Arc::new(
@@ -1485,7 +1489,7 @@ impl Node {
                         })
                     }
                 );
-                    
+
                 // Prepare separate Arc clones for each callback to avoid move issues
                 // let self_arc_for_conn = Arc::new(self.clone());
                 // let connection_callback: crate::network::transport::ConnectionCallback = Arc::new(
@@ -1534,7 +1538,11 @@ impl Node {
         }
     }
 
-    async fn handle_peer_connected(&self, peer_node_id: String, peer_node_info: NodeInfo) -> Result<()> {
+    async fn handle_peer_connected(
+        &self,
+        peer_node_id: String,
+        peer_node_info: NodeInfo,
+    ) -> Result<()> {
         log_debug!(
             self.logger,
             "handle_peer_connected  peer_node_id:{peer_node_id}"
@@ -1566,7 +1574,6 @@ impl Node {
                 PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
             )
             .await?;
-        
         } else {
             self.add_new_peer(&peer_node_info).await?;
             self.publish_with_options(
@@ -1574,11 +1581,10 @@ impl Node {
                 Some(ArcValue::new_primitive(peer_node_id.clone())),
                 PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
             )
-            .await?; 
+            .await?;
         }
         self.remote_node_info.insert(peer_node_id, peer_node_info);
         Ok(())
-    
     }
 
     /// Create a discovery provider based on the provider type
@@ -1590,7 +1596,7 @@ impl Node {
         let peer_info = self.get_local_node_info().await?;
         let local_peer_info = PeerInfo {
             public_key: peer_info.node_public_key,
-            addresses: peer_info.addresses, 
+            addresses: peer_info.addresses,
         };
 
         match provider_config {
@@ -1731,13 +1737,18 @@ impl Node {
         if let Some(prev_info) = self.remote_node_info.get(peer_node_id) {
             for service in &prev_info.node_metadata.services {
                 if let Ok(service_tp) =
-                    crate::routing::TopicPath::new(&service.service_path, &service.network_id) {
+                    crate::routing::TopicPath::new(&service.service_path, &service.network_id)
+                {
                     let _ = self
                         .service_registry
                         .remove_remote_service(&service_tp)
                         .await;
                 } else {
-                    log_error!(self.logger, "Failed to parse topic path: {service_path}", service_path = service.service_path);
+                    log_error!(
+                        self.logger,
+                        "Failed to parse topic path: {service_path}",
+                        service_path = service.service_path
+                    );
                 }
             }
         }
@@ -1746,13 +1757,18 @@ impl Node {
         self.remote_node_info.remove(peer_node_id);
 
         // 4) Publish a local-only event indicating peer removal
-        if let Err(e) = self.publish_with_options(
-            &format!("$registry/peer/{peer_node_id}/disconnected"),
-            Some(ArcValue::new_primitive(peer_node_id.to_string())),
-            PublishOptions::local_only(),
-        )
-        .await {
-            log_error!(self.logger, "Failed to publish peer disconnected event: {e}");
+        if let Err(e) = self
+            .publish_with_options(
+                &format!("$registry/peer/{peer_node_id}/disconnected"),
+                Some(ArcValue::new_primitive(peer_node_id.to_string())),
+                PublishOptions::local_only(),
+            )
+            .await
+        {
+            log_error!(
+                self.logger,
+                "Failed to publish peer disconnected event: {e}"
+            );
         }
 
         ()

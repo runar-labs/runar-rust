@@ -165,7 +165,7 @@ async fn test_node_lifecycle() {
         let mut config = create_node_test_config().expect("Error creating test config");
         // Disable networking
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Start the node
         node.start().await.unwrap();
@@ -224,7 +224,7 @@ async fn test_node_init() -> Result<()> {
     config.network_config = None;
 
     // Create a node
-    let mut node = Node::new(config).await?;
+    let node = Node::new(config).await?;
 
     // Start the node
     node.start().await?;

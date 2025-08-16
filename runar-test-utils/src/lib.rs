@@ -100,6 +100,9 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
     let ca_certificate = mobile_keys_manager
         .get_ca_certificate()
         .to_rustls_certificate();
+    // Assign a unique multicast port for this test instance to isolate from other tests
+    let unique_port: u16 = 47000 + (rand::random::<u16>() % 1000);
+    let unique_group = format!("239.255.42.98:{unique_port}");
 
     let mut configs = Vec::new();
     for _ in 0..total {
@@ -120,20 +123,17 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
 
         //transport_options.
 
-        // Assign a unique multicast port for this test instance to isolate from other tests
-        let unique_port: u16 = 47000 + (rand::random::<u16>() % 1000);
-        let unique_group = format!("239.255.42.98:{unique_port}");
         let discovery_options = runar_node::network::discovery::DiscoveryOptions {
             multicast_group: unique_group.clone(),
             ..Default::default()
         };
-         
+
         let config = NodeConfig::new(node_id, default_network_id.clone())
             .with_key_manager_state(key_state_bytes)
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)
-                .with_discovery_options(discovery_options)
-                .with_discovery_provider(DiscoveryProviderConfig::default_multicast()),
+                    .with_discovery_options(discovery_options)
+                    .with_discovery_provider(DiscoveryProviderConfig::default_multicast()),
             );
 
         configs.push(config);

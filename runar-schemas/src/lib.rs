@@ -6,7 +6,6 @@ use runar_serializer_macros::Plain;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-
 /// Information about a node in the network
 ///
 /// INTENTION: Represents a snapshot of a node's presence and capabilities
@@ -26,7 +25,6 @@ pub struct NodeInfo {
     /// when that happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
     pub version: i64,
 }
-
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
 pub struct ActionMetadata {

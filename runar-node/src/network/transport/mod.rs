@@ -85,7 +85,7 @@ impl ServerCertVerifier for SkipServerVerification {
 pub use quic_transport::{QuicTransport, QuicTransportOptions};
 
 use super::discovery::multicast_discovery::PeerInfo;
- 
+
 /// Type alias for async-returning function
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -290,8 +290,7 @@ pub type ConnectionCallback =
 pub type PeerConnectedCallback =
     Arc<dyn Fn(String, NodeInfo) -> BoxFuture<'static, ()> + Send + Sync>;
 
-pub type PeerDisconnectedCallback =
-    Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
+pub type PeerDisconnectedCallback = Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]

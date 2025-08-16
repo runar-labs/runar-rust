@@ -6,9 +6,7 @@ use anyhow::Result;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_node::network::discovery::DEFAULT_MULTICAST_ADDR;
-use runar_node::network::discovery::{
-    DiscoveryOptions, MulticastDiscovery, NodeDiscovery,
-};
+use runar_node::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -16,7 +14,7 @@ use tokio::sync::mpsc;
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::Node;
 use runar_test_utils::create_networked_node_test_config;
-use serial_test::serial; 
+use serial_test::serial;
 use tokio::sync::oneshot;
 
 #[tokio::test]
@@ -28,14 +26,13 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
     let mut configs = create_networked_node_test_config(2)?;
 
     // Configure short TTL and debounce for faster test
-    let short_ttl = Duration::from_millis(500);
     let short_debounce = Duration::from_millis(100);
 
     for config in &mut configs {
         if let Some(net) = &mut config.network_config {
             net.discovery_options = Some(DiscoveryOptions {
                 announce_interval: Duration::from_millis(50),
-                 
+
                 discovery_timeout: Duration::from_secs(1),
                 debounce_window: short_debounce,
                 ..DiscoveryOptions::default()
@@ -51,7 +48,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
             net.discovery_options = Some(DiscoveryOptions {
                 multicast_group: unique_group.clone(),
                 announce_interval: Duration::from_millis(50),
-                
+
                 discovery_timeout: Duration::from_secs(1),
                 debounce_window: short_debounce,
                 ..DiscoveryOptions::default()
@@ -93,13 +90,15 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
     // Stop node B's networking (simulate TTL expiry)
     node_b.stop().await?;
 
-    node_a.on(
-        format!("$registry/peer/{id_b}/disconnected"),
-        Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
-        }),
-    ).await??;
+    node_a
+        .on(
+            format!("$registry/peer/{id_b}/disconnected"),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(3),
+                include_past: None,
+            }),
+        )
+        .await??;
 
     // Node A should have cleaned up the disconnected peer
     assert!(
@@ -124,14 +123,14 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
 
     // Create two networked node configs (QUIC + multicast discovery)
     let mut configs = create_networked_node_test_config(2)?;
-    
+
     // Use a unique multicast port for this test to avoid cross-test interference
     let unique_port: u16 = 46000 + (rand::random::<u16>() % 1000);
     let unique_group = format!("{DEFAULT_MULTICAST_ADDR}:{unique_port}");
     if let Some(net) = &mut configs[0].network_config {
         net.discovery_options = Some(DiscoveryOptions {
             multicast_group: unique_group.clone(),
-            announce_interval: Duration::from_millis(80), 
+            announce_interval: Duration::from_millis(80),
             discovery_timeout: Duration::from_secs(1),
             debounce_window: Duration::from_millis(120),
             ..DiscoveryOptions::default()
@@ -140,7 +139,7 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     if let Some(net) = &mut configs[1].network_config {
         net.discovery_options = Some(DiscoveryOptions {
             multicast_group: unique_group,
-            announce_interval: Duration::from_millis(80), 
+            announce_interval: Duration::from_millis(80),
             discovery_timeout: Duration::from_secs(1),
             debounce_window: Duration::from_millis(120),
             ..DiscoveryOptions::default()
@@ -181,13 +180,15 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     // Stop B's networking (simulate announcer stop and TTL expiry)
     node_b.stop().await?;
 
-    node_a.on(
-        format!("$registry/peer/{id_b}/disconnected"),
-        Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
-        }),
-    ).await??;
+    node_a
+        .on(
+            format!("$registry/peer/{id_b}/disconnected"),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(3),
+                include_past: None,
+            }),
+        )
+        .await??;
 
     // Node A should mark B as disconnected by now
     assert!(
@@ -333,10 +334,8 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
         let node_2_id = compact_id(&node_2_public_key);
 
         // Create two discovery instances
-        let discovery1 =
-            create_test_discovery(  &node_1_id, &node_1_public_key).await?;
-        let discovery2 =
-            create_test_discovery(  &node_2_id, &node_2_public_key).await?;
+        let discovery1 = create_test_discovery(&node_1_id, &node_1_public_key).await?;
+        let discovery2 = create_test_discovery(&node_2_id, &node_2_public_key).await?;
 
         // Create channels for receiving notifications
         let (tx1, _rx1) = mpsc::channel::<PeerInfo>(10);
@@ -466,8 +465,8 @@ async fn test_no_duplicate_notifications() -> Result<()> {
     let node_2_id = compact_id(&node_2_public_key);
 
     // Create two discovery instances
-    let discovery1 = create_test_discovery(  &node_1_id, &node_1_public_key).await?;
-    let discovery2 = create_test_discovery(  &node_2_id, &node_2_public_key).await?;
+    let discovery1 = create_test_discovery(&node_1_id, &node_1_public_key).await?;
+    let discovery2 = create_test_discovery(&node_2_id, &node_2_public_key).await?;
 
     // Create a counter to track how many times we receive notifications
     let notification_count = Arc::new(tokio::sync::Mutex::new(0));
@@ -504,8 +503,6 @@ async fn test_no_duplicate_notifications() -> Result<()> {
     // Start announcing for both nodes
     discovery1.start_announcing().await?;
     discovery2.start_announcing().await?;
-
- 
 
     // Wait for multiple announcement cycles (each 1 second)
     // This should trigger multiple announcements
@@ -585,7 +582,7 @@ async fn test_node_cleanup_behavior() -> Result<()> {
     // Verify both nodes see each other
     let id_a = node_a.node_id();
     let id_b = node_b.node_id();
-    
+
     let peer_future2 = node_a.on(
         format!("$registry/peer/{id_b}/discovered"),
         Some(runar_node::services::OnOptions {
@@ -603,17 +600,18 @@ async fn test_node_cleanup_behavior() -> Result<()> {
     //join both futures and wait for both to complete
     let _ = tokio::join!(peer_future2, peer_future1);
 
-
     // Stop node B's networking (simulate TTL expiry)
     node_b.stop().await?;
 
-    node_a.on(
-        format!("$registry/peer/{id_b}/disconnected"),
-        Some(runar_node::services::OnOptions {
-            timeout: Duration::from_secs(3),
-            include_past: None,
-        }),
-    ).await??;
+    node_a
+        .on(
+            format!("$registry/peer/{id_b}/disconnected"),
+            Some(runar_node::services::OnOptions {
+                timeout: Duration::from_secs(3),
+                include_past: None,
+            }),
+        )
+        .await??;
 
     // Node A should have cleaned up the disconnected peer
     assert!(
@@ -635,7 +633,7 @@ async fn test_discovery_provider_stateless_behavior() -> Result<()> {
     let options = DiscoveryOptions {
         multicast_group: format!("{DEFAULT_MULTICAST_ADDR}:47100"),
         announce_interval: Duration::from_millis(100),
-         
+
         discovery_timeout: Duration::from_secs(1),
         debounce_window: Duration::from_millis(100),
         ..DiscoveryOptions::default()

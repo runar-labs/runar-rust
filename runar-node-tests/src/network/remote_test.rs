@@ -29,7 +29,7 @@ use crate::fixtures::math_service::MathService;
 #[tokio::test]
 async fn test_remote_action_call() -> Result<()> {
     // Configure logging to ensure test logs are displayed
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     // Set up logger
@@ -40,7 +40,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     let configs =
         create_networked_node_test_config(2).expect("Failed to create multiple node test configs");
-    
+
     let node1_config = configs[0].clone();
     let node1_id = node1_config.node_id.clone();
     let node2_config = configs[1].clone();
@@ -92,7 +92,18 @@ async fn test_remote_action_call() -> Result<()> {
         }),
     );
     //join both futures and wait for both to complete
-    let _ = tokio::join!(peer_future2, peer_future1);
+    let (peer_result2, peer_result1) = tokio::join!(peer_future2, peer_future1);
+
+    // Check for timeout errors and panic if any occurred
+    match peer_result2 {
+        Ok(_) => logger.debug("✅ Node2 successfully discovered Node1"),
+        Err(e) => panic!("❌ Node2 failed to discover Node1 within timeout: {e}"),
+    }
+
+    match peer_result1 {
+        Ok(_) => logger.debug("✅ Node1 successfully discovered Node2"),
+        Err(e) => panic!("❌ Node1 failed to discover Node2 within timeout: {e}"),
+    }
 
     // Create subscription for math1/math/added BEFORE calling the math operation
     logger.debug("📥 Setting up subscription for math1/math/added event on node1...");

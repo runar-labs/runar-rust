@@ -175,8 +175,8 @@ use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
-    MessageHandler, NetworkMessage, NetworkMessagePayloadItem,
-    NetworkTransport, OneWayMessageHandler, PeerConnectedCallback, PeerDisconnectedCallback,
+    MessageHandler, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
+    OneWayMessageHandler, PeerConnectedCallback, PeerDisconnectedCallback,
 };
 use runar_node::routing::TopicPath;
 use runar_node::{ActionMetadata, ServiceMetadata};
@@ -1700,7 +1700,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let events2: Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
         Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    
+
     let cb1_connected: PeerConnectedCallback = {
         let ev = events1.clone();
         Arc::new(move |peer: String, _info: NodeInfo| {
@@ -1710,7 +1710,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             })
         })
     };
-    
+
     let cb1_disconnected: PeerDisconnectedCallback = {
         let ev = events1.clone();
         Arc::new(move |peer: String| {
@@ -1720,7 +1720,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             })
         })
     };
-    
+
     let cb2_connected: PeerConnectedCallback = {
         let ev = events2.clone();
         Arc::new(move |peer: String, _info: NodeInfo| {
@@ -1730,7 +1730,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             })
         })
     };
-    
+
     let cb2_disconnected: PeerDisconnectedCallback = {
         let ev = events2.clone();
         Arc::new(move |peer: String| {
@@ -2059,7 +2059,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let ev2: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    
+
     let cb1_connected: runar_node::network::transport::PeerConnectedCallback = {
         let ev = ev1.clone();
         std::sync::Arc::new(move |peer: String, _info: NodeInfo| {
@@ -2069,7 +2069,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
             })
         })
     };
-    
+
     let cb1_disconnected: runar_node::network::transport::PeerDisconnectedCallback = {
         let ev = ev1.clone();
         std::sync::Arc::new(move |peer: String| {
@@ -2079,7 +2079,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
             })
         })
     };
-    
+
     let cb2_connected: runar_node::network::transport::PeerConnectedCallback = {
         let ev = ev2.clone();
         std::sync::Arc::new(move |peer: String, _info: NodeInfo| {
@@ -2089,7 +2089,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
             })
         })
     };
-    
+
     let cb2_disconnected: runar_node::network::transport::PeerDisconnectedCallback = {
         let ev = ev2.clone();
         std::sync::Arc::new(move |peer: String| {
