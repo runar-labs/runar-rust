@@ -5,6 +5,7 @@
 use runar_common::logging::Component;
 use std::collections::HashMap;
 
+
 /// Logging configuration options
 #[derive(Clone, Debug)]
 pub struct LoggingConfig {
@@ -116,10 +117,12 @@ impl LoggingConfig {
         // Disable reading from environment variables
         builder.parse_default_env();
 
-        //builder.format_timestamp(None);
+        // Customize the log format to remove module path and simplify output
         builder.format_module_path(false);
+        builder.format_target(false);
+        builder.format_timestamp(Some(env_logger::TimestampPrecision::Millis));
 
-        // Set the default level
+        // Set the default levels
         builder.filter_level(self.default_level.to_level_filter());
 
         // Apply component-specific levels
