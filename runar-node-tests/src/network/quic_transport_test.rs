@@ -175,8 +175,8 @@ use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
-    ConnectionCallback, MessageHandler, NetworkMessage, NetworkMessagePayloadItem,
-    NetworkTransport, OneWayMessageHandler,
+    MessageHandler, NetworkMessage, NetworkMessagePayloadItem,
+    NetworkTransport, OneWayMessageHandler, PeerConnectedCallback, PeerDisconnectedCallback,
 };
 use runar_node::routing::TopicPath;
 use runar_node::{ActionMetadata, ServiceMetadata};
@@ -1700,23 +1700,43 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let events2: Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
         Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let cb1: ConnectionCallback = {
+    
+    let cb1_connected: PeerConnectedCallback = {
         let ev = events1.clone();
-        Arc::new(move |peer: String, up: bool, _info: Option<NodeInfo>| {
+        Arc::new(move |peer: String, _info: NodeInfo| {
             let ev = ev.clone();
             Box::pin(async move {
-                ev.lock().await.push((peer, up));
-                Ok(())
+                ev.lock().await.push((peer, true));
             })
         })
     };
-    let cb2: ConnectionCallback = {
-        let ev = events2.clone();
-        Arc::new(move |peer: String, up: bool, _info: Option<NodeInfo>| {
+    
+    let cb1_disconnected: PeerDisconnectedCallback = {
+        let ev = events1.clone();
+        Arc::new(move |peer: String| {
             let ev = ev.clone();
             Box::pin(async move {
-                ev.lock().await.push((peer, up));
-                Ok(())
+                ev.lock().await.push((peer, false));
+            })
+        })
+    };
+    
+    let cb2_connected: PeerConnectedCallback = {
+        let ev = events2.clone();
+        Arc::new(move |peer: String, _info: NodeInfo| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, true));
+            })
+        })
+    };
+    
+    let cb2_disconnected: PeerDisconnectedCallback = {
+        let ev = events2.clone();
+        Arc::new(move |peer: String| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, false));
             })
         })
     };
@@ -1734,7 +1754,8 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             .with_bind_addr("127.0.0.1:50131".parse::<SocketAddr>()?)
             .with_message_handler(handler)
             .with_one_way_message_handler(one_way)
-            .with_connection_callback(cb1)
+            .with_peer_connected_callback(cb1_connected)
+            .with_peer_disconnected_callback(cb1_disconnected)
             .with_logger(logger.clone())
             .with_keystore(Arc::new(NoCrypto))
             .with_label_resolver(resolver.clone()),
@@ -1748,7 +1769,8 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             .with_bind_addr("127.0.0.1:50132".parse::<SocketAddr>()?)
             .with_message_handler(Box::new(|_m| Box::pin(async { Ok(None) })))
             .with_one_way_message_handler(Box::new(|_m| Box::pin(async { Ok(()) })))
-            .with_connection_callback(cb2)
+            .with_peer_connected_callback(cb2_connected)
+            .with_peer_disconnected_callback(cb2_disconnected)
             .with_logger(logger.clone())
             .with_keystore(Arc::new(NoCrypto))
             .with_label_resolver(resolver.clone()),
@@ -1844,7 +1866,7 @@ async fn test_capability_version_bump_across_reconnect(
     let pk2 = km2.get_node_public_key();
     let id1 = runar_common::compact_ids::compact_id(&pk1);
     let id2 = runar_common::compact_ids::compact_id(&pk2);
-    let mut info1 = runar_node::network::discovery::NodeInfo {
+    let mut info1 = NodeInfo {
         node_public_key: pk1.clone(),
         network_ids: vec!["test".into()],
         addresses: vec!["127.0.0.1:50171".into()],
@@ -1854,7 +1876,7 @@ async fn test_capability_version_bump_across_reconnect(
         },
         version: 0,
     };
-    let info2 = runar_node::network::discovery::NodeInfo {
+    let info2 = NodeInfo {
         node_public_key: pk2.clone(),
         network_ids: vec!["test".into()],
         addresses: vec!["127.0.0.1:50172".into()],
@@ -1995,7 +2017,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     let pk2 = km2.get_node_public_key();
     let id1 = runar_common::compact_ids::compact_id(&pk1);
     let id2 = runar_common::compact_ids::compact_id(&pk2);
-    let info1 = runar_node::network::discovery::NodeInfo {
+    let info1 = NodeInfo {
         node_public_key: pk1.clone(),
         network_ids: vec!["test".into()],
         addresses: vec!["127.0.0.1:50181".into()],
@@ -2005,7 +2027,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         },
         version: 0,
     };
-    let info2 = runar_node::network::discovery::NodeInfo {
+    let info2 = NodeInfo {
         node_public_key: pk2.clone(),
         network_ids: vec!["test".into()],
         addresses: vec!["127.0.0.1:50182".into()],
@@ -2037,33 +2059,45 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let ev2: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let cb1: runar_node::network::transport::ConnectionCallback = {
+    
+    let cb1_connected: runar_node::network::transport::PeerConnectedCallback = {
         let ev = ev1.clone();
-        std::sync::Arc::new(
-            move |peer: String,
-                  up: bool,
-                  _info: Option<runar_node::network::discovery::NodeInfo>| {
-                let ev = ev.clone();
-                Box::pin(async move {
-                    ev.lock().await.push((peer, up));
-                    Ok(())
-                })
-            },
-        )
+        std::sync::Arc::new(move |peer: String, _info: NodeInfo| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, true));
+            })
+        })
     };
-    let cb2: runar_node::network::transport::ConnectionCallback = {
+    
+    let cb1_disconnected: runar_node::network::transport::PeerDisconnectedCallback = {
+        let ev = ev1.clone();
+        std::sync::Arc::new(move |peer: String| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, false));
+            })
+        })
+    };
+    
+    let cb2_connected: runar_node::network::transport::PeerConnectedCallback = {
         let ev = ev2.clone();
-        std::sync::Arc::new(
-            move |peer: String,
-                  up: bool,
-                  _info: Option<runar_node::network::discovery::NodeInfo>| {
-                let ev = ev.clone();
-                Box::pin(async move {
-                    ev.lock().await.push((peer, up));
-                    Ok(())
-                })
-            },
-        )
+        std::sync::Arc::new(move |peer: String, _info: NodeInfo| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, true));
+            })
+        })
+    };
+    
+    let cb2_disconnected: runar_node::network::transport::PeerDisconnectedCallback = {
+        let ev = ev2.clone();
+        std::sync::Arc::new(move |peer: String| {
+            let ev = ev.clone();
+            Box::pin(async move {
+                ev.lock().await.push((peer, false));
+            })
+        })
     };
 
     let t1 = std::sync::Arc::new(
@@ -2076,7 +2110,8 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
                 .with_bind_addr("127.0.0.1:50181".parse()?)
                 .with_message_handler(handler1)
                 .with_one_way_message_handler(one_way1)
-                .with_connection_callback(cb1)
+                .with_peer_connected_callback(cb1_connected)
+                .with_peer_disconnected_callback(cb1_disconnected)
                 .with_logger(logger.clone())
                 .with_keystore(std::sync::Arc::new(NoCrypto))
                 .with_label_resolver(resolver.clone()),
@@ -2092,7 +2127,8 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
                 .with_bind_addr("127.0.0.1:50182".parse()?)
                 .with_message_handler(handler2)
                 .with_one_way_message_handler(one_way2)
-                .with_connection_callback(cb2)
+                .with_peer_connected_callback(cb2_connected)
+                .with_peer_disconnected_callback(cb2_disconnected)
                 .with_logger(logger.clone())
                 .with_keystore(std::sync::Arc::new(NoCrypto))
                 .with_label_resolver(resolver.clone()),

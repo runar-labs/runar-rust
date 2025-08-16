@@ -7,6 +7,7 @@ use anyhow::Result;
 use runar_common::compact_ids;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
+use runar_node::network::network_config::DiscoveryProviderConfig;
 use runar_node::{
     network::{network_config::NetworkConfig, QuicTransportOptions},
     NodeConfig,
@@ -119,10 +120,20 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
 
         //transport_options.
 
+        // Assign a unique multicast port for this test instance to isolate from other tests
+        let unique_port: u16 = 47000 + (rand::random::<u16>() % 1000);
+        let unique_group = format!("239.255.42.98:{unique_port}");
+        let discovery_options = runar_node::network::discovery::DiscoveryOptions {
+            multicast_group: unique_group.clone(),
+            ..Default::default()
+        };
+         
         let config = NodeConfig::new(node_id, default_network_id.clone())
             .with_key_manager_state(key_state_bytes)
             .with_network_config(
-                NetworkConfig::with_quic(transport_options).with_multicast_discovery(),
+                NetworkConfig::with_quic(transport_options)
+                .with_discovery_options(discovery_options)
+                .with_discovery_provider(DiscoveryProviderConfig::default_multicast()),
             );
 
         configs.push(config);

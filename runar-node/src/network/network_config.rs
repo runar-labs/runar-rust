@@ -56,8 +56,6 @@ impl std::fmt::Display for NetworkConfig {
                     discovery_options.discovery_timeout.as_millis()
                 )?;
             }
-
-            write!(f, " ttl:{}s", discovery_options.node_ttl.as_secs())?;
         }
 
         Ok(())

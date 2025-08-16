@@ -3721,6 +3721,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "rand 0.8.5",
  "runar-keys",
  "runar-serializer",
  "runar_common 0.1.0",

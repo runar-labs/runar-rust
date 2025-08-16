@@ -814,6 +814,14 @@ impl Node {
         &self.node_id
     }
 
+    pub async fn is_connected(&self, peer_node_id: &str) -> bool {
+        if let Some(transport) = self.network_transport.read().await.as_ref() {
+            transport.is_connected(peer_node_id).await
+        } else {
+            false
+        }
+    }
+
     /// Wait for an event to occur with a timeout (hot subscription).
     ///
     /// This method begins listening immediately when called, avoiding races where
@@ -1208,7 +1216,7 @@ impl Node {
     /// 3. Updates the service state in the metadata as each service stops
     /// 4. Handles any errors during service shutdown
     /// 5. Transitions the Node to the Stopped state
-    pub async fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&self) -> Result<()> {
         log_info!(self.logger, "Stopping node...");
 
         if !self.running.load(Ordering::SeqCst) {
@@ -1739,12 +1747,12 @@ impl Node {
 
         // 4) Publish a local-only event indicating peer removal
         if let Err(e) = self.publish_with_options(
-            &format!("$registry/peer/{peer_node_id}/removed"),
+            &format!("$registry/peer/{peer_node_id}/disconnected"),
             Some(ArcValue::new_primitive(peer_node_id.to_string())),
             PublishOptions::local_only(),
         )
         .await {
-            log_error!(self.logger, "Failed to publish peer removed event: {e}");
+            log_error!(self.logger, "Failed to publish peer disconnected event: {e}");
         }
 
         ()

@@ -25,8 +25,6 @@ pub struct DiscoveryOptions {
     pub announce_interval: Duration,
     /// Timeout for discovery operations (in seconds)
     pub discovery_timeout: Duration,
-    /// Time-to-live for discovered nodes (in seconds)
-    pub node_ttl: Duration,
     /// Per-peer debounce window to coalesce bursty events
     pub debounce_window: Duration,
     /// Whether to use multicast for discovery (if supported)
@@ -42,7 +40,6 @@ impl Default for DiscoveryOptions {
         Self {
             announce_interval: Duration::from_secs(5),
             discovery_timeout: Duration::from_secs(10),
-            node_ttl: Duration::from_secs(300),
             debounce_window: Duration::from_millis(400),
             use_multicast: true,
             local_network_only: true,
