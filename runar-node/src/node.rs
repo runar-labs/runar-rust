@@ -49,7 +49,7 @@ use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
 use crate::services::service_registry::{
-    EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry, INTERNAL_SERVICES,
+    EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry, is_internal_service,
 };
 use crate::services::NodeDelegate;
 use crate::services::{
@@ -1032,11 +1032,11 @@ impl Node {
 
         let internal_services = local_services
             .iter()
-            .filter(|(_, service_entry)| INTERNAL_SERVICES.contains(&service_entry.service.path()))
+            .filter(|(_, service_entry)| is_internal_service(&service_entry.service.path()))
             .collect::<HashMap<_, _>>();
         let non_internal_services = local_services
             .iter()
-            .filter(|(_, service_entry)| !INTERNAL_SERVICES.contains(&service_entry.service.path()))
+            .filter(|(_, service_entry)| !is_internal_service(&service_entry.service.path()))
             .collect::<HashMap<_, _>>();
 
         // start internal services first
@@ -1113,7 +1113,7 @@ impl Node {
         service_entry: &ServiceEntry,
         update_node_version: bool,
     ) {
-        log_info!(self.logger, "Starting service: {service_topic}");
+        log_info!(self.logger, "[start_service] Starting service: {service_topic}");
 
         let service = service_entry.service.clone();
         let registry = &self.service_registry.clone();
@@ -1133,7 +1133,7 @@ impl Node {
         if let Err(e) = service.start(start_context).await {
             log_error!(
                 self.logger,
-                "Failed to start service: {service_topic}, error: {e}"
+                "[start_service] Failed to start service: {service_topic}, error: {e}"
             );
             if let Err(update_err) = registry
                 .update_local_service_state(service_topic, ServiceState::Error)
@@ -1141,7 +1141,7 @@ impl Node {
             {
                 log_error!(
                     self.logger,
-                    "Failed to update service state to Error: {update_err}"
+                    "[start_service] Failed to update service state to Error: {update_err}"
                 );
             }
             if let Err(publish_err) = self
@@ -1160,7 +1160,7 @@ impl Node {
                 )
                 .await
             {
-                log_error!(self.logger, "Failed to publish error state: {publish_err}");
+                log_error!(self.logger, "[start_service] Failed to publish error state: {publish_err}");
             }
             return;
         }
@@ -1171,7 +1171,7 @@ impl Node {
         {
             log_error!(
                 self.logger,
-                "Failed to update service state to Running: {update_err}"
+                "[start_service] Failed to update service state to Running: {update_err}"
             );
         }
 
@@ -1193,17 +1193,17 @@ impl Node {
         {
             log_error!(
                 self.logger,
-                "Failed to publish running state: {publish_err}"
+                "[start_service] Failed to publish running state: {publish_err}"
             );
         }
         log_info!(
             self.logger,
-            "Published local-only running for local service {service_topic}"
+            "[start_service] published local-only running for local service {service_topic}"
         );
         if update_node_version {
             log_info!(
                 self.logger,
-                "Notifying node change for service: {service_topic}"
+                "[start_service] notifying node change for service: {service_topic}"
             );
             if let Err(notify_err) = self.notify_node_change().await {
                 log_error!(self.logger, "Failed to notify node change: {notify_err}");
@@ -3023,7 +3023,7 @@ impl NodeDelegate for Node {
 
         log_debug!(
             self.logger,
-            "Node: subscribe called for topic_path '{}' - node started: {}",
+            "[subscribe] Node: subscribe called for topic_path '{}' - node started: {}",
             topic_path.as_str(),
             node_started
         );
@@ -3065,7 +3065,7 @@ impl NodeDelegate for Node {
 
             log_debug!(
                 self.logger,
-                "[include_past] matched_keys={} first={}",
+                "[subscribe] matched_keys={} first={}",
                 matched.len(),
                 matched.first().cloned().unwrap_or_default()
             );
@@ -3076,7 +3076,7 @@ impl NodeDelegate for Node {
                 if let Some(entry) = self.retained_events.get(&key) {
                     log_debug!(
                         self.logger,
-                        "[include_past] considering key={} retained_count={} cutoff={:?}",
+                        "[subscribe] considering key={} retained_count={} cutoff={:?}",
                         key,
                         entry.len(),
                         lookback
@@ -3090,27 +3090,13 @@ impl NodeDelegate for Node {
                             newest = Some((*ts, data.clone(), key.clone()));
                         }
                     }
-                } else {
-                    // Debug: list available retained keys to diagnose mismatches
-                    let sample: Vec<String> = self
-                        .retained_events
-                        .iter()
-                        .take(3)
-                        .map(|kv| kv.key().clone())
-                        .collect();
-                    log_debug!(
-                        self.logger,
-                        "[include_past] no entry for key='{}'; sample_keys={:?}",
-                        key,
-                        sample
-                    );
-                }
+                }  
             }
 
             if let Some((_ts, data, _key)) = newest.clone() {
                 log_debug!(
                     self.logger,
-                    "[include_past] delivering retained event to new subscriber"
+                    "[subscribe] delivering retained event to new subscriber"
                 );
                 let event_context = Arc::new(EventContext::new(
                     &topic_path,
@@ -3129,12 +3115,15 @@ impl NodeDelegate for Node {
                     }
                 }
             } else {
-                self.logger
-                    .debug("[include_past] no retained event found to deliver");
+                 log_debug!(
+                    self.logger, "[subscribe] no retained event found to deliver");
             }
         }
 
-        if node_started {
+        if node_started && !is_internal_service(&topic_path.as_str()) {
+            log_debug!(
+                self.logger, "[subscribe] node started, notifying node change"
+            );
             self.notify_node_change().await?;
         }
 
@@ -3145,27 +3134,31 @@ impl NodeDelegate for Node {
         let node_started = self.running.load(Ordering::SeqCst);
         log_debug!(
             self.logger,
-            "Unsubscribing from with ID: {subscription_id} - node started: {node_started}"
+            "[unsubscribe] Unsubscribing from with ID: {subscription_id} - node started: {node_started}"
         );
         // Directly forward to service registry's method
         let registry = self.service_registry.clone();
-        match registry.unsubscribe_local(subscription_id).await {
-            Ok(_) => {
+        let topic_path = match registry.unsubscribe_local(subscription_id).await {
+            Ok(topic_path) => {
                 log_debug!(
                     self.logger,
-                    "Successfully unsubscribed locally from  with id {subscription_id}"
+                    "[unsubscribe] Successfully unsubscribed locally from  with id {subscription_id} and topic path {topic_path}"
                 );
+                topic_path
             }
             Err(e) => {
                 log_error!(
                     self.logger,
-                    "Failed to unsubscribe locally from  with id {subscription_id}: {e}"
+                    "[unsubscribe] Failed to unsubscribe locally from  with id {subscription_id}: {e}"
                 );
                 return Err(anyhow!("Failed to unsubscribe locally: {e}"));
             }
-        }
-        //if already started... need to increment  -> registry_version
-        if node_started {
+        };
+        //if already started and if not internal service... need to increment  -> registry_version
+        if node_started && !is_internal_service(&topic_path.as_str()) {
+            log_debug!(
+                self.logger, "[unsubscribe] node started, notifying node change"
+            );
             self.notify_node_change().await?;
         }
         Ok(())

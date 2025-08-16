@@ -125,7 +125,11 @@ pub type SubscriptionEntry = (String, SubscriberKind, SubscriptionMetadata);
 // Wrapper stored at each trie leaf
 pub type SubscriptionVec = Vec<SubscriptionEntry>;
 
-pub const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
+const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
+
+pub fn is_internal_service(service_path: &str) -> bool {
+    INTERNAL_SERVICES.iter().any(|&internal| service_path.starts_with(internal))
+}
 
 /// Service registry for managing services and their handlers
 ///
@@ -746,7 +750,7 @@ impl ServiceRegistry {
         &self.local_services_list
     }
 
-    pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<()> {
+    pub async fn unsubscribe_local(&self, subscription_id: &str) -> Result<TopicPath> {
         log_debug!(
             self.logger,
             "Attempting to unsubscribe local subscription ID: {subscription_id}"
@@ -799,7 +803,7 @@ impl ServiceRegistry {
                     topic_path.as_str(),
                     subscription_id
                 );
-                Ok(())
+                Ok(topic_path)
             } else {
                 let msg = format!(
                     "No subscriptions found for topic path {topic_path} and ID {subscription_id}",
@@ -1013,9 +1017,7 @@ impl ServiceRegistry {
                         anyhow!("Invalid subscription topic path {}: {e}", metadata.path)
                     })?;
                     let service_path = tp.service_path();
-                    if service_path.starts_with('$')
-                        || INTERNAL_SERVICES.contains(&service_path.as_str())
-                    {
+                    if is_internal_service(&service_path.as_str()) {
                         continue;
                     }
                 }
@@ -1047,8 +1049,7 @@ impl ServiceRegistry {
                         anyhow!("Invalid subscription topic path {}: {e}", metadata.path)
                     })?;
                     let service_path = tp.service_path();
-                    if service_path.starts_with('$')
-                        || INTERNAL_SERVICES.contains(&service_path.as_str())
+                    if is_internal_service(&service_path.as_str())
                     {
                         continue;
                     }
@@ -1077,7 +1078,7 @@ impl ServiceRegistry {
             let path_str = service.path();
 
             // Skip internal services if not included
-            if !include_internal_services && INTERNAL_SERVICES.contains(&path_str) {
+            if !include_internal_services && is_internal_service(&path_str) {
                 continue;
             }
 
@@ -1113,7 +1114,7 @@ impl ServiceRegistry {
             let path_str = service.path();
 
             // Skip internal services if not included
-            if !include_internal_services && INTERNAL_SERVICES.contains(&path_str) {
+            if !include_internal_services && is_internal_service(&path_str) {
                 continue;
             }
 
