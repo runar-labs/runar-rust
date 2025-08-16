@@ -83,7 +83,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
     let _ = tokio::join!(peer_future2, peer_future1);
 
     assert!(
-        node_a.is_connected(&id_b).await || node_b.is_connected(&id_a).await,
+        node_a.is_connected(id_b).await || node_b.is_connected(id_a).await,
         "expected at least one side to be connected"
     );
 
@@ -173,7 +173,7 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
     let _ = tokio::join!(peer_future2, peer_future1);
 
     assert!(
-        node_a.is_connected(&id_b).await && node_b.is_connected(&id_a).await,
+        node_a.is_connected(id_b).await && node_b.is_connected(id_a).await,
         "expected at least one side to be connected"
     );
 
@@ -192,7 +192,7 @@ async fn test_node_handles_discovery_events_connect_and_lost_cleanup() -> Result
 
     // Node A should mark B as disconnected by now
     assert!(
-        !node_a.is_connected(&id_b).await,
+        !node_a.is_connected(id_b).await,
         "Node A should have cleaned up disconnected peer B after Lost"
     );
 
@@ -299,7 +299,7 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
     Ok(())
 }
 async fn create_test_discovery(
-    node_id: &str,
+    _node_id: &str,
     node_public_key: &[u8],
 ) -> Result<MulticastDiscovery> {
     let options = DiscoveryOptions {

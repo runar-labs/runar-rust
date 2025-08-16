@@ -1032,11 +1032,11 @@ impl Node {
 
         let internal_services = local_services
             .iter()
-            .filter(|(_, service_entry)| is_internal_service(&service_entry.service.path()))
+            .filter(|(_, service_entry)| is_internal_service(service_entry.service.path()))
             .collect::<HashMap<_, _>>();
         let non_internal_services = local_services
             .iter()
-            .filter(|(_, service_entry)| !is_internal_service(&service_entry.service.path()))
+            .filter(|(_, service_entry)| !is_internal_service(service_entry.service.path()))
             .collect::<HashMap<_, _>>();
 
         // start internal services first
@@ -3128,7 +3128,7 @@ impl NodeDelegate for Node {
             }
         }
 
-        if node_started && !is_internal_service(&topic_path.as_str()) {
+        if node_started && !is_internal_service(topic_path.as_str()) {
             log_debug!(
                 self.logger,
                 "[subscribe] node started, notifying node change"
@@ -3164,7 +3164,7 @@ impl NodeDelegate for Node {
             }
         };
         //if already started and if not internal service... need to increment  -> registry_version
-        if node_started && !is_internal_service(&topic_path.as_str()) {
+        if node_started && !is_internal_service(topic_path.as_str()) {
             log_debug!(
                 self.logger,
                 "[unsubscribe] node started, notifying node change"
