@@ -31,7 +31,7 @@ async fn test_dial_cancel_on_inbound_connect(
 
     // Make two transports with ephemeral ports
     // Build minimal NodeInfo for transports
-    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+    let mk_info = |addr: &str| NodeInfo {
         node_public_key: rand::random::<[u8; 32]>().to_vec(),
         network_ids: vec!["main".to_string()],
         addresses: vec![addr.to_string()],
@@ -166,14 +166,13 @@ use runar_node::network::transport::{
     MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST,
     MESSAGE_TYPE_RESPONSE,
 };
-use runar_schemas::{NodeMetadata, SubscriptionMetadata};
+use runar_schemas::{NodeInfo, NodeMetadata, SubscriptionMetadata};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_node::network::discovery::multicast_discovery::PeerInfo;
-use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{
     quic_transport::{QuicTransport, QuicTransportOptions},
     ConnectionCallback, MessageHandler, NetworkMessage, NetworkMessagePayloadItem,
@@ -961,7 +960,7 @@ async fn test_request_dedup_same_correlation_id_two_sends(
     let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
 
     // Minimal NodeInfo
-    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+    let mk_info = |addr: &str| NodeInfo {
         node_public_key: rand::random::<[u8; 32]>().to_vec(),
         network_ids: vec!["main".to_string()],
         addresses: vec![addr.to_string()],
@@ -1140,7 +1139,7 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
     km_server.install_certificate(cert_server)?;
     let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
 
-    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+    let mk_info = |addr: &str| NodeInfo {
         node_public_key: rand::random::<[u8; 32]>().to_vec(),
         network_ids: vec!["main".to_string()],
         addresses: vec![addr.to_string()],
@@ -1294,7 +1293,7 @@ async fn test_cache_expiry_triggers_handler_again(
     km_server.install_certificate(cert_server)?;
     let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
 
-    let mk_info = |addr: &str| runar_node::network::discovery::NodeInfo {
+    let mk_info = |addr: &str| NodeInfo {
         node_public_key: rand::random::<[u8; 32]>().to_vec(),
         network_ids: vec!["main".to_string()],
         addresses: vec![addr.to_string()],

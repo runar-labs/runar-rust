@@ -10,7 +10,7 @@ use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
 
-use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
+use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
 use runar_serializer::{ArcValue, LabelKeyInfo};
@@ -27,10 +27,10 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex, RwLock};
 
 use crate::network::discovery::multicast_discovery::PeerInfo;
-use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery, NodeInfo};
+use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 use crate::network::transport::{
     NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT,
-    MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
+    MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
@@ -61,8 +61,6 @@ use crate::{AbstractService, ServiceState};
 // Type aliases to reduce clippy type_complexity warnings
 type RetainedDeque = std::collections::VecDeque<(std::time::Instant, Option<ArcValue>)>;
 type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
-
-use crate::network::peer_directory::PeerDirectory;
 
 /// Configuration for a Runar Node instance.
 ///
@@ -405,10 +403,8 @@ pub struct Node {
     service_registry: Arc<ServiceRegistry>,
 
     // Centralized peer directory (single source of truth)
-    peer_directory: Arc<PeerDirectory>,
-
-    // Per-peer connect guards to avoid concurrent connects
-    peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    // peer_directory: Arc<PeerDirectory>,
+    remote_node_info: Arc<DashMap<String, NodeInfo>>,
 
     // Debounce repeated discovery events per peer
     discovery_seen_times: Arc<DashMap<String, Instant>>,
@@ -473,16 +469,7 @@ impl Node {
         }
         Ok(removed)
     }
-    /// Public helper for tests: check if Node believes a peer is connected
-    pub fn is_connected(&self, peer_id: &str) -> bool {
-        self.peer_directory.is_connected(peer_id)
-    }
-    async fn get_or_create_connect_mutex(&self, peer_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        self.peer_connect_mutexes
-            .entry(peer_id.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    }
+    
     /// Create a new Node with the given configuration.
     ///
     /// This constructor initializes a new Node instance with the specified configuration,
@@ -601,8 +588,7 @@ impl Node {
             config: Arc::new(config),
             logger: logger.clone(),
             service_registry,
-            peer_directory: Arc::new(PeerDirectory::new()),
-            peer_connect_mutexes: Arc::new(DashMap::new()),
+            remote_node_info: Arc::new(DashMap::new()),
             discovery_seen_times: Arc::new(DashMap::new()),
             running: AtomicBool::new(false),
             supports_networking: networking_enabled,
@@ -1453,9 +1439,10 @@ impl Node {
                         })
                     });
 
+                let self_arc_for_message = self_arc.clone();
                 let one_way_message_handler: crate::network::transport::OneWayMessageHandler =
                     Box::new(move |message: NetworkMessage| {
-                        let self_arc = self_arc.clone();
+                        let self_arc = self_arc_for_message.clone();
                         Box::pin(async move {
                             // For one-way messages, we call the same handler but ignore the response
                             let _response = self_arc
@@ -1470,21 +1457,42 @@ impl Node {
                         })
                     });
 
-                // Prepare separate Arc clones for each callback to avoid move issues
-                let self_arc_for_conn = Arc::new(self.clone());
-                let connection_callback: crate::network::transport::ConnectionCallback = Arc::new(
-                    move |peer_node_id: String, connected: bool, _info: Option<NodeInfo>| {
-                        let node = self_arc_for_conn.clone();
+                let self_arc_for_callback = self_arc.clone();
+                let peer_connected_callback: crate::network::transport::PeerConnectedCallback = Arc::new(
+                    move |peer_node_id: String, peer_node_info: NodeInfo| {
+                        let node = self_arc_for_callback.clone();
                         Box::pin(async move {
-                            if connected {
-                                node.peer_directory.mark_connected(&peer_node_id);
-                            } else {
-                                node.cleanup_disconnected_peer(&peer_node_id).await?;
-                            }
-                            Ok(())
+                            node.handle_peer_connected(peer_node_id, peer_node_info).await; 
                         })
-                    },
+                    }
                 );
+
+                let self_arc_for_callback = self_arc.clone();
+                let peer_disconnected_callback: crate::network::transport::PeerDisconnectedCallback = Arc::new(
+                    move |peer_node_id: String| {
+                        let node = self_arc_for_callback.clone();
+                        Box::pin(async move {
+                            node.cleanup_disconnected_peer(&peer_node_id).await; 
+                            ()
+                        })
+                    }
+                );
+                    
+                // Prepare separate Arc clones for each callback to avoid move issues
+                // let self_arc_for_conn = Arc::new(self.clone());
+                // let connection_callback: crate::network::transport::ConnectionCallback = Arc::new(
+                //     move |peer_node_id: String, connected: bool| {
+                //         let node = self_arc_for_conn.clone();
+                //         Box::pin(async move {
+                //             if connected {
+                //                 node.peer_directory.mark_connected(&peer_node_id);
+                //             } else {
+                //                 node.cleanup_disconnected_peer(&peer_node_id).await?;
+                //             }
+                //             Ok(())
+                //         })
+                //     },
+                // );
 
                 let cert_config = self
                     .keys_manager
@@ -1502,7 +1510,8 @@ impl Node {
                     .with_bind_addr(bind_addr)
                     .with_message_handler(message_handler)
                     .with_one_way_message_handler(one_way_message_handler)
-                    .with_connection_callback(connection_callback)
+                    .with_peer_connected_callback(peer_connected_callback)
+                    .with_peer_disconnected_callback(peer_disconnected_callback)
                     .with_logger(self.logger.clone())
                     .with_keystore(self.keys_manager.clone())
                     .with_label_resolver(self.label_resolver.clone());
@@ -1517,13 +1526,64 @@ impl Node {
         }
     }
 
+    async fn handle_peer_connected(&self, peer_node_id: String, peer_node_info: NodeInfo) -> Result<()> {
+        log_debug!(
+            self.logger,
+            "handle_peer_connected  peer_node_id:{peer_node_id}"
+        );
+        // Check existing info from directory
+        if let Some(existing_peer) = self.remote_node_info.get(&peer_node_id) {
+            // Idempotency: ignore if version is not newer
+            if peer_node_info.version <= existing_peer.version {
+                log_debug!(
+                    self.logger,
+                    "Node {peer_node_id} has older version {new_peer_version}, ignoring",
+                    new_peer_version = peer_node_info.version
+                );
+                return Ok(());
+            }
+
+            log_debug!(
+                self.logger,
+                "Node {peer_node_id} exists but has new version {new_peer_version}, diffing capabilities",
+                new_peer_version = peer_node_info.version
+            );
+
+            self.update_peer_capabilities(&existing_peer, &peer_node_info)
+                .await?;
+            // replace stored peer info
+            self.publish_with_options(
+                &format!("$registry/peer/{peer_node_id}/updated"),
+                Some(ArcValue::new_primitive(peer_node_id.clone())),
+                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
+            )
+            .await?;
+        
+        } else {
+            self.add_new_peer(&peer_node_info).await?;
+            self.publish_with_options(
+                &format!("$registry/peer/{peer_node_id}/discovered"),
+                Some(ArcValue::new_primitive(peer_node_id.clone())),
+                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
+            )
+            .await?; 
+        }
+        self.remote_node_info.insert(peer_node_id, peer_node_info);
+        Ok(())
+    
+    }
+
     /// Create a discovery provider based on the provider type
     async fn create_discovery_provider(
         &self,
         provider_config: &DiscoveryProviderConfig,
         discovery_options: Option<DiscoveryOptions>,
     ) -> Result<Arc<dyn NodeDiscovery>> {
-        let node_info = self.get_local_node_info().await?;
+        let peer_info = self.get_local_node_info().await?;
+        let local_peer_info = PeerInfo {
+            public_key: peer_info.node_public_key,
+            addresses: peer_info.addresses, 
+        };
 
         match provider_config {
             DiscoveryProviderConfig::Multicast(_options) => {
@@ -1533,7 +1593,7 @@ impl Node {
                 );
                 // Use .await to properly wait for the async initialization
                 let discovery = MulticastDiscovery::new(
-                    node_info,
+                    local_peer_info,
                     discovery_options.unwrap_or_default(),
                     self.logger.with_component(Component::NetworkDiscovery),
                 )
@@ -1563,12 +1623,6 @@ impl Node {
             "Discovery listener found node: {discovered_peer_id}"
         );
 
-        // Always allow an idempotent connect attempt. Transport will no-op if already connected
-        // and will reconcile duplicates if races occur. This avoids stale state blocking reconnects.
-        if self.peer_directory.is_connected(&discovered_peer_id) {
-            log_debug!(self.logger, "Discovery event for already-connected peer: {discovered_peer_id}; proceeding with idempotent connect to reconcile state");
-        }
-
         // Debounce rapid duplicate announcements only when not connected is false (we already checked not connected),
         // but still avoid spamming connects if multiple events arrive within a very short window.
         {
@@ -1588,10 +1642,6 @@ impl Node {
                     .insert(discovered_peer_id.clone(), Instant::now());
             }
         }
-
-        // Guard concurrent connects to same peer
-        let connect_mutex = self.get_or_create_connect_mutex(&discovered_peer_id).await;
-        let _guard = connect_mutex.lock().await;
 
         // Proceed with idempotent connect regardless of current directory flag
 
@@ -1631,49 +1681,6 @@ impl Node {
 
         // Match on message type
         match message.message_type {
-            MESSAGE_TYPE_HANDSHAKE => {
-                log_debug!(self.logger, "Received handshake message");
-                // Try to parse either raw NodeInfo (v1) or HandshakeData { node_info, nonce, role } (v2)
-                let payload_bytes = &message.payloads[0].value_bytes;
-                let peer_node_info = match serde_cbor::from_slice::<NodeInfo>(payload_bytes) {
-                    Ok(v1_info) => v1_info,
-                    Err(_) => {
-                        // Fallback: parse as generic CBOR and extract `node_info`
-                        match serde_cbor::from_slice::<serde_cbor::Value>(payload_bytes) {
-                            Ok(serde_cbor::Value::Map(map)) => {
-                                // Find key "node_info"
-                                let mut maybe_node_info_bytes: Option<Vec<u8>> = None;
-                                for (k, v) in map {
-                                    if let serde_cbor::Value::Text(key) = k {
-                                        if key == "node_info" {
-                                            // Re-encode the inner value to bytes and parse as NodeInfo
-                                            if let Ok(inner_bytes) = serde_cbor::to_vec(&v) {
-                                                maybe_node_info_bytes = Some(inner_bytes);
-                                            }
-                                            break;
-                                        }
-                                    }
-                                }
-                                if let Some(inner) = maybe_node_info_bytes {
-                                    serde_cbor::from_slice::<NodeInfo>(&inner).map_err(|e| {
-                                        anyhow!("Could not parse node_info from HandshakeData: {e}")
-                                    })?
-                                } else {
-                                    return Err(anyhow!("Handshake payload missing node_info"));
-                                }
-                            }
-                            Ok(_) => return Err(anyhow!("Unexpected handshake payload format")),
-                            Err(e) => {
-                                return Err(anyhow!(
-                                    "Could not parse handshake payload as NodeInfo or HandshakeData: {e}"
-                                ))
-                            }
-                        }
-                    }
-                };
-                self.process_remote_capabilities(peer_node_info).await?;
-                Ok(None)
-            }
             MESSAGE_TYPE_REQUEST => {
                 let response = self.handle_network_request(message).await?;
                 if let Some(response_message) = response {
@@ -1700,7 +1707,7 @@ impl Node {
 
     /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
     /// and forget the peer from known_peers and discovery caches.
-    async fn cleanup_disconnected_peer(&self, peer_node_id: &str) -> Result<()> {
+    async fn cleanup_disconnected_peer(&self, peer_node_id: &str) -> () {
         log_info!(self.logger, "Cleaning up disconnected peer: {peer_node_id}");
 
         // 1) Remove remote subscriptions registered for this peer
@@ -1713,30 +1720,34 @@ impl Node {
         }
 
         // 2) Remove remote services from this peer
-        if let Some(prev_info) = self.peer_directory.take_node_info(peer_node_id) {
-            for service in prev_info.node_metadata.services {
-                let service_tp =
-                    crate::routing::TopicPath::new(&service.service_path, &service.network_id)
-                        .map_err(|e| anyhow!(e))?;
-                let _ = self
-                    .service_registry
-                    .remove_remote_service(&service_tp)
-                    .await;
+        if let Some(prev_info) = self.remote_node_info.get(peer_node_id) {
+            for service in &prev_info.node_metadata.services {
+                if let Ok(service_tp) =
+                    crate::routing::TopicPath::new(&service.service_path, &service.network_id) {
+                    let _ = self
+                        .service_registry
+                        .remove_remote_service(&service_tp)
+                        .await;
+                } else {
+                    log_error!(self.logger, "Failed to parse topic path: {service_path}", service_path = service.service_path);
+                }
             }
         }
 
-        // 3) Mark as disconnected in the directory
-        self.peer_directory.mark_disconnected(peer_node_id);
+        // 3) removed from local cache
+        self.remote_node_info.remove(peer_node_id);
 
         // 4) Publish a local-only event indicating peer removal
-        self.publish_with_options(
+        if let Err(e) = self.publish_with_options(
             &format!("$registry/peer/{peer_node_id}/removed"),
             Some(ArcValue::new_primitive(peer_node_id.to_string())),
             PublishOptions::local_only(),
         )
-        .await?;
+        .await {
+            log_error!(self.logger, "Failed to publish peer removed event: {e}");
+        }
 
-        Ok(())
+        ()
     }
 
     /// Handle a network request
@@ -2306,59 +2317,6 @@ impl Node {
         Ok(())
     }
 
-    /// Handle remote node capabilities
-    ///
-    /// INTENTION: Process capabilities from a remote node by creating
-    /// RemoteService instances and making them available locally.
-    async fn process_remote_capabilities(
-        &self,
-        new_peer: NodeInfo,
-    ) -> Result<Vec<Arc<RemoteService>>> {
-        let new_peer_node_id = compact_id(&new_peer.node_public_key);
-        log_debug!(
-            self.logger,
-            "Processing remote capabilities from node {new_peer_node_id}"
-        );
-        // Check existing info from directory
-        if let Some(existing_peer) = self.peer_directory.get_node_info(&new_peer_node_id) {
-            // Idempotency: ignore if version is not newer
-            if new_peer.version <= existing_peer.version {
-                return Ok(Vec::new());
-            }
-
-            log_debug!(
-                self.logger,
-                "Node {new_peer_node_id} has new version {new_peer_version}, diffing capabilities",
-                new_peer_version = new_peer.version
-            );
-
-            self.update_peer_capabilities(&existing_peer, &new_peer)
-                .await?;
-            // replace stored peer info
-            self.peer_directory
-                .set_node_info(&new_peer_node_id, new_peer.clone());
-            self.publish_with_options(
-                &format!("$registry/peer/{new_peer_node_id}/updated"),
-                Some(ArcValue::new_primitive(new_peer_node_id.clone())),
-                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
-            )
-            .await?;
-            Ok(Vec::new())
-        } else {
-            self.peer_directory
-                .set_node_info(&new_peer_node_id, new_peer.clone());
-            self.peer_directory.mark_connected(&new_peer_node_id);
-            let res = self.add_new_peer(new_peer).await;
-            self.publish_with_options(
-                &format!("$registry/peer/{new_peer_node_id}/discovered"),
-                Some(ArcValue::new_primitive(new_peer_node_id.clone())),
-                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
-            )
-            .await?;
-            res
-        }
-    }
-
     async fn update_peer_capabilities(
         &self,
         old_peer: &NodeInfo,
@@ -2587,7 +2545,7 @@ impl Node {
         Ok(())
     }
 
-    async fn add_new_peer(&self, node_info: NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
+    async fn add_new_peer(&self, node_info: &NodeInfo) -> Result<Vec<Arc<RemoteService>>> {
         let capabilities = &node_info.node_metadata;
         log_info!(
             self.logger,
@@ -2795,7 +2753,7 @@ impl Node {
     /// trigger the actual notification. After the debounce period, it delegates to notify_node_change_impl,
     /// which sends the latest node info to all known peers via the transport.
     pub async fn notify_node_change(&self) -> Result<()> {
-        //check if network is en
+        //check if network is enabled
         if !self.supports_networking {
             log_debug!(
                 self.logger,
@@ -2842,21 +2800,22 @@ impl Node {
         let local_node_info = self.get_local_node_info().await?;
         log_info!(self.logger, "Notifying node change - previous version: {previous_version}, new version: {new_version}", previous_version = previous_version, new_version = local_node_info.version);
 
+        //NOTE discovery does not hold the full node info anymore and does not need to be updated
         // Update discovery providers with new node info (avoid holding lock across await)
-        let providers_to_update = {
-            let guard = self.network_discovery_providers.read().await;
-            guard.as_ref().cloned()
-        };
-        if let Some(discovery_providers) = providers_to_update {
-            for provider in discovery_providers {
-                if let Err(e) = provider
-                    .update_local_node_info(local_node_info.clone())
-                    .await
-                {
-                    log_warn!(self.logger, "Failed to update discovery provider: {e}");
-                }
-            }
-        }
+        // let providers_to_update = {
+        //     let guard = self.network_discovery_providers.read().await;
+        //     guard.as_ref().cloned()
+        // };
+        // if let Some(discovery_providers) = providers_to_update {
+        //     for provider in discovery_providers {
+        //         if let Err(e) = provider
+        //             .update_local_node_info(local_node_info.clone())
+        //             .await
+        //         {
+        //             log_warn!(self.logger, "Failed to update discovery provider: {e}");
+        //         }
+        //     }
+        // }
 
         let transport_guard = self.network_transport.read().await;
         if let Some(transport) = transport_guard.as_ref() {
@@ -3200,7 +3159,7 @@ impl NodeDelegate for Node {
                 return Err(anyhow!("Failed to unsubscribe locally: {e}"));
             }
         }
-        //if started... need to increment  -> registry_version
+        //if already started... need to increment  -> registry_version
         if node_started {
             self.notify_node_change().await?;
         }
@@ -3412,8 +3371,9 @@ impl Clone for Node {
             node_public_key: self.node_public_key.clone(),
             config: self.config.clone(),
             service_registry: self.service_registry.clone(),
-            peer_directory: self.peer_directory.clone(),
-            peer_connect_mutexes: self.peer_connect_mutexes.clone(),
+            // peer_directory: self.peer_directory.clone(),
+            // peer_connect_mutexes: self.peer_connect_mutexes.clone(),
+            remote_node_info: self.remote_node_info.clone(),
             discovery_seen_times: self.discovery_seen_times.clone(),
             logger: self.logger.clone(),
             running: AtomicBool::new(self.running.load(Ordering::SeqCst)),

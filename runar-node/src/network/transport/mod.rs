@@ -2,6 +2,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use rand;
+use runar_schemas::NodeInfo;
 use runar_serializer::ArcValue;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -16,16 +17,10 @@ use thiserror::Error;
 use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
 use rustls_pki_types::{CertificateDer, ServerName};
 
-// Internal module declarations
-pub mod connection_pool;
-pub mod peer_state;
-// legacy implementation removed.  New best-practice transport lives in `quic_transport.rs`.
 pub mod quic_transport; // new best-practice implementation
 pub mod stream_pool;
 
 use crate::routing::TopicPath;
-pub use connection_pool::ConnectionPool;
-pub use peer_state::PeerState;
 pub use stream_pool::StreamPool;
 // --- Moved from quic_transport.rs ---
 /// Custom certificate verifier that skips verification for testing
@@ -90,9 +85,7 @@ impl ServerCertVerifier for SkipServerVerification {
 pub use quic_transport::{QuicTransport, QuicTransportOptions};
 
 use super::discovery::multicast_discovery::PeerInfo;
-// Import NodeInfo from the discovery module
-use super::discovery::NodeInfo;
-
+ 
 /// Type alias for async-returning function
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -292,7 +285,13 @@ pub type MessageCallback =
 
 /// Callback type for connection status changes
 pub type ConnectionCallback =
-    Arc<dyn Fn(String, bool, Option<NodeInfo>) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+    Arc<dyn Fn(String, bool) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+
+pub type PeerConnectedCallback =
+    Arc<dyn Fn(String, NodeInfo) -> BoxFuture<'static, ()> + Send + Sync>;
+
+pub type PeerDisconnectedCallback =
+    Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]

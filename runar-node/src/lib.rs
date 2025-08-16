@@ -101,7 +101,7 @@ pub use routing::TopicPath;
 // Re-export the main types from the network module
 pub use network::{
     DiscoveryOptions, NetworkMessage, NetworkMessageType, NetworkTransport, NodeDiscovery,
-    NodeInfo, TransportOptions,
+    TransportOptions,
 };
 
 // Re-export common macros for convenience

@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 // Internal imports
-use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
+use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery};
 
 // Default multicast address and port
 const DEFAULT_MULTICAST_PORT: u16 = 45678;
@@ -81,7 +81,7 @@ impl MulticastMessage {
 /// Multicast-based node discovery implementation
 pub struct MulticastDiscovery {
     options: Arc<RwLock<DiscoveryOptions>>,
-    local_node: Arc<RwLock<Option<NodeInfo>>>,
+    local_node: Arc<RwLock<Option<PeerInfo>>>,
     socket: Arc<UdpSocket>,
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>,
     tx: Arc<Mutex<Option<Sender<MulticastMessage>>>>,
@@ -96,7 +96,7 @@ pub struct MulticastDiscovery {
 impl MulticastDiscovery {
     /// Create a new multicast discovery instance
     pub async fn new(
-        local_node: NodeInfo,
+        local_peer_info: PeerInfo,
         options: DiscoveryOptions,
         logger: Logger,
     ) -> Result<Self> {
@@ -140,7 +140,7 @@ impl MulticastDiscovery {
 
         let instance = Self {
             options: Arc::new(RwLock::new(options)),
-            local_node: Arc::new(RwLock::new(Some(local_node))),
+            local_node: Arc::new(RwLock::new(Some(local_peer_info))),
             socket: Arc::new(socket),
             listeners: Arc::new(RwLock::new(Vec::new())),
             tx: Arc::new(Mutex::new(None)),
@@ -223,7 +223,7 @@ impl MulticastDiscovery {
             // Get local node info once, outside the loop
             let local_node_guard = local_node.read().await;
             let local_peer_node_id = if let Some(info) = local_node_guard.as_ref() {
-                compact_id(&info.node_public_key)
+                compact_id(&info.public_key)
             } else {
                 log_error!(
                     logger,
@@ -251,8 +251,7 @@ impl MulticastDiscovery {
                                 }
                                 if !skip {
                                     Self::process_message(
-                                        message,
-                                        &local_node,
+                                        message, 
                                         &listeners,
                                         &logger,
                                     )
@@ -297,7 +296,7 @@ impl MulticastDiscovery {
 
                 // Create announcement message
                 let peer_info = PeerInfo::new(
-                    local_node_info.node_public_key.clone(),
+                    local_node_info.public_key.clone(),
                     local_node_info.addresses.clone(),
                 );
 
@@ -306,7 +305,6 @@ impl MulticastDiscovery {
                     goodbye: None,
                 };
 
-                // Serialize and send
                 match serde_cbor::to_vec(&message) {
                     Ok(data) => {
                         if let Err(e) = socket.send_to(&data, *multicast_addr.lock().await).await {
@@ -344,12 +342,12 @@ impl MulticastDiscovery {
             while let Some(mut message) = rx.recv().await {
                 // Update announce message with our local info
                 if let Some(ref mut discovery_msg) = message.announce {
-                    discovery_msg.public_key = local_node_info.node_public_key.clone();
+                    discovery_msg.public_key = local_node_info.public_key.clone();
                     discovery_msg.addresses = local_node_info.addresses.clone();
                 }
                 // Update goodbye message with our local ID
                 if let Some(ref mut id) = message.goodbye {
-                    *id = compact_id(&local_node_info.node_public_key);
+                    *id = compact_id(&local_node_info.public_key);
                 }
 
                 match serde_cbor::to_vec(&message) {
@@ -375,30 +373,10 @@ impl MulticastDiscovery {
     /// Process a received multicast message
     #[allow(clippy::too_many_arguments)]
     async fn process_message(
-        message: MulticastMessage,
-        local_node: &Arc<RwLock<Option<NodeInfo>>>,
+        message: MulticastMessage, 
         listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
         logger: &Logger,
-    ) {
-        // Skip if we don't have local node info
-        let local_node_info = match local_node.read().await.as_ref() {
-            Some(info) => info.clone(),
-            None => {
-                logger.warn("No local node info available for discovery");
-                return;
-            }
-        };
-
-        // Skip messages from ourselves
-        if let Some(announce) = &message.announce {
-            let sender_id = compact_id(&announce.public_key);
-            let local_id = compact_id(&local_node_info.node_public_key);
-            if sender_id == local_id {
-                log_debug!(logger, "Ignoring discovery message from self");
-                return;
-            }
-        }
-
+    ) {       
         // Process the message and emit appropriate events
         match &message {
             MulticastMessage {
@@ -481,7 +459,7 @@ impl NodeDiscovery for MulticastDiscovery {
                 ))
             }
         };
-        let local_peer_node_id = compact_id(&local_info.node_public_key);
+        let local_peer_node_id = compact_id(&local_info.public_key);
         log_info!(
             self.logger,
             "Starting to announce node: {local_peer_node_id}"
@@ -504,7 +482,7 @@ impl NodeDiscovery for MulticastDiscovery {
 
         // Create a discovery message from the NodeInfo
         let peer_info = PeerInfo::new(
-            local_info.node_public_key.clone(),
+            local_info.public_key.clone(),
             local_info.addresses.clone(),
         );
 
@@ -535,15 +513,10 @@ impl NodeDiscovery for MulticastDiscovery {
         Ok(())
     }
 
-    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()> {
+    async fn update_local_peer_info(&self, new_peer_info: PeerInfo) -> Result<()> {
         let mut local_node_guard = self.local_node.write().await;
-        *local_node_guard = Some(new_node_info);
+        *local_node_guard = Some(new_peer_info);
         drop(local_node_guard);
-
-        log_debug!(
-            self.logger,
-            "Updated local node information for multicast discovery"
-        );
         Ok(())
     }
 

@@ -35,13 +35,9 @@
 
 pub mod discovery;
 pub mod network_config;
-pub mod peer_directory;
 pub mod transport;
 
-pub use discovery::{
-    DiscoveryListener, DiscoveryOptions, MemoryDiscovery, MulticastDiscovery, NodeDiscovery,
-    NodeInfo,
-};
+pub use discovery::{DiscoveryListener, DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 pub use runar_schemas::{ActionMetadata, ServiceMetadata};
 pub use transport::{
     MessageHandler, NetworkMessage, NetworkMessageType, NetworkTransport, QuicTransport,

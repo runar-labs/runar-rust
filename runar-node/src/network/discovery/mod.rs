@@ -14,12 +14,8 @@ use std::time::Duration;
 
 use runar_schemas::NodeMetadata;
 
-pub mod memory_discovery;
-pub mod mock;
 pub mod multicast_discovery;
 
-pub use memory_discovery::MemoryDiscovery;
-pub use mock::MockNodeDiscovery;
 pub use multicast_discovery::MulticastDiscovery;
 
 /// Configuration options for node discovery
@@ -58,26 +54,6 @@ impl Default for DiscoveryOptions {
 // Make the constant public
 pub const DEFAULT_MULTICAST_ADDR: &str = "239.255.42.98";
 
-/// Information about a node in the network
-///
-/// INTENTION: Represents a snapshot of a node's presence and capabilities
-/// within one or more networks. This information is shared via discovery mechanisms.
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct NodeInfo {
-    /// The node's unique identifier
-    pub node_public_key: Vec<u8>,
-    /// The list of network IDs this node participates in and handles traffic for.
-    /// A node can be part of multiple networks simultaneously.
-    pub network_ids: Vec<String>,
-    /// The node's  network addressess (e.g., "IP:PORT") - ordered by preference
-    pub addresses: Vec<String>,
-    /// Node services representing the services provided by this node
-    pub node_metadata: NodeMetadata,
-    /// incremental version counter that change everytime the node changes (new services added, new event subscriptions, etc)
-    /// when that happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
-    pub version: i64,
-}
-
 /// Callback function type for discovery events
 use std::future::Future;
 use std::pin::Pin;
@@ -112,8 +88,8 @@ pub trait NodeDiscovery: Send + Sync {
     /// Shutdown the discovery mechanism
     async fn shutdown(&self) -> Result<()>;
 
-    /// Update the local node information (called when node capabilities change)
-    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()>;
+    /// Update the local peer information (called when node capabilities change)
+    async fn update_local_peer_info(&self, new_peer_info: PeerInfo) -> Result<()>;
 
     // Stateless providers do not maintain authoritative peer caches.
 }
