@@ -6,9 +6,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use log::LevelFilter;
 use runar_macros_common::{log_debug, log_info};
-use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{NetworkMessage, NetworkTransport};
 use runar_node::network::{QuicTransport, QuicTransportOptions};
+use runar_schemas::NodeInfo;
 // no-op
 
 use runar_transport_tests::quic_interop_common::{
@@ -86,7 +86,10 @@ async fn main() -> Result<()> {
     let opts = QuicTransportOptions::new()
         .with_certificates(chain)
         .with_private_key(key)
-        .with_local_node_info(node_info)
+        .with_get_local_node_info(Arc::new(move || {
+            let node_info = node_info.clone();
+            Box::pin(async move { Ok(node_info) })
+        }))
         .with_bind_addr(bind_addr)
         .with_message_handler(handler)
         .with_one_way_message_handler(one_way)

@@ -71,7 +71,7 @@ async fn test_gateway_routes() -> Result<()> {
         .expect("Error creating test config")
         .with_logging_config(logging_config);
 
-    let logger = Arc::new(Logger::new_root(Component::Custom("gateway_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("gateway_test")));
 
     let mut node = Node::new(node_config).await?;
 

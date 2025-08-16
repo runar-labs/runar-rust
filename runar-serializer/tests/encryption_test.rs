@@ -45,7 +45,7 @@ type TestContext = (
 );
 
 fn build_test_context() -> Result<TestContext> {
-    let logger = Arc::new(Logger::new_root(Component::System, "encryption-test"));
+    let logger = Arc::new(Logger::new_root(Component::System));
 
     // This mimics a proper setup, where one mobile key store is used to setup the network and nodes
     // and the user has its own mobile key store with its keys, but does not have access to the network private keys

@@ -106,7 +106,7 @@ impl StartCommand {
             .context("Failed to deserialize node state")?;
 
         // Create logger for the key manager
-        let key_logger = Arc::new(Logger::new_root(Component::Keys, &config.node_id));
+        let key_logger = Arc::new(Logger::new_root(Component::Keys));
 
         // Create node key manager from state
         let node_key_manager = NodeKeyManager::from_state(node_state, key_logger)
@@ -132,8 +132,7 @@ impl StartCommand {
             .context("Failed to serialize node state for Runar config")?;
 
         // Create Runar node configuration using production constructor
-        let mut runar_config =
-            NodeConfig::new(config.node_id.clone(), config.default_network_id.clone());
+        let mut runar_config = NodeConfig::new(config.default_network_id.clone());
         runar_config = runar_config
             .with_additional_networks(config.network_ids.clone())
             .with_request_timeout(config.request_timeout_ms)

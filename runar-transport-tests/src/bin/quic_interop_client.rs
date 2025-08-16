@@ -6,9 +6,10 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::LevelFilter;
 use runar_macros_common::log_info;
-use runar_node::network::discovery::{multicast_discovery::PeerInfo, NodeInfo};
+use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::network::transport::{MessageContext, NetworkTransport};
 use runar_node::network::{QuicTransport, QuicTransportOptions};
+use runar_schemas::NodeInfo;
 use runar_serializer::ArcValue;
 
 use runar_transport_tests::quic_interop_common::{
@@ -64,7 +65,10 @@ async fn main() -> Result<()> {
     let opts = QuicTransportOptions::new()
         .with_certificates(chain)
         .with_private_key(key)
-        .with_local_node_info(local_info.clone())
+        .with_get_local_node_info(Arc::new(move || {
+            let local_info = local_info.clone();
+            Box::pin(async move { Ok(local_info) })
+        }))
         .with_bind_addr(bind_addr)
         .with_message_handler(handler)
         .with_one_way_message_handler(one_way)

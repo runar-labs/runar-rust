@@ -73,7 +73,7 @@ pub fn create_node_test_config() -> napi::Result<JsNodeConfig> {
     // Return JS-safe version
     Ok(JsNodeConfig {
         correlation_id,
-        node_id: config.node_id,
+        node_id: "test-node".to_string(),
         default_network_id: config.default_network_id,
         network_ids: config.network_ids,
         request_timeout_ms: config.request_timeout_ms as f64,
@@ -93,7 +93,7 @@ pub fn create_node_config(
 ) -> napi::Result<JsNodeConfig> {
     let correlation_id = Uuid::new_v4().to_string();
 
-    let config = NodeConfig::new(node_id.clone(), default_network_id.clone());
+    let config = NodeConfig::new(default_network_id.clone());
 
     // Store the full config in Rust
     get_node_configs().insert(correlation_id.clone(), config);

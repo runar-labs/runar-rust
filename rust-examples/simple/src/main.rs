@@ -62,7 +62,7 @@ impl StatsService {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup logging
-    let logger = Arc::new(Logger::new_root(Component::System, "simple-example"));
+    let logger = Arc::new(Logger::new_root(Component::System));
 
     // Create a test environment with mobile simulator
     let (simulator, config) = create_test_environment().expect("Error creating test environment");

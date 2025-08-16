@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
 
-    let logger = Arc::new(Logger::new_root(Component::System, "microservices-demo"));
+    let logger = Arc::new(Logger::new_root(Component::System));
 
     logger.info("🚀 Starting Runar Encryption Demo with Database");
     logger.info("================================================");

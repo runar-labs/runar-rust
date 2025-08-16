@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use runar_common::logging::{Component, Logger};
-use runar_node::network::discovery::NodeInfo;
 use runar_node::network::transport::{MessageContext, NetworkMessage, NetworkMessagePayloadItem};
 use runar_node::routing::TopicPath;
+use runar_schemas::NodeInfo;
 // Intentionally not importing QuicTransportOptions here
 use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
 use runar_serializer::traits::{
@@ -83,7 +83,7 @@ pub fn read_pem_key(path: &str) -> Result<PrivateKeyDer<'static>> {
 }
 
 pub fn default_logger() -> Arc<Logger> {
-    Arc::new(Logger::new_root(Component::Transporter, "interop"))
+    Arc::new(Logger::new_root(Component::Transporter))
 }
 
 /// Minimal NoCrypto that satisfies EnvelopeCrypto for interop (no-op envelope)

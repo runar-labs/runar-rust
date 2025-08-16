@@ -32,10 +32,7 @@ async fn setup_node_with_services() -> Result<Node> {
         .with_logging_config(logging_config);
     let mut node = Node::new(node_config).await?;
 
-    let _logger_arc = Arc::new(Logger::new_root(
-        Component::Custom("crud_sqlite_test"),
-        "test_node_crud",
-    ));
+    let _logger_arc = Arc::new(Logger::new_root(Component::Custom("crud_sqlite_test")));
 
     // Define the schema
     let app_schema = Arc::new(SqliteSchema {

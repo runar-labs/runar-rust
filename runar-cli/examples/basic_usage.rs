@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     println!("📁 Using temporary config directory: {config_dir:?}");
 
     // Create logger
-    let logger = Arc::new(Logger::new_root(Component::CLI, "example"));
+    let logger = Arc::new(Logger::new_root(Component::CLI));
 
     // Example 1: Create a configuration manually
     println!("\n🔧 Example 1: Creating configuration manually");

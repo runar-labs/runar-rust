@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn test_key_store_operations() {
-        let logger = Arc::new(Logger::new_root(Component::CLI, "test"));
+        let logger = Arc::new(Logger::new_root(Component::CLI));
         let key_store = OsKeyStore::new(logger);
 
         let test_keys_name = "test_keys_123";

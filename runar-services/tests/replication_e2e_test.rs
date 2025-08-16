@@ -118,7 +118,7 @@ fn create_replicated_sqlite_service(
 
 /// Clean up database files to ensure test isolation
 fn cleanup_database_files() {
-    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     let db_files = vec![
         "./node_1_db",
         "./node_1_db-shm",
@@ -152,10 +152,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
     logging_config.apply();
 
     // Set up logger
-    let logger = Arc::new(Logger::new_root(
-        Component::Custom("replication_e2e_test"),
-        "",
-    ));
+    let logger = Arc::new(Logger::new_root(Component::Custom("replication_e2e_test")));
 
     logger.info("=== Test 1: Basic Replication Between Nodes ===");
 
@@ -471,7 +468,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
-    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
 
     // Create SQLite services
     //node1 uses a file db becaue it will stop and start again and must retain its data
@@ -1372,7 +1369,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
-    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     logger.info("=== Test 3: Event Tables and Ordering ===");
 
     // Create two node configurations
@@ -1666,7 +1663,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 async fn test_mobile_simulator_replication() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     logger.info("=== Test 4: Mobile Simulator Replication Test ===");
 
     // Create mobile simulation environment
@@ -1936,7 +1933,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 async fn test_high_volume_replication_with_pagination() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     logger.info("🧪 Testing high-volume replication with pagination (400 records)...");
 
     // Create Node 1 with 400 records
