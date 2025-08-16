@@ -148,8 +148,6 @@ pub fn is_internal_service(service_path: &str) -> bool {
     false
 }
 
-
-
 /// Service registry for managing services and their handlers
 ///
 /// INTENTION: Provide a centralized registry for action handlers and event subscriptions.

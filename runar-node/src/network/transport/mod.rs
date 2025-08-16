@@ -17,11 +17,9 @@ use thiserror::Error;
 use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
 use rustls_pki_types::{CertificateDer, ServerName};
 
-pub mod quic_transport; // new best-practice implementation
-pub mod stream_pool;
+pub mod quic_transport;
 
 use crate::routing::TopicPath;
-pub use stream_pool::StreamPool;
 // --- Moved from quic_transport.rs ---
 /// Custom certificate verifier that skips verification for testing
 ///
