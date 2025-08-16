@@ -357,9 +357,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // For our certificates, we expect the node public key in the subject
     assert!(
-        subject_str.contains(
-            &node_keys_manager.dns_safe_node_id(&compact_id(&node_public_key_from_token))
-        ),
+        subject_str.contains(&compact_id(&node_public_key_from_token)),
         "Certificate subject should contain node public key"
     );
 

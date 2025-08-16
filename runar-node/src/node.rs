@@ -49,7 +49,7 @@ use crate::services::remote_service::{
     CreateRemoteServicesConfig, RemoteService, RemoteServiceDependencies,
 };
 use crate::services::service_registry::{
-    EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry, is_internal_service,
+    is_internal_service, EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry,
 };
 use crate::services::NodeDelegate;
 use crate::services::{
@@ -1113,7 +1113,10 @@ impl Node {
         service_entry: &ServiceEntry,
         update_node_version: bool,
     ) {
-        log_info!(self.logger, "[start_service] Starting service: {service_topic}");
+        log_info!(
+            self.logger,
+            "[start_service] Starting service: {service_topic}"
+        );
 
         let service = service_entry.service.clone();
         let registry = &self.service_registry.clone();
@@ -1160,7 +1163,10 @@ impl Node {
                 )
                 .await
             {
-                log_error!(self.logger, "[start_service] Failed to publish error state: {publish_err}");
+                log_error!(
+                    self.logger,
+                    "[start_service] Failed to publish error state: {publish_err}"
+                );
             }
             return;
         }
@@ -3090,7 +3096,7 @@ impl NodeDelegate for Node {
                             newest = Some((*ts, data.clone(), key.clone()));
                         }
                     }
-                }  
+                }
             }
 
             if let Some((_ts, data, _key)) = newest.clone() {
@@ -3115,14 +3121,17 @@ impl NodeDelegate for Node {
                     }
                 }
             } else {
-                 log_debug!(
-                    self.logger, "[subscribe] no retained event found to deliver");
+                log_debug!(
+                    self.logger,
+                    "[subscribe] no retained event found to deliver"
+                );
             }
         }
 
         if node_started && !is_internal_service(&topic_path.as_str()) {
             log_debug!(
-                self.logger, "[subscribe] node started, notifying node change"
+                self.logger,
+                "[subscribe] node started, notifying node change"
             );
             self.notify_node_change().await?;
         }
@@ -3157,7 +3166,8 @@ impl NodeDelegate for Node {
         //if already started and if not internal service... need to increment  -> registry_version
         if node_started && !is_internal_service(&topic_path.as_str()) {
             log_debug!(
-                self.logger, "[unsubscribe] node started, notifying node change"
+                self.logger,
+                "[unsubscribe] node started, notifying node change"
             );
             self.notify_node_change().await?;
         }

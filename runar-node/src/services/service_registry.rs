@@ -134,7 +134,7 @@ pub fn is_internal_service(service_path: &str) -> bool {
             return true;
         }
     }
-    
+
     // Check if it has the pattern <network_id>:<internal_service>/...
     if let Some(colon_pos) = service_path.find(':') {
         let after_colon = &service_path[colon_pos + 1..];
@@ -144,7 +144,7 @@ pub fn is_internal_service(service_path: &str) -> bool {
             }
         }
     }
-    
+
     false
 }
 
@@ -164,9 +164,13 @@ mod tests {
 
         // Test network-prefixed internal service paths
         assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry"));
-        assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry/peer/node123/discovered"));
+        assert!(is_internal_service(
+            "31cpl9tk8gbtreprejof9orghts:$registry/peer/node123/discovered"
+        ));
         assert!(is_internal_service("abc123:$keys/ensure_symmetric_key"));
-        assert!(is_internal_service("network-456:$registry/services/math1/state/running"));
+        assert!(is_internal_service(
+            "network-456:$registry/services/math1/state/running"
+        ));
 
         // Test non-internal service paths
         assert!(!is_internal_service("math1"));
@@ -181,14 +185,18 @@ mod tests {
         assert!(!is_internal_service("external/$keys/manager"));
 
         // Test network-prefixed non-internal services
-        assert!(!is_internal_service("31cpl9tk8gbtreprejof9orghts:math1/add"));
+        assert!(!is_internal_service(
+            "31cpl9tk8gbtreprejof9orghts:math1/add"
+        ));
         assert!(!is_internal_service("abc123:echo-service/echo"));
         assert!(!is_internal_service("network-456:user-service/profile"));
 
         // Test edge cases with special characters
         assert!(!is_internal_service("$registry_helper")); // Doesn't start with exact internal service
         assert!(!is_internal_service("$keys_backup")); // Doesn't start with exact internal service
-        assert!(!is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry_helper")); // Network prefix but not internal
+        assert!(!is_internal_service(
+            "31cpl9tk8gbtreprejof9orghts:$registry_helper"
+        )); // Network prefix but not internal
         assert!(!is_internal_service("abc123:$keys_backup")); // Network prefix but not internal
 
         // Test empty and single character cases
@@ -206,22 +214,40 @@ mod tests {
     #[test]
     fn test_is_internal_service_with_complex_paths() {
         // Test deeply nested internal service paths
-        assert!(is_internal_service("$registry/services/math1/state/running"));
-        assert!(is_internal_service("$registry/peer/node123/services/math1/state/running"));
+        assert!(is_internal_service(
+            "$registry/services/math1/state/running"
+        ));
+        assert!(is_internal_service(
+            "$registry/peer/node123/services/math1/state/running"
+        ));
         assert!(is_internal_service("$keys/ensure_symmetric_key/result"));
         assert!(is_internal_service("$keys/generate_keypair/private/public"));
 
         // Test network-prefixed deeply nested paths
-        assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry/services/math1/state/running"));
-        assert!(is_internal_service("abc123:$registry/peer/node123/services/math1/state/running"));
-        assert!(is_internal_service("network-456:$keys/ensure_symmetric_key/result"));
-        assert!(is_internal_service("test-789:$keys/generate_keypair/private/public"));
+        assert!(is_internal_service(
+            "31cpl9tk8gbtreprejof9orghts:$registry/services/math1/state/running"
+        ));
+        assert!(is_internal_service(
+            "abc123:$registry/peer/node123/services/math1/state/running"
+        ));
+        assert!(is_internal_service(
+            "network-456:$keys/ensure_symmetric_key/result"
+        ));
+        assert!(is_internal_service(
+            "test-789:$keys/generate_keypair/private/public"
+        ));
 
         // Test mixed internal and non-internal in same path (should still be internal)
         assert!(is_internal_service("$registry/services/math1/actions/add"));
-        assert!(is_internal_service("$keys/ensure_symmetric_key/for_service/math1"));
-        assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry/peer/node123/services/math1/actions/add"));
-        assert!(is_internal_service("abc123:$keys/ensure_symmetric_key/for_service/math1"));
+        assert!(is_internal_service(
+            "$keys/ensure_symmetric_key/for_service/math1"
+        ));
+        assert!(is_internal_service(
+            "31cpl9tk8gbtreprejof9orghts:$registry/peer/node123/services/math1/actions/add"
+        ));
+        assert!(is_internal_service(
+            "abc123:$keys/ensure_symmetric_key/for_service/math1"
+        ));
     }
 }
 
@@ -1143,8 +1169,7 @@ impl ServiceRegistry {
                         anyhow!("Invalid subscription topic path {}: {e}", metadata.path)
                     })?;
                     let service_path = tp.service_path();
-                    if is_internal_service(&service_path.as_str())
-                    {
+                    if is_internal_service(&service_path.as_str()) {
                         continue;
                     }
                 }

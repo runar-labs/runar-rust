@@ -338,19 +338,6 @@ impl PeerState {
     }
 }
 
-/// Convert a compact ID to a DNS-safe format by replacing invalid characters
-fn dns_safe_node_id(node_id: &str) -> String {
-    node_id
-        .chars()
-        .map(|c| match c {
-            '-' => 'x',                    // Replace hyphen with 'x'
-            '_' => 'y',                    // Replace underscore with 'y'
-            c if c.is_alphanumeric() => c, // Keep alphanumeric
-            _ => 'z',                      // Replace any other invalid chars with 'z'
-        })
-        .collect()
-}
-
 #[derive(Clone, Debug)]
 struct SharedState {
     peers: Arc<DashMap<String, PeerState>>,
@@ -1890,7 +1877,6 @@ impl NetworkTransport for QuicTransport {
                 NetworkError::ConfigurationError(format!("bad addr: {e}"))
             })?;
 
-        let dns_safe_peer_id = dns_safe_node_id(&peer_node_id);
         // Deterministic dial-direction gate: Higher node-id yields to inbound
         let local_node_id = self.local_node_id.clone();
         let prefer_inbound = local_node_id.as_str() > peer_node_id.as_str();
@@ -1927,7 +1913,10 @@ impl NetworkTransport for QuicTransport {
                 "[connect_peer] Prefer inbound but none arrived; proceeding to dial {peer_node_id}"
             );
         }
-        log_debug!(self.logger, "🔍 [connect_peer] Connecting to {peer_node_id} (DNS-safe: {dns_safe_peer_id}) at {addr}");
+        log_debug!(
+            self.logger,
+            "🔍 [connect_peer] Connecting to {peer_node_id} at {addr}"
+        );
 
         // Per-peer cancel Notify (created if absent)
         let cancel_notify = {
@@ -1962,7 +1951,7 @@ impl NetworkTransport for QuicTransport {
             }
         }
 
-        let connecting = endpoint.connect(addr, &dns_safe_peer_id).map_err(|e| {
+        let connecting = endpoint.connect(addr, &peer_node_id).map_err(|e| {
             log_error!(self.logger, "❌ [connect_peer] Connect failed: {e}");
             NetworkError::ConnectionError(format!("connect: {e}"))
         })?;

@@ -422,8 +422,7 @@ impl NodeKeyManager {
         let node_id = self.get_node_id();
 
         // Convert to DNS-safe format for certificate generation
-        let dns_safe_node_id = self.dns_safe_node_id(&node_id);
-        let subject = format!("CN={dns_safe_node_id},O=Runar Node,C=US");
+        let subject = format!("CN={node_id},O=Runar Node,C=US");
 
         let csr_der = CertificateRequest::create(&self.node_key_pair, &subject)?;
 
@@ -446,19 +445,6 @@ impl NodeKeyManager {
         })
     }
 
-    /// Convert a compact ID to a DNS-safe format by replacing invalid characters
-    pub fn dns_safe_node_id(&self, node_id: &str) -> String {
-        node_id
-            .chars()
-            .map(|c| match c {
-                '-' => 'x',                    // Replace hyphen with 'x'
-                '_' => 'y',                    // Replace underscore with 'y'
-                c if c.is_alphanumeric() => c, // Keep alphanumeric
-                _ => 'z',                      // Replace any other invalid chars with 'z'
-            })
-            .collect()
-    }
-
     /// Get the node key pair for certificate creation
     pub fn get_node_key_pair(&self) -> &EcdsaKeyPair {
         &self.node_key_pair
@@ -472,13 +458,7 @@ impl NodeKeyManager {
 
         // Verify the certificate is for this node
         let node_id = self.get_node_id();
-        let dns_safe_node_id = self.dns_safe_node_id(&node_id);
-        //let expected_subject = format!("CN={dns_safe_node_id},O=Runar Node,C=US");
-        if !cert_message
-            .node_certificate
-            .subject()
-            .contains(&dns_safe_node_id)
-        {
+        if !cert_message.node_certificate.subject().contains(&node_id) {
             return Err(KeyError::CertificateValidationError(
                 "Certificate subject doesn't match node ID".to_string(),
             ));
