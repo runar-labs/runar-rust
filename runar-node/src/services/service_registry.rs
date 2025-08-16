@@ -128,7 +128,101 @@ pub type SubscriptionVec = Vec<SubscriptionEntry>;
 const INTERNAL_SERVICES: [&str; 2] = ["$registry", "$keys"];
 
 pub fn is_internal_service(service_path: &str) -> bool {
-    INTERNAL_SERVICES.iter().any(|&internal| service_path.starts_with(internal))
+    // Check if it starts with an internal service directly (exact match or followed by /)
+    for &internal in &INTERNAL_SERVICES {
+        if service_path == internal || service_path.starts_with(&format!("{}/", internal)) {
+            return true;
+        }
+    }
+    
+    // Check if it has the pattern <network_id>:<internal_service>/...
+    if let Some(colon_pos) = service_path.find(':') {
+        let after_colon = &service_path[colon_pos + 1..];
+        for &internal in &INTERNAL_SERVICES {
+            if after_colon == internal || after_colon.starts_with(&format!("{}/", internal)) {
+                return true;
+            }
+        }
+    }
+    
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_internal_service() {
+        // Test direct internal service paths
+        assert!(is_internal_service("$registry"));
+        assert!(is_internal_service("$registry/services/list"));
+        assert!(is_internal_service("$registry/peer/node123/discovered"));
+        assert!(is_internal_service("$keys"));
+        assert!(is_internal_service("$keys/ensure_symmetric_key"));
+        assert!(is_internal_service("$keys/generate_keypair"));
+
+        // Test network-prefixed internal service paths
+        assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry"));
+        assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry/peer/node123/discovered"));
+        assert!(is_internal_service("abc123:$keys/ensure_symmetric_key"));
+        assert!(is_internal_service("network-456:$registry/services/math1/state/running"));
+
+        // Test non-internal service paths
+        assert!(!is_internal_service("math1"));
+        assert!(!is_internal_service("math1/add"));
+        assert!(!is_internal_service("echo-service/echo"));
+        assert!(!is_internal_service("user-service/profile"));
+
+        // Test edge cases - internal service names appearing elsewhere in the path
+        assert!(!is_internal_service("my_service/$registry"));
+        assert!(!is_internal_service("service/$keys/backup"));
+        assert!(!is_internal_service("app/math1/$registry/helper"));
+        assert!(!is_internal_service("external/$keys/manager"));
+
+        // Test network-prefixed non-internal services
+        assert!(!is_internal_service("31cpl9tk8gbtreprejof9orghts:math1/add"));
+        assert!(!is_internal_service("abc123:echo-service/echo"));
+        assert!(!is_internal_service("network-456:user-service/profile"));
+
+        // Test edge cases with special characters
+        assert!(!is_internal_service("$registry_helper")); // Doesn't start with exact internal service
+        assert!(!is_internal_service("$keys_backup")); // Doesn't start with exact internal service
+        assert!(!is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry_helper")); // Network prefix but not internal
+        assert!(!is_internal_service("abc123:$keys_backup")); // Network prefix but not internal
+
+        // Test empty and single character cases
+        assert!(!is_internal_service(""));
+        assert!(!is_internal_service("$"));
+        assert!(!is_internal_service("a"));
+        assert!(!is_internal_service(":"));
+
+        // Test malformed network prefixes
+        assert!(!is_internal_service(":math1/add")); // Colon at start
+        assert!(!is_internal_service("network::math1/add")); // Double colon
+        assert!(!is_internal_service("network:math1/add:")); // Colon at end
+    }
+
+    #[test]
+    fn test_is_internal_service_with_complex_paths() {
+        // Test deeply nested internal service paths
+        assert!(is_internal_service("$registry/services/math1/state/running"));
+        assert!(is_internal_service("$registry/peer/node123/services/math1/state/running"));
+        assert!(is_internal_service("$keys/ensure_symmetric_key/result"));
+        assert!(is_internal_service("$keys/generate_keypair/private/public"));
+
+        // Test network-prefixed deeply nested paths
+        assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry/services/math1/state/running"));
+        assert!(is_internal_service("abc123:$registry/peer/node123/services/math1/state/running"));
+        assert!(is_internal_service("network-456:$keys/ensure_symmetric_key/result"));
+        assert!(is_internal_service("test-789:$keys/generate_keypair/private/public"));
+
+        // Test mixed internal and non-internal in same path (should still be internal)
+        assert!(is_internal_service("$registry/services/math1/actions/add"));
+        assert!(is_internal_service("$keys/ensure_symmetric_key/for_service/math1"));
+        assert!(is_internal_service("31cpl9tk8gbtreprejof9orghts:$registry/peer/node123/services/math1/actions/add"));
+        assert!(is_internal_service("abc123:$keys/ensure_symmetric_key/for_service/math1"));
+    }
 }
 
 /// Service registry for managing services and their handlers
