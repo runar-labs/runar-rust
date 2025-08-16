@@ -17,7 +17,7 @@ use runar_keys::{
 };
 use std::sync::Arc;
 
-fn create_test_logger( ) -> Arc<Logger> {
+fn create_test_logger() -> Arc<Logger> {
     Arc::new(Logger::new_root(Component::Custom("Keys")))
 }
 
@@ -596,9 +596,9 @@ async fn test_enhanced_key_management() -> Result<()> {
 
 #[test]
 fn test_symmetric_key_management() {
-    let logger = Arc::new(Logger::new_root(
-        runar_common::logging::Component::Custom("test"),
-    ));
+    let logger = Arc::new(Logger::new_root(runar_common::logging::Component::Custom(
+        "test",
+    )));
     let mut node_manager = NodeKeyManager::new(logger).expect("Failed to create NodeKeyManager");
 
     // Test symmetric key management

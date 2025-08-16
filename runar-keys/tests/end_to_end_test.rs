@@ -853,7 +853,6 @@ async fn test_negative_ecies_wrong_recipient_fails() -> Result<()> {
     let other_node_logger = create_test_logger();
     other_node_logger.set_node_id("other".to_string());
     let other_node = NodeKeyManager::new(other_node_logger)?;
-     
 
     // Encrypt a message for other_node's public key
     let msg = b"secret";
