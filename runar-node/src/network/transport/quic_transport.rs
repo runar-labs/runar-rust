@@ -873,7 +873,7 @@ impl QuicTransport {
         tokio::spawn(async move {
             let needs_to_correlate_peer_id = peer_id == "inbound";
             tokio::select! {
-                res = self_clone.uni_accept_loop(conn.clone()) => if let Err(e) = res { log_error!(self_clone.logger, "uni loop failed: {e}") },
+                res = self_clone.uni_accept_loop(conn.clone(), needs_to_correlate_peer_id) => if let Err(e) = res { log_error!(self_clone.logger, "uni loop failed: {e}") },
                 res = self_clone.bi_accept_loop(conn.clone(), needs_to_correlate_peer_id) => if let Err(e) = res { log_error!(self_clone.logger, "bi loop failed: {e}") },
             }
             let resolved_peer_id = if needs_to_correlate_peer_id {
@@ -950,13 +950,20 @@ impl QuicTransport {
         })
     }
 
-    async fn uni_accept_loop(&self, conn: Arc<quinn::Connection>) -> Result<(), NetworkError> {
+    async fn uni_accept_loop(&self, conn: Arc<quinn::Connection>, needs_to_correlate_peer_id: bool) -> Result<(), NetworkError> {
         loop {
             let mut recv = conn
                 .accept_uni()
                 .await
                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
             let msg = self.read_message(&mut recv).await?;
+
+            if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
+                self.handle_handshake(conn.clone(), None, msg, needs_to_correlate_peer_id)
+                    .await?;
+                continue;
+            }
+
             // Use the one-way message handler for unidirectional streams
             (self.one_way_message_handler)(msg).await?;
         }
@@ -1059,15 +1066,15 @@ impl QuicTransport {
     async fn handle_handshake(
         &self,
         conn: Arc<quinn::Connection>,
-        send: &mut quinn::SendStream,
+        send: Option<&mut quinn::SendStream>,
         msg: NetworkMessage,
         needs_to_correlate_peer_id: bool,
     ) -> Result<(), NetworkError> {
         self.logger
-            .debug("🔍 [bi_accept_loop] Processing handshake message");
+            .debug("🔍 [handle_handshake] Processing handshake message");
 
         let mut response_nonce: u64 = 0;
-        let mut should_send_response = false;
+        let should_send_response = send.is_some();
         let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
         if let Some(payload) = msg.payloads.first() {
             let hs: HandshakeData = serde_cbor::from_slice(&payload.value_bytes)
@@ -1082,7 +1089,7 @@ impl QuicTransport {
             let local_nonce = Self::generate_nonce();
             response_nonce = local_nonce;
 
-            log_debug!(self.logger, "🔍 [bi_accept_loop] HS v2 from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}");
+            log_debug!(self.logger, "🔍 [handle_handshake] HS v2 from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}");
             let candidate_initiator = match (remote_role, local_role) {
                 (ConnectionRole::Initiator, ConnectionRole::Responder) => (
                     peer_node_id.clone(),
@@ -1111,7 +1118,7 @@ impl QuicTransport {
             };
             log_debug!(
                 self.logger,
-                "🔍 [bi_accept_loop] candidate dup key init=({},{}) resp=({},{})",
+                "🔍 [handle_handshake] candidate dup key init=({},{}) resp=({},{})",
                 candidate_initiator.0,
                 candidate_initiator.1,
                 candidate_initiator.2,
@@ -1129,14 +1136,14 @@ impl QuicTransport {
                 .await;
             if !kept {
                 // New inbound lost; skip further processing for this connection
-                log_debug!(self.logger, "🔍 [bi_accept_loop] New inbound lost; skipping further processing for this connection");
+                log_debug!(self.logger, "🔍 [handle_handshake] New inbound lost; skipping further processing for this connection");
                 return Ok(());
             }
             // Mark active after surviving dup-resolution
             if let Some(state) = self.state.peers.get(&peer_node_id) {
                 let _ = state.value().activation_tx.send(true);
             }
-            should_send_response = true;
+             
             if let Some(connected_callback) = &self.peer_connected_callback {
                 (connected_callback)(peer_node_id.clone(), node_info).await;
             }
@@ -1151,7 +1158,7 @@ impl QuicTransport {
         // Send handshake response only if this connection is the surviving winner
         if should_send_response {
             self.logger
-                .debug("🔍 [bi_accept_loop] Sending handshake response");
+                .debug("🔍 [handle_handshake] Sending handshake response");
             let local_node_info = self.local_node_info.read().await.clone();
             let source_node_id = compact_id(&local_node_info.node_public_key);
             let response_hs = HandshakeData {
@@ -1175,30 +1182,17 @@ impl QuicTransport {
                 }],
             };
 
+            let send = send.unwrap();
+
             // Let upper layer process our handshake response (capabilities) as well
             // so both sides can register remote services. First, send it to peer:
             self.write_message(send, &response_msg).await?;
             send.finish()
                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
             self.logger
-                .debug("✅ [bi_accept_loop] Handshake response sent");
+                .debug("✅ [handle_handshake] Handshake response sent");
         }
-        Ok(())
-        // Notify connection up
-        // if let Some(connected_callback) = &self.peer_connected_callback {
-        //     // Resolve peer id strictly from mapping, otherwise skip (avoid bogus IP-based ids)
-        // let connection_id = conn.stable_id();
-        // if let Some(resolved_peer_id) = self
-        //     .state
-        //     .connection_id_to_peer_id
-        //     .get(&connection_id)
-        //     .map(|entry| entry.value().clone())
-        // {
-        //     // let _ = (connected_callback)(resolved_peer_id, None).await;
-        //     // self.peer_directory.mark_connected(&resolved_peer_id);
-        // } else {
-        //     log_debug!(self.logger, "[bi_accept_loop] Skipping on_up callback due to missing peer-id mapping");
-        // }
+        Ok(()) 
     }
 
     async fn bi_accept_loop(
@@ -1220,7 +1214,7 @@ impl QuicTransport {
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
 
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
-                self.handle_handshake(conn.clone(), &mut send, msg, needs_to_correlate_peer_id)
+                self.handle_handshake(conn.clone(), Some(&mut send), msg, needs_to_correlate_peer_id)
                     .await?;
                 continue;
             }
@@ -1848,10 +1842,6 @@ impl NetworkTransport for QuicTransport {
         let connect_mutex = self.get_or_create_connect_mutex(&peer_node_id).await;
         let _guard = connect_mutex.lock().await;
 
-        log_debug!(
-            self.logger,
-            "🔍 [connect_peer] Starting connection to peer: {peer_node_id}"
-        );
         // check we already know about this peer
         if self.state.peers.contains_key(&peer_node_id) {
             log_debug!(
@@ -1861,6 +1851,10 @@ impl NetworkTransport for QuicTransport {
             return Ok(());
         }
 
+        log_debug!(
+            self.logger,
+            "🔍 [connect_peer] Starting connection to peer: {peer_node_id}"
+        );
         let endpoint = {
             let guard = self.endpoint.read().await;
             match guard.as_ref().cloned() {
