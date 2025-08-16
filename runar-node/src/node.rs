@@ -38,8 +38,8 @@ pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
 type ServiceTask = (TopicPath, tokio::task::JoinHandle<()>);
 // Certificate and PrivateKey types are now imported via the cert_utils module
-use crate::config::LoggingConfig;
 use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
+use runar_common::logging::LoggingConfig;
 
 use crate::routing::TopicPath;
 use crate::services::keys_service::KeysService;

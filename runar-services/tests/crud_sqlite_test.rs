@@ -6,7 +6,7 @@ use runar_serializer::ArcValue; // Added for vmap!
 use runar_node::Node;
 use runar_test_utils::create_node_test_config;
 
-use runar_node::config::{LogLevel, LoggingConfig};
+use runar_common::logging::{LogLevel, LoggingConfig};
 
 use std::collections::HashMap;
 use std::sync::Arc; // For downcasting

@@ -14,7 +14,7 @@ pub mod errors;
 pub mod logging;
 
 // Re-export traits and types at the root level
-pub use logging::{Component, Logger, LoggingContext};
+pub use logging::{Component, ComponentKey, LogLevel, Logger, LoggingConfig, LoggingContext};
 
 /// Utility module for compact ID encoding
 pub mod compact_ids {

@@ -159,9 +159,12 @@ impl Logger {
         self.clone()
     }
 
-    /// Get a reference to the node ID
+    /// Get a reference to the node ID (truncated to first 8 characters for readability)
     pub fn node_id(&self) -> &str {
-        self.node_id.get().map(|s| s.as_str()).unwrap_or("unknown")
+        self.node_id
+            .get()
+            .map(|s| if s.len() > 8 { &s[..8] } else { s.as_str() })
+            .unwrap_or("unknown")
     }
 
     /// Get a reference to the action path if available
@@ -482,3 +485,7 @@ pub trait LoggingContext {
         parts.join("|")
     }
 }
+
+// Re-export logging configuration
+pub mod config;
+pub use config::{ComponentKey, LogLevel, LoggingConfig};

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use runar_node::config::{LogLevel, LoggingConfig};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::ArcValue;
 use runar_services::{

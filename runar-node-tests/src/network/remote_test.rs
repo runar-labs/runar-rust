@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_macros_common::params;
-use runar_node::config::{LogLevel, LoggingConfig};
 use runar_serializer::ArcValue; // needed by params! macro
 
 use runar_node::node::Node;

@@ -3,7 +3,7 @@ async fn test_dial_cancel_on_inbound_connect(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use runar_common::compact_ids::compact_id;
     use runar_common::logging::{Component, Logger};
-    use runar_node::config::{LogLevel, LoggingConfig};
+    use runar_common::logging::{LogLevel, LoggingConfig};
     // PeerInfo not used in this test
     use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
     use runar_node::network::transport::{
@@ -171,7 +171,7 @@ async fn test_dial_cancel_on_inbound_connect(
 }
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
-use runar_node::config::{LogLevel, LoggingConfig};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_node::network::transport::{
     GetLocalNodeInfoFn, MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
     MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
@@ -957,8 +957,8 @@ async fn test_request_dedup_same_correlation_id_two_sends(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use runar_common::compact_ids::compact_id;
     use runar_common::logging::{Component, Logger};
+    use runar_common::logging::{LogLevel, LoggingConfig};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
-    use runar_node::config::{LogLevel, LoggingConfig};
     use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
     use runar_node::network::transport::SkipServerVerification;
     use runar_node::network::transport::{
@@ -1149,8 +1149,8 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use runar_common::compact_ids::compact_id;
     use runar_common::logging::{Component, Logger};
+    use runar_common::logging::{LogLevel, LoggingConfig};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
-    use runar_node::config::{LogLevel, LoggingConfig};
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
@@ -1309,8 +1309,8 @@ async fn test_cache_expiry_triggers_handler_again(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use runar_common::compact_ids::compact_id;
     use runar_common::logging::{Component, Logger};
+    use runar_common::logging::{LogLevel, LoggingConfig};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
-    use runar_node::config::{LogLevel, LoggingConfig};
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
@@ -1902,7 +1902,7 @@ async fn test_capability_version_bump_across_reconnect(
         panic!("test_capability_version_bump_across_reconnect timed out");
     });
 
-    let logging_config = runar_node::config::LoggingConfig::new()
+    let logging_config = runar_common::logging::LoggingConfig::new()
         .with_default_level(runar_node::config::LogLevel::Warn);
     logging_config.apply();
     let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
@@ -2063,7 +2063,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         panic!("test_quic_anti_flap_under_race timed out");
     });
 
-    let logging_config = runar_node::config::LoggingConfig::new()
+    let logging_config = runar_common::logging::LoggingConfig::new()
         .with_default_level(runar_node::config::LogLevel::Warn);
     logging_config.apply();
     let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(

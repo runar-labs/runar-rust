@@ -458,7 +458,7 @@ mod tests {
 
     // Set up logging once for all tests in this module
     fn setup_logging() {
-        let logging_config = runar_node::config::LoggingConfig::new()
+        let logging_config = runar_common::logging::LoggingConfig::new()
             .with_default_level(runar_node::config::LogLevel::Warn);
         logging_config.apply();
     }
@@ -614,7 +614,7 @@ mod tests {
         init();
 
         // Configure logging
-        let logging_config = runar_node::config::LoggingConfig::new()
+        let logging_config = runar_common::logging::LoggingConfig::new()
             .with_default_level(runar_node::config::LogLevel::Warn);
         logging_config.apply();
 

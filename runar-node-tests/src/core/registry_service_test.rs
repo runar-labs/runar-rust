@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_node::config::logging_config::{LogLevel, LoggingConfig};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_node::{Node, ServiceMetadata, ServiceState};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;

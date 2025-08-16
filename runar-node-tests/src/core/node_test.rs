@@ -4,7 +4,7 @@
 // and delegates to the ServiceRegistry as needed.
 
 use runar_common::logging::{Component, Logger};
-use runar_node::config::logging_config::{LogLevel, LoggingConfig};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_node::ServiceMetadata;
 use runar_node::{LifecycleContext, NodeDelegate, RequestContext, TopicPath};

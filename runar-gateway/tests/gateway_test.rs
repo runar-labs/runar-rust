@@ -63,7 +63,7 @@ impl EchoService {
 #[tokio::test]
 async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
-    let logging_config = runar_node::config::LoggingConfig::new()
+    let logging_config = runar_common::logging::LoggingConfig::new()
         .with_default_level(runar_node::config::LogLevel::Warn);
     logging_config.apply();
 
