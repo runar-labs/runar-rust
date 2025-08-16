@@ -1543,12 +1543,14 @@ impl Node {
         peer_node_id: String,
         peer_node_info: NodeInfo,
     ) -> Result<()> {
-        log_debug!(
-            self.logger,
-            "handle_peer_connected  peer_node_id:{peer_node_id}"
-        );
         // Check existing info from directory
         if let Some(existing_peer) = self.remote_node_info.get(&peer_node_id) {
+            log_debug!(
+                self.logger,
+                "[handle_peer_connected] peer_node_id:{peer_node_id} already connected - existing version: {existing_version} - new version: {new_version}",
+                existing_version = existing_peer.version,
+                new_version = peer_node_info.version
+            );
             // Idempotency: ignore if version is not newer
             if peer_node_info.version <= existing_peer.version {
                 log_debug!(
@@ -1575,6 +1577,10 @@ impl Node {
             )
             .await?;
         } else {
+            log_debug!(
+                self.logger,
+                "[handle_peer_connected] peer_node_id:{peer_node_id} is new"
+            );
             self.add_new_peer(&peer_node_info).await?;
             self.publish_with_options(
                 &format!("$registry/peer/{peer_node_id}/discovered"),

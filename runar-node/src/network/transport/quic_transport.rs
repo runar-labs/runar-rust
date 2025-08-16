@@ -1089,7 +1089,7 @@ impl QuicTransport {
             let local_nonce = Self::generate_nonce();
             response_nonce = local_nonce;
 
-            log_debug!(self.logger, "🔍 [handle_handshake] HS v2 from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}");
+            log_debug!(self.logger, "🔍 [handle_handshake] from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}");
             let candidate_initiator = match (remote_role, local_role) {
                 (ConnectionRole::Initiator, ConnectionRole::Responder) => (
                     peer_node_id.clone(),
