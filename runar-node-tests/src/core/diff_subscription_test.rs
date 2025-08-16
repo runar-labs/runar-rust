@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_diff_remote_subscriptions() -> Result<()> {
-    let logger = Arc::new(Logger::new_root(Component::Custom("Test"), "diff_test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
     let registry = ServiceRegistry::new(logger);
 
     let peer = "peer1";

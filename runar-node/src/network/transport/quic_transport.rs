@@ -19,7 +19,9 @@ use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
 
 use crate::network::discovery::multicast_discovery::PeerInfo;
-use crate::network::transport::{MessageContext, NetworkError, NetworkMessage, NetworkTransport};
+use crate::network::transport::{
+    GetLocalNodeInfoFn, MessageContext, NetworkError, NetworkMessage, NetworkTransport,
+};
 use crate::routing::TopicPath;
 use runar_serializer::{ArcValue, SerializationContext};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -35,12 +37,13 @@ pub struct QuicTransportOptions {
     keep_alive_interval: Duration,
 
     // New parameters moved from constructor
-    local_node_info: Option<NodeInfo>,
+    local_node_public_key: Option<Vec<u8>>,
     bind_addr: Option<SocketAddr>,
     message_handler: Option<super::MessageHandler>,
     one_way_message_handler: Option<super::OneWayMessageHandler>,
     peer_connected_callback: Option<super::PeerConnectedCallback>,
     peer_disconnected_callback: Option<super::PeerDisconnectedCallback>,
+    get_local_node_info: Option<GetLocalNodeInfoFn>,
     //connection_callback: Option<super::ConnectionCallback>,
     logger: Option<Arc<Logger>>,
     keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
@@ -72,7 +75,7 @@ impl std::fmt::Debug for QuicTransportOptions {
             )
             .field("connection_idle_timeout", &self.connection_idle_timeout)
             .field("keep_alive_interval", &self.keep_alive_interval)
-            .field("local_node_info", &self.local_node_info)
+            .field("local_node_public_key", &self.local_node_public_key)
             .field("bind_addr", &self.bind_addr)
             .field(
                 "message_handler",
@@ -82,14 +85,6 @@ impl std::fmt::Debug for QuicTransportOptions {
                     "None"
                 },
             )
-            // .field(
-            //     "connection_callback",
-            //     &if self.connection_callback.is_some() {
-            //         "Some(ConnectionCallback)"
-            //     } else {
-            //         "None"
-            //     },
-            // )
             .field(
                 "logger",
                 &if self.logger.is_some() {
@@ -128,13 +123,14 @@ impl Default for QuicTransportOptions {
             connection_idle_timeout: Duration::from_secs(30),
             keep_alive_interval: Duration::from_secs(5),
 
-            local_node_info: None,
+            local_node_public_key: None,
             bind_addr: None,
             message_handler: None,
             one_way_message_handler: None,
             // connection_callback: None,
             peer_connected_callback: None,
             peer_disconnected_callback: None,
+            get_local_node_info: None,
             logger: None,
             keystore: None,
             label_resolver: None,
@@ -165,8 +161,8 @@ impl QuicTransportOptions {
     }
 
     // New builder methods for moved parameters
-    pub fn with_local_node_info(mut self, node_info: NodeInfo) -> Self {
-        self.local_node_info = Some(node_info);
+    pub fn with_local_node_public_key(mut self, public_key: Vec<u8>) -> Self {
+        self.local_node_public_key = Some(public_key);
         self
     }
 
@@ -198,10 +194,10 @@ impl QuicTransportOptions {
         self
     }
 
-    // pub fn with_connection_callback(mut self, callback: super::ConnectionCallback) -> Self {
-    //     self.connection_callback = Some(callback);
-    //     self
-    // }
+    pub fn with_get_local_node_info(mut self, get_local_node_info: GetLocalNodeInfoFn) -> Self {
+        self.get_local_node_info = Some(get_local_node_info);
+        self
+    }
 
     pub fn with_logger(mut self, logger: Arc<Logger>) -> Self {
         self.logger = Some(logger);
@@ -243,8 +239,8 @@ impl QuicTransportOptions {
     }
 
     // Getters for new parameters
-    pub fn local_node_info(&self) -> Option<&NodeInfo> {
-        self.local_node_info.as_ref()
+    pub fn local_node_public_key(&self) -> Option<&Vec<u8>> {
+        self.local_node_public_key.as_ref()
     }
 
     pub fn bind_addr(&self) -> Option<SocketAddr> {
@@ -288,13 +284,13 @@ impl Clone for QuicTransportOptions {
             root_certificates: self.root_certificates.clone(),
             connection_idle_timeout: self.connection_idle_timeout,
             keep_alive_interval: self.keep_alive_interval,
-            local_node_info: self.local_node_info.clone(),
+            local_node_public_key: self.local_node_public_key.clone(),
             bind_addr: self.bind_addr,
             message_handler: None, // MessageHandler doesn't implement Clone
             one_way_message_handler: None, // OneWayMessageHandler doesn't implement Clone
-            //connection_callback: self.connection_callback.clone(),
             peer_connected_callback: self.peer_connected_callback.clone(),
             peer_disconnected_callback: self.peer_disconnected_callback.clone(),
+            get_local_node_info: self.get_local_node_info.clone(),
             logger: self.logger.clone(),
             keystore: self.keystore.clone(),
             label_resolver: self.label_resolver.clone(),
@@ -494,7 +490,7 @@ pub struct QuicTransport {
     bind_addr: SocketAddr,
     options: QuicTransportOptions,
 
-    local_node_info: Arc<RwLock<NodeInfo>>,
+    local_node_id: String,
 
     // runtime state
     endpoint: Arc<RwLock<Option<Endpoint>>>,
@@ -503,9 +499,9 @@ pub struct QuicTransport {
     // callback into Node layer
     message_handler: super::MessageHandler,
     one_way_message_handler: super::OneWayMessageHandler,
-    // connection_callback: Option<super::ConnectionCallback>,
     peer_connected_callback: Option<super::PeerConnectedCallback>,
     peer_disconnected_callback: Option<super::PeerDisconnectedCallback>,
+    get_local_node_info: GetLocalNodeInfoFn,
 
     // Per-peer connect guards to avoid concurrent connects
     peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -531,10 +527,6 @@ impl QuicTransport {
     fn generate_nonce() -> u64 {
         rand::random::<u64>()
     }
-
-    // fn local_node_id(&self) -> String {
-    //     compact_id(&self.local_node_info.read().await.node_public_key)
-    // }
 
     async fn get_or_create_connect_mutex(&self, peer_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.peer_connect_mutexes
@@ -630,7 +622,7 @@ impl QuicTransport {
             // Deterministic, nonce-free tie-breaker based on peer IDs and local direction.
             // Rule: Let L = local_node_id(), R = peer_node_id. If L < R, keep direction=Initiator (outbound) locally.
             // Otherwise, keep direction=Responder (inbound) locally. This yields a single winner across both peers.
-            let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
+            let local_node_id = self.local_node_id.clone();
             let desired_local_role = if local_node_id.as_str() < peer_node_id {
                 ConnectionRole::Initiator
             } else {
@@ -717,10 +709,11 @@ impl QuicTransport {
         mut options: QuicTransportOptions,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Extract required parameters from options
-        let local_node_info = options
-            .local_node_info
+        let local_node_public_key = options
+            .local_node_public_key
             .take()
-            .ok_or("local_node_info is required")?;
+            .ok_or("local_node_public_key is required")?;
+        let local_node_id = compact_id(&local_node_public_key);
         let bind_addr = options.bind_addr.take().ok_or("bind_addr is required")?;
         let message_handler = options
             .message_handler
@@ -748,9 +741,13 @@ impl QuicTransport {
         let peer_connected_callback = options.peer_connected_callback.take();
         let peer_disconnected_callback = options.peer_disconnected_callback.take();
 
+        let get_local_node_info = options
+            .get_local_node_info
+            .take()
+            .ok_or("get_local_node_info is required")?;
+
         let cache_ttl = options.response_cache_ttl();
         Ok(Self {
-            local_node_info: Arc::new(RwLock::new(local_node_info)),
             bind_addr,
             options,
             endpoint: Arc::new(RwLock::new(None)),
@@ -760,6 +757,8 @@ impl QuicTransport {
             peer_connected_callback,
             peer_disconnected_callback,
             peer_connect_mutexes: Arc::new(DashMap::new()),
+            get_local_node_info,
+            local_node_id,
             keystore,
             label_resolver,
             state: Self::shared_state(),
@@ -950,7 +949,11 @@ impl QuicTransport {
         })
     }
 
-    async fn uni_accept_loop(&self, conn: Arc<quinn::Connection>, needs_to_correlate_peer_id: bool) -> Result<(), NetworkError> {
+    async fn uni_accept_loop(
+        &self,
+        conn: Arc<quinn::Connection>,
+        needs_to_correlate_peer_id: bool,
+    ) -> Result<(), NetworkError> {
         loop {
             let mut recv = conn
                 .accept_uni()
@@ -1075,7 +1078,7 @@ impl QuicTransport {
 
         let mut response_nonce: u64 = 0;
         let should_send_response = send.is_some();
-        let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
+        let local_node_id = self.local_node_id.clone();
         if let Some(payload) = msg.payloads.first() {
             let hs: HandshakeData = serde_cbor::from_slice(&payload.value_bytes)
                 .map_err(|e| NetworkError::MessageError(format!("failed to decode cbor: {e}")))?;
@@ -1143,7 +1146,7 @@ impl QuicTransport {
             if let Some(state) = self.state.peers.get(&peer_node_id) {
                 let _ = state.value().activation_tx.send(true);
             }
-             
+
             if let Some(connected_callback) = &self.peer_connected_callback {
                 (connected_callback)(peer_node_id.clone(), node_info).await;
             }
@@ -1159,8 +1162,10 @@ impl QuicTransport {
         if should_send_response {
             self.logger
                 .debug("🔍 [handle_handshake] Sending handshake response");
-            let local_node_info = self.local_node_info.read().await.clone();
-            let source_node_id = compact_id(&local_node_info.node_public_key);
+            let local_node_info = (self.get_local_node_info)()
+                .await
+                .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+            let source_node_id = self.local_node_id.clone();
             let response_hs = HandshakeData {
                 node_info: local_node_info,
                 nonce: response_nonce, // include responder nonce (0 for legacy), so both sides can compute tie-break keys
@@ -1192,7 +1197,7 @@ impl QuicTransport {
             self.logger
                 .debug("✅ [handle_handshake] Handshake response sent");
         }
-        Ok(()) 
+        Ok(())
     }
 
     async fn bi_accept_loop(
@@ -1214,8 +1219,13 @@ impl QuicTransport {
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
 
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
-                self.handle_handshake(conn.clone(), Some(&mut send), msg, needs_to_correlate_peer_id)
-                    .await?;
+                self.handle_handshake(
+                    conn.clone(),
+                    Some(&mut send),
+                    msg,
+                    needs_to_correlate_peer_id,
+                )
+                .await?;
                 continue;
             }
 
@@ -1274,9 +1284,7 @@ impl QuicTransport {
                         .collect();
 
                     let error_msg = NetworkMessage {
-                        source_node_id: compact_id(
-                            &self.local_node_info.read().await.node_public_key,
-                        ),
+                        source_node_id: self.local_node_id.clone(),
                         destination_node_id: source_node_id,
                         message_type: super::MESSAGE_TYPE_RESPONSE,
                         payloads: error_payloads,
@@ -1304,8 +1312,10 @@ impl QuicTransport {
             self.logger,
             "🔍 [handshake_outbound] Serializing local HandshakeData"
         );
-        let local_node_info = self.local_node_info.read().await.clone();
-        let local_node_id = compact_id(&local_node_info.node_public_key);
+        let local_node_info = (self.get_local_node_info)()
+            .await
+            .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+        let local_node_id = self.local_node_id.clone();
         let hs = HandshakeData {
             node_info: local_node_info,
             nonce: local_nonce,
@@ -1704,7 +1714,7 @@ impl NetworkTransport for QuicTransport {
             profile_public_key: Some(profile_public_key.clone()),
         };
 
-        let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
+        let local_node_id = self.local_node_id.clone();
 
         // build message
         let msg = NetworkMessage {
@@ -1807,7 +1817,7 @@ impl NetworkTransport for QuicTransport {
             network_id,
             profile_public_key: None,
         };
-        let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
+        let local_node_id = self.local_node_id.clone();
         // Create the NetworkMessage internally
         let message = NetworkMessage {
             source_node_id: local_node_id,
@@ -1882,7 +1892,7 @@ impl NetworkTransport for QuicTransport {
 
         let dns_safe_peer_id = dns_safe_node_id(&peer_node_id);
         // Deterministic dial-direction gate: Higher node-id yields to inbound
-        let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
+        let local_node_id = self.local_node_id.clone();
         let prefer_inbound = local_node_id.as_str() > peer_node_id.as_str();
         if prefer_inbound {
             // If we prefer inbound and no connection exists yet, wait briefly for inbound acceptance
@@ -2012,7 +2022,7 @@ impl NetworkTransport for QuicTransport {
         // wrap connection in Arc for sharing
         let conn_arc = Arc::new(conn);
         let local_nonce = Self::generate_nonce();
-        let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
+        let local_node_id = self.local_node_id.clone();
         // store peer if still not connected (idempotent connect)
         if !self.state.peers.contains_key(&peer_node_id) {
             // Tentative insert with placeholder dup-metadata; real values will be set after handshake
@@ -2133,12 +2143,18 @@ impl NetworkTransport for QuicTransport {
             return Ok(());
         }
 
-        // Create handshake message with updated node info
-        let payload_bytes = serde_cbor::to_vec(&node_info).map_err(|e| {
-            NetworkError::MessageError(format!("Failed to serialize node info: {e}"))
+        // Create handshake message with updated node info wrapped in HandshakeData
+        let handshake_data = HandshakeData {
+            node_info,
+            nonce: 0, // Use 0 for update messages since this is not a new connection
+            role: ConnectionRole::Initiator, // Use Initiator role for updates
+        };
+
+        let payload_bytes = serde_cbor::to_vec(&handshake_data).map_err(|e| {
+            NetworkError::MessageError(format!("Failed to serialize handshake data: {e}"))
         })?;
 
-        let local_node_id = compact_id(&self.local_node_info.read().await.node_public_key);
+        let local_node_id = self.local_node_id.clone();
 
         let message = NetworkMessage {
             source_node_id: local_node_id,
@@ -2156,6 +2172,12 @@ impl NetworkTransport for QuicTransport {
         for entry in self.state.peers.iter() {
             let peer_id = entry.key();
             let _peer_state = entry.value();
+
+            log_debug!(
+                self.logger,
+                "🔍 [update_peers] Sending handshake to {peer_id}"
+            );
+
             let mut send = self.open_uni_active(peer_id).await.map_err(|e| {
                 NetworkError::TransportError(format!("Failed to open uni stream to {peer_id}: {e}"))
             })?;

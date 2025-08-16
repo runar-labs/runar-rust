@@ -54,7 +54,7 @@ async fn test_subscribe_and_unsubscribe() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
 
         // Create a TopicPath for the test topic
         let topic = TopicPath::new("test/event", "net1").expect("Valid topic path");
@@ -120,7 +120,7 @@ async fn test_wildcard_subscriptions() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
 
         // Create a callback
         let callback = Arc::new(
@@ -196,7 +196,7 @@ async fn test_wildcard_subscriptions() {
 async fn test_register_and_get_action_handler() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
         let registry = ServiceRegistry::new(logger.clone());
 
         let service_path = "math".to_string();
@@ -251,7 +251,7 @@ async fn test_register_and_get_action_handler() {
 async fn test_multiple_action_handlers() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
         let registry = ServiceRegistry::new(logger.clone());
 
         // Create paths and handlers for different actions
@@ -335,7 +335,7 @@ async fn test_action_handler_network_isolation() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a registry
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
         let registry = ServiceRegistry::new(logger.clone());
 
         // Define two paths with the same path but different network IDs
@@ -446,7 +446,7 @@ async fn test_multiple_event_handlers() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
 
         // Create test topics
         let topic1 = TopicPath::new("events/created", "net1").expect("Valid topic path");
@@ -541,7 +541,7 @@ async fn test_multiple_event_handlers() {
 async fn test_path_template_parameters() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
         let registry = ServiceRegistry::new(logger.clone());
 
         // Create paths with parameter templates
@@ -697,7 +697,7 @@ async fn test_path_template_parameters() {
 async fn test_local_remote_action_handler_separation() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
         let registry = ServiceRegistry::new(logger.clone());
 
         // Create a common topic path for both local and remote
@@ -743,7 +743,7 @@ async fn test_local_remote_action_handler_separation() {
 #[tokio::test]
 async fn test_multiple_network_ids() {
     // Set up test logger
-    let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
 
     // Create registry
     let registry = ServiceRegistry::new(logger.clone());
@@ -825,7 +825,7 @@ async fn test_get_actions_metadata() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Set up test logger
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
 
         // Create registry
         let registry = ServiceRegistry::new(logger.clone());
@@ -954,7 +954,7 @@ async fn test_get_local_services() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
         let registry = ServiceRegistry::new(logger.clone());
 
         // Create services in different networks
@@ -1065,7 +1065,7 @@ async fn test_remove_remote_event_subscription() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a service registry
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
 
         // Create a TopicPath for the test topic
         let topic = TopicPath::new("test/event", "net1").expect("Valid topic path");

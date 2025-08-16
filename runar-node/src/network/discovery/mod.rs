@@ -6,17 +6,14 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use multicast_discovery::PeerInfo;
-
-use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use runar_schemas::NodeMetadata;
-
 pub mod multicast_discovery;
 
-pub use multicast_discovery::MulticastDiscovery;
+pub use multicast_discovery::{MulticastDiscovery, PeerInfo};
 
 /// Configuration options for node discovery
 #[derive(Clone, Debug)]
@@ -50,10 +47,6 @@ impl Default for DiscoveryOptions {
 
 // Make the constant public
 pub const DEFAULT_MULTICAST_ADDR: &str = "239.255.42.98";
-
-/// Callback function type for discovery events
-use std::future::Future;
-use std::pin::Pin;
 
 /// Discovery events emitted by providers. Providers are event sources; Node decides behavior.
 #[derive(Clone, Debug)]

@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// ⚠️  WARNING: This is for TESTING ONLY. Do not use in production.
 /// Use the proper node setup flow for production use.
 pub fn create_test_mobile_keys() -> Result<(MobileKeyManager, String)> {
-    let logger = Arc::new(Logger::new_root(Component::Keys, "mobile_keys_test"));
+    let logger = Arc::new(Logger::new_root(Component::Keys));
 
     let mut mobile_keys_manager = MobileKeyManager::new(logger.clone())?;
     let _ = mobile_keys_manager
@@ -41,12 +41,12 @@ pub fn create_test_node_keys(
     mobile_keys_manager: &mut MobileKeyManager,
     default_network_id: &str,
 ) -> Result<(NodeKeyManager, String)> {
-    let logger = Arc::new(Logger::new_root(Component::Keys, "mobile_keys_test"));
+    let logger = Arc::new(Logger::new_root(Component::Keys));
 
     let mut node_keys_manager = NodeKeyManager::new(logger.clone())?;
     let node_public_key = node_keys_manager.get_node_public_key();
     let node_id = compact_ids::compact_id(&node_public_key);
-
+    logger.set_node_id(node_id.clone());
     let setup_token = node_keys_manager
         .generate_csr()
         .expect("Failed to generate setup token");
@@ -79,13 +79,16 @@ pub fn create_node_test_config() -> Result<NodeConfig> {
 
     let (mut mobile_keys_manager, default_network_id) = create_test_mobile_keys()?;
 
-    let (node_keys_manager, node_id) =
+    let (node_keys_manager, _node_id) =
         create_test_node_keys(&mut mobile_keys_manager, &default_network_id)?;
 
     let key_state = node_keys_manager.export_state();
     let key_state_bytes = bincode::serialize(&key_state)?;
 
-    Ok(NodeConfig::new(node_id, default_network_id).with_key_manager_state(key_state_bytes))
+    let config =
+        NodeConfig::new(default_network_id.clone()).with_key_manager_state(key_state_bytes);
+
+    Ok(config)
 }
 
 /// Create a test configuration with certificates, user root keys, network and node keys installed.
@@ -106,7 +109,7 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
 
     let mut configs = Vec::new();
     for _ in 0..total {
-        let (node_keys_manager, node_id) =
+        let (node_keys_manager, _node_id) =
             create_test_node_keys(&mut mobile_keys_manager, &default_network_id)?;
 
         let node_cert_config = node_keys_manager
@@ -128,7 +131,7 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
             ..Default::default()
         };
 
-        let config = NodeConfig::new(node_id, default_network_id.clone())
+        let config = NodeConfig::new(default_network_id.clone())
             .with_key_manager_state(key_state_bytes)
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)
@@ -185,7 +188,7 @@ impl MobileSimulator {
         logger.info("🚀 Creating Mobile Simulator...");
 
         // Create master mobile
-        let master_logger = Arc::new(Logger::new_root(Component::System, "master-mobile"));
+        let master_logger = Arc::new(Logger::new_root(Component::System));
         let mut master_key_manager = MobileKeyManager::new(master_logger.clone())?;
 
         // Initialize master with user root key and network
@@ -216,10 +219,7 @@ impl MobileSimulator {
         self.logger
             .info(format!("📱 Adding user mobile: {user_id}"));
 
-        let user_logger = Arc::new(Logger::new_root(
-            Component::System,
-            &format!("user-{user_id}"),
-        ));
+        let user_logger = Arc::new(Logger::new_root(Component::System));
         let mut user_key_manager = MobileKeyManager::new(user_logger.clone())?;
 
         // Initialize user with root key
@@ -258,7 +258,7 @@ impl MobileSimulator {
         self.logger.info("🖥️ Creating node configuration...");
 
         // Create node key manager
-        let node_logger = Arc::new(Logger::new_root(Component::System, "simulated-node"));
+        let node_logger = Arc::new(Logger::new_root(Component::System));
         let mut node_key_manager = NodeKeyManager::new(node_logger)?;
 
         // Get node setup token and have master sign it
@@ -295,19 +295,13 @@ impl MobileSimulator {
         let key_state_bytes = bincode::serialize(&key_state)?;
 
         // Create transport options with QUIC certificates
-        let transport_options = QuicTransportOptions::new()
+        let _transport_options = QuicTransportOptions::new()
             .with_certificates(node_cert_config.certificate_chain)
             .with_private_key(node_cert_config.private_key)
             .with_root_certificates(vec![ca_certificate]);
 
-        let config = NodeConfig::new(
-            node_key_manager.get_node_id(),
-            self.master.network_id.clone(),
-        )
-        .with_key_manager_state(key_state_bytes)
-        .with_network_config(
-            NetworkConfig::with_quic(transport_options).with_multicast_discovery(),
-        );
+        let config =
+            NodeConfig::new(self.master.network_id.clone()).with_key_manager_state(key_state_bytes);
 
         self.logger.info(format!(
             "✅ Node configuration created for node: {} with network transport",
@@ -441,7 +435,7 @@ impl MobileSimulator {
 
 /// Convenience function to create a simple mobile simulation for testing
 pub fn create_simple_mobile_simulation() -> Result<MobileSimulator> {
-    let logger = Arc::new(Logger::new_root(Component::System, "simple-sim"));
+    let logger = Arc::new(Logger::new_root(Component::System));
     let mut simulator = MobileSimulator::new(logger)?;
 
     // Add a default user with common profiles
@@ -509,7 +503,7 @@ mod tests {
 
         // Verify we can export the state (which validates the internal state)
         let exported_state = node_keys_manager.export_state();
-        let logger = Arc::new(Logger::new_root(Component::Keys, "test_import"));
+        let logger = Arc::new(Logger::new_root(Component::Keys));
 
         let imported_manager = NodeKeyManager::from_state(exported_state, logger).unwrap();
 
@@ -523,7 +517,6 @@ mod tests {
         let config = create_node_test_config().unwrap();
 
         // Verify basic config properties
-        assert!(!config.node_id.is_empty());
         assert!(!config.default_network_id.is_empty());
         assert_eq!(config.request_timeout_ms, 30000);
 
@@ -548,7 +541,6 @@ mod tests {
 
         // Verify each config is valid
         for (i, config) in configs.iter().enumerate() {
-            assert!(!config.node_id.is_empty(), "Node {i} has empty node_id");
             assert!(
                 !config.default_network_id.is_empty(),
                 "Node {i} has empty network_id"
@@ -565,16 +557,6 @@ mod tests {
             assert_eq!(
                 &config.default_network_id, first_network_id,
                 "Node {i} has different network_id"
-            );
-        }
-
-        // Verify all nodes have unique node IDs
-        let mut node_ids = std::collections::HashSet::new();
-        for config in &configs {
-            assert!(
-                node_ids.insert(config.node_id.clone()),
-                "Duplicate node_id found: {}",
-                config.node_id
             );
         }
     }
@@ -615,19 +597,6 @@ mod tests {
     }
 
     #[test]
-    fn test_node_config_creation() -> Result<()> {
-        init();
-        let simulator = create_simple_mobile_simulation()?;
-        let node_config = simulator.create_node_config()?;
-
-        // Verify node config is valid
-        assert!(!node_config.node_id.is_empty());
-        assert!(!node_config.default_network_id.is_empty());
-
-        Ok(())
-    }
-
-    #[test]
     fn test_label_resolvers() -> Result<()> {
         init();
         let simulator = create_simple_mobile_simulation()?;
@@ -649,10 +618,9 @@ mod tests {
             .with_default_level(runar_node::config::LogLevel::Warn);
         logging_config.apply();
 
-        let logger = Arc::new(Logger::new_root(
-            Component::Custom("mobile_sim_network_test"),
-            "",
-        ));
+        let logger = Arc::new(Logger::new_root(Component::Custom(
+            "mobile_sim_network_test",
+        )));
 
         // Create mobile simulator
         let simulator = create_simple_mobile_simulation()?;
@@ -661,16 +629,16 @@ mod tests {
         let node1_config = simulator.create_node_config()?;
         let node2_config = simulator.create_node_config()?;
 
-        let node1_id = node1_config.node_id.clone();
-        let node2_id = node2_config.node_id.clone();
+        // let node1_id = node1_config.node_id.clone();
+        // let node2_id = node2_config.node_id.clone();
 
-        logger.info(format!("Node1 ID: {node1_id}"));
-        logger.info(format!("Node2 ID: {node2_id}"));
+        // logger.info(format!("Node1 ID: {node1_id}"));
+        // logger.info(format!("Node2 ID: {node2_id}"));
         logger.info(format!("Network ID: {}", simulator.master.network_id));
 
         // Create nodes
-        let mut node1 = runar_node::Node::new(node1_config).await?;
-        let mut node2 = runar_node::Node::new(node2_config).await?;
+        let node1 = runar_node::Node::new(node1_config).await?;
+        let node2 = runar_node::Node::new(node2_config).await?;
 
         // Start nodes
         node1.start().await?;
@@ -689,7 +657,7 @@ mod tests {
                 ),
                 Some(runar_node::services::OnOptions {
                     timeout: Duration::from_secs(3),
-                    include_past: None,
+                    include_past: Some(Duration::from_secs(3)),
                 }),
             )
             .await?;
@@ -701,7 +669,7 @@ mod tests {
                 ),
                 Some(runar_node::services::OnOptions {
                     timeout: Duration::from_secs(3),
-                    include_past: None,
+                    include_past: Some(Duration::from_secs(3)),
                 }),
             )
             .await?;

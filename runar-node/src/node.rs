@@ -29,8 +29,9 @@ use tokio::sync::{oneshot, Mutex, RwLock};
 use crate::network::discovery::multicast_discovery::PeerInfo;
 use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 use crate::network::transport::{
-    NetworkMessage, NetworkMessagePayloadItem, NetworkTransport, QuicTransport, MESSAGE_TYPE_EVENT,
-    MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
+    GetLocalNodeInfoFn, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
+    PeerDisconnectedCallback, QuicTransport, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST,
+    MESSAGE_TYPE_RESPONSE,
 };
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
@@ -99,7 +100,7 @@ pub struct NodeConfig {
     ///
     /// This ID is used for service discovery, routing, and network identification.
     /// Must be unique within the network.
-    pub node_id: String,
+    // pub node_id: String,
 
     /// Primary network identifier this node belongs to.
     ///
@@ -163,9 +164,8 @@ impl NodeConfig {
     /// let config = NodeConfig::new("my-node", "my-network")
     ///     .with_key_manager_state(serialized_keys);
     /// ```
-    pub fn new(node_id: impl Into<String>, default_network_id: impl Into<String>) -> Self {
+    pub fn new(default_network_id: impl Into<String>) -> Self {
         Self {
-            node_id: node_id.into(),
             default_network_id: default_network_id.into(),
             network_ids: Vec::new(),
             network_config: None,
@@ -291,8 +291,8 @@ impl std::fmt::Display for NodeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "NodeConfig: node_id:{} network:{} request_timeout:{}ms",
-            self.node_id, self.default_network_id, self.request_timeout_ms
+            "NodeConfig: default_network:{} request_timeout:{}ms",
+            self.default_network_id, self.request_timeout_ms
         )?;
 
         // Add network configuration details if available
@@ -440,6 +440,8 @@ pub struct Node {
 
     service_tasks: Arc<RwLock<Vec<ServiceTask>>>,
 
+    local_node_info: Arc<RwLock<NodeInfo>>,
+
     /// Retained event store: exact full topic -> deque of (timestamp, data)
     /// Wrapped in Arc to ensure Node clones share the same storage
     retained_events: Arc<RetainedEventsMap>,
@@ -516,18 +518,13 @@ impl Node {
     /// - Key manager state cannot be deserialized
     /// - Internal components fail to initialize
     pub async fn new(config: NodeConfig) -> Result<Self> {
-        let node_id = config.node_id.clone();
-        let logger = Arc::new(Logger::new_root(Component::Node, &node_id));
-
         // Apply logging configuration (default to Info level if none provided)
         if let Some(logging_config) = &config.logging_config {
             logging_config.apply();
-            log_debug!(logger, "Applied custom logging configuration");
         } else {
             // Apply default Info logging when no configuration is provided
             let default_config = LoggingConfig::default_info();
             default_config.apply();
-            log_debug!(logger, "Applied default Info logging configuration");
         }
 
         // Clone fields before moving config
@@ -538,13 +535,8 @@ impl Node {
         network_ids.push(default_network_id.clone());
         network_ids.dedup();
 
-        log_info!(
-            logger,
-            "Initializing node '{node_id}' in network '{default_network_id}'..."
-        );
-
+        let logger = Arc::new(Logger::new_root(Component::Node));
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
-        let _serializer_logger = Arc::new(logger.with_component(Component::Custom("Serializer")));
 
         // at this stage the node credentials must already exist and must be in a secure store
         let key_manager_state_bytes = config
@@ -558,12 +550,11 @@ impl Node {
         let keys_manager = NodeKeyManager::from_state(key_manager_state.clone(), logger.clone())?;
         let keys_manager_mut = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
 
-        //TODO check if we shuold use the compact ID here instead of just a hex of the key
         let node_public_key = keys_manager.get_node_public_key();
         let node_id = compact_id(&node_public_key);
+        logger.set_node_id(node_id.clone());
 
         log_info!(logger, "Successfully loaded existing node credentials.");
-        log_info!(logger, "Node ID: {node_id}");
 
         let keys_manager = Arc::new(keys_manager);
         let keys_manager_mut = Arc::new(Mutex::new(keys_manager_mut));
@@ -579,7 +570,19 @@ impl Node {
             )]),
         }));
 
+        let local_node_info = NodeInfo {
+            node_public_key: node_public_key.clone(),
+            network_ids: network_ids.clone(),
+            addresses: vec![],
+            node_metadata: NodeMetadata {
+                services: vec![],
+                subscriptions: vec![],
+            },
+            version: 0,
+        };
+
         let mut node = Self {
+            local_node_info: Arc::new(RwLock::new(local_node_info)),
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: default_network_id,
             network_ids,
@@ -1321,6 +1324,10 @@ impl Node {
         // Log the network configuration
         log_info!(self.logger, "Network config: {network_config}");
 
+        let mut local_node_info = self.local_node_info.write().await;
+        *local_node_info = self.get_local_node_info().await?;
+        drop(local_node_info);
+
         // Initialize the network transport
         if self.network_transport.read().await.is_none() {
             log_info!(self.logger, "Initializing network transport...");
@@ -1421,7 +1428,7 @@ impl Node {
         network_config: &NetworkConfig,
     ) -> Result<Arc<dyn NetworkTransport>> {
         // Get the local node info to pass to the transport
-        let local_node_info = self.get_local_node_info().await?;
+        let local_node_info = self.local_node_info.read().await;
         let self_arc = Arc::new(self.clone());
         match network_config.transport_type {
             TransportType::Quic => {
@@ -1480,31 +1487,17 @@ impl Node {
                     });
 
                 let self_arc_for_callback = self_arc.clone();
-                let peer_disconnected_callback: crate::network::transport::PeerDisconnectedCallback = Arc::new(
-                    move |peer_node_id: String| {
+                let peer_disconnected_callback: PeerDisconnectedCallback =
+                    Arc::new(move |peer_node_id: String| {
                         let node = self_arc_for_callback.clone();
-                        Box::pin(async move {
-                            node.cleanup_disconnected_peer(&peer_node_id).await; 
-                            ()
-                        })
-                    }
-                );
+                        Box::pin(async move { node.cleanup_disconnected_peer(&peer_node_id).await })
+                    });
 
-                // Prepare separate Arc clones for each callback to avoid move issues
-                // let self_arc_for_conn = Arc::new(self.clone());
-                // let connection_callback: crate::network::transport::ConnectionCallback = Arc::new(
-                //     move |peer_node_id: String, connected: bool| {
-                //         let node = self_arc_for_conn.clone();
-                //         Box::pin(async move {
-                //             if connected {
-                //                 node.peer_directory.mark_connected(&peer_node_id);
-                //             } else {
-                //                 node.cleanup_disconnected_peer(&peer_node_id).await?;
-                //             }
-                //             Ok(())
-                //         })
-                //     },
-                // );
+                let self_arc_for_callback = self_arc.clone();
+                let get_local_node_info: GetLocalNodeInfoFn = Arc::new(move || {
+                    let node = self_arc_for_callback.clone();
+                    Box::pin(async move { node.get_local_node_info().await })
+                });
 
                 let cert_config = self
                     .keys_manager
@@ -1518,12 +1511,13 @@ impl Node {
                     .with_private_key(cert_config.private_key);
 
                 let transport_options = configured_quic_options
-                    .with_local_node_info(local_node_info)
+                    .with_local_node_public_key(local_node_info.node_public_key.clone())
                     .with_bind_addr(bind_addr)
                     .with_message_handler(message_handler)
                     .with_one_way_message_handler(one_way_message_handler)
                     .with_peer_connected_callback(peer_connected_callback)
                     .with_peer_disconnected_callback(peer_disconnected_callback)
+                    .with_get_local_node_info(get_local_node_info)
                     .with_logger(self.logger.clone())
                     .with_keystore(self.keys_manager.clone())
                     .with_label_resolver(self.label_resolver.clone());
@@ -1727,7 +1721,7 @@ impl Node {
 
     /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
     /// and forget the peer from known_peers and discovery caches.
-    async fn cleanup_disconnected_peer(&self, peer_node_id: &str) -> () {
+    async fn cleanup_disconnected_peer(&self, peer_node_id: &str) {
         log_info!(self.logger, "Cleaning up disconnected peer: {peer_node_id}");
 
         // 1) Remove remote subscriptions registered for this peer
@@ -1776,8 +1770,6 @@ impl Node {
                 "Failed to publish peer disconnected event: {e}"
             );
         }
-
-        ()
     }
 
     /// Handle a network request
@@ -2830,23 +2822,6 @@ impl Node {
         let local_node_info = self.get_local_node_info().await?;
         log_info!(self.logger, "Notifying node change - previous version: {previous_version}, new version: {new_version}", previous_version = previous_version, new_version = local_node_info.version);
 
-        //NOTE discovery does not hold the full node info anymore and does not need to be updated
-        // Update discovery providers with new node info (avoid holding lock across await)
-        // let providers_to_update = {
-        //     let guard = self.network_discovery_providers.read().await;
-        //     guard.as_ref().cloned()
-        // };
-        // if let Some(discovery_providers) = providers_to_update {
-        //     for provider in discovery_providers {
-        //         if let Err(e) = provider
-        //             .update_local_node_info(local_node_info.clone())
-        //             .await
-        //         {
-        //             log_warn!(self.logger, "Failed to update discovery provider: {e}");
-        //         }
-        //     }
-        // }
-
         let transport_guard = self.network_transport.read().await;
         if let Some(transport) = transport_guard.as_ref() {
             transport.update_peers(local_node_info).await?;
@@ -3417,6 +3392,7 @@ impl Clone for Node {
             keys_manager: self.keys_manager.clone(),
             keys_manager_mut: self.keys_manager_mut.clone(),
             service_tasks: self.service_tasks.clone(),
+            local_node_info: self.local_node_info.clone(),
             retained_events: self.retained_events.clone(),
             retained_index: self.retained_index.clone(),
         }

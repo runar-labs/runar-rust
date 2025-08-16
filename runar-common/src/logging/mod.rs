@@ -8,6 +8,7 @@
 // - Support for action and event path tracing
 
 use log::{debug, error, info, warn};
+use once_cell::sync::OnceCell;
 use std::fmt::{self, Arguments, Display, Formatter};
 
 /// Predefined components for logging categorization
@@ -87,7 +88,7 @@ pub struct Logger {
     /// Component this logger is for
     component: Component,
     /// Node ID for distributed tracing
-    node_id: String,
+    node_id: OnceCell<String>,
     /// Parent component for hierarchical logging (if any)
     parent_component: Option<Component>,
     /// Action path for request/action tracing
@@ -97,15 +98,22 @@ pub struct Logger {
 }
 
 impl Logger {
-    /// Create a new root logger for a specific component and node ID
+    /// Create a new root logger for a specific component
     /// This should only be called by the Node root component
-    pub fn new_root(component: Component, node_id: &str) -> Self {
+    pub fn new_root(component: Component) -> Self {
         Self {
             component,
-            node_id: node_id.to_string(),
+            node_id: OnceCell::new(),
             parent_component: None,
             action_path: None,
             event_path: None,
+        }
+    }
+
+    pub fn set_node_id(&self, node_id: String) {
+        if self.node_id.set(node_id).is_err() {
+            // This should never happen in normal usage
+            panic!("Node ID already set for this logger");
         }
     }
 
@@ -153,7 +161,7 @@ impl Logger {
 
     /// Get a reference to the node ID
     pub fn node_id(&self) -> &str {
-        &self.node_id
+        self.node_id.get().map(|s| s.as_str()).unwrap_or("unknown")
     }
 
     /// Get a reference to the action path if available
@@ -201,11 +209,11 @@ impl Logger {
         if log::log_enabled!(log::Level::Debug) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
-                debug!("[{}] {}", self.node_id, message.into());
+                debug!("[{}] {}", self.node_id(), message.into());
             } else {
                 debug!(
                     "[{}][{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     self.full_prefix(),
                     message.into()
                 );
@@ -217,11 +225,11 @@ impl Logger {
     pub fn debug_args(&self, args: Arguments) {
         if log::log_enabled!(log::Level::Debug) {
             if self.component == Component::Node && self.parent_component.is_none() {
-                debug!("[{}] {}", self.node_id, args);
+                debug!("[{}] {}", self.node_id(), args);
             } else {
                 debug!(
                     "[{}][{}{}{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     ComponentPrefixDisplay {
                         parent: self.parent_component,
                         component: self.component
@@ -239,11 +247,11 @@ impl Logger {
         if log::log_enabled!(log::Level::Info) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
-                info!("[{}] {}", self.node_id, message.into());
+                info!("[{}] {}", self.node_id(), message.into());
             } else {
                 info!(
                     "[{}][{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     self.full_prefix(),
                     message.into()
                 );
@@ -255,11 +263,11 @@ impl Logger {
     pub fn info_args(&self, args: Arguments) {
         if log::log_enabled!(log::Level::Info) {
             if self.component == Component::Node && self.parent_component.is_none() {
-                info!("[{}] {}", self.node_id, args);
+                info!("[{}] {}", self.node_id(), args);
             } else {
                 info!(
                     "[{}][{}{}{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     ComponentPrefixDisplay {
                         parent: self.parent_component,
                         component: self.component
@@ -276,11 +284,11 @@ impl Logger {
     pub fn info_static(&self, msg: &'static str) {
         if log::log_enabled!(log::Level::Info) {
             if self.component == Component::Node && self.parent_component.is_none() {
-                info!("[{}] {}", self.node_id, msg);
+                info!("[{}] {}", self.node_id(), msg);
             } else {
                 info!(
                     "[{}][{}{}{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     ComponentPrefixDisplay {
                         parent: self.parent_component,
                         component: self.component
@@ -298,11 +306,11 @@ impl Logger {
         if log::log_enabled!(log::Level::Warn) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
-                warn!("[{}] {}", self.node_id, message.into());
+                warn!("[{}] {}", self.node_id(), message.into());
             } else {
                 warn!(
                     "[{}][{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     self.full_prefix(),
                     message.into()
                 );
@@ -314,11 +322,11 @@ impl Logger {
     pub fn warn_args(&self, args: Arguments) {
         if log::log_enabled!(log::Level::Warn) {
             if self.component == Component::Node && self.parent_component.is_none() {
-                warn!("[{}] {}", self.node_id, args);
+                warn!("[{}] {}", self.node_id(), args);
             } else {
                 warn!(
                     "[{}][{}{}{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     ComponentPrefixDisplay {
                         parent: self.parent_component,
                         component: self.component
@@ -336,11 +344,11 @@ impl Logger {
         if log::log_enabled!(log::Level::Error) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
-                error!("[{}] {}", self.node_id, message.into());
+                error!("[{}] {}", self.node_id(), message.into());
             } else {
                 error!(
                     "[{}][{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     self.full_prefix(),
                     message.into()
                 );
@@ -352,11 +360,11 @@ impl Logger {
     pub fn error_args(&self, args: Arguments) {
         if log::log_enabled!(log::Level::Error) {
             if self.component == Component::Node && self.parent_component.is_none() {
-                error!("[{}] {}", self.node_id, args);
+                error!("[{}] {}", self.node_id(), args);
             } else {
                 error!(
                     "[{}][{}{}{}] {}",
-                    self.node_id,
+                    self.node_id(),
                     ComponentPrefixDisplay {
                         parent: self.parent_component,
                         component: self.component

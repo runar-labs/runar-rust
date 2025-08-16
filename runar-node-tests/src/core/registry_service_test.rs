@@ -100,7 +100,7 @@ async fn test_registry_service_list_services() {
 async fn test_registry_service_get_service_info() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
-        let test_logger = Logger::new_root(Component::Node, "test_name");
+        let test_logger = Logger::new_root(Component::Custom("Test"));
 
         let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
 
@@ -182,7 +182,7 @@ async fn test_registry_service_get_service_state() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a test logger for debugging
-        let test_logger = Logger::new_root(Component::Node, "test_state");
+        let test_logger = Logger::new_root(Component::Custom("Test"));
 
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
@@ -241,7 +241,7 @@ async fn test_registry_service_missing_parameter() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a test logger for debugging
-        let test_logger = Logger::new_root(Component::Node, "test_missing_param");
+        let test_logger = Logger::new_root(Component::Custom("Test"));
 
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");

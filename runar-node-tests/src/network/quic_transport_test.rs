@@ -14,7 +14,7 @@ async fn test_dial_cancel_on_inbound_connect(
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("dial_cancel_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("dial_cancel_test")));
 
     // Use CA + node certs as in other tests
     let mut mobile_ca = runar_keys::MobileKeyManager::new(logger.clone())?;
@@ -87,11 +87,21 @@ async fn test_dial_cancel_on_inbound_connect(
     let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
         label_mappings: HashMap::new(),
     }));
+    let t1_info_clone = t1_info.clone();
+    let t2_info_clone = t2_info.clone();
+    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+        let t1_info_clone = t1_info_clone.clone();
+        Box::pin(async move { Ok(t1_info_clone.clone()) })
+    });
+    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+        let t2_info_clone = t2_info_clone.clone();
+        Box::pin(async move { Ok(t2_info_clone.clone()) })
+    });
     let t1_opts = QuicTransportOptions::new()
         .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
         .with_private_key(km1.get_quic_certificate_config()?.private_key)
         .with_root_certificates(vec![ca_cert.clone()])
-        .with_local_node_info(t1_info)
+        .with_get_local_node_info(get_local_node_info_t1)
         .with_bind_addr(t1_addr)
         .with_message_handler(handler1)
         .with_one_way_message_handler(one_way1)
@@ -102,7 +112,7 @@ async fn test_dial_cancel_on_inbound_connect(
         .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
         .with_private_key(km2.get_quic_certificate_config()?.private_key)
         .with_root_certificates(vec![ca_cert])
-        .with_local_node_info(t2_info)
+        .with_get_local_node_info(get_local_node_info_t2)
         .with_bind_addr(t2_addr)
         .with_message_handler(handler2)
         .with_one_way_message_handler(one_way2)
@@ -163,8 +173,8 @@ use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::network::transport::{
-    MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST,
-    MESSAGE_TYPE_RESPONSE,
+    GetLocalNodeInfoFn, MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
+    MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 };
 use runar_schemas::{NodeInfo, NodeMetadata, SubscriptionMetadata};
 use std::net::SocketAddr;
@@ -228,7 +238,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
-    let logger = Arc::new(Logger::new_root(Component::Custom("quic_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("quic_test")));
 
     logger.debug("QUIC Test function started");
 
@@ -573,8 +583,18 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
             label_mappings: HashMap::new(),
         }));
 
+    let node1_info_clone = node1_info.clone();
+    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+        let node1_info_clone = node1_info_clone.clone();
+        Box::pin(async move { Ok(node1_info_clone.clone()) })
+    });
+    let node2_info_clone = node2_info.clone();
+    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+        let node2_info_clone = node2_info_clone.clone();
+        Box::pin(async move { Ok(node2_info_clone.clone()) })
+    });
     let transport1_options = transport1_options
-        .with_local_node_info(node1_info.clone())
+        .with_get_local_node_info(get_local_node_info_t1)
         .with_bind_addr("127.0.0.1:50069".parse::<SocketAddr>()?)
         .with_message_handler(node1_handler)
         .with_one_way_message_handler(node1_one_way_handler)
@@ -585,7 +605,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     let transport1 = Arc::new(QuicTransport::new(transport1_options)?);
 
     let transport2_options = transport2_options
-        .with_local_node_info(node2_info.clone())
+        .with_get_local_node_info(get_local_node_info_t2)
         .with_bind_addr("127.0.0.1:50044".parse::<SocketAddr>()?)
         .with_message_handler(node2_handler)
         .with_one_way_message_handler(node2_one_way_handler)
@@ -947,7 +967,7 @@ async fn test_request_dedup_same_correlation_id_two_sends(
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("dedup_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("dedup_test")));
 
     // CA + node certs
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
@@ -1011,11 +1031,16 @@ async fn test_request_dedup_same_correlation_id_two_sends(
     let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
         label_mappings: HashMap::new(),
     }));
+    let server_info_clone = server_info.clone();
+    let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
+        let server_info_clone = server_info_clone.clone();
+        Box::pin(async move { Ok(server_info_clone.clone()) })
+    });
     let server_opts = QuicTransportOptions::new()
         .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
         .with_private_key(km_server.get_quic_certificate_config()?.private_key)
         .with_root_certificates(vec![ca_cert])
-        .with_local_node_info(server_info)
+        .with_get_local_node_info(get_local_node_info_server)
         .with_bind_addr(server_addr)
         .with_response_cache_ttl(Duration::from_secs(3))
         .with_message_handler(handler)
@@ -1129,7 +1154,7 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("write_fail_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("write_fail_test")));
 
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
     let _ = mobile_ca.initialize_user_root_key()?;
@@ -1188,11 +1213,17 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
     let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
         label_mappings: HashMap::new(),
     }));
+
+    let server_info_clone = server_info.clone();
+    let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
+        let server_info_clone = server_info_clone.clone();
+        Box::pin(async move { Ok(server_info_clone.clone()) })
+    });
     let server_opts = QuicTransportOptions::new()
         .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
         .with_private_key(km_server.get_quic_certificate_config()?.private_key)
         .with_root_certificates(vec![ca_cert])
-        .with_local_node_info(server_info)
+        .with_get_local_node_info(get_local_node_info_server)
         .with_bind_addr(server_addr)
         .with_response_cache_ttl(Duration::from_secs(3))
         .with_message_handler(handler)
@@ -1283,7 +1314,7 @@ async fn test_cache_expiry_triggers_handler_again(
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("expiry_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("expiry_test")));
 
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
     let _ = mobile_ca.initialize_user_root_key()?;
@@ -1343,11 +1374,17 @@ async fn test_cache_expiry_triggers_handler_again(
         label_mappings: HashMap::new(),
     }));
     let ttl = Duration::from_secs(2);
+
+    let server_info_clone = server_info.clone();
+    let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
+        let server_info_clone = server_info_clone.clone();
+        Box::pin(async move { Ok(server_info_clone.clone()) })
+    });
     let server_opts = QuicTransportOptions::new()
         .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
         .with_private_key(km_server.get_quic_certificate_config()?.private_key)
         .with_root_certificates(vec![ca_cert])
-        .with_local_node_info(server_info)
+        .with_get_local_node_info(get_local_node_info_server)
         .with_bind_addr(server_addr)
         .with_response_cache_ttl(ttl)
         .with_message_handler(handler)
@@ -1459,7 +1496,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("dup_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("dup_test")));
 
     // Keys and certs
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
@@ -1556,11 +1593,22 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
             label_mappings: HashMap::new(),
         }));
+
+    let node1_info_clone = node1_info.clone();
+    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+        let node1_info_clone = node1_info_clone.clone();
+        Box::pin(async move { Ok(node1_info_clone.clone()) })
+    });
+    let node2_info_clone = node2_info.clone();
+    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+        let node2_info_clone = node2_info_clone.clone();
+        Box::pin(async move { Ok(node2_info_clone.clone()) })
+    });
     let t1_opts = QuicTransportOptions::new()
         .with_certificates(node1_cert_config.certificate_chain)
         .with_private_key(node1_cert_config.private_key)
         .with_root_certificates(vec![ca_certificate.clone()])
-        .with_local_node_info(node1_info.clone())
+        .with_get_local_node_info(get_local_node_info_t1)
         .with_bind_addr("127.0.0.1:50111".parse::<SocketAddr>()?)
         .with_message_handler(handler1)
         .with_one_way_message_handler(one_way1)
@@ -1571,7 +1619,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         .with_certificates(node2_cert_config.certificate_chain)
         .with_private_key(node2_cert_config.private_key)
         .with_root_certificates(vec![ca_certificate])
-        .with_local_node_info(node2_info.clone())
+        .with_get_local_node_info(get_local_node_info_t2)
         .with_bind_addr("127.0.0.1:50112".parse::<SocketAddr>()?)
         .with_message_handler(handler2)
         .with_one_way_message_handler(one_way2)
@@ -1651,7 +1699,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("lifecycle_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("lifecycle_test")));
 
     // Keys and certs
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
@@ -1745,12 +1793,24 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
             label_mappings: HashMap::new(),
         }));
+
+    let info1_clone = info1.clone();
+    let info2_clone = info2.clone();
+    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+        let info1_clone = info1_clone.clone();
+        Box::pin(async move { Ok(info1_clone.clone()) })
+    });
+    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+        let info2_clone = info2_clone.clone();
+        Box::pin(async move { Ok(info2_clone.clone()) })
+    });
+
     let t1 = Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
             .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
             .with_private_key(km1.get_quic_certificate_config()?.private_key)
             .with_root_certificates(vec![ca.clone()])
-            .with_local_node_info(info1.clone())
+            .with_get_local_node_info(get_local_node_info_t1)
             .with_bind_addr("127.0.0.1:50131".parse::<SocketAddr>()?)
             .with_message_handler(handler)
             .with_one_way_message_handler(one_way)
@@ -1765,7 +1825,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
             .with_private_key(km2.get_quic_certificate_config()?.private_key)
             .with_root_certificates(vec![ca])
-            .with_local_node_info(info2.clone())
+            .with_get_local_node_info(get_local_node_info_t2)
             .with_bind_addr("127.0.0.1:50132".parse::<SocketAddr>()?)
             .with_message_handler(Box::new(|_m| Box::pin(async { Ok(None) })))
             .with_one_way_message_handler(Box::new(|_m| Box::pin(async { Ok(()) })))
@@ -1847,7 +1907,6 @@ async fn test_capability_version_bump_across_reconnect(
     logging_config.apply();
     let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
         runar_common::logging::Component::Custom("cap_version_test"),
-        "",
     ));
 
     // Keys/certs
@@ -1903,13 +1962,23 @@ async fn test_capability_version_bump_across_reconnect(
             },
         ));
 
+    let info1_clone = info1.clone();
+    let info2_clone = info2.clone();
+    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+        let info1_clone = info1_clone.clone();
+        Box::pin(async move { Ok(info1_clone.clone()) })
+    });
+    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+        let info2_clone = info2_clone.clone();
+        Box::pin(async move { Ok(info2_clone.clone()) })
+    });
     let t1 = std::sync::Arc::new(
         runar_node::network::transport::quic_transport::QuicTransport::new(
             runar_node::network::transport::quic_transport::QuicTransportOptions::new()
                 .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
                 .with_private_key(km1.get_quic_certificate_config()?.private_key)
                 .with_root_certificates(vec![ca_cert.clone()])
-                .with_local_node_info(info1.clone())
+                .with_get_local_node_info(get_local_node_info_t1)
                 .with_bind_addr("127.0.0.1:50171".parse()?)
                 .with_message_handler(handler1)
                 .with_one_way_message_handler(one_way1)
@@ -1924,7 +1993,7 @@ async fn test_capability_version_bump_across_reconnect(
                 .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
                 .with_private_key(km2.get_quic_certificate_config()?.private_key)
                 .with_root_certificates(vec![ca_cert])
-                .with_local_node_info(info2.clone())
+                .with_get_local_node_info(get_local_node_info_t2)
                 .with_bind_addr("127.0.0.1:50172".parse()?)
                 .with_message_handler(handler2)
                 .with_one_way_message_handler(one_way2)
@@ -1999,7 +2068,6 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     logging_config.apply();
     let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
         runar_common::logging::Component::Custom("anti_flap_test"),
-        "",
     ));
 
     // Keys/certs
@@ -2100,13 +2168,24 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         })
     };
 
+    let info1_clone = info1.clone();
+    let info2_clone = info2.clone();
+    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+        let info1_clone = info1_clone.clone();
+        Box::pin(async move { Ok(info1_clone.clone()) })
+    });
+    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+        let info2_clone = info2_clone.clone();
+        Box::pin(async move { Ok(info2_clone.clone()) })
+    });
+
     let t1 = std::sync::Arc::new(
         runar_node::network::transport::quic_transport::QuicTransport::new(
             runar_node::network::transport::quic_transport::QuicTransportOptions::new()
                 .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
                 .with_private_key(km1.get_quic_certificate_config()?.private_key)
                 .with_root_certificates(vec![ca_cert.clone()])
-                .with_local_node_info(info1.clone())
+                .with_get_local_node_info(get_local_node_info_t1)
                 .with_bind_addr("127.0.0.1:50181".parse()?)
                 .with_message_handler(handler1)
                 .with_one_way_message_handler(one_way1)
@@ -2123,7 +2202,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
                 .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
                 .with_private_key(km2.get_quic_certificate_config()?.private_key)
                 .with_root_certificates(vec![ca_cert])
-                .with_local_node_info(info2.clone())
+                .with_get_local_node_info(get_local_node_info_t2)
                 .with_bind_addr("127.0.0.1:50182".parse()?)
                 .with_message_handler(handler2)
                 .with_one_way_message_handler(one_way2)
@@ -2193,7 +2272,7 @@ async fn test_transport_message_header_bounds_checking(
     });
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("bounds_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("bounds_test")));
 
     logger.debug("Message header bounds checking test started");
 

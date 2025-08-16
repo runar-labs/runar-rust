@@ -116,6 +116,9 @@ impl LoggingConfig {
         // Disable reading from environment variables
         builder.parse_default_env();
 
+        //builder.format_timestamp(None);
+        builder.format_module_path(false);
+
         // Set the default level
         builder.filter_level(self.default_level.to_level_filter());
 

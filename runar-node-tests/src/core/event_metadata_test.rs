@@ -27,7 +27,7 @@ async fn test_get_subscription_metadata() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Set up test logger
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Service));
 
         // Create registry
         let registry = ServiceRegistry::new(logger.clone());

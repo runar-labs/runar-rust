@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 /// Test multiple subscriptions to the same topic
 #[tokio::test]
 async fn test_multiple_subscriptions_same_topic() -> Result<()> {
-    let logger = Arc::new(Logger::new_root(Component::Node, "test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
     let registry = ServiceRegistry::new(logger.clone());
 
     let topic_path = TopicPath::new("test/event", "network1").map_err(|e| anyhow::anyhow!(e))?;

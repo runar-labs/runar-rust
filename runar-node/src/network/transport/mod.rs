@@ -292,6 +292,8 @@ pub type PeerConnectedCallback =
 
 pub type PeerDisconnectedCallback = Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
 
+pub type GetLocalNodeInfoFn = Arc<dyn Fn() -> BoxFuture<'static, Result<NodeInfo>> + Send + Sync>;
+
 /// Network transport interface
 #[async_trait]
 pub trait NetworkTransport: Send + Sync {

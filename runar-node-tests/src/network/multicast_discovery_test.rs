@@ -219,7 +219,7 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
         ..DiscoveryOptions::default()
     };
 
-    let logger = Logger::new_root(Component::NetworkDiscovery, "provider_restart");
+    let logger = Logger::new_root(Component::Custom("Test"));
 
     // Two nodes
     let node1_pk: [u8; 32] = rand::random();
@@ -309,7 +309,7 @@ async fn create_test_discovery(
     };
 
     // Create a logger for testing
-    let logger = Logger::new_root(Component::NetworkDiscovery, node_id);
+    let logger = Logger::new_root(Component::Custom("Test"));
 
     // Create a test node info using direct struct initialization
     let peer_info = PeerInfo {
@@ -639,7 +639,7 @@ async fn test_discovery_provider_stateless_behavior() -> Result<()> {
         ..DiscoveryOptions::default()
     };
 
-    let logger = Logger::new_root(Component::NetworkDiscovery, "stateless_test");
+    let logger = Logger::new_root(Component::Custom("Test"));
 
     // Create two discovery instances
     let node1_pk: [u8; 32] = rand::random();

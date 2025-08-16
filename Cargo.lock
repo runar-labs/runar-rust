@@ -3524,6 +3524,7 @@ dependencies = [
  "env_logger 0.10.2",
  "lazy_static",
  "log",
+ "once_cell",
  "prost",
  "prost-derive",
  "rustc-hash 1.1.0",

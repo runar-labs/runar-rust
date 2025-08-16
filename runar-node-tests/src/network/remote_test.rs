@@ -34,17 +34,15 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Set up logger
     let logger = Arc::new(Logger::new_root(
-        Component::Custom("remote_action_test"),
-        "",
+        Component::Custom("remote_action_test")
     ));
 
     let configs =
         create_networked_node_test_config(2).expect("Failed to create multiple node test configs");
 
     let node1_config = configs[0].clone();
-    let node1_id = node1_config.node_id.clone();
     let node2_config = configs[1].clone();
-    let node2_id = node2_config.node_id.clone();
+    
     // Create math services with different paths using the fixture
     let math_service1 = MathService::new("math1", "math1");
     let math_service2 = MathService::new("math2", "math2");
@@ -78,14 +76,14 @@ async fn test_remote_action_call() -> Result<()> {
 
     logger.debug("⏳ Waiting for nodes to discover each other via multicast and establish QUIC connections...");
     let peer_future2 = node2.on(
-        format!("$registry/peer/{node1_id}/discovered"),
+        format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(3),
             include_past: None,
         }),
     );
     let peer_future1 = node1.on(
-        format!("$registry/peer/{node2_id}/discovered"),
+        format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(3),
             include_past: None,
@@ -274,15 +272,13 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logging_config.apply();
 
         // Set up logger
-        let logger = Arc::new(Logger::new_root(Component::Custom("stop_restart_test"), ""));
+        let logger = Arc::new(Logger::new_root(Component::Custom("stop_restart_test")));
 
         let configs = create_networked_node_test_config(2)
             .expect("Failed to create multiple node test configs");
 
-        let node1_config = configs[0].clone();
-        let node1_id = node1_config.node_id.clone();
-        let node2_config = configs[1].clone();
-        let node2_id = node2_config.node_id.clone();
+        let node1_config = configs[0].clone(); 
+        let node2_config = configs[1].clone(); 
 
         // Create math services with different paths using the fixture
         let math_service1 = MathService::new("math1", "math1");
@@ -304,16 +300,16 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         // Wait for nodes to discover each other
         logger.debug("⏳ Waiting for nodes to discover each other...");
         let peer_future2 = node2.on(
-            format!("$registry/peer/{node1_id}/discovered"),
+            format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(3),
                 include_past: None,
             }),
         );
         let peer_future1 = node1.on(
-            format!("$registry/peer/{node2_id}/discovered"),
+            format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()),
             Some(runar_node::services::OnOptions {
-                timeout: Duration::from_secs(3),
+                timeout: Duration::from_secs(3),    
                 include_past: None,
             }),
         );
@@ -390,14 +386,14 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         // Wait for nodes to discover each other again - same as initial setup
         logger.debug("⏳ Waiting for nodes to rediscover each other...");
         let on_node1_found = node2.on(
-            format!("$registry/peer/{node1_id}/discovered"),
+            format!("$registry/peer/{node1_id}/discovered", node1_id=node1.node_id()),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(10),
                 include_past: None,
             }),
         );
         let on_node2_found = node1.on(
-            format!("$registry/peer/{node2_id}/discovered"),
+            format!("$registry/peer/{node2_id}/discovered", node2_id=node2.node_id()),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(10),
                 include_past: None,

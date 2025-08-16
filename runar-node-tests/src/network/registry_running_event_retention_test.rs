@@ -46,14 +46,14 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
 
     // Wait for nodes to discover each other
     let on1 = node2.on(
-        format!("$registry/peer/{}/discovered", node1_config.node_id),
+        format!("$registry/peer/{}/discovered", node1.node_id()),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(10),
             include_past: None,
         }),
     );
     let on2 = node1.on(
-        format!("$registry/peer/{}/discovered", node2_config.node_id),
+        format!("$registry/peer/{}/discovered", node2.node_id()),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(10),
             include_past: None,

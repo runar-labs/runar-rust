@@ -409,7 +409,7 @@ async fn test_on_method() {
         );
 
         // Test 3: Test from RequestContext
-        let test_logger = Logger::new_root(Component::Node, "test_on_method");
+        let test_logger = Logger::new_root(Component::Custom("Test"));
         let topic_path = TopicPath::new("math/add", "test_network").unwrap();
         let context = RequestContext::new(
             &topic_path,
