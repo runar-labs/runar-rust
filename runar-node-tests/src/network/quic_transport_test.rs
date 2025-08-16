@@ -1147,100 +1147,100 @@ async fn test_request_dedup_same_correlation_id_two_sends(
     Ok(())
 }
 
-    /// Force failure on write path (open_bi ok but connection closed before any write)
-    /// Ensure no cache insert occurs and handler invoked once upon later success.
-    #[tokio::test]
-    async fn test_write_failure_then_success_does_not_cache_until_sent(
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use runar_common::compact_ids::compact_id;
-        use runar_common::logging::{Component, Logger};
-        use runar_common::logging::{LogLevel, LoggingConfig};
-        use runar_keys::{MobileKeyManager, NodeKeyManager};
+/// Force failure on write path (open_bi ok but connection closed before any write)
+/// Ensure no cache insert occurs and handler invoked once upon later success.
+#[tokio::test]
+async fn test_write_failure_then_success_does_not_cache_until_sent(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::compact_ids::compact_id;
+    use runar_common::logging::{Component, Logger};
+    use runar_common::logging::{LogLevel, LoggingConfig};
+    use runar_keys::{MobileKeyManager, NodeKeyManager};
 
-        let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
-        logging_config.apply();
-        let logger = Arc::new(Logger::new_root(Component::Custom("write_fail_test")));
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("write_fail_test")));
 
-        let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
-        let _ = mobile_ca.initialize_user_root_key()?;
-        let mut km_server = NodeKeyManager::new(logger.clone())?;
-        let csr_server = km_server.generate_csr()?;
-        let cert_server = mobile_ca.process_setup_token(&csr_server)?;
-        km_server.install_certificate(cert_server)?;
-        let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
+    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
+    let _ = mobile_ca.initialize_user_root_key()?;
+    let mut km_server = NodeKeyManager::new(logger.clone())?;
+    let csr_server = km_server.generate_csr()?;
+    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
+    km_server.install_certificate(cert_server)?;
+    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
 
-        let mk_info = |addr: &str| NodeInfo {
-            node_public_key: rand::random::<[u8; 32]>().to_vec(),
-            network_ids: vec!["main".to_string()],
-            addresses: vec![addr.to_string()],
-            node_metadata: runar_schemas::NodeMetadata {
-                services: vec![],
-                subscriptions: vec![],
-            },
-            version: 0,
-        };
-        let server_addr = "127.0.0.1:50162".parse().unwrap();
-        let server_info = mk_info("127.0.0.1:0");
+    let mk_info = |addr: &str| NodeInfo {
+        node_public_key: rand::random::<[u8; 32]>().to_vec(),
+        network_ids: vec!["main".to_string()],
+        addresses: vec![addr.to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let server_addr = "127.0.0.1:50162".parse().unwrap();
+    let server_info = mk_info("127.0.0.1:0");
 
-        let invocation_count = Arc::new(AtomicUsize::new(0));
-        let count_clone = invocation_count.clone();
-        let handler: MessageHandler = Box::new(move |m: NetworkMessage| {
-            let count_clone = count_clone.clone();
-            Box::pin(async move {
-                count_clone.fetch_add(1, Ordering::SeqCst);
-                let corr = m
-                    .payloads
-                    .first()
-                    .map(|p| p.correlation_id.clone())
-                    .unwrap_or_default();
-                let path = m
-                    .payloads
-                    .first()
-                    .map(|p| p.path.clone())
-                    .unwrap_or_else(|| "test".to_string());
-                let response_value = ArcValue::new_primitive("ok".to_string());
-                let reply = NetworkMessage {
-                    source_node_id: m.destination_node_id.clone(),
-                    destination_node_id: m.source_node_id.clone(),
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payloads: vec![NetworkMessagePayloadItem {
-                        path,
-                        value_bytes: response_value.serialize(None).unwrap_or_default(),
-                        context: None,
-                        correlation_id: corr,
-                    }],
-                };
-                Ok(Some(reply))
-            })
-        });
-        let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+    let invocation_count = Arc::new(AtomicUsize::new(0));
+    let count_clone = invocation_count.clone();
+    let handler: MessageHandler = Box::new(move |m: NetworkMessage| {
+        let count_clone = count_clone.clone();
+        Box::pin(async move {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+            let corr = m
+                .payloads
+                .first()
+                .map(|p| p.correlation_id.clone())
+                .unwrap_or_default();
+            let path = m
+                .payloads
+                .first()
+                .map(|p| p.path.clone())
+                .unwrap_or_else(|| "test".to_string());
+            let response_value = ArcValue::new_primitive("ok".to_string());
+            let reply = NetworkMessage {
+                source_node_id: m.destination_node_id.clone(),
+                destination_node_id: m.source_node_id.clone(),
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payloads: vec![NetworkMessagePayloadItem {
+                    path,
+                    value_bytes: response_value.serialize(None).unwrap_or_default(),
+                    context: None,
+                    correlation_id: corr,
+                }],
+            };
+            Ok(Some(reply))
+        })
+    });
+    let one_way: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
 
-        let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
-            label_mappings: HashMap::new(),
-        }));
+    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+        label_mappings: HashMap::new(),
+    }));
 
-        let server_info_clone = server_info.clone();
-        let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
-            let server_info_clone = server_info_clone.clone();
-            Box::pin(async move { Ok(server_info_clone.clone()) })
-        });
-        let server_opts = QuicTransportOptions::new()
-            .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
-            .with_private_key(km_server.get_quic_certificate_config()?.private_key)
-            .with_root_certificates(vec![ca_cert])
-            .with_local_node_public_key(km_server.get_node_public_key())
-            .with_get_local_node_info(get_local_node_info_server)
-            .with_bind_addr(server_addr)
-            .with_response_cache_ttl(Duration::from_secs(3))
-            .with_message_handler(handler)
-            .with_one_way_message_handler(one_way)
-            .with_keystore(Arc::new(NoCrypto))
-            .with_label_resolver(resolver)
-            .with_logger(logger.clone());
-        let server_transport = Arc::new(QuicTransport::new(server_opts)?);
-        let server_id = compact_id(&km_server.get_node_public_key());
-        server_transport.clone().start().await?;
-        tokio::time::sleep(Duration::from_millis(150)).await;
+    let server_info_clone = server_info.clone();
+    let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
+        let server_info_clone = server_info_clone.clone();
+        Box::pin(async move { Ok(server_info_clone.clone()) })
+    });
+    let server_opts = QuicTransportOptions::new()
+        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert])
+        .with_local_node_public_key(km_server.get_node_public_key())
+        .with_get_local_node_info(get_local_node_info_server)
+        .with_bind_addr(server_addr)
+        .with_response_cache_ttl(Duration::from_secs(3))
+        .with_message_handler(handler)
+        .with_one_way_message_handler(one_way)
+        .with_keystore(Arc::new(NoCrypto))
+        .with_label_resolver(resolver)
+        .with_logger(logger.clone());
+    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
+    let server_id = compact_id(&km_server.get_node_public_key());
+    server_transport.clone().start().await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
 
     // Build client endpoint with SkipServerVerification
     use runar_node::network::transport::SkipServerVerification;
