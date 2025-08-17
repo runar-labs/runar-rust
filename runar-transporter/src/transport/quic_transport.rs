@@ -18,11 +18,11 @@ use tokio::sync::RwLock;
 use x509_parser::parse_x509_certificate;
 use x509_parser::prelude::{GeneralName, ParsedExtension};
 
-use crate::network::discovery::multicast_discovery::PeerInfo;
-use crate::network::transport::{
-    GetLocalNodeInfoFn, MessageContext, NetworkError, NetworkMessage, NetworkTransport,
+use crate::discovery::multicast_discovery::PeerInfo;
+use crate::transport::TopicPath;
+use crate::transport::{
+    GetLocalNodeInfoCallback, MessageContext, NetworkError, NetworkMessage, NetworkTransport,
 };
-use crate::routing::TopicPath;
 use runar_serializer::{ArcValue, SerializationContext};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
@@ -43,7 +43,7 @@ pub struct QuicTransportOptions {
     one_way_message_handler: Option<super::OneWayMessageHandler>,
     peer_connected_callback: Option<super::PeerConnectedCallback>,
     peer_disconnected_callback: Option<super::PeerDisconnectedCallback>,
-    get_local_node_info: Option<GetLocalNodeInfoFn>,
+    get_local_node_info: Option<GetLocalNodeInfoCallback>,
     //connection_callback: Option<super::ConnectionCallback>,
     logger: Option<Arc<Logger>>,
     keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
@@ -194,7 +194,10 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_get_local_node_info(mut self, get_local_node_info: GetLocalNodeInfoFn) -> Self {
+    pub fn with_get_local_node_info(
+        mut self,
+        get_local_node_info: GetLocalNodeInfoCallback,
+    ) -> Self {
         self.get_local_node_info = Some(get_local_node_info);
         self
     }
@@ -488,7 +491,7 @@ pub struct QuicTransport {
     one_way_message_handler: super::OneWayMessageHandler,
     peer_connected_callback: Option<super::PeerConnectedCallback>,
     peer_disconnected_callback: Option<super::PeerDisconnectedCallback>,
-    get_local_node_info: GetLocalNodeInfoFn,
+    get_local_node_info: GetLocalNodeInfoCallback,
 
     // Per-peer connect guards to avoid concurrent connects
     peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,

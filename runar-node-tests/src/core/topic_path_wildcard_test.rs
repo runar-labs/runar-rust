@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use runar_common::logging::{Component, Logger};
-use runar_node::routing::TopicPath;
+use runar_common::routing::TopicPath;
 use runar_node::services::EventContext;
 use runar_node::ServiceRegistry;
 use runar_serializer::ArcValue;
@@ -141,7 +141,7 @@ mod topic_path_wildcard_tests {
 
     #[test]
     fn test_efficient_template_pattern_lookup() {
-        use runar_node::routing::TopicPath;
+        use runar_common::routing::TopicPath;
         use std::collections::HashMap;
 
         // Create a HashMap to store handlers by path pattern
@@ -216,7 +216,7 @@ mod topic_path_wildcard_tests {
 
     #[test]
     fn test_efficient_wildcard_pattern_lookup() {
-        use runar_node::routing::TopicPath;
+        use runar_common::routing::TopicPath;
         use std::collections::HashMap;
 
         // Create a HashMap to store handlers by path pattern

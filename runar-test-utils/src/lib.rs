@@ -7,12 +7,13 @@ use anyhow::Result;
 use runar_common::compact_ids;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
-use runar_node::network::network_config::DiscoveryProviderConfig;
-use runar_node::{
-    network::{network_config::NetworkConfig, QuicTransportOptions},
-    NodeConfig,
-};
+use runar_node::NodeConfig;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo};
+use runar_transporter::{
+    discovery::DiscoveryOptions,
+    network_config::{DiscoveryProviderConfig, NetworkConfig},
+    transport::QuicTransportOptions,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -126,7 +127,7 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
 
         //transport_options.
 
-        let discovery_options = runar_node::network::discovery::DiscoveryOptions {
+        let discovery_options = DiscoveryOptions {
             multicast_group: unique_group.clone(),
             ..Default::default()
         };

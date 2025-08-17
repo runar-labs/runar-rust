@@ -6,11 +6,13 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::LevelFilter;
 use runar_macros_common::log_info;
-use runar_node::network::discovery::multicast_discovery::PeerInfo;
-use runar_node::network::transport::{MessageContext, NetworkTransport};
-use runar_node::network::{QuicTransport, QuicTransportOptions};
 use runar_schemas::NodeInfo;
 use runar_serializer::ArcValue;
+use runar_transporter::discovery::multicast_discovery::PeerInfo;
+use runar_transporter::transport::{
+    MessageContext, MessageHandler, NetworkMessage, NetworkTransport,
+};
+use runar_transporter::transport::{OneWayMessageHandler, QuicTransport, QuicTransportOptions};
 
 use runar_transport_tests::quic_interop_common::{
     build_node_info, default_label_resolver, default_logger, make_echo_request, read_pem_certs,
@@ -47,14 +49,10 @@ async fn main() -> Result<()> {
     let node_id = args.node_id.unwrap_or_else(|| "rust-client".to_string());
 
     // Simple handlers; client mostly initiates request and event
-    let handler: runar_node::network::transport::MessageHandler = Box::new(
-        move |_msg: runar_node::network::transport::NetworkMessage| {
-            Box::pin(async move { Ok(None) })
-        },
-    );
-    let one_way: runar_node::network::transport::OneWayMessageHandler = Box::new(
-        move |_msg: runar_node::network::transport::NetworkMessage| Box::pin(async move { Ok(()) }),
-    );
+    let handler: MessageHandler =
+        Box::new(move |_msg: NetworkMessage| Box::pin(async move { Ok(None) }));
+    let one_way: OneWayMessageHandler =
+        Box::new(move |_msg: NetworkMessage| Box::pin(async move { Ok(()) }));
 
     let keystore = Arc::new(NoCrypto);
     let label_resolver = default_label_resolver();

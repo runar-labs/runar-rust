@@ -18,8 +18,6 @@ use rustls::client::danger::{ServerCertVerified, ServerCertVerifier};
 use rustls_pki_types::{CertificateDer, ServerName};
 
 pub mod quic_transport;
-
-use crate::routing::TopicPath;
 // --- Moved from quic_transport.rs ---
 /// Custom certificate verifier that skips verification for testing
 ///
@@ -83,6 +81,7 @@ impl ServerCertVerifier for SkipServerVerification {
 pub use quic_transport::{QuicTransport, QuicTransportOptions};
 
 use super::discovery::multicast_discovery::PeerInfo;
+use runar_common::routing::TopicPath;
 
 /// Type alias for async-returning function
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -290,7 +289,8 @@ pub type PeerConnectedCallback =
 
 pub type PeerDisconnectedCallback = Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
 
-pub type GetLocalNodeInfoFn = Arc<dyn Fn() -> BoxFuture<'static, Result<NodeInfo>> + Send + Sync>;
+pub type GetLocalNodeInfoCallback =
+    Arc<dyn Fn() -> BoxFuture<'static, Result<NodeInfo>> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]

@@ -5,10 +5,10 @@ async fn test_dial_cancel_on_inbound_connect(
     use runar_common::logging::{Component, Logger};
     use runar_common::logging::{LogLevel, LoggingConfig};
     // PeerInfo not used in this test
-    use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
-    use runar_node::network::transport::{
+    use runar_transporter::transport::{
         NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
     };
+    use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -48,7 +48,7 @@ async fn test_dial_cancel_on_inbound_connect(
     let t2_info = mk_info("127.0.0.1:0");
 
     // Simple echo response handler to satisfy request/response
-    let mk_handler = || -> runar_node::network::transport::MessageHandler {
+    let mk_handler = || -> MessageHandler {
         Box::new(|m: NetworkMessage| {
             Box::pin(async move {
                 let corr = m
@@ -65,7 +65,7 @@ async fn test_dial_cancel_on_inbound_connect(
                 let reply = NetworkMessage {
                     source_node_id: m.destination_node_id.clone(),
                     destination_node_id: m.source_node_id.clone(),
-                    message_type: runar_node::network::transport::MESSAGE_TYPE_RESPONSE,
+                    message_type: MESSAGE_TYPE_RESPONSE,
                     payloads: vec![NetworkMessagePayloadItem {
                         path,
                         value_bytes: response_value.serialize(None).unwrap_or_default(),
@@ -79,21 +79,19 @@ async fn test_dial_cancel_on_inbound_connect(
     };
     let handler1 = mk_handler();
     let handler2 = mk_handler();
-    let one_way1: runar_node::network::transport::OneWayMessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(()) }));
-    let one_way2: runar_node::network::transport::OneWayMessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let one_way1: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+    let one_way2: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
     // Use the default configurable resolver with empty config
     let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
         label_mappings: HashMap::new(),
     }));
     let t1_info_clone = t1_info.clone();
     let t2_info_clone = t2_info.clone();
-    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let t1_info_clone = t1_info_clone.clone();
         Box::pin(async move { Ok(t1_info_clone.clone()) })
     });
-    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t2: GetLocalNodeInfoCallback = Arc::new(move || {
         let t2_info_clone = t2_info_clone.clone();
         Box::pin(async move { Ok(t2_info_clone.clone()) })
     });
@@ -157,8 +155,8 @@ async fn test_dial_cancel_on_inbound_connect(
     assert!(t1.is_connected(&id2).await || t2.is_connected(&id1).await);
 
     // Simple request to verify stable connection
-    let topic = runar_node::routing::TopicPath::new("$registry/services/list", "main").unwrap();
-    let ctx = runar_node::network::transport::MessageContext {
+    let topic = TopicPath::new("$registry/services/list", "main").unwrap();
+    let ctx = MessageContext {
         profile_public_key: vec![],
     };
     let res1 = t1.request(&topic, None, &id2, ctx.clone()).await;
@@ -174,26 +172,26 @@ async fn test_dial_cancel_on_inbound_connect(
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_common::logging::{LogLevel, LoggingConfig};
-use runar_node::network::transport::{
-    GetLocalNodeInfoFn, MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
+use runar_schemas::{NodeInfo, NodeMetadata, SubscriptionMetadata};
+use runar_transporter::transport::{
+    GetLocalNodeInfoCallback, MessageContext, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE,
     MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 };
-use runar_schemas::{NodeInfo, NodeMetadata, SubscriptionMetadata};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use runar_common::routing::TopicPath;
 use runar_keys::{MobileKeyManager, NodeKeyManager};
-use runar_node::network::discovery::multicast_discovery::PeerInfo;
-use runar_node::network::transport::{
-    quic_transport::{QuicTransport, QuicTransportOptions},
-    MessageHandler, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
-    OneWayMessageHandler, PeerConnectedCallback, PeerDisconnectedCallback,
-};
-use runar_node::routing::TopicPath;
 use runar_node::{ActionMetadata, ServiceMetadata};
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
 use runar_serializer::ArcValue;
+use runar_transporter::discovery::multicast_discovery::PeerInfo;
+use runar_transporter::transport::{
+    MessageHandler, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
+    OneWayMessageHandler, PeerConnectedCallback, PeerDisconnectedCallback,
+    {QuicTransport, QuicTransportOptions},
+};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -586,12 +584,12 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         }));
 
     let node1_info_clone = node1_info.clone();
-    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let node1_info_clone = node1_info_clone.clone();
         Box::pin(async move { Ok(node1_info_clone.clone()) })
     });
     let node2_info_clone = node2_info.clone();
-    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t2: GetLocalNodeInfoCallback = Arc::new(move || {
         let node2_info_clone = node2_info_clone.clone();
         Box::pin(async move { Ok(node2_info_clone.clone()) })
     });
@@ -963,11 +961,11 @@ async fn test_request_dedup_same_correlation_id_two_sends(
     use runar_common::logging::{Component, Logger};
     use runar_common::logging::{LogLevel, LoggingConfig};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
-    use runar_node::network::transport::quic_transport::{QuicTransport, QuicTransportOptions};
-    use runar_node::network::transport::SkipServerVerification;
-    use runar_node::network::transport::{
+    use runar_transporter::transport::SkipServerVerification;
+    use runar_transporter::transport::{
         NetworkMessage, NetworkMessagePayloadItem, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
     };
+    use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
@@ -1036,7 +1034,7 @@ async fn test_request_dedup_same_correlation_id_two_sends(
         label_mappings: HashMap::new(),
     }));
     let server_info_clone = server_info.clone();
-    let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_server: GetLocalNodeInfoCallback = Arc::new(move || {
         let server_info_clone = server_info_clone.clone();
         Box::pin(async move { Ok(server_info_clone.clone()) })
     });
@@ -1220,7 +1218,7 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
     }));
 
     let server_info_clone = server_info.clone();
-    let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_server: GetLocalNodeInfoCallback = Arc::new(move || {
         let server_info_clone = server_info_clone.clone();
         Box::pin(async move { Ok(server_info_clone.clone()) })
     });
@@ -1243,7 +1241,7 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     // Build client endpoint with SkipServerVerification
-    use runar_node::network::transport::SkipServerVerification;
+    use runar_transporter::transport::SkipServerVerification;
     let endpoint = {
         let client_rustls = rustls::ClientConfig::builder()
             .dangerous()
@@ -1382,7 +1380,7 @@ async fn test_cache_expiry_triggers_handler_again(
     let ttl = Duration::from_secs(2);
 
     let server_info_clone = server_info.clone();
-    let get_local_node_info_server: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_server: GetLocalNodeInfoCallback = Arc::new(move || {
         let server_info_clone = server_info_clone.clone();
         Box::pin(async move { Ok(server_info_clone.clone()) })
     });
@@ -1405,7 +1403,7 @@ async fn test_cache_expiry_triggers_handler_again(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Client setup with SkipServerVerification
-    use runar_node::network::transport::SkipServerVerification;
+    use runar_transporter::transport::SkipServerVerification;
     let client_endpoint = {
         let client_rustls = rustls::ClientConfig::builder()
             .dangerous()
@@ -1602,12 +1600,12 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         }));
 
     let node1_info_clone = node1_info.clone();
-    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let node1_info_clone = node1_info_clone.clone();
         Box::pin(async move { Ok(node1_info_clone.clone()) })
     });
     let node2_info_clone = node2_info.clone();
-    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t2: GetLocalNodeInfoCallback = Arc::new(move || {
         let node2_info_clone = node2_info_clone.clone();
         Box::pin(async move { Ok(node2_info_clone.clone()) })
     });
@@ -1805,11 +1803,11 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
 
     let info1_clone = info1.clone();
     let info2_clone = info2.clone();
-    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let info1_clone = info1_clone.clone();
         Box::pin(async move { Ok(info1_clone.clone()) })
     });
-    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t2: GetLocalNodeInfoCallback = Arc::new(move || {
         let info2_clone = info2_clone.clone();
         Box::pin(async move { Ok(info2_clone.clone()) })
     });
@@ -1958,14 +1956,10 @@ async fn test_capability_version_bump_across_reconnect(
     };
 
     // Handlers: respond ok, no-op one-way (distinct instances per transport)
-    let handler1: runar_node::network::transport::MessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(None) }));
-    let one_way1: runar_node::network::transport::OneWayMessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(()) }));
-    let handler2: runar_node::network::transport::MessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(None) }));
-    let one_way2: runar_node::network::transport::OneWayMessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let handler1: MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way1: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+    let handler2: MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way2: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
     let resolver: std::sync::Arc<dyn runar_serializer::traits::LabelResolver> =
         std::sync::Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
             runar_serializer::traits::KeyMappingConfig {
@@ -1975,46 +1969,42 @@ async fn test_capability_version_bump_across_reconnect(
 
     let info1_clone = info1.clone();
     let info2_clone = info2.clone();
-    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let info1_clone = info1_clone.clone();
         Box::pin(async move { Ok(info1_clone.clone()) })
     });
-    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t2: GetLocalNodeInfoCallback = Arc::new(move || {
         let info2_clone = info2_clone.clone();
         Box::pin(async move { Ok(info2_clone.clone()) })
     });
-    let t1 = std::sync::Arc::new(
-        runar_node::network::transport::quic_transport::QuicTransport::new(
-            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
-                .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
-                .with_private_key(km1.get_quic_certificate_config()?.private_key)
-                .with_root_certificates(vec![ca_cert.clone()])
-                .with_local_node_public_key(pk1.clone())
-                .with_get_local_node_info(get_local_node_info_t1)
-                .with_bind_addr("127.0.0.1:50171".parse()?)
-                .with_message_handler(handler1)
-                .with_one_way_message_handler(one_way1)
-                .with_logger(logger.clone())
-                .with_keystore(std::sync::Arc::new(NoCrypto))
-                .with_label_resolver(resolver.clone()),
-        )?,
-    );
-    let t2 = std::sync::Arc::new(
-        runar_node::network::transport::quic_transport::QuicTransport::new(
-            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
-                .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
-                .with_private_key(km2.get_quic_certificate_config()?.private_key)
-                .with_root_certificates(vec![ca_cert])
-                .with_local_node_public_key(pk2.clone())
-                .with_get_local_node_info(get_local_node_info_t2)
-                .with_bind_addr("127.0.0.1:50172".parse()?)
-                .with_message_handler(handler2)
-                .with_one_way_message_handler(one_way2)
-                .with_logger(logger.clone())
-                .with_keystore(std::sync::Arc::new(NoCrypto))
-                .with_label_resolver(resolver.clone()),
-        )?,
-    );
+    let t1 = std::sync::Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca_cert.clone()])
+            .with_local_node_public_key(pk1.clone())
+            .with_get_local_node_info(get_local_node_info_t1)
+            .with_bind_addr("127.0.0.1:50171".parse()?)
+            .with_message_handler(handler1)
+            .with_one_way_message_handler(one_way1)
+            .with_logger(logger.clone())
+            .with_keystore(std::sync::Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
+    let t2 = std::sync::Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca_cert])
+            .with_local_node_public_key(pk2.clone())
+            .with_get_local_node_info(get_local_node_info_t2)
+            .with_bind_addr("127.0.0.1:50172".parse()?)
+            .with_message_handler(handler2)
+            .with_one_way_message_handler(one_way2)
+            .with_logger(logger.clone())
+            .with_keystore(std::sync::Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
 
     let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
     sr1?;
@@ -2023,12 +2013,10 @@ async fn test_capability_version_bump_across_reconnect(
 
     // Connect and wait
     t1.clone()
-        .connect_peer(
-            runar_node::network::discovery::multicast_discovery::PeerInfo::new(
-                info2.node_public_key.clone(),
-                info2.addresses.clone(),
-            ),
-        )
+        .connect_peer(PeerInfo::new(
+            info2.node_public_key.clone(),
+            info2.addresses.clone(),
+        ))
         .await?;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     while !t1.is_connected(&id2).await || !t2.is_connected(&id1).await {
@@ -2049,12 +2037,10 @@ async fn test_capability_version_bump_across_reconnect(
 
     // Reconnect
     t1.clone()
-        .connect_peer(
-            runar_node::network::discovery::multicast_discovery::PeerInfo::new(
-                info2.node_public_key.clone(),
-                info2.addresses.clone(),
-            ),
-        )
+        .connect_peer(PeerInfo::new(
+            info2.node_public_key.clone(),
+            info2.addresses.clone(),
+        ))
         .await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
@@ -2120,14 +2106,10 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     };
 
     // Handlers
-    let handler1: runar_node::network::transport::MessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(None) }));
-    let handler2: runar_node::network::transport::MessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(None) }));
-    let one_way1: runar_node::network::transport::OneWayMessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(()) }));
-    let one_way2: runar_node::network::transport::OneWayMessageHandler =
-        Box::new(|_m| Box::pin(async { Ok(()) }));
+    let handler1: MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let handler2: MessageHandler = Box::new(|_m| Box::pin(async { Ok(None) }));
+    let one_way1: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
+    let one_way2: OneWayMessageHandler = Box::new(|_m| Box::pin(async { Ok(()) }));
     let resolver: std::sync::Arc<dyn runar_serializer::traits::LabelResolver> =
         std::sync::Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
             runar_serializer::traits::KeyMappingConfig {
@@ -2141,7 +2123,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     let ev2: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
-    let cb1_connected: runar_node::network::transport::PeerConnectedCallback = {
+    let cb1_connected: PeerConnectedCallback = {
         let ev = ev1.clone();
         std::sync::Arc::new(move |peer: String, _info: NodeInfo| {
             let ev = ev.clone();
@@ -2151,7 +2133,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         })
     };
 
-    let cb1_disconnected: runar_node::network::transport::PeerDisconnectedCallback = {
+    let cb1_disconnected: PeerDisconnectedCallback = {
         let ev = ev1.clone();
         std::sync::Arc::new(move |peer: String| {
             let ev = ev.clone();
@@ -2161,7 +2143,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         })
     };
 
-    let cb2_connected: runar_node::network::transport::PeerConnectedCallback = {
+    let cb2_connected: PeerConnectedCallback = {
         let ev = ev2.clone();
         std::sync::Arc::new(move |peer: String, _info: NodeInfo| {
             let ev = ev.clone();
@@ -2171,7 +2153,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         })
     };
 
-    let cb2_disconnected: runar_node::network::transport::PeerDisconnectedCallback = {
+    let cb2_disconnected: PeerDisconnectedCallback = {
         let ev = ev2.clone();
         std::sync::Arc::new(move |peer: String| {
             let ev = ev.clone();
@@ -2183,51 +2165,47 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
 
     let info1_clone = info1.clone();
     let info2_clone = info2.clone();
-    let get_local_node_info_t1: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let info1_clone = info1_clone.clone();
         Box::pin(async move { Ok(info1_clone.clone()) })
     });
-    let get_local_node_info_t2: GetLocalNodeInfoFn = Arc::new(move || {
+    let get_local_node_info_t2: GetLocalNodeInfoCallback = Arc::new(move || {
         let info2_clone = info2_clone.clone();
         Box::pin(async move { Ok(info2_clone.clone()) })
     });
 
-    let t1 = std::sync::Arc::new(
-        runar_node::network::transport::quic_transport::QuicTransport::new(
-            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
-                .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
-                .with_private_key(km1.get_quic_certificate_config()?.private_key)
-                .with_root_certificates(vec![ca_cert.clone()])
-                .with_local_node_public_key(pk1.clone())
-                .with_get_local_node_info(get_local_node_info_t1)
-                .with_bind_addr("127.0.0.1:50181".parse()?)
-                .with_message_handler(handler1)
-                .with_one_way_message_handler(one_way1)
-                .with_peer_connected_callback(cb1_connected)
-                .with_peer_disconnected_callback(cb1_disconnected)
-                .with_logger(logger.clone())
-                .with_keystore(std::sync::Arc::new(NoCrypto))
-                .with_label_resolver(resolver.clone()),
-        )?,
-    );
-    let t2 = std::sync::Arc::new(
-        runar_node::network::transport::quic_transport::QuicTransport::new(
-            runar_node::network::transport::quic_transport::QuicTransportOptions::new()
-                .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
-                .with_private_key(km2.get_quic_certificate_config()?.private_key)
-                .with_root_certificates(vec![ca_cert])
-                .with_local_node_public_key(pk2.clone())
-                .with_get_local_node_info(get_local_node_info_t2)
-                .with_bind_addr("127.0.0.1:50182".parse()?)
-                .with_message_handler(handler2)
-                .with_one_way_message_handler(one_way2)
-                .with_peer_connected_callback(cb2_connected)
-                .with_peer_disconnected_callback(cb2_disconnected)
-                .with_logger(logger.clone())
-                .with_keystore(std::sync::Arc::new(NoCrypto))
-                .with_label_resolver(resolver.clone()),
-        )?,
-    );
+    let t1 = std::sync::Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca_cert.clone()])
+            .with_local_node_public_key(pk1.clone())
+            .with_get_local_node_info(get_local_node_info_t1)
+            .with_bind_addr("127.0.0.1:50181".parse()?)
+            .with_message_handler(handler1)
+            .with_one_way_message_handler(one_way1)
+            .with_peer_connected_callback(cb1_connected)
+            .with_peer_disconnected_callback(cb1_disconnected)
+            .with_logger(logger.clone())
+            .with_keystore(std::sync::Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
+    let t2 = std::sync::Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_root_certificates(vec![ca_cert])
+            .with_local_node_public_key(pk2.clone())
+            .with_get_local_node_info(get_local_node_info_t2)
+            .with_bind_addr("127.0.0.1:50182".parse()?)
+            .with_message_handler(handler2)
+            .with_one_way_message_handler(one_way2)
+            .with_peer_connected_callback(cb2_connected)
+            .with_peer_disconnected_callback(cb2_disconnected)
+            .with_logger(logger.clone())
+            .with_keystore(std::sync::Arc::new(NoCrypto))
+            .with_label_resolver(resolver.clone()),
+    )?);
 
     let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
     sr1?;
@@ -2235,14 +2213,8 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
     // Repeated race rounds
-    let p1 = runar_node::network::discovery::multicast_discovery::PeerInfo::new(
-        info1.node_public_key.clone(),
-        info1.addresses.clone(),
-    );
-    let p2 = runar_node::network::discovery::multicast_discovery::PeerInfo::new(
-        info2.node_public_key.clone(),
-        info2.addresses.clone(),
-    );
+    let p1 = PeerInfo::new(info1.node_public_key.clone(), info1.addresses.clone());
+    let p2 = PeerInfo::new(info2.node_public_key.clone(), info2.addresses.clone());
     for _ in 0..5 {
         let (a, b) = tokio::join!(
             t1.clone().connect_peer(p2.clone()),

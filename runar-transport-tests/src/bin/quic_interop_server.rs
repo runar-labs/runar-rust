@@ -6,9 +6,12 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use log::LevelFilter;
 use runar_macros_common::{log_debug, log_info};
-use runar_node::network::transport::{NetworkMessage, NetworkTransport};
-use runar_node::network::{QuicTransport, QuicTransportOptions};
 use runar_schemas::NodeInfo;
+use runar_transporter::transport::{
+    MessageHandler, NetworkMessage, NetworkTransport, OneWayMessageHandler, MESSAGE_TYPE_REQUEST,
+    MESSAGE_TYPE_RESPONSE,
+};
+use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
 // no-op
 
 use runar_transport_tests::quic_interop_common::{
@@ -44,38 +47,36 @@ async fn main() -> Result<()> {
     let node_id = args.node_id.unwrap_or_else(|| "rust-server".to_string());
 
     // Minimal message handler (echo request -> response)
-    let handler: runar_node::network::transport::MessageHandler =
-        Box::new(move |msg: NetworkMessage| {
-            let logger = logger_for_handlers.clone();
-            Box::pin(async move {
-                log_debug!(
-                    logger,
-                    "server received msg type={} from {}",
-                    msg.message_type,
-                    msg.source_node_id
-                );
-                if msg.message_type == runar_node::network::transport::MESSAGE_TYPE_REQUEST {
-                    let reply = NetworkMessage {
-                        source_node_id: msg.destination_node_id.clone(),
-                        destination_node_id: msg.source_node_id.clone(),
-                        message_type: runar_node::network::transport::MESSAGE_TYPE_RESPONSE,
-                        payloads: msg.payloads.clone(),
-                    };
-                    return Ok(Some(reply));
-                }
-                Ok(None)
-            })
-        });
+    let handler: MessageHandler = Box::new(move |msg: NetworkMessage| {
+        let logger = logger_for_handlers.clone();
+        Box::pin(async move {
+            log_debug!(
+                logger,
+                "server received msg type={} from {}",
+                msg.message_type,
+                msg.source_node_id
+            );
+            if msg.message_type == MESSAGE_TYPE_REQUEST {
+                let reply = NetworkMessage {
+                    source_node_id: msg.destination_node_id.clone(),
+                    destination_node_id: msg.source_node_id.clone(),
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payloads: msg.payloads.clone(),
+                };
+                return Ok(Some(reply));
+            }
+            Ok(None)
+        })
+    });
 
     // One-way event handler just logs
-    let one_way: runar_node::network::transport::OneWayMessageHandler =
-        Box::new(move |msg: NetworkMessage| {
-            let logger = logger_for_one_way.clone();
-            Box::pin(async move {
-                log_info!(logger, "server received event from {}", msg.source_node_id);
-                Ok(())
-            })
-        });
+    let one_way: OneWayMessageHandler = Box::new(move |msg: NetworkMessage| {
+        let logger = logger_for_one_way.clone();
+        Box::pin(async move {
+            log_info!(logger, "server received event from {}", msg.source_node_id);
+            Ok(())
+        })
+    });
 
     let keystore = Arc::new(NoCrypto);
     let label_resolver = default_label_resolver();

@@ -12,12 +12,12 @@
 // deriving values from the TopicPath when needed.
 
 use crate::node::Node; // Added for concrete type
-use crate::routing::TopicPath;
 use crate::services::service_registry::EventHandler;
 use crate::services::NodeDelegate;
 use crate::services::{EventRegistrationOptions, PublishOptions};
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;

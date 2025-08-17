@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 runar_node = { path = "../runar-node" }
+runar_transporter = { path = "../runar-transporter" }
 runar_macros_common = { path = "../runar-macros-common" }
 runar_test_utils = { path = "../runar-test-utils" }
 runar-schemas = { path = "../runar-schemas" }

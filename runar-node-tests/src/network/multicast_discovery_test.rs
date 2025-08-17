@@ -5,15 +5,15 @@
 use anyhow::Result;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
-use runar_node::network::discovery::DEFAULT_MULTICAST_ADDR;
-use runar_node::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
+use runar_transporter::discovery::{DiscoveryEvent, DEFAULT_MULTICAST_ADDR};
+use runar_transporter::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use runar_node::network::discovery::multicast_discovery::PeerInfo;
 use runar_node::Node;
 use runar_test_utils::create_networked_node_test_config;
+use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use serial_test::serial;
 use tokio::sync::oneshot;
 
@@ -250,8 +250,8 @@ async fn test_multicast_provider_restart_emits_again() -> Result<()> {
             let node2_id = node2_id_clone.clone();
             Box::pin(async move {
                 match event {
-                    runar_node::network::discovery::DiscoveryEvent::Discovered(pi)
-                    | runar_node::network::discovery::DiscoveryEvent::Updated(pi) => {
+                    runar_transporter::discovery::DiscoveryEvent::Discovered(pi)
+                    | runar_transporter::discovery::DiscoveryEvent::Updated(pi) => {
                         if compact_id(&pi.public_key) == node2_id {
                             if let Some(tx) = first_tx.lock().await.take() {
                                 let _ = tx.send(());
@@ -356,7 +356,7 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                 let node_2_id = node_2_id_clone.clone();
 
                 Box::pin(async move {
-                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) =
+                    if let runar_transporter::discovery::DiscoveryEvent::Discovered(peer_info) =
                         event
                     {
                         let peer_id = compact_id(&peer_info.public_key);
@@ -381,7 +381,7 @@ async fn test_multicast_announce_and_discover() -> Result<()> {
                 let node_1_id = node_1_id_clone.clone();
 
                 Box::pin(async move {
-                    if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) =
+                    if let runar_transporter::discovery::DiscoveryEvent::Discovered(peer_info) =
                         event
                     {
                         let peer_id = compact_id(&peer_info.public_key);
@@ -484,8 +484,7 @@ async fn test_no_duplicate_notifications() -> Result<()> {
             let node_2_id = node_2_id_clone.clone();
 
             Box::pin(async move {
-                if let runar_node::network::discovery::DiscoveryEvent::Discovered(peer_info) = event
-                {
+                if let DiscoveryEvent::Discovered(peer_info) = event {
                     let peer_id = compact_id(&peer_info.public_key);
                     if peer_id == node_2_id {
                         let mut count_guard = count.lock().await;
@@ -666,13 +665,13 @@ async fn test_discovery_provider_stateless_behavior() -> Result<()> {
             let events = Arc::clone(&events_clone);
             Box::pin(async move {
                 let event_str = match event {
-                    runar_node::network::discovery::DiscoveryEvent::Discovered(pi) => {
+                    DiscoveryEvent::Discovered(pi) => {
                         format!("Discovered: {}", compact_id(&pi.public_key))
                     }
-                    runar_node::network::discovery::DiscoveryEvent::Updated(pi) => {
+                    DiscoveryEvent::Updated(pi) => {
                         format!("Updated: {}", compact_id(&pi.public_key))
                     }
-                    runar_node::network::discovery::DiscoveryEvent::Lost(peer) => {
+                    DiscoveryEvent::Lost(peer) => {
                         format!("Lost: {peer}")
                     }
                 };

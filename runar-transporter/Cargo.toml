@@ -1,15 +1,15 @@
 [package]
-name = "runar_node"
+name = "runar_transporter"
 version = "0.1.0"
 edition = "2021"
-description = "Runar Node implementation"
+description = "Network transport and discovery for Runar nodes"
 authors = ["Runar Team"]
 license = "MIT"
 keywords = ["p2p", "encryption", "micro-services"]
 categories = ["development-tools"]
 repository = "https://github.com/runar-labs/runar-rust"
 homepage = "https://github.com/runar-labs/runar-rust"
-documentation = "https://docs.rs/runar_node"
+documentation = "https://docs.rs/runar_transporter"
 readme = "README.md"
 rust-version = "1.70"
 
@@ -37,7 +37,6 @@ runar-serializer = { path = "../runar-serializer" }
 runar-serializer-macros = { path = "../runar-serializer-macros" }
 runar-schemas = { path = "../runar-schemas" }
 runar_macros_common = { path = "../runar-macros-common" }
-runar_transporter = { path = "../runar-transporter" }
 
 # Network dependencies
 quinn = "0.11"
@@ -68,23 +67,8 @@ futures = "0.3"
 
 [features]
 default = []
- 
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-targets = [
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-pc-windows-msvc",
-    "aarch64-pc-windows-msvc",
-]
 
 [dev-dependencies]
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
 runar_test_utils = { path = "../runar-test-utils" }
-
-
-

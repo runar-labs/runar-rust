@@ -1,9 +1,9 @@
-use runar_node::routing::{PathTrie, TopicPath};
-use std::collections::HashMap;
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::HashMap;
+
+    use runar_common::routing::PathTrie;
+    use runar_node::TopicPath;
 
     #[test]
     fn test_path_trie_template_match() {

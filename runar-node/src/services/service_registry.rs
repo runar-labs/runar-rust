@@ -28,10 +28,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::routing::{PathTrie, TopicPath};
 use crate::services::abstract_service::{AbstractService, ServiceState};
 use crate::services::{ActionHandler, EventContext, EventRegistrationOptions, RemoteService};
 use runar_common::logging::Logger;
+use runar_common::routing::{PathTrie, TopicPath};
 use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
 use runar_serializer::ArcValue;
 

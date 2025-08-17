@@ -1,6 +1,6 @@
 use anyhow::Result;
 use runar_common::logging::{LogLevel, LoggingConfig};
-use runar_node::node::Node;
+use runar_node::{node::Node, DiscoveryOptions};
 use runar_test_utils::create_networked_node_test_config;
 use std::time::Duration;
 
@@ -17,13 +17,13 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     let unique_port: u16 = 48000 + (rand::random::<u16>() % 1000);
     let unique_group = format!("239.255.42.98:{unique_port}");
     if let Some(net) = &mut configs[0].network_config {
-        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
+        net.discovery_options = Some(DiscoveryOptions {
             multicast_group: unique_group.clone(),
             ..Default::default()
         });
     }
     if let Some(net) = &mut configs[1].network_config {
-        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
+        net.discovery_options = Some(DiscoveryOptions {
             multicast_group: unique_group,
             ..Default::default()
         });

@@ -32,7 +32,7 @@
 // ## Examples
 //
 // ```rust
-// use runar_node::routing::TopicPath;
+// use runar_common::routing::TopicPath;
 //
 // // Create a topic path
 // let path = TopicPath::new("math/add", "my-network")?;
@@ -444,7 +444,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// // With network_id prefix
     /// let path = TopicPath::new("main:auth/login", "default").expect("Valid path");
@@ -632,7 +632,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::new("main:auth/login", "default").expect("Valid path");
     /// assert_eq!(path.action_path(), "auth/login");
@@ -660,7 +660,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::new("main:auth/login", "default").expect("Valid path");
     /// assert_eq!(path.network_id(), "main");
@@ -676,7 +676,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::new("main:auth/login", "default").expect("Valid path");
     /// // The service_path method returns just the service name (first segment)
@@ -697,7 +697,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::new_service("main", "auth");
     /// assert_eq!(path.as_str(), "main:auth");
@@ -729,7 +729,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::new("main:auth/users", "default").expect("Valid path");
     /// let prefix = TopicPath::new("main:auth", "default").expect("Valid path");
@@ -749,7 +749,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let base = TopicPath::new("main:auth", "default").expect("Valid path");
     /// let child = base.child("login").expect("Valid child path");
@@ -843,7 +843,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::new("main:auth/login/form", "default").expect("Valid path");
     /// let segments = path.get_segments();
@@ -863,7 +863,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::new("main:auth/users", "default").expect("Valid path");
     /// let parent = path.parent().expect("Valid parent path");
@@ -932,7 +932,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let path = TopicPath::test_default("auth/login");
     /// assert_eq!(path.as_str(), "default:auth/login");
@@ -951,7 +951,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let template = "services/{service_path}/state";
     /// let path = TopicPath::new("main:services/math/state", "main").expect("Valid path");
@@ -1011,7 +1011,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let template = "services/{service_path}/state";
     /// let path = TopicPath::new("main:services/math/state", "default").expect("Valid path");
@@ -1103,7 +1103,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     ///
     /// let pattern = TopicPath::new("main:services/*/state", "default").expect("Valid pattern");
     /// let topic1 = TopicPath::new("main:services/math/state", "default").expect("Valid topic");
@@ -1250,7 +1250,7 @@ impl TopicPath {
     ///
     /// Example:
     /// ```
-    /// use runar_node::routing::TopicPath;
+    /// use runar_common::routing::TopicPath;
     /// use std::collections::HashMap;
     ///
     /// let mut params = HashMap::new();

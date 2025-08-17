@@ -12,7 +12,7 @@
 // Export modules
 pub mod errors;
 pub mod logging;
-
+pub mod routing;
 // Re-export traits and types at the root level
 pub use logging::{Component, ComponentKey, LogLevel, Logger, LoggingConfig, LoggingContext};
 

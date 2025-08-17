@@ -11,11 +11,11 @@
 // while maintaining proper isolation between events.
 
 use crate::node::Node; // Added for concrete type
-use crate::routing::TopicPath;
 use crate::services::PublishOptions; // Restored
 use crate::NodeDelegate; // Keep one instance
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
+use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;

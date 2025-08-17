@@ -21,6 +21,7 @@ runar-serializer = { path = "../runar-serializer" }
 runar-keys = { path = "../runar-keys" }
 runar-schemas = { path = "../runar-schemas" }
 runar_macros_common = { path = "../runar-macros-common" }
+runar_transporter = { path = "../runar-transporter" }
 rustls-pki-types = "1.12.0"
 rustls-pemfile = "1.0.3"
 serde_json = "1.0"

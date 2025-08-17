@@ -1,4 +1,4 @@
-use runar_node::routing::TopicPath;
+use runar_common::routing::TopicPath;
 
 /// Comprehensive test suite for TopicPath
 ///

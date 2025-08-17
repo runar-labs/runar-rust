@@ -76,9 +76,7 @@
 
 // Public modules
 pub mod config;
-pub mod network;
 pub mod node;
-pub mod routing;
 pub mod services;
 
 // Re-export the main types from the node module
@@ -92,19 +90,15 @@ pub use services::{
     RequestContext, ServiceRequest,
 };
 
-// Re-export the schema types from runar_common
+// Re-export the schema types from runar_schemas
 pub use runar_schemas::{ActionMetadata, ServiceMetadata};
 
-// Re-export the main types from the routing module
-pub use routing::TopicPath;
+pub use runar_common::routing::TopicPath;
 
-// Re-export the main types from the network module
-pub use network::{
-    DiscoveryOptions, NetworkMessage, NetworkMessageType, NetworkTransport, NodeDiscovery,
-    TransportOptions,
+pub use runar_transporter::discovery::{DiscoveryOptions, NodeDiscovery};
+pub use runar_transporter::transport::{
+    GetLocalNodeInfoCallback, NetworkMessage, NetworkMessageType, NetworkTransport,
 };
-
-// Re-export common macros for convenience
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

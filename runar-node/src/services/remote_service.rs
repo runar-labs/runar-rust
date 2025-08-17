@@ -10,14 +10,14 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::network::transport::{MessageContext, NetworkTransport};
-use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
 use crate::services::service_registry::EventHandler;
 use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
+use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
+use runar_transporter::transport::{MessageContext, NetworkTransport};
 
 // No direct key-store or label resolver – encryption handled by transport layer
 

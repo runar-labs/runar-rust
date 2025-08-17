@@ -1,6 +1,6 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_node::routing::TopicPath;
+use runar_common::routing::TopicPath;
 use runar_node::services::service_registry::{EventHandler, ServiceRegistry};
 use runar_node::services::EventRegistrationOptions;
 use std::sync::{Arc, Mutex};

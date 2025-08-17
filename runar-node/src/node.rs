@@ -8,12 +8,24 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
+use runar_common::routing::{PathTrie, TopicPath};
 use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
 use runar_serializer::{ArcValue, LabelKeyInfo};
+use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
+use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
+use runar_transporter::transport::{
+    GetLocalNodeInfoCallback, NetworkError, NetworkMessagePayloadItem, OneWayMessageHandler,
+    PeerConnectedCallback, PeerDisconnectedCallback, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST,
+    MESSAGE_TYPE_RESPONSE,
+};
+use runar_transporter::{
+    DiscoveryOptions, MessageHandler, MulticastDiscovery, NetworkMessage, NetworkTransport,
+    NodeDiscovery, QuicTransport,
+};
 use socket2;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -26,22 +38,12 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex, RwLock};
 
-use crate::network::discovery::multicast_discovery::PeerInfo;
-use crate::network::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
-use crate::network::transport::{
-    GetLocalNodeInfoFn, NetworkMessage, NetworkMessagePayloadItem, NetworkTransport,
-    PeerDisconnectedCallback, QuicTransport, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST,
-    MESSAGE_TYPE_RESPONSE,
-};
-
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
 type ServiceTask = (TopicPath, tokio::task::JoinHandle<()>);
 // Certificate and PrivateKey types are now imported via the cert_utils module
-use crate::network::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
 use runar_common::logging::LoggingConfig;
 
-use crate::routing::TopicPath;
 use crate::services::keys_service::KeysService;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
 use crate::services::registry_service::RegistryService;
@@ -446,7 +448,7 @@ pub struct Node {
     /// Wrapped in Arc to ensure Node clones share the same storage
     retained_events: Arc<RetainedEventsMap>,
     /// Index of exact topics for wildcard lookups
-    retained_index: Arc<RwLock<crate::routing::PathTrie<String>>>,
+    retained_index: Arc<RwLock<PathTrie<String>>>,
 }
 
 // Implementation for Node
@@ -605,7 +607,7 @@ impl Node {
             keys_manager_mut,
             service_tasks: Arc::new(RwLock::new(Vec::new())),
             retained_events: Arc::new(RetainedEventsMap::new()),
-            retained_index: Arc::new(RwLock::new(crate::routing::PathTrie::new())),
+            retained_index: Arc::new(RwLock::new(PathTrie::new())),
         };
 
         // Register the registry service
@@ -721,8 +723,7 @@ impl Node {
 
         let registry = Arc::clone(&self.service_registry);
         // Create a proper topic path for the service
-        let service_topic = match crate::routing::TopicPath::new(service_path, &default_network_id)
-        {
+        let service_topic = match TopicPath::new(service_path, &default_network_id) {
             Ok(tp) => tp,
             Err(e) => {
                 log_error!(self.logger, "Failed to create topic path for service name:{service_name} path:{service_path} error:{e}");
@@ -1381,13 +1382,13 @@ impl Node {
                         let provider_type_clone = provider_type_clone.clone();
                         Box::pin(async move {
                             match event {
-                                crate::network::discovery::DiscoveryEvent::Discovered(peer_info)
-                                | crate::network::discovery::DiscoveryEvent::Updated(peer_info) => {
+                                DiscoveryEvent::Discovered(peer_info)
+                                | DiscoveryEvent::Updated(peer_info) => {
                                     if let Err(e) = node_arc.handle_discovered_node(peer_info).await {
                                         log_error!(node_arc.logger, "Failed to handle node discovered by {provider_type_clone} provider: {e}");
                                     }
                                 }
-                                crate::network::discovery::DiscoveryEvent::Lost(peer_id) => {
+                                DiscoveryEvent::Lost(peer_id) => {
                                     // Treat as disconnect cleanup hint
                                     let _ = node_arc.cleanup_disconnected_peer(&peer_id).await;
                                 }
@@ -1442,26 +1443,20 @@ impl Node {
 
                 // Use bind address and options from config
                 let bind_addr = network_config.transport_options.bind_address;
-                let quic_options = network_config
-                    .quic_options
-                    .clone()
-                    .ok_or_else(|| anyhow!("QUIC options not provided"))?;
 
                 let self_arc_for_message = self_arc.clone();
-                let message_handler: crate::network::transport::MessageHandler =
-                    Box::new(move |message: NetworkMessage| {
-                        let self_arc = self_arc_for_message.clone();
-                        Box::pin(async move {
-                            self_arc.handle_network_message(message).await.map_err(|e| {
-                                crate::network::transport::NetworkError::TransportError(
-                                    e.to_string(),
-                                )
-                            })
-                        })
-                    });
+                let message_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
+                    let self_arc = self_arc_for_message.clone();
+                    Box::pin(async move {
+                        self_arc
+                            .handle_network_message(message)
+                            .await
+                            .map_err(|e| NetworkError::TransportError(e.to_string()))
+                    })
+                });
 
                 let self_arc_for_message = self_arc.clone();
-                let one_way_message_handler: crate::network::transport::OneWayMessageHandler =
+                let one_way_message_handler: OneWayMessageHandler =
                     Box::new(move |message: NetworkMessage| {
                         let self_arc = self_arc_for_message.clone();
                         Box::pin(async move {
@@ -1469,17 +1464,13 @@ impl Node {
                             let _response = self_arc
                                 .handle_network_message(message)
                                 .await
-                                .map_err(|e| {
-                                    crate::network::transport::NetworkError::TransportError(
-                                        e.to_string(),
-                                    )
-                                })?;
+                                .map_err(|e| NetworkError::TransportError(e.to_string()))?;
                             Ok(())
                         })
                     });
 
                 let self_arc_for_callback = self_arc.clone();
-                let peer_connected_callback: crate::network::transport::PeerConnectedCallback =
+                let peer_connected_callback: PeerConnectedCallback =
                     Arc::new(move |peer_node_id: String, peer_node_info: NodeInfo| {
                         let node = self_arc_for_callback.clone();
                         Box::pin(async move {
@@ -1500,7 +1491,7 @@ impl Node {
                     });
 
                 let self_arc_for_callback = self_arc.clone();
-                let get_local_node_info: GetLocalNodeInfoFn = Arc::new(move || {
+                let get_local_node_info: GetLocalNodeInfoCallback = Arc::new(move || {
                     let node = self_arc_for_callback.clone();
                     Box::pin(async move { node.get_local_node_info().await })
                 });
@@ -1509,6 +1500,11 @@ impl Node {
                     .keys_manager
                     .get_quic_certificate_config()
                     .context("Failed to get QUIC certificates")?;
+
+                let quic_options = network_config
+                    .quic_options
+                    .clone()
+                    .ok_or_else(|| anyhow!("QUIC options not provided"))?;
 
                 // Configure QUIC options with certificates and private key from key manager
                 // Standard QUIC/TLS will handle certificate validation using the CA certificate
@@ -1742,9 +1738,7 @@ impl Node {
         // 2) Remove remote services from this peer
         if let Some(prev_info) = self.remote_node_info.get(peer_node_id) {
             for service in &prev_info.node_metadata.services {
-                if let Ok(service_tp) =
-                    crate::routing::TopicPath::new(&service.service_path, &service.network_id)
-                {
+                if let Ok(service_tp) = TopicPath::new(&service.service_path, &service.network_id) {
                     let _ = self
                         .service_registry
                         .remove_remote_service(&service_tp)

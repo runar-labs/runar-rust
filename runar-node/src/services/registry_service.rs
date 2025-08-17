@@ -14,10 +14,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::routing::TopicPath;
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::{AbstractService, ServiceState};
 use runar_common::logging::Logger;
+use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info};
 use runar_serializer::ArcValue;
 
