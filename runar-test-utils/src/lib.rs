@@ -296,13 +296,21 @@ impl MobileSimulator {
         let key_state_bytes = bincode::serialize(&key_state)?;
 
         // Create transport options with QUIC certificates
-        let _transport_options = QuicTransportOptions::new()
+        let transport_options = QuicTransportOptions::new()
             .with_certificates(node_cert_config.certificate_chain)
             .with_private_key(node_cert_config.private_key)
             .with_root_certificates(vec![ca_certificate]);
 
+        let discovery_options = DiscoveryOptions::default();
+
         let config =
-            NodeConfig::new(self.master.network_id.clone()).with_key_manager_state(key_state_bytes);
+            NodeConfig::new(self.master.network_id.clone())
+            .with_key_manager_state(key_state_bytes)
+            .with_network_config(
+                NetworkConfig::with_quic(transport_options)
+                    .with_discovery_options(discovery_options)
+                    .with_discovery_provider(DiscoveryProviderConfig::default_multicast()),
+            );
 
         self.logger.info(format!(
             "✅ Node configuration created for node: {} with network transport",
