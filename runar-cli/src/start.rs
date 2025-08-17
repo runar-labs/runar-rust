@@ -47,7 +47,7 @@ impl StartCommand {
         let runar_config = self.create_runar_config(&config, &node_key_manager)?;
 
         // Create and start the node
-        let  node = Node::new(runar_config)
+        let node = Node::new(runar_config)
             .await
             .context("Failed to create Runar node")?;
 
@@ -67,7 +67,7 @@ impl StartCommand {
         println!("🛑 Press Ctrl+C to stop the node");
 
         // Wait for shutdown signal
-        self.wait_for_shutdown(&mut node).await?;
+        self.wait_for_shutdown(&node).await?;
 
         Ok(())
     }
@@ -141,7 +141,7 @@ impl StartCommand {
         Ok(runar_config)
     }
 
-    async fn wait_for_shutdown(&self, node: &mut Node) -> Result<()> {
+    async fn wait_for_shutdown(&self, node: &Node) -> Result<()> {
         // Set up signal handling for graceful shutdown (cross-platform)
         let ctrl_c = tokio::signal::ctrl_c();
         ctrl_c

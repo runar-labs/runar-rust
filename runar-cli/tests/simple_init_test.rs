@@ -60,7 +60,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     // ==========================================
     println!("\n🖥️  STEP 2: Generating node keys and CSR");
 
-    let  node_key_manager =
+    let mut node_key_manager =
         NodeKeyManager::new(logger.clone()).context("Failed to create node key manager")?;
 
     let setup_token = node_key_manager

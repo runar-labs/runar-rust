@@ -132,7 +132,7 @@ impl InitCommand {
 
     fn generate_node_keys(&self) -> Result<(NodeKeyManager, SetupToken)> {
         // Create node key manager
-        let  node_key_manager = NodeKeyManager::new(self.logger.clone())
+        let mut node_key_manager = NodeKeyManager::new(self.logger.clone())
             .context("Failed to create node key manager")?;
 
         // Generate CSR

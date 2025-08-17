@@ -73,7 +73,7 @@ mod tests {
         let config = create_node_test_config()
             .expect("Debug creating test config")
             .with_logging_config(logging_config);
-        let  node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         let schema = Schema {
             tables: vec![TableDefinition {

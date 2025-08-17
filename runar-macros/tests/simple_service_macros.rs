@@ -395,7 +395,7 @@ mod tests {
 
         let default_network_id = config.default_network_id.clone();
 
-        let  node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         let store = Arc::new(Mutex::new(HashMap::new()));
 

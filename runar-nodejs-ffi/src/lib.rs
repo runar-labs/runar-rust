@@ -191,7 +191,7 @@ impl JsNode {
 
     #[napi]
     pub async fn add_service(&self, js_service: JsService) -> napi::Result<()> {
-        let  node = self.inner.lock().await;
+        let node = self.inner.lock().await;
 
         // Validate that the service has actions
         if js_service.actions.is_empty() {

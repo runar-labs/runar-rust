@@ -85,7 +85,7 @@ use runar_common::routing::TopicPath;
 
 /// Type alias for async-returning function
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
- 
+
 /// Options for network transport configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransportOptions {
@@ -267,6 +267,32 @@ pub type PeerDisconnectedCallback = Arc<dyn Fn(String) -> BoxFuture<'static, ()>
 
 pub type GetLocalNodeInfoCallback =
     Arc<dyn Fn() -> BoxFuture<'static, Result<NodeInfo>> + Send + Sync>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestMessage {
+    pub path: String,
+    pub correlation_id: String,
+    pub params_bytes: Vec<u8>,
+    pub profile_public_key: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseMessage {
+    pub correlation_id: String,
+    pub params_bytes: Vec<u8>,
+    pub profile_public_key: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventMessage {
+    pub correlation_id: String,
+    pub params_bytes: Vec<u8>,
+}
+
+pub type RequestCallback =
+    Arc<dyn Fn(RequestMessage) -> BoxFuture<'static, Result<ResponseMessage>> + Send + Sync>;
+
+pub type EventCallback = Arc<dyn Fn(EventMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]

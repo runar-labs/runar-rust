@@ -583,7 +583,7 @@ impl Node {
             version: 0,
         };
 
-        let  node = Self {
+        let node = Self {
             local_node_info: Arc::new(RwLock::new(local_node_info)),
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: default_network_id,
@@ -701,10 +701,7 @@ impl Node {
     ///
     /// If the service doesn't specify a network ID, it will use the node's default network.
     /// Services can be registered to specific networks for multi-network deployments.
-    pub async fn add_service<S: AbstractService + 'static>(
-        &self,
-        mut service: S,
-    ) -> Result<()> {
+    pub async fn add_service<S: AbstractService + 'static>(&self, mut service: S) -> Result<()> {
         let default_network_id = self.network_id.to_string();
         let service_network_id = match service.network_id() {
             Some(id) => id,

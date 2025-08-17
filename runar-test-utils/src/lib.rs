@@ -303,8 +303,7 @@ impl MobileSimulator {
 
         let discovery_options = DiscoveryOptions::default();
 
-        let config =
-            NodeConfig::new(self.master.network_id.clone())
+        let config = NodeConfig::new(self.master.network_id.clone())
             .with_key_manager_state(key_state_bytes)
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)

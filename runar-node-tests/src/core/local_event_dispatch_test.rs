@@ -88,7 +88,7 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
 
     // Create a node with NO networking
     let config = create_node_test_config()?;
-    let  node = Node::new(config).await?;
+    let node = Node::new(config).await?;
 
     // Add MathService (this will create its own subscription to math/added)
     let math_service = MathService::new("math1", "math1");

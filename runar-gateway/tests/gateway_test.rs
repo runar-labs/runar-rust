@@ -73,7 +73,7 @@ async fn test_gateway_routes() -> Result<()> {
 
     let logger = Arc::new(Logger::new_root(Component::Custom("gateway_test")));
 
-    let  node = Node::new(node_config).await?;
+    let node = Node::new(node_config).await?;
 
     // 2. Setup and Add EchoService
     let echo_service = EchoService::default();
