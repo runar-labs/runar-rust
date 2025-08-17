@@ -17,6 +17,12 @@ impl RoundRobinLoadBalancer {
     }
 }
 
+impl Default for RoundRobinLoadBalancer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Network configuration options
 #[derive(Clone, Debug)]
 pub struct NetworkConfig {

@@ -102,7 +102,7 @@ async fn test_discovery_ttl_lost_and_debounce() -> Result<()> {
 
     // Node A should have cleaned up the disconnected peer
     assert!(
-        !node_a.is_connected(&id_b).await,
+        !node_a.is_connected(id_b).await,
         "Node A should have cleaned up disconnected peer B after TTL"
     );
 
@@ -614,7 +614,7 @@ async fn test_node_cleanup_behavior() -> Result<()> {
 
     // Node A should have cleaned up the disconnected peer
     assert!(
-        !node_a.is_connected(&id_b).await,
+        !node_a.is_connected(id_b).await,
         "Node A should have cleaned up disconnected peer B after TTL"
     );
 
