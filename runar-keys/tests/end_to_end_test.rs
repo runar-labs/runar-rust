@@ -809,10 +809,10 @@ async fn test_negative_csr_cn_mismatch_rejected() -> Result<()> {
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let node_logger = create_test_logger();
     node_logger.set_node_id("node".to_string());
-    let mut node = NodeKeyManager::new(node_logger)?;
+    let mut node_keys = NodeKeyManager::new(node_logger)?;
 
     // Generate valid setup token
-    let token = node.generate_csr()?;
+    let token = node_keys.generate_csr()?;
 
     // Tamper node_id so CN won't match
     let mut bad_token = token.clone();
@@ -830,9 +830,9 @@ async fn test_negative_tampered_csr_signature_rejected() -> Result<()> {
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let node_logger = create_test_logger();
     node_logger.set_node_id("node".to_string());
-    let mut node = NodeKeyManager::new(node_logger)?;
+    let mut node_keys = NodeKeyManager::new(node_logger)?;
 
-    let mut token = node.generate_csr()?;
+    let mut token = node_keys.generate_csr()?;
     // Flip one byte in csr_der to break signature
     if let Some(b) = token.csr_der.get_mut(0) {
         *b ^= 0xFF;

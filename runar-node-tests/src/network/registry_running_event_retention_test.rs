@@ -33,7 +33,7 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     let node2_config = configs[1].clone();
 
     // Node 1 with a service
-    let mut node1 = Node::new(node1_config.clone()).await?;
+    let  node1 = Node::new(node1_config.clone()).await?;
     node1
         .add_service(MathService::new("math1", "math1"))
         .await?;

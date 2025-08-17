@@ -101,7 +101,7 @@ impl StatsService {
 async fn main() -> Result<()> {
     // Create a minimal Node configuration
     let config = NodeConfig::new_test_config("node-test", "default_network");
-    let mut node = Node::new(config).await?;
+    let  node = Node::new(config).await?;
 
     // Register services
     node.add_service(MathService).await?;
@@ -214,7 +214,7 @@ impl SecureNotesService {
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = NodeConfig::new_test_config("secure-notes-node", "default_network");
-    let mut node = Node::new(config).await?;
+    let  node = Node::new(config).await?;
 
     node.add_service(SecureNotesService::default()).await?;
 
@@ -266,7 +266,7 @@ This lets you start with a blazing-fast monolith and migrate to microservices gr
 
 ```rust
 // In tests or local tooling – everything lives in one process
-let mut node = Node::new(NodeConfig::new_test_config("test-node", "test-network")).await?;
+let  node = Node::new(NodeConfig::new_test_config("test-node", "test-network")).await?;
 node.add_service(MathService).await?;
 let sum: f64 = node.request("math/add", Some(ArcValue::new_map(hmap!{"a"=>1.0,"b"=>2.0}))).await?;
 ```
@@ -281,7 +281,7 @@ let quic_options = QuicTransportOptions::new();
 let network_config = NetworkConfig::with_quic(quic_options)
     .with_multicast_discovery();
 
-let mut node = Node::new(
+let  node = Node::new(
     NodeConfig::new_test_config("prod-node", "prod-network")
         .with_network_config(network_config)
 ).await?;

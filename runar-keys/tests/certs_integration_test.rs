@@ -238,26 +238,26 @@ async fn test_certificate_validation_edge_cases() -> Result<()> {
     let node_logger = create_test_logger();
     node_logger.set_node_id("node".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
-    let mut node = NodeKeyManager::new(node_logger)?;
+    let mut node_keys = NodeKeyManager::new(node_logger)?;
 
     // Use the proper CSR-based certificate workflow
-    let setup_token = node.generate_csr()?;
+    let setup_token = node_keys.generate_csr()?;
     let cert_message = mobile.process_setup_token(&setup_token)?;
-    node.install_certificate(cert_message)?;
+    node_keys.install_certificate(cert_message)?;
 
     // Test peer validation
     let node_cert = X509Certificate::from_der(
-        node.get_quic_certificate_config()?.certificate_chain[0].to_vec(),
+        node_keys.get_quic_certificate_config()?.certificate_chain[0].to_vec(),
     )?;
 
     // Valid validation
-    node.validate_peer_certificate(&node_cert)?;
+    node_keys.validate_peer_certificate(&node_cert)?;
     println!("   ✅ Self-validation passed");
 
     // Test signature verification
     let test_data = b"Test signature data";
-    let signature = node.sign_data(test_data)?;
-    node.verify_peer_signature(test_data, &signature, &node_cert)?;
+    let signature = node_keys.sign_data(test_data)?;
+    node_keys.verify_peer_signature(test_data, &signature, &node_cert)?;
     println!("   ✅ Signature verification passed");
 
     Ok(())

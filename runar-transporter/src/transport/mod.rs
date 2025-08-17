@@ -85,31 +85,7 @@ use runar_common::routing::TopicPath;
 
 /// Type alias for async-returning function
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-// /// Unique identifier for a node in the network
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-// pub struct PeerId {
-//     /// Unique ID for this node within the network
-//     pub public_key: String,
-//     pub node_id: String,
-// }
-
-// impl PeerId {
-//     /// Create a new NodeIdentifier
-//     pub fn new(public_key: String, node_id: String) -> Self {
-//         Self {
-//             public_key: public_key,
-//             node_id: node_id,
-//         }
-//     }
-// }
-
-// impl fmt::Display for PeerId {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "{}", self.public_key)
-//     }
-// }
-
+ 
 /// Options for network transport configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransportOptions {

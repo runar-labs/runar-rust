@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     // Create a test environment with mobile simulator
     let (simulator, config) = create_test_environment().expect("Error creating test environment");
     simulator.print_summary();
-    let mut node = Node::new(config).await?;
+    let  node = Node::new(config).await?;
 
     // Register services
     node.add_service(MathService::default()).await?;

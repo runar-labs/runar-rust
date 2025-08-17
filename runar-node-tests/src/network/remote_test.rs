@@ -48,7 +48,7 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug(format!("Node1 config: {node1_config}"));
     logger.debug(format!("Node2 config: {node2_config}"));
 
-    let mut node1 = Node::new(node1_config).await?;
+    let  node1 = Node::new(node1_config).await?;
     node1.add_service(math_service1).await?;
 
     // Start the subscription in the background (hold join handle)
@@ -66,7 +66,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     logger.debug("✅ Node 1 started");
 
-    let mut node2 = Node::new(node2_config).await?;
+    let  node2 = Node::new(node2_config).await?;
     node2.add_service(math_service2).await?;
 
     node2.start().await?;
@@ -291,12 +291,12 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.debug(format!("Node1 config: {node1_config}"));
         logger.debug(format!("Node2 config: {node2_config}"));
 
-        let mut node1 = Node::new(node1_config.clone()).await?;
+        let  node1 = Node::new(node1_config.clone()).await?;
         node1.add_service(math_service1.clone()).await?;
         node1.start().await?;
         logger.debug("✅ Node 1 started");
 
-        let mut node2 = Node::new(node2_config).await?;
+        let  node2 = Node::new(node2_config).await?;
         node2.add_service(math_service2).await?;
         node2.start().await?;
         logger.debug("✅ Node 2 started");
@@ -386,7 +386,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         //sleep(Duration::from_millis(1000)).await;
 
         // Create a fresh node using the same config (preserves node_id, keys, etc.)
-        let mut node1 = Node::new(node1_config.clone()).await?;
+        let  node1 = Node::new(node1_config.clone()).await?;
         node1.add_service(math_service1.clone()).await?;
         node1.start().await?;
         // Ensure background service start completion before remote requests

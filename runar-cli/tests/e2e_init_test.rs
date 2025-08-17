@@ -262,7 +262,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     let _init_cmd = InitCommand::new(config_dir.clone(), logger.clone());
 
     let (mut node_key_manager, setup_token) = {
-        let mut node_key_manager =
+        let  node_key_manager =
             NodeKeyManager::new(logger.clone()).context("Failed to create node key manager")?;
 
         let setup_token = node_key_manager

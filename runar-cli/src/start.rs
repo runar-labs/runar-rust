@@ -47,7 +47,7 @@ impl StartCommand {
         let runar_config = self.create_runar_config(&config, &node_key_manager)?;
 
         // Create and start the node
-        let mut node = Node::new(runar_config)
+        let  node = Node::new(runar_config)
             .await
             .context("Failed to create Runar node")?;
 

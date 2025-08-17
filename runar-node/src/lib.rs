@@ -33,7 +33,7 @@
 //!     // let config = NodeConfig::new("my-node", "my-network");
 //!     //
 //!     // Create and start the node
-//!     // let mut node = Node::new(config).await?;
+//!     // let  node = Node::new(config).await?;
 //!     // node.start().await?;
 //!     //
 //!     // Your services can now communicate!

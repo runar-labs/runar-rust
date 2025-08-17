@@ -148,7 +148,7 @@ fn cleanup_database_files() {
 #[serial]
 async fn test_basic_replication_between_nodes() -> Result<()> {
     // Configure logging
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     // Set up logger
@@ -169,7 +169,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 
     // Start Node 1 and add some initial data
     logger.info("Starting Node 1...");
-    let mut node1 = Node::new(node1_config).await?;
+    let  node1 = Node::new(node1_config).await?;
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     logger.info("✅ Node 1 started");
@@ -261,7 +261,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
 
     // Now start Node 2 - it should sync during startup
     logger.info("Starting Node 2 (should sync during startup)...");
-    let mut node2 = Node::new(node2_config).await?;
+    let  node2 = Node::new(node2_config).await?;
     // Pre-register discovery before starting Node 2
     let node1_discovered_by_node2 = node2.on(
         format!(
@@ -465,7 +465,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let node1_config = configs[0].clone();
     let node2_config = configs[1].clone();
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("test")));
@@ -479,7 +479,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 
     // Start Node 1 and add substantial data
     logger.info("Starting Node 1 and adding substantial data...");
-    let mut node1 = Node::new(node1_config).await?;
+    let  node1 = Node::new(node1_config).await?;
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     logger.info("✅ Node 1 started");
@@ -548,7 +548,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     // Now start Node 2 - it should sync during startup and service should not be available until complete
     logger.info("Starting Node 2 (service should not be available until sync completes)...");
     let start_time = std::time::Instant::now();
-    let mut node2 = Node::new(node2_config).await?;
+    let  node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
     // Pre-register discovery before starting Node 2
     let node1_discovered_by_node2 = node2.on(
@@ -838,7 +838,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
         create_replicated_sqlite_service("sqlite_test", "users_db_test_2", ":memory:", true);
 
     logger.info("Starting Node 3 and sync.");
-    let mut node3 = Node::new(node3_config).await?;
+    let  node3 = Node::new(node3_config).await?;
     node3.add_service(sqlite_service3).await?;
 
     let on_node2_found = node3.on(
@@ -980,7 +980,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     drop(node1);
 
     //create new node1 from same config
-    let mut node1 = Node::new(configs[0].clone()).await?;
+    let  node1 = Node::new(configs[0].clone()).await?;
     let sqlite_service1 =
         create_replicated_sqlite_service("sqlite_test", "users_db_test_2", "./node_1_db", true);
     node1.add_service(sqlite_service1).await?;
@@ -1366,7 +1366,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_event_tables_and_ordering() -> Result<()> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("test")));
@@ -1385,7 +1385,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 
     // Start Node 1
     logger.info("Starting Node 1...");
-    let mut node1 = Node::new(node1_config).await?;
+    let  node1 = Node::new(node1_config).await?;
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     logger.info("✅ Node 1 started");
@@ -1483,7 +1483,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 
     // Start Node 2
     logger.info("Starting Node 2...");
-    let mut node2 = Node::new(node2_config).await?;
+    let  node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
     // Pre-register discovery before starting Node 2
     let node1_discovered_by_node2 = node2.on(
@@ -1661,7 +1661,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_mobile_simulator_replication() -> Result<()> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     logger.info("=== Test 4: Mobile Simulator Replication Test ===");
@@ -1682,7 +1682,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 
     // Start Node 1
     logger.info("Starting Node 1...");
-    let mut node1 = Node::new(node1_config).await?;
+    let  node1 = Node::new(node1_config).await?;
     node1.add_service(sqlite_service1).await?;
     node1.start().await?;
     logger.info(format!("✅ Node 1 started with ID: {}", node1.node_id()));
@@ -1732,7 +1732,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 
     // Start Node 2 - it should sync during startup
     logger.info("Starting Node 2 (should sync during startup)...");
-    let mut node2 = Node::new(node2_config).await?;
+    let  node2 = Node::new(node2_config).await?;
     node2.add_service(sqlite_service2).await?;
     // Pre-register discovery before starting Node 2
     let node1_discovered_by_node2 = node2.on(
@@ -1931,7 +1931,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_high_volume_replication_with_pagination() -> Result<()> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     logger.info("🧪 Testing high-volume replication with pagination (400 records)...");
@@ -1940,7 +1940,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     let configs = create_networked_node_test_config(2)?;
     let node1_config = configs[0].clone();
 
-    let mut node1 = Node::new(node1_config).await?;
+    let  node1 = Node::new(node1_config).await?;
 
     // Create SQLite service with replication for Node 1
     let sqlite_service1 = create_replicated_sqlite_service(
@@ -2006,7 +2006,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
     // Create Node 2 (empty, will sync from Node 1)
     let node2_config = configs[1].clone();
 
-    let mut node2 = Node::new(node2_config).await?;
+    let  node2 = Node::new(node2_config).await?;
 
     // Create SQLite service with replication for Node 2
     let sqlite_service2 = create_replicated_sqlite_service(

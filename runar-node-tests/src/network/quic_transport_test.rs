@@ -263,7 +263,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // ==================================================
 
     // Create node 1 key manager and generate setup token
-    let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
+    let  node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
     let setup_token_1 = node_key_manager_1
         .generate_csr()
         .expect("Failed to generate setup token for node 1");
@@ -283,7 +283,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // ==================================================
 
     // Create node 2 key manager and generate setup token
-    let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
+    let  node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
     let setup_token_2 = node_key_manager_2
         .generate_csr()
         .expect("Failed to generate setup token for node 2");
@@ -1506,10 +1506,10 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
     // Keys and certs
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
     let _ = mobile_ca.initialize_user_root_key()?;
-    let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
+    let  node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
     let cert_1 = mobile_ca.process_setup_token(&node_key_manager_1.generate_csr()?)?;
     node_key_manager_1.install_certificate(cert_1)?;
-    let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
+    let  node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
     let cert_2 = mobile_ca.process_setup_token(&node_key_manager_2.generate_csr()?)?;
     node_key_manager_2.install_certificate(cert_2)?;
 

@@ -61,14 +61,14 @@ fn build_test_context() -> Result<TestContext> {
     // so this user mobile can encrypt for the network, but not decrypt
     user_mobile.install_network_public_key(&network_pub)?;
 
-    let mut node = NodeKeyManager::new(logger.clone())?;
-    let token = node.generate_csr()?;
+    let mut node_keys = NodeKeyManager::new(logger.clone())?;
+    let token = node_keys.generate_csr()?;
     let nk_msg = mobile_network_master
         .create_network_key_message(&network_id, &token.node_agreement_public_key)?;
-    node.install_network_key(nk_msg)?;
+    node_keys.install_network_key(nk_msg)?;
 
     let user_mobile_ks = Arc::new(user_mobile) as Arc<dyn EnvelopeCrypto>;
-    let node_ks = Arc::new(node) as Arc<dyn EnvelopeCrypto>;
+    let node_ks = Arc::new(node_keys) as Arc<dyn EnvelopeCrypto>;
 
     let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
         label_mappings: HashMap::from([

@@ -49,7 +49,7 @@ let cfg = SqliteConfig::new(":memory:", schema, false);
 let sqlite = SqliteService::new("users_db", "users_db", cfg);
 
 // 3) Add to node
-let mut node = Node::new(NodeConfig::new("node", "default")).await?;
+let  node = Node::new(NodeConfig::new("node", "default")).await?;
 node.add_service(sqlite).await?;
 node.start().await?;
 node.wait_for_services_to_start().await?;
@@ -80,7 +80,7 @@ let sqlite_cfg = SqliteConfig::new(":memory:", schema.clone(), false);
 let sqlite = SqliteService::new("sqlite", "sqlite", sqlite_cfg);
 let crud = CrudSqliteService::new("crud", "crud", "sqlite", schema);
 
-let mut node = Node::new(NodeConfig::new("node", "default")).await?;
+let  node = Node::new(NodeConfig::new("node", "default")).await?;
 node.add_service(sqlite).await?;
 node.add_service(crud).await?;
 node.start().await?;

@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
 
     // Use the config from the simulator
     let config = config.with_logging_config(logging_config);
-    let mut node = Node::new(config).await?;
+    let  node = Node::new(config).await?;
 
     // Setup database services
     let (sqlite_service, crud_service) = db_services::setup_database_services();

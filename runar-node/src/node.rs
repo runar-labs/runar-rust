@@ -360,7 +360,7 @@ impl std::fmt::Display for NodeConfig {
 ///     // key manager state to actually create a Node instance.
 ///     
 ///     // let config = NodeConfig::new("my-node", "my-network");
-///     // let mut node = Node::new(config).await?;
+///     // let  node = Node::new(config).await?;
 ///     //
 ///     // Add services
 ///     // node.add_service(MyService::new()).await?;
@@ -583,7 +583,7 @@ impl Node {
             version: 0,
         };
 
-        let mut node = Self {
+        let  node = Self {
             local_node_info: Arc::new(RwLock::new(local_node_info)),
             debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             network_id: default_network_id,
@@ -677,7 +677,7 @@ impl Node {
     ///     // key manager state to actually create a Node instance.
     ///     
     ///     // let mut config = NodeConfig::new("my-node", "my-network");
-    ///     // let mut node = Node::new(config).await?;
+    ///     // let  node = Node::new(config).await?;
     ///     //
     ///     // Add a service
     ///     // let service = MyService::new();
@@ -702,7 +702,7 @@ impl Node {
     /// If the service doesn't specify a network ID, it will use the node's default network.
     /// Services can be registered to specific networks for multi-network deployments.
     pub async fn add_service<S: AbstractService + 'static>(
-        &mut self,
+        &self,
         mut service: S,
     ) -> Result<()> {
         let default_network_id = self.network_id.to_string();
@@ -991,7 +991,7 @@ impl Node {
     ///     // key manager state to actually create a Node instance.
     ///     
     ///     // let mut config = NodeConfig::new("my-node", "my-network");
-    ///     // let mut node = Node::new(config).await?;
+    ///     // let  node = Node::new(config).await?;
     ///     //
     ///     // Add services first
     ///     // node.add_service(MyService::new()).await?;

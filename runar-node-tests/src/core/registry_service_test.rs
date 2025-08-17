@@ -29,7 +29,7 @@ async fn test_registry_service_list_services() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -108,7 +108,7 @@ async fn test_registry_service_get_service_info() {
         let config = create_node_test_config()
             .expect("Error creating test config")
             .with_logging_config(logging_config);
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math Service", "math");
@@ -186,7 +186,7 @@ async fn test_registry_service_get_service_state() {
 
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -245,7 +245,7 @@ async fn test_registry_service_missing_parameter() {
 
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -318,7 +318,7 @@ async fn test_registry_service_pause_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -403,7 +403,7 @@ async fn test_registry_service_resume_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -493,7 +493,7 @@ async fn test_registry_service_request_to_paused_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -643,7 +643,7 @@ async fn test_registry_service_resume_running_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -691,7 +691,7 @@ async fn test_registry_service_pause_already_paused_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");

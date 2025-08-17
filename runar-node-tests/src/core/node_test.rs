@@ -74,7 +74,7 @@ async fn test_node_add_service() {
         let mut config = create_node_test_config().expect("Error creating test config");
         // Disable networking
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service with consistent name and path
         let service = MathService::new("Math", "Math");
@@ -114,7 +114,7 @@ async fn test_node_request() {
             .with_logging_config(logging_config);
         // Disable networking
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Create a test service with consistent name and path
         let service = MathService::new("Math Service", "math");
@@ -192,7 +192,7 @@ async fn test_node_lifecycle() {
 async fn test_node_event_metadata_registration() -> Result<()> {
     let config = create_node_test_config().expect("Error creating test config");
     let default_network_id = config.default_network_id.clone();
-    let mut node = Node::new(config).await?;
+    let  node = Node::new(config).await?;
 
     let math_service_name = "MathMetaTest";
     let math_service_path = "math_meta_svc";
@@ -314,7 +314,7 @@ async fn test_path_params_in_context() {
     // Create a node with a test network ID
     let mut config = create_node_test_config().expect("Error creating test config");
     config.network_config = None;
-    let mut node = Node::new(config).await.unwrap();
+    let  node = Node::new(config).await.unwrap();
 
     // Create our path parameters test service
     let service = PathParamsService::new("PathParams", "test");
@@ -495,7 +495,7 @@ async fn test_service_state_events() {
         // Create a node with a test network ID
         let mut config = create_node_test_config().expect("Error creating test config");
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Start the node
         node.start().await.unwrap();
@@ -620,7 +620,7 @@ async fn test_service_state_events_wildcard() {
         // Create a node with a test network ID
         let mut config = create_node_test_config().expect("Error creating test config");
         config.network_config = None;
-        let mut node = Node::new(config).await.unwrap();
+        let  node = Node::new(config).await.unwrap();
 
         // Start the node
         node.start().await.unwrap();

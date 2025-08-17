@@ -1,5 +1,4 @@
 use anyhow::Result;
-use runar_common::logging::{Component, Logger};
 use runar_macros_common::vmap;
 use runar_serializer::ArcValue; // Added for vmap!
 
@@ -26,13 +25,12 @@ const CRUD_SERVICE_NAME: &str = "test_crud_service";
 const CRUD_SERVICE_PATH: &str = "crud_db";
 
 async fn setup_node_with_services() -> Result<Node> {
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    // logging_config.apply();
     let node_config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
-    let mut node = Node::new(node_config).await?;
-
-    let _logger_arc = Arc::new(Logger::new_root(Component::Custom("crud_sqlite_test")));
+    let node = Node::new(node_config).await?;
 
     // Define the schema
     let app_schema = Arc::new(SqliteSchema {
