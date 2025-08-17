@@ -61,7 +61,7 @@ use std::hash::{Hash, Hasher};
 /// # Examples
 ///
 /// ```rust
-/// use runar_node::routing::PathType;
+/// use runar_common::routing::PathType;
 ///
 /// let path_type = PathType::Action;
 /// match path_type {
@@ -106,7 +106,7 @@ pub enum PathType {
 /// # Examples
 ///
 /// ```rust
-/// use runar_node::routing::PathSegment;
+/// use runar_common::routing::PathSegment;
 ///
 /// // Literal segments
 /// let segment = PathSegment::Literal("math".to_string());
@@ -363,13 +363,13 @@ impl TopicPath {
     /// ensuring consistent formatting and proper path type.
     ///
     /// Example:
-    /// ```
-    /// use runar_node::TopicPath;
-    /// let service_path = TopicPath::new("main:auth", "default").expect("Valid path");
-    /// let action_path = service_path.new_action_topic("login").expect("Valid action path");
-    ///
-    /// assert_eq!(action_path.action_path(), "auth/login");
-    /// ```
+/// ```
+/// use runar_common::routing::TopicPath;
+/// let service_path = TopicPath::new("main:auth", "default").expect("Valid path");
+/// let action_path = service_path.new_action_topic("login").expect("Valid action path");
+///
+/// assert_eq!(action_path.action_path(), "auth/login");
+/// ```
     pub fn new_action_topic(&self, action_name: &str) -> Result<Self, String> {
         if self.segments.len() > 1 {
             //invalid.. u cannot create an action path on top of another action path
@@ -390,13 +390,13 @@ impl TopicPath {
     /// ensuring consistent formatting and proper path type.
     ///
     /// Example:
-    /// ```
-    /// use runar_node::TopicPath;
-    /// let service_path = TopicPath::new("main:auth", "default").expect("Valid path");
-    /// let event_path = service_path.new_event_topic("user_logged_in").expect("Valid event path");
-    ///
-    /// assert_eq!(event_path.action_path(), "auth/user_logged_in");
-    /// ```
+/// ```
+/// use runar_common::routing::TopicPath;
+/// let service_path = TopicPath::new("main:auth", "default").expect("Valid path");
+/// let event_path = service_path.new_event_topic("user_logged_in").expect("Valid event path");
+///
+/// assert_eq!(event_path.action_path(), "auth/user_logged_in");
+/// ```
     pub fn new_event_topic(&self, event_name: &str) -> Result<Self, String> {
         // For now, the format is the same as action_topic, but we'll mark it as an event
         let path = self.new_action_topic(event_name)?;
