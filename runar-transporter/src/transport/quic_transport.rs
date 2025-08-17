@@ -671,8 +671,16 @@ impl QuicTransport {
                 }
                 true
             } else {
-                log_debug!(self.logger, "🔁 [dup] Existing kept (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}; closing new");
-                new_conn.close(0u32.into(), b"duplicate-loser");
+                log_debug!(self.logger, "🔁 [dup] Existing kept (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}; evaluating close on new");
+                // If the \"new\" connection refers to the same underlying connection as the existing one,
+                // do NOT close it. This situation happens for update handshakes sent over an already-active conn.
+                let existing_id = existing.connection_id;
+                let new_id = new_conn.stable_id();
+                if new_id != existing_id {
+                    new_conn.close(0u32.into(), b"duplicate-loser");
+                } else {
+                    log_debug!(self.logger, "🔁 [dup] Skipping close for duplicate-loser: same connection id={new_id} for peer {peer_node_id}");
+                }
                 false
             }
         } else {
@@ -1081,6 +1089,25 @@ impl QuicTransport {
             let local_role = ConnectionRole::Responder;
             let local_nonce = Self::generate_nonce();
             response_nonce = local_nonce;
+
+            // Update (nonce==0) handshakes sent over a unidirectional stream should NOT trigger
+            // duplicate-resolution. They are metadata updates on an already-established connection.
+            if remote_nonce == 0 && send.is_none() {
+                log_debug!(
+                    self.logger,
+                    "🔍 [handle_handshake] Received update handshake (nonce=0) over uni; skipping duplicate-resolution for peer {peer_node_id}"
+                );
+                if let Some(connected_callback) = &self.peer_connected_callback {
+                    (connected_callback)(peer_node_id.clone(), node_info.clone()).await;
+                }
+                let _ = (self.message_handler)(msg.clone()).await;
+                if needs_to_correlate_peer_id {
+                    self.state
+                        .connection_id_to_peer_id
+                        .insert(conn.stable_id(), peer_node_id);
+                }
+                return Ok(());
+            }
 
             log_debug!(self.logger, "🔍 [handle_handshake] from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}");
             let candidate_initiator = match (remote_role, local_role) {
