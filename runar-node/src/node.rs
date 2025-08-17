@@ -73,13 +73,14 @@ type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
 /// # Examples
 ///
 /// ```rust
-/// use runar_node::{NodeConfig, network::network_config::NetworkConfig};
+/// use runar_node::NodeConfig;
+/// use runar_transporter::network_config::NetworkConfig;
 ///
 /// // Basic configuration
-/// let config = NodeConfig::new("my-node", "my-network");
+/// let config = NodeConfig::new("my-node");
 ///
 /// // Advanced configuration with networking
-/// let config = NodeConfig::new("my-node", "my-network")
+/// let config = NodeConfig::new("my-node")
 ///     .with_network_config(NetworkConfig::default())
 ///     .with_request_timeout(5000)
 ///     .with_additional_networks(vec!["backup-network".to_string()]);
@@ -156,16 +157,16 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use runar_node::NodeConfig;
-    ///
-    /// // Basic configuration
-    /// let config = NodeConfig::new("my-node", "my-network");
-    ///
-    /// // Production configuration requires key manager state
-    /// let serialized_keys = vec![1, 2, 3, 4]; // Example key data
-    /// let config = NodeConfig::new("my-node", "my-network")
-    ///     .with_key_manager_state(serialized_keys);
-    /// ```
+/// use runar_node::NodeConfig;
+///
+/// // Basic configuration
+/// let config = NodeConfig::new("my-node");
+///
+/// // Production configuration requires key manager state
+/// let serialized_keys = vec![1, 2, 3, 4]; // Example key data
+/// let config = NodeConfig::new("my-node")
+///     .with_key_manager_state(serialized_keys);
+/// ```
     pub fn new(default_network_id: impl Into<String>) -> Self {
         Self {
             default_network_id: default_network_id.into(),
@@ -186,11 +187,12 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use runar_node::{NodeConfig, network::network_config::NetworkConfig};
-    ///
-    /// let config = NodeConfig::new("my-node", "my-network")
-    ///     .with_network_config(NetworkConfig::default());
-    /// ```
+/// use runar_node::NodeConfig;
+/// use runar_transporter::network_config::NetworkConfig;
+///
+/// let config = NodeConfig::new("my-node")
+///     .with_network_config(NetworkConfig::default());
+/// ```
     pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
         self.network_config = Some(config);
         self
@@ -205,11 +207,12 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use runar_node::{NodeConfig, config::LoggingConfig};
-    ///
-    /// let config = NodeConfig::new("my-node", "my-network")
-    ///     .with_logging_config(LoggingConfig::default_info());
-    /// ```
+/// use runar_node::NodeConfig;
+/// use runar_common::logging::LoggingConfig;
+///
+/// let config = NodeConfig::new("my-node")
+///     .with_logging_config(LoggingConfig::default_info());
+/// ```
     pub fn with_logging_config(mut self, config: LoggingConfig) -> Self {
         self.logging_config = Some(config);
         self
@@ -227,11 +230,11 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use runar_node::NodeConfig;
-    ///
-    /// let config = NodeConfig::new("my-node", "my-network")
-    ///     .with_additional_networks(vec!["backup".to_string(), "testing".to_string()]);
-    /// ```
+/// use runar_node::NodeConfig;
+///
+/// let config = NodeConfig::new("my-node")
+///     .with_additional_networks(vec!["backup".to_string(), "testing".to_string()]);
+/// ```
     pub fn with_additional_networks(mut self, network_ids: Vec<String>) -> Self {
         self.network_ids = network_ids;
         self
@@ -249,11 +252,11 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use runar_node::NodeConfig;
-    ///
-    /// let config = NodeConfig::new("my-node", "my-network")
-    ///     .with_request_timeout(5000); // 5 second timeout
-    /// ```
+/// use runar_node::NodeConfig;
+///
+/// let config = NodeConfig::new("my-node")
+///     .with_request_timeout(5000); // 5 second timeout
+/// ```
     pub fn with_request_timeout(mut self, timeout_ms: u64) -> Self {
         self.request_timeout_ms = timeout_ms;
         self
@@ -276,12 +279,12 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use runar_node::NodeConfig;
-    ///
-    /// let secure_key_bytes = vec![1, 2, 3, 4]; // Example key data
-    /// let config = NodeConfig::new("my-node", "my-network")
-    ///     .with_key_manager_state(secure_key_bytes);
-    /// ```
+/// use runar_node::NodeConfig;
+///
+/// let secure_key_bytes = vec![1, 2, 3, 4]; // Example key data
+/// let config = NodeConfig::new("my-node")
+///     .with_key_manager_state(secure_key_bytes);
+/// ```
     pub fn with_key_manager_state(mut self, key_state_bytes: Vec<u8>) -> Self {
         self.key_manager_state = Some(key_state_bytes);
         self
