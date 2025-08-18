@@ -42,8 +42,10 @@ pub struct TransportOptions {
 
 impl Default for TransportOptions {
     fn default() -> Self {
-        let port = pick_free_port(50000..51000).unwrap_or(0);
-        let bind_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
+        // Use port 0 so the OS assigns an ephemeral free port at bind time.
+        // This avoids test flakes under concurrent CI runs where a pre-picked
+        // port may be taken by another process by the time we bind.
+        let bind_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
         Self {
             timeout: Some(Duration::from_secs(30)),
