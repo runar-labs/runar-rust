@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_node::config::logging_config::{LogLevel, LoggingConfig};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_node::{Node, ServiceMetadata, ServiceState};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
@@ -29,7 +29,7 @@ async fn test_registry_service_list_services() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -100,7 +100,7 @@ async fn test_registry_service_list_services() {
 async fn test_registry_service_get_service_info() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
-        let test_logger = Logger::new_root(Component::Node, "test_name");
+        let test_logger = Logger::new_root(Component::Custom("Test"));
 
         let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
 
@@ -108,7 +108,7 @@ async fn test_registry_service_get_service_info() {
         let config = create_node_test_config()
             .expect("Error creating test config")
             .with_logging_config(logging_config);
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math Service", "math");
@@ -182,11 +182,11 @@ async fn test_registry_service_get_service_state() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a test logger for debugging
-        let test_logger = Logger::new_root(Component::Node, "test_state");
+        let test_logger = Logger::new_root(Component::Custom("Test"));
 
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -241,11 +241,11 @@ async fn test_registry_service_missing_parameter() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Create a test logger for debugging
-        let test_logger = Logger::new_root(Component::Node, "test_missing_param");
+        let test_logger = Logger::new_root(Component::Custom("Test"));
 
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -318,7 +318,7 @@ async fn test_registry_service_pause_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -403,7 +403,7 @@ async fn test_registry_service_resume_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -493,7 +493,7 @@ async fn test_registry_service_request_to_paused_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -643,7 +643,7 @@ async fn test_registry_service_resume_running_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");
@@ -691,7 +691,7 @@ async fn test_registry_service_pause_already_paused_service() {
     match timeout(Duration::from_secs(10), async {
         // Create a node with a test network ID
         let config = create_node_test_config().expect("Error creating test config");
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         // Create a test service
         let math_service = MathService::new("Math", "math");

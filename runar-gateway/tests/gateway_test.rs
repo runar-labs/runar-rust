@@ -63,7 +63,7 @@ impl EchoService {
 #[tokio::test]
 async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
-    let logging_config = runar_node::config::LoggingConfig::new()
+    let logging_config = runar_common::logging::LoggingConfig::new()
         .with_default_level(runar_node::config::LogLevel::Warn);
     logging_config.apply();
 
@@ -71,9 +71,9 @@ async fn test_gateway_routes() -> Result<()> {
         .expect("Error creating test config")
         .with_logging_config(logging_config);
 
-    let logger = Arc::new(Logger::new_root(Component::Custom("gateway_test"), ""));
+    let logger = Arc::new(Logger::new_root(Component::Custom("gateway_test")));
 
-    let mut node = Node::new(node_config).await?;
+    let node = Node::new(node_config).await?;
 
     // 2. Setup and Add EchoService
     let echo_service = EchoService::default();

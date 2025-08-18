@@ -10,7 +10,7 @@ If the user does runar -init and previos config exists.. need to confirm with th
 config is in the same folder as the runar binary in the .runar folder
 
 
-when entering ini the node will create a new Node Key store -> let mut nodeKeys = NodeKeyManager::new(node_logger)?;
+when entering ini the node will create a new Node Key store -> let  nodeKeys = NodeKeyManager::new(node_logger)?;
 
 when doing this it will generate its own TLS and Storage keypairs
 and generate a setup handshake token which contains the CSR request and the node public key

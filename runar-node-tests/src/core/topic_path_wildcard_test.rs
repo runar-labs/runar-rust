@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use runar_common::logging::{Component, Logger};
-use runar_node::routing::TopicPath;
+use runar_common::routing::TopicPath;
 use runar_node::services::EventContext;
 use runar_node::ServiceRegistry;
 use runar_serializer::ArcValue;
@@ -141,7 +141,7 @@ mod topic_path_wildcard_tests {
 
     #[test]
     fn test_efficient_template_pattern_lookup() {
-        use runar_node::routing::TopicPath;
+        use runar_common::routing::TopicPath;
         use std::collections::HashMap;
 
         // Create a HashMap to store handlers by path pattern
@@ -216,7 +216,7 @@ mod topic_path_wildcard_tests {
 
     #[test]
     fn test_efficient_wildcard_pattern_lookup() {
-        use runar_node::routing::TopicPath;
+        use runar_common::routing::TopicPath;
         use std::collections::HashMap;
 
         // Create a HashMap to store handlers by path pattern
@@ -297,7 +297,7 @@ mod service_registry_wildcard_tests {
     #[tokio::test]
     async fn test_wildcard_event_subscriptions() -> Result<()> {
         // Create service registry
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
 
         // Create a counter to track event deliveries
         let counter = Arc::new(Mutex::new(0));
@@ -374,7 +374,7 @@ mod service_registry_wildcard_tests {
                         .await?,
                 ),
                 true,
-                Arc::new(Logger::new_root(Component::Service, "test")),
+                Arc::new(Logger::new_root(Component::Custom("Test"))),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -390,7 +390,7 @@ mod service_registry_wildcard_tests {
                         .await?,
                 ),
                 true,
-                Arc::new(Logger::new_root(Component::Service, "test")),
+                Arc::new(Logger::new_root(Component::Custom("Test"))),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -406,7 +406,7 @@ mod service_registry_wildcard_tests {
                         .await?,
                 ),
                 true,
-                Arc::new(Logger::new_root(Component::Service, "test")),
+                Arc::new(Logger::new_root(Component::Custom("Test"))),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -422,7 +422,7 @@ mod service_registry_wildcard_tests {
                         .await?,
                 ),
                 true,
-                Arc::new(Logger::new_root(Component::Service, "test")),
+                Arc::new(Logger::new_root(Component::Custom("Test"))),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -438,7 +438,7 @@ mod service_registry_wildcard_tests {
                         .await?,
                 ),
                 true,
-                Arc::new(Logger::new_root(Component::Service, "test")),
+                Arc::new(Logger::new_root(Component::Custom("Test"))),
             ));
             handler(context, Some(data.clone())).await?;
         }
@@ -458,7 +458,7 @@ mod service_registry_wildcard_tests {
     #[tokio::test]
     async fn test_wildcard_unsubscription() -> Result<()> {
         // Create service registry
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
 
         // Create a callback
         let callback = Arc::new(move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
@@ -493,7 +493,7 @@ mod service_registry_wildcard_tests {
     /// Minimal test to isolate PathTrie wildcard duplication issue
     #[tokio::test]
     async fn test_path_trie_wildcard_duplication() -> Result<()> {
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
 
         // Create a callback
         let callback = Arc::new(move |_ctx: Arc<EventContext>, _data: Option<ArcValue>| {
@@ -551,7 +551,7 @@ mod service_registry_wildcard_tests {
     /// Test that multiple wildcard handlers can be registered and receive events
     #[tokio::test]
     async fn test_multiple_wildcard_handlers() -> Result<()> {
-        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Service, "test")));
+        let registry = ServiceRegistry::new(Arc::new(Logger::new_root(Component::Custom("Test"))));
         let counter1 = Arc::new(Mutex::new(0));
         let counter2 = Arc::new(Mutex::new(0));
 
@@ -610,7 +610,7 @@ mod service_registry_wildcard_tests {
                         .await?,
                 ),
                 true,
-                Arc::new(Logger::new_root(Component::Service, "test")),
+                Arc::new(Logger::new_root(Component::Custom("Test"))),
             ));
             handler(context, Some(data.clone())).await?;
         }

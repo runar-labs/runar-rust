@@ -2,11 +2,26 @@
 //
 // This module provides configuration options for network functionality in the Runar system.
 
-use crate::network::discovery::{DiscoveryOptions, DEFAULT_MULTICAST_ADDR};
-use crate::network::transport::{QuicTransportOptions, TransportOptions};
-use crate::services::load_balancing::RoundRobinLoadBalancer;
+use crate::discovery::{DiscoveryOptions, DEFAULT_MULTICAST_ADDR};
+use crate::transport::{QuicTransportOptions, TransportOptions};
 use std::sync::Arc;
 use std::time::Duration;
+
+// Simple placeholder for load balancer
+#[derive(Debug, Clone)]
+pub struct RoundRobinLoadBalancer;
+
+impl RoundRobinLoadBalancer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for RoundRobinLoadBalancer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Network configuration options
 #[derive(Clone, Debug)]
@@ -56,8 +71,6 @@ impl std::fmt::Display for NetworkConfig {
                     discovery_options.discovery_timeout.as_millis()
                 )?;
             }
-
-            write!(f, " ttl:{}s", discovery_options.node_ttl.as_secs())?;
         }
 
         Ok(())

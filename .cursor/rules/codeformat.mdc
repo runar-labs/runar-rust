@@ -17,7 +17,9 @@ run cargo clippy -p runar_node --all-targets --all-features -- -D warnings
 - **Compilation**: `cargo check` must pass
 - **Clippy**: `cargo clippy --all-targets --all-features -- -D warnings` must pass
 - **Tests**: `cargo test --all` must pass
-- **Formatting**: Use `format!("Error: {e}")` not `format!("Error: {}", e)` -  run cargo fmt --all at the end of every task.
+- **Formatting**: 
+ - Use `format!("Error: {e}")` not `format!("Error: {}", e)` -  run cargo fmt --all at the end of every task.
+ - Use proper inmports, do not do let context = runar_serializer::SerializationContext {...} import the type and use  let context = SerializationContext{...}
 
 ## 🔑 **Ownership & Borrowing**
 - **Prefer references**: Use `&str`/`&[u8]`/`&T` over `String`/`Vec<u8>`/`T`

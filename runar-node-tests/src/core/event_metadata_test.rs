@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 use runar_common::logging::{Component, Logger};
-use runar_node::routing::TopicPath;
+use runar_common::routing::TopicPath;
 use runar_node::services::service_registry::ServiceRegistry;
 use runar_node::services::{EventContext, EventRegistrationOptions};
 use runar_serializer::ArcValue;
@@ -27,7 +27,7 @@ async fn test_get_subscription_metadata() {
     // Wrap the test in a timeout to prevent it from hanging
     match timeout(Duration::from_secs(10), async {
         // Set up test logger
-        let logger = Arc::new(Logger::new_root(Component::Service, "test"));
+        let logger = Arc::new(Logger::new_root(Component::Service));
 
         // Create registry
         let registry = ServiceRegistry::new(logger.clone());

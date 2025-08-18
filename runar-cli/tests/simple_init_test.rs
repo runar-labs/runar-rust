@@ -36,7 +36,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     println!("📁 Using test config directory: {config_dir:?}");
 
     // Create logger
-    let logger = Arc::new(Logger::new_root(Component::CLI, "simple-test"));
+    let logger = Arc::new(Logger::new_root(Component::CLI));
 
     // ==========================================
     // STEP 1: Initialize mobile device (simulate mobile app)

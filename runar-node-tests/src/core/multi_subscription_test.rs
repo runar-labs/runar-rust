@@ -1,6 +1,6 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
-use runar_node::routing::TopicPath;
+use runar_common::routing::TopicPath;
 use runar_node::services::service_registry::{EventHandler, ServiceRegistry};
 use runar_node::services::EventRegistrationOptions;
 use std::sync::{Arc, Mutex};
@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 /// Test multiple subscriptions to the same topic
 #[tokio::test]
 async fn test_multiple_subscriptions_same_topic() -> Result<()> {
-    let logger = Arc::new(Logger::new_root(Component::Node, "test"));
+    let logger = Arc::new(Logger::new_root(Component::Custom("Test")));
     let registry = ServiceRegistry::new(logger.clone());
 
     let topic_path = TopicPath::new("test/event", "network1").map_err(|e| anyhow::anyhow!(e))?;

@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 // Internal imports
-use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery, NodeInfo};
+use super::{DiscoveryEvent, DiscoveryListener, DiscoveryOptions, NodeDiscovery};
 
 // Default multicast address and port
 const DEFAULT_MULTICAST_PORT: u16 = 45678;
@@ -81,12 +81,14 @@ impl MulticastMessage {
 /// Multicast-based node discovery implementation
 pub struct MulticastDiscovery {
     options: Arc<RwLock<DiscoveryOptions>>,
-    local_node: Arc<RwLock<Option<NodeInfo>>>,
+    local_node: Arc<RwLock<Option<PeerInfo>>>,
     socket: Arc<UdpSocket>,
     listeners: Arc<RwLock<Vec<DiscoveryListener>>>,
     tx: Arc<Mutex<Option<Sender<MulticastMessage>>>>,
     // Task fields
     announce_task: Mutex<Option<JoinHandle<()>>>,
+    listener_task: Mutex<Option<JoinHandle<()>>>,
+    sender_task: Mutex<Option<JoinHandle<()>>>,
     // Multicast address field
     multicast_addr: Arc<Mutex<SocketAddr>>,
     // Logger
@@ -96,7 +98,7 @@ pub struct MulticastDiscovery {
 impl MulticastDiscovery {
     /// Create a new multicast discovery instance
     pub async fn new(
-        local_node: NodeInfo,
+        local_peer_info: PeerInfo,
         options: DiscoveryOptions,
         logger: Logger,
     ) -> Result<Self> {
@@ -133,27 +135,31 @@ impl MulticastDiscovery {
 
         // Create UDP socket with proper configuration
         let socket = Self::create_multicast_socket(socket_addr, &logger).await?;
-        log_info!(
+        log_debug!(
             logger,
             "Successfully created multicast socket with address: {socket_addr}"
         );
 
         let instance = Self {
             options: Arc::new(RwLock::new(options)),
-            local_node: Arc::new(RwLock::new(Some(local_node))),
+            local_node: Arc::new(RwLock::new(Some(local_peer_info))),
             socket: Arc::new(socket),
             listeners: Arc::new(RwLock::new(Vec::new())),
             tx: Arc::new(Mutex::new(None)),
             multicast_addr: Arc::new(Mutex::new(socket_addr)),
             announce_task: Mutex::new(None),
+            listener_task: Mutex::new(None),
+            sender_task: Mutex::new(None),
             logger: logger.clone(),
         };
 
         // Initialize the tasks
-        instance.start_listener_task();
+        let listener_handle = instance.start_listener_task();
+        *instance.listener_task.lock().await = Some(listener_handle);
 
         // Call start_sender_task and store results
-        let (_sender_handle, tx) = instance.start_sender_task();
+        let (sender_handle, tx) = instance.start_sender_task();
+        *instance.sender_task.lock().await = Some(sender_handle);
         *instance.tx.lock().await = Some(tx);
 
         Ok(instance)
@@ -190,7 +196,13 @@ impl MulticastDiscovery {
         socket.bind(&bind_addr.into())?;
 
         // Join the multicast group
-        socket.join_multicast_v4(&multicast_ip, &Ipv4Addr::UNSPECIFIED)?;
+        socket
+            .join_multicast_v4(&multicast_ip, &Ipv4Addr::UNSPECIFIED)
+            .map_err(|e| {
+                anyhow!(
+                    "Failed to join multicast group {multicast_ip}: {e}. On some platforms (iOS/Android), multicast may require special entitlements or may be unavailable."
+                )
+            })?;
 
         // Convert to std socket and then to tokio socket
         let std_socket: std::net::UdpSocket = socket.into();
@@ -199,7 +211,7 @@ impl MulticastDiscovery {
         // Create tokio UDP socket
         let udp_socket = UdpSocket::from_std(std_socket)?;
 
-        log_info!(
+        log_debug!(
             logger,
             "Created multicast socket bound to {}:{} and joined multicast group {}",
             Ipv4Addr::UNSPECIFIED,
@@ -223,7 +235,7 @@ impl MulticastDiscovery {
             // Get local node info once, outside the loop
             let local_node_guard = local_node.read().await;
             let local_peer_node_id = if let Some(info) = local_node_guard.as_ref() {
-                compact_id(&info.node_public_key)
+                compact_id(&info.public_key)
             } else {
                 log_error!(
                     logger,
@@ -250,13 +262,7 @@ impl MulticastDiscovery {
                                     }
                                 }
                                 if !skip {
-                                    Self::process_message(
-                                        message,
-                                        &local_node,
-                                        &listeners,
-                                        &logger,
-                                    )
-                                    .await;
+                                    Self::process_message(message, &listeners, &logger).await;
                                 }
                             }
                             Err(e) => {
@@ -297,7 +303,7 @@ impl MulticastDiscovery {
 
                 // Create announcement message
                 let peer_info = PeerInfo::new(
-                    local_node_info.node_public_key.clone(),
+                    local_node_info.public_key.clone(),
                     local_node_info.addresses.clone(),
                 );
 
@@ -306,7 +312,6 @@ impl MulticastDiscovery {
                     goodbye: None,
                 };
 
-                // Serialize and send
                 match serde_cbor::to_vec(&message) {
                     Ok(data) => {
                         if let Err(e) = socket.send_to(&data, *multicast_addr.lock().await).await {
@@ -344,12 +349,12 @@ impl MulticastDiscovery {
             while let Some(mut message) = rx.recv().await {
                 // Update announce message with our local info
                 if let Some(ref mut discovery_msg) = message.announce {
-                    discovery_msg.public_key = local_node_info.node_public_key.clone();
+                    discovery_msg.public_key = local_node_info.public_key.clone();
                     discovery_msg.addresses = local_node_info.addresses.clone();
                 }
                 // Update goodbye message with our local ID
                 if let Some(ref mut id) = message.goodbye {
-                    *id = compact_id(&local_node_info.node_public_key);
+                    *id = compact_id(&local_node_info.public_key);
                 }
 
                 match serde_cbor::to_vec(&message) {
@@ -376,29 +381,9 @@ impl MulticastDiscovery {
     #[allow(clippy::too_many_arguments)]
     async fn process_message(
         message: MulticastMessage,
-        local_node: &Arc<RwLock<Option<NodeInfo>>>,
         listeners: &Arc<RwLock<Vec<DiscoveryListener>>>,
         logger: &Logger,
     ) {
-        // Skip if we don't have local node info
-        let local_node_info = match local_node.read().await.as_ref() {
-            Some(info) => info.clone(),
-            None => {
-                logger.warn("No local node info available for discovery");
-                return;
-            }
-        };
-
-        // Skip messages from ourselves
-        if let Some(announce) = &message.announce {
-            let sender_id = compact_id(&announce.public_key);
-            let local_id = compact_id(&local_node_info.node_public_key);
-            if sender_id == local_id {
-                log_debug!(logger, "Ignoring discovery message from self");
-                return;
-            }
-        }
-
         // Process the message and emit appropriate events
         match &message {
             MulticastMessage {
@@ -464,7 +449,7 @@ impl NodeDiscovery for MulticastDiscovery {
         // Create valid socket address and store it
         let socket_addr = SocketAddr::new(multicast_addr, port);
         *self.multicast_addr.lock().await = socket_addr;
-        log_info!(self.logger, "Using multicast address: {socket_addr}");
+        log_debug!(self.logger, "Using multicast address: {socket_addr}");
 
         // Tasks are already initialized in the constructor, no need to duplicate here
 
@@ -481,8 +466,8 @@ impl NodeDiscovery for MulticastDiscovery {
                 ))
             }
         };
-        let local_peer_node_id = compact_id(&local_info.node_public_key);
-        log_info!(
+        let local_peer_node_id = compact_id(&local_info.public_key);
+        log_debug!(
             self.logger,
             "Starting to announce node: {local_peer_node_id}"
         );
@@ -500,13 +485,10 @@ impl NodeDiscovery for MulticastDiscovery {
         };
 
         // Send initial announcement and return Result
-        log_info!(self.logger, "Sending initial announcement");
+        log_debug!(self.logger, "Sending initial announcement");
 
         // Create a discovery message from the NodeInfo
-        let peer_info = PeerInfo::new(
-            local_info.node_public_key.clone(),
-            local_info.addresses.clone(),
-        );
+        let peer_info = PeerInfo::new(local_info.public_key.clone(), local_info.addresses.clone());
 
         tx.send(MulticastMessage {
             announce: Some(peer_info),
@@ -535,15 +517,10 @@ impl NodeDiscovery for MulticastDiscovery {
         Ok(())
     }
 
-    async fn update_local_node_info(&self, new_node_info: NodeInfo) -> Result<()> {
+    async fn update_local_peer_info(&self, new_peer_info: PeerInfo) -> Result<()> {
         let mut local_node_guard = self.local_node.write().await;
-        *local_node_guard = Some(new_node_info);
+        *local_node_guard = Some(new_peer_info);
         drop(local_node_guard);
-
-        log_debug!(
-            self.logger,
-            "Updated local node information for multicast discovery"
-        );
         Ok(())
     }
 
@@ -557,6 +534,19 @@ impl NodeDiscovery for MulticastDiscovery {
                 "Error stopping announcements during shutdown: {e}"
             );
         }
+
+        // Stop listener task
+        if let Some(task) = self.listener_task.lock().await.take() {
+            task.abort();
+        }
+
+        // Stop sender task
+        if let Some(task) = self.sender_task.lock().await.take() {
+            task.abort();
+        }
+
+        // Drop sender channel to free resources
+        *self.tx.lock().await = None;
 
         Ok(())
     }

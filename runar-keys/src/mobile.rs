@@ -153,19 +153,6 @@ impl MobileKeyManager {
         })
     }
 
-    /// Convert a compact ID to a DNS-safe format by replacing invalid characters
-    fn dns_safe_node_id(&self, node_id: &str) -> String {
-        node_id
-            .chars()
-            .map(|c| match c {
-                '-' => 'x',                    // Replace hyphen with 'x'
-                '_' => 'y',                    // Replace underscore with 'y'
-                c if c.is_alphanumeric() => c, // Keep alphanumeric
-                _ => 'z',                      // Replace any other invalid chars with 'z'
-            })
-            .collect()
-    }
-
     pub fn install_network_public_key(&mut self, network_public_key: &[u8]) -> Result<()> {
         let network_id = compact_id(network_public_key);
         self.network_public_keys
@@ -626,10 +613,9 @@ impl MobileKeyManager {
             })?;
 
             let mut cn_matches = false;
-            let dns_safe_node_id = self.dns_safe_node_id(node_id);
             for entry in csr.subject_name().entries_by_nid(Nid::COMMONNAME) {
                 if let Ok(data) = entry.data().as_utf8() {
-                    if data.to_string() == dns_safe_node_id {
+                    if data.to_string() == *node_id {
                         cn_matches = true;
                         break;
                     }
@@ -638,7 +624,7 @@ impl MobileKeyManager {
 
             if !cn_matches {
                 return Err(KeyError::InvalidOperation(format!(
-                    "CSR CN does not match node ID '{node_id}' (DNS-safe: '{dns_safe_node_id}')",
+                    "CSR CN does not match node ID '{node_id}'",
                 )));
             }
         }

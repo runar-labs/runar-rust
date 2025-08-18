@@ -31,7 +31,7 @@ async fn test_config_creation() {
 async fn test_init_command_creation() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let config_dir = temp_dir.path().to_path_buf();
-    let logger = Arc::new(Logger::new_root(Component::CLI, "test"));
+    let logger = Arc::new(Logger::new_root(Component::CLI));
 
     let _init_cmd = InitCommand::new(config_dir, logger);
 
@@ -42,7 +42,7 @@ async fn test_init_command_creation() {
 async fn test_start_command_creation() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let config_dir = temp_dir.path().to_path_buf();
-    let logger = Arc::new(Logger::new_root(Component::CLI, "test"));
+    let logger = Arc::new(Logger::new_root(Component::CLI));
 
     let _start_cmd = StartCommand::new(config_dir, logger);
 
