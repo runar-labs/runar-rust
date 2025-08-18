@@ -3330,17 +3330,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runar-keys-ffi"
-version = "0.1.0"
-dependencies = [
- "ciborium",
- "runar-keys",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "runar-node-tests"
 version = "0.1.0"
 dependencies = [
@@ -3541,6 +3530,18 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "runar_ffi"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "runar-keys",
+ "runar_common 0.1.0",
+ "runar_transporter",
+ "serde",
+ "serde_cbor",
 ]
 
 [[package]]

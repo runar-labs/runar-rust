@@ -1,0 +1,22 @@
+[package]
+name = "runar_ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Unified FFI bridge for Runar Keys + Transporter"
+license = "MIT"
+
+[lib]
+name = "runar_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+runar-keys = { path = "../runar-keys" }
+runar_transporter = { path = "../runar-transporter" }
+runar_common = { path = "../runar-common" }
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11"
+once_cell = "1.19"
+
+[features]
+default = []
+
