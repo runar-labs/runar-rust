@@ -28,7 +28,7 @@ hkdf = "0.12"
 sha2 = "0.10"
 
 # Certificate generation and parsing - OpenSSL for proper CA operations
-openssl = { version = "0.10", features = ["vendored"] }
+openssl = { version = "0.10", features = ["vendored"], optional = true }
 rcgen = "0.12"  # Still needed for CSR generation and self-signed CA certs
 x509-parser = { version = "0.16", features = ["verify"] }
 rustls-pki-types = "1.0"
@@ -56,8 +56,37 @@ tokio = { version = "1.0", features = ["full"] }
 tempfile = "3.0"
 
 [features]
-default = []
+default = ["openssl-x509"]
 macros = []
+openssl-x509 = ["dep:openssl"]
+pure-x509 = [
+    "dep:x509-cert",
+    "dep:spki",
+    "dep:der",
+    "dep:const-oid",
+    "dep:sha1",
+]
+
+[dependencies.x509-cert]
+version = "0.2"
+optional = true
+
+[dependencies.spki]
+version = "0.7"
+optional = true
+
+[dependencies.der]
+version = "0.7"
+features = ["std"]
+optional = true
+
+[dependencies.const-oid]
+version = "0.9"
+optional = true
+
+[dependencies.sha1]
+version = "0.10"
+optional = true
 
 [package.metadata.docs.rs]
 all-features = true
