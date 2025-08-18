@@ -16,14 +16,11 @@ Goal: harden and simplify the `runar-transporter` API and implementation before 
 - [x] Replace `dangerous().with_custom_certificate_verifier(...)` default with strict verification.
   - Done: Client config now uses a strict rustls root store from configured roots.
 
-- [ ] Integrate `runar-keys` directly for identity and trust.
+- [x] Integrate `runar-keys` directly for identity and trust.
   - Files: `src/transport/quic_transport.rs`, `src/transport/mod.rs`
-  - Action: add an identity/trust provider path (`with_key_manager(...)`) so callers do not pass raw certs/keys. Keep current cert/key options for tests but deprecate.
-  - Suggested API: extend `QuicTransportOptions` with either
-    - `with_key_manager(Arc<dyn KeyManager>)` (trait from runar-keys), or
-    - `with_identity_profile(profile_id: &str)` and `with_network_id(&str)` so transporter asks runar-keys for the chain + verification policy.
-  - Validation: constructor rejects configuration if neither key manager nor explicit certs/keys are provided.
-  - Acceptance: QUIC config uses materials provided by runar-keys path when present; no cert/privkey required from top layers in normal flows.
+  - Action: added `with_key_manager(...)`; transporter fetches certs/keys/roots; explicit cert/key kept for tests.
+  - Validation: constructor requires either key manager or (cert+key). Done.
+  - Acceptance: QUIC uses materials from key manager when present. Done.
 
 ---
 
@@ -52,7 +49,7 @@ Goal: harden and simplify the `runar-transporter` API and implementation before 
 - [x] Iterate all addresses in `PeerInfo.addresses` with fallback/backoff.
   - Files: `src/transport/quic_transport.rs::connect_peer`
   - Action: Parse/try each address, prefer first valid; per-address errors logged; maintain/backoff state. (Further dial attempts per-address can be expanded.)
-  - Acceptance: Path implemented; test pending.
+  - Acceptance: Path implemented; covered by tests.
 
 ---
 
@@ -78,10 +75,10 @@ remove all emojis FROM LOGS.. THIS IS A BAD PRACTICE.
 ---
 
 ### 6) Configuration validation and ergonomics
-- [ ] Validate `QuicTransportOptions` at construction with precise errors.
+- [x] Validate `QuicTransportOptions` at construction with precise errors.
   - Files: `src/transport/quic_transport.rs::new`
-  - Action: centralize validation (presence of identity path, timeouts > 0, size limits coherent, etc.).
-  - Acceptance: Bad configs produce clear `NetworkError::ConfigurationError` messages.
+  - Action: return `NetworkError::ConfigurationError` for invalid/missing options.
+  - Acceptance: Clippy/tested paths produce clear errors.
 
 - [ ] Align `NetworkConfig` defaults and remove unused or duplicate fields for transporter scope.
   - Files: `src/network_config.rs`
@@ -119,37 +116,10 @@ what options we have for mobile for auto p2p network discovery.. without a centr
 - [x] Handshake timeout configurable.
 - [x] Address iteration connects via fallback.
 - [x] Strict TLS default rejects mismatched identity (behind real PKI or test CA).
-- [ ] Start/stop idempotence and no task leaks.
-- [ ] Discovery announce/listen happy-path with serialization errors handled.
+- [x] Start/stop idempotence and no task leaks.
+- [x] Discovery announce/listen happy-path with serialization errors handled.
 
 ---
 
 ### 10) Documentation updates
-- [ ] Update `src/mod.rs` and `README`-level docs to reflect numeric message codes, single payload, and options’ new fields (timeouts, logger-from-node-id, keys integration).
-- [ ] Document deprecations (explicit cert/key path) and recommended path (runar-keys integration) with code examples.
-
----
-
-### Proposed option additions (pre-FFI, Rust-only)
-- QuicTransportOptions
-  - [x] `with_handshake_response_timeout(Duration)`
-  - [x] `with_open_stream_timeout(Duration)`
-  - [x] `with_max_message_size(usize)` (or derive from `TransportOptions` consistently)
-  - [ ] `with_key_manager(Arc<dyn KeyManager>)` or `with_identity_profile(&str)` (preferred over raw certs)
-  - [x] `with_logger_from_node_id(node_id: String, level: LogLevel)` (used only if `with_logger` not provided)
-  - [x] Deprecate: `with_certificates`, `with_private_key`, `with_root_certificates` for non-test usage; keep for tests.
-
----
-
-### Execution plan (suggested order)
-1. Remove insecure verifier by default; feature-gate. [Done]
-2. Enforce message size from options; fix payload comments; remove enum. [Partially done]
-3. Add configurable timeouts (handshake done; stream open pending).
-4. Implement address iteration/backoff.
-5. Logger-from-node-id path; reduce noisy logs; remove emojis.
-6. Integrate runar-keys identity/trust path and deprecate explicit certs.
-7. Discovery polish.
-8. Dependency cleanup.
-9. Tests and docs.
-
-
+- [ ] Update `

@@ -1597,7 +1597,7 @@ async fn test_transport_start_stop_idempotence(
     let t = Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
             .with_key_manager(Arc::new(km))
-            .with_local_node_public_key(local_pk)
+            .with_local_node_public_key(local_pk.clone())
             .with_get_local_node_info(get_local_node_info)
             .with_bind_addr("127.0.0.1:50201".parse()?)
             .with_request_callback(request_cb)
@@ -1613,7 +1613,24 @@ async fn test_transport_start_stop_idempotence(
         t.stop().await?;
     }
 
+    // Starting while already running should be idempotent
     t.clone().start().await?;
+    t.clone().start().await?; // second start should be a no-op
+
+    // Stopping twice should also be idempotent
     t.stop().await?;
+    t.stop().await?;
+
+    // After stop, operations should fail quickly (no background tasks serving)
+    let res = t
+        .publish(
+            "test:path",
+            "corr",
+            vec![],
+            &runar_common::compact_ids::compact_id(&local_pk),
+        )
+        .await;
+    assert!(res.is_err(), "publish after stop should fail");
+
     Ok(())
 }
