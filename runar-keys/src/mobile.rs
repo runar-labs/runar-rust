@@ -616,20 +616,22 @@ impl MobileKeyManager {
 
         // ----- Validate CSR subject: CN must equal the claimed node_id -----
         {
-            use openssl::nid::Nid;
-            use openssl::x509::X509Req;
+            use x509_parser::certification_request::X509CertificationRequest as XpCsr;
+            use x509_parser::prelude::FromDer;
+            use x509_parser::x509::X509Name;
 
-            let csr = X509Req::from_der(&setup_token.csr_der).map_err(|e| {
+            let (_, csr) = XpCsr::from_der(&setup_token.csr_der).map_err(|e| {
                 KeyError::CertificateError(format!(
                     "Failed to parse CSR DER for subject validation: {e}"
                 ))
             })?;
 
-            let mut cn_matches = false;
             let dns_safe_node_id = self.dns_safe_node_id(node_id);
-            for entry in csr.subject_name().entries_by_nid(Nid::COMMONNAME) {
-                if let Ok(data) = entry.data().as_utf8() {
-                    if data.to_string() == dns_safe_node_id {
+            let subject: &X509Name = &csr.certification_request_info.subject;
+            let mut cn_matches = false;
+            for rdn in subject.iter_common_name() {
+                if let Ok(val) = rdn.as_str() {
+                    if val == dns_safe_node_id {
                         cn_matches = true;
                         break;
                     }

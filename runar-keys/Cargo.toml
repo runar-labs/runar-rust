@@ -27,11 +27,16 @@ chacha20poly1305 = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 
-# Certificate generation and parsing - OpenSSL for proper CA operations
-openssl = { version = "0.10", features = ["vendored"], optional = true }
-rcgen = "0.12"  # Still needed for CSR generation and self-signed CA certs
+# Certificate generation and parsing (pure Rust)
+rcgen = "0.12"  # CSR generation
 x509-parser = { version = "0.16", features = ["verify"] }
 rustls-pki-types = "1.0"
+x509-cert = { version = "0.2", features = ["builder"] }
+spki = "0.7"
+der = { version = "0.7", features = ["std"] }
+const-oid = "0.9"
+sha1 = "0.10"
+time = { version = "0.3", features = ["formatting"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -58,44 +63,10 @@ rustls = "0.23"
 rustls-pemfile = "2"
 
 [features]
-default = ["openssl-x509"]
+default = []
 macros = []
-openssl-x509 = ["dep:openssl"]
-pure-x509 = [
-    "dep:x509-cert",
-    "dep:spki",
-    "dep:der",
-    "dep:const-oid",
-    "dep:sha1",
-    "dep:time",
-]
 
-[dependencies.x509-cert]
-version = "0.2"
-features = ["builder"]
-optional = true
 
-[dependencies.spki]
-version = "0.7"
-optional = true
-
-[dependencies.der]
-version = "0.7"
-features = ["std"]
-optional = true
-
-[dependencies.const-oid]
-version = "0.9"
-optional = true
-
-[dependencies.sha1]
-version = "0.10"
-optional = true
-
-[dependencies.time]
-version = "0.3"
-features = ["formatting"]
-optional = true
 
 [package.metadata.docs.rs]
 all-features = true

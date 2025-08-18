@@ -1,5 +1,3 @@
-#![cfg(feature = "pure-x509")]
-
 use crate::certificate::{EcdsaKeyPair, X509Certificate};
 use crate::error::{KeyError, Result};
 use der::asn1::{BitString, Ia5String, OctetString, UtcTime};
