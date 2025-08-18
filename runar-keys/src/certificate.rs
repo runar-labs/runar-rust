@@ -363,6 +363,7 @@ impl CertificateAuthority {
             return pure_x509::sign_csr_with_ca(
                 &self.ca_key_pair,
                 &self.ca_subject,
+                self.ca_certificate.der_bytes(),
                 csr_der,
                 validity_days,
                 serial_override,

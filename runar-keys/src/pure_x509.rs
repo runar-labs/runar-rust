@@ -182,6 +182,7 @@ pub fn create_self_signed_ca(
 pub fn sign_csr_with_ca(
     ca_key_pair: &EcdsaKeyPair,
     ca_subject_str: &str,
+    ca_der: &[u8],
     csr_der: &[u8],
     validity_days: u32,
     serial_override: Option<u64>,
@@ -278,20 +279,6 @@ pub fn sign_csr_with_ca(
     };
 
     let mut extensions = vec![ext_basic, ext_ku, ext_eku];
-    // Add SAN from CN
-    let subject_str = subject.to_string();
-    if let Some(cn) = subject_str
-        .split(',')
-        .find_map(|c| c.trim().strip_prefix("CN=").map(|s| s.trim().to_string()))
-    {
-        let san = SubjectAltName(vec![GeneralName::DnsName(Ia5String::new(&cn).unwrap())]);
-        let san_ext = Extension {
-            extn_id: OID_SAN,
-            critical: false,
-            extn_value: OctetString::new(san.to_der().unwrap()).unwrap(),
-        };
-        extensions.push(san_ext);
-    }
 
     let ext_ski = Extension {
         extn_id: OID_SKI,
@@ -301,14 +288,18 @@ pub fn sign_csr_with_ca(
     extensions.push(ext_ski);
 
     let ca_ski = compute_ski(&spki_from_verifying_key(ca_key_pair.verifying_key())?);
+    let ca_cert = x509_cert::Certificate::from_der(ca_der)
+        .map_err(|e| KeyError::CertificateError(format!("Failed to parse CA DER for AKI: {e}")))?;
     let ext_aki = Extension {
         extn_id: OID_AKI,
         critical: false,
         extn_value: OctetString::new(
             AuthorityKeyIdentifier {
                 key_identifier: Some(ca_ski.0.clone()),
-                authority_cert_issuer: None,
-                authority_cert_serial_number: Some(SerialNumber::new(&[1]).unwrap()),
+                authority_cert_issuer: Some(vec![GeneralName::DirectoryName(
+                    ca_cert.tbs_certificate.issuer.clone(),
+                )]),
+                authority_cert_serial_number: Some(ca_cert.tbs_certificate.serial_number.clone()),
             }
             .to_der()
             .unwrap(),
