@@ -18,6 +18,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use once_cell::sync::OnceCell;
 use std::sync::atomic::AtomicU64;
+use std::sync::Mutex as StdMutex;
 use serde_cbor as _; // keep dependency linked for now
 
 #[repr(C)]
@@ -25,6 +26,8 @@ pub struct RnError {
     pub code: i32,
     pub message: *const c_char,
 }
+
+static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
 // Minimal memory helpers (placeholders; to be filled during implementation)
 #[no_mangle]
@@ -68,9 +71,17 @@ pub struct FfiKeysHandle { inner: *mut KeysInner }
 
 fn set_error(err: *mut RnError, code: i32, message: &str) {
     if err.is_null() {
+        // still store the message globally
+        let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
+        let mut guard = cell.lock().unwrap();
+        *guard = Some(message.to_string());
         return;
     }
     let c_msg = CString::new(message).unwrap_or_else(|_| CString::new("ffi error").unwrap());
+    // store message globally as well
+    let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
+    let mut guard = cell.lock().unwrap();
+    *guard = Some(message.to_string());
     unsafe {
         (*err).code = code;
         (*err).message = c_msg.into_raw();
@@ -91,6 +102,40 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
         *out_len = len;
     }
     true
+}
+
+#[no_mangle]
+pub extern "C" fn rn_last_error(out: *mut c_char, out_len: usize) -> i32 {
+    if out.is_null() || out_len == 0 {
+        return 1;
+    }
+    let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
+    let msg_opt = cell.lock().unwrap().clone();
+    let msg = match msg_opt {
+        Some(s) => s,
+        None => String::new(),
+    };
+    let bytes = msg.as_bytes();
+    // ensure space for NUL terminator
+    let copy_len = bytes.len().min(out_len.saturating_sub(1));
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy_len);
+        *(out.add(copy_len)) = 0;
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn rn_set_log_level(level: i32) {
+    let filter = match level {
+        0 => log::LevelFilter::Off,
+        1 => log::LevelFilter::Error,
+        2 => log::LevelFilter::Warn,
+        3 => log::LevelFilter::Info,
+        4 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Info,
+    };
+    log::set_max_level(filter);
 }
 
 fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool {
