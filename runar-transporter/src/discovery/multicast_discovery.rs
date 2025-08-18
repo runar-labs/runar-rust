@@ -133,7 +133,7 @@ impl MulticastDiscovery {
 
         // Create UDP socket with proper configuration
         let socket = Self::create_multicast_socket(socket_addr, &logger).await?;
-        log_info!(
+        log_debug!(
             logger,
             "Successfully created multicast socket with address: {socket_addr}"
         );
@@ -199,7 +199,7 @@ impl MulticastDiscovery {
         // Create tokio UDP socket
         let udp_socket = UdpSocket::from_std(std_socket)?;
 
-        log_info!(
+        log_debug!(
             logger,
             "Created multicast socket bound to {}:{} and joined multicast group {}",
             Ipv4Addr::UNSPECIFIED,
@@ -437,7 +437,7 @@ impl NodeDiscovery for MulticastDiscovery {
         // Create valid socket address and store it
         let socket_addr = SocketAddr::new(multicast_addr, port);
         *self.multicast_addr.lock().await = socket_addr;
-        log_info!(self.logger, "Using multicast address: {socket_addr}");
+        log_debug!(self.logger, "Using multicast address: {socket_addr}");
 
         // Tasks are already initialized in the constructor, no need to duplicate here
 
@@ -455,7 +455,7 @@ impl NodeDiscovery for MulticastDiscovery {
             }
         };
         let local_peer_node_id = compact_id(&local_info.public_key);
-        log_info!(
+        log_debug!(
             self.logger,
             "Starting to announce node: {local_peer_node_id}"
         );
@@ -473,7 +473,7 @@ impl NodeDiscovery for MulticastDiscovery {
         };
 
         // Send initial announcement and return Result
-        log_info!(self.logger, "Sending initial announcement");
+        log_debug!(self.logger, "Sending initial announcement");
 
         // Create a discovery message from the NodeInfo
         let peer_info = PeerInfo::new(local_info.public_key.clone(), local_info.addresses.clone());

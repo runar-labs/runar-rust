@@ -165,17 +165,32 @@ impl QuicTransportOptions {
         Self::default()
     }
 
-    // Original builder methods
+    // Original builder methods - DEPRECATED: Use with_key_manager instead
+    /// DEPRECATED: Use `with_key_manager()` instead for production code.
+    /// This method is kept for testing purposes only.
+    #[deprecated(
+        note = "Use with_key_manager() instead for production code. This method is for testing only."
+    )]
     pub fn with_certificates(mut self, certs: Vec<CertificateDer<'static>>) -> Self {
         self.certificates = Some(certs);
         self
     }
 
+    /// DEPRECATED: Use `with_key_manager()` instead for production code.
+    /// This method is kept for testing purposes only.
+    #[deprecated(
+        note = "Use with_key_manager() instead for production code. This method is for testing only."
+    )]
     pub fn with_private_key(mut self, key: PrivateKeyDer<'static>) -> Self {
         self.private_key = Some(key);
         self
     }
 
+    /// DEPRECATED: Use `with_key_manager()` instead for production code.
+    /// This method is kept for testing purposes only.
+    #[deprecated(
+        note = "Use with_key_manager() instead for production code. This method is for testing only."
+    )]
     pub fn with_root_certificates(mut self, certs: Vec<CertificateDer<'static>>) -> Self {
         self.root_certificates = Some(certs);
         self
@@ -1777,7 +1792,7 @@ impl NetworkTransport for QuicTransport {
         peer_node_id: &str,
         profile_public_key: Vec<u8>,
     ) -> Result<Vec<u8>, NetworkError> {
-        log_info!(
+        log_debug!(
             self.logger,
             "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id}"
         );
@@ -2071,13 +2086,13 @@ impl NetworkTransport for QuicTransport {
         }
 
         let connecting = endpoint.connect(addr, &peer_node_id).map_err(|e| {
-            log_error!(self.logger, "❌ [connect_peer] Connect failed: {e}");
+            log_error!(self.logger, "[connect_peer] Connect failed: {e}");
             NetworkError::ConnectionError(format!("connect: {e}"))
         })?;
 
         log_debug!(
             self.logger,
-            "🔍 [connect_peer] Connection initiated, waiting for handshake..."
+            "[connect_peer] Connection initiated, waiting for handshake..."
         );
 
         let conn = match connecting.await {
@@ -2115,7 +2130,7 @@ impl NetworkTransport for QuicTransport {
                     .insert(peer_node_id.clone(), (attempts, Instant::now() + delay));
                 log_debug!(
                     self.logger,
-                    "⏫ [backoff-incr] peer={peer_node_id} attempts={attempts} delay_ms={}",
+                    "[backoff-incr] peer={peer_node_id} attempts={attempts} delay_ms={}",
                     delay.as_millis()
                 );
                 return Err(NetworkError::ConnectionError(format!(
@@ -2302,7 +2317,7 @@ impl NetworkTransport for QuicTransport {
                 .debug(format!("Updated peer {peer_id} with new node info"));
         }
 
-        log_info!(
+        log_debug!(
             self.logger,
             "Updated {} peers with new node info",
             self.state.peers.len()

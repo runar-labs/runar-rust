@@ -62,7 +62,7 @@ Goal: harden and simplify the `runar-transporter` API and implementation before 
   - Action: Added `with_logger_from_node_id(node_id: String)` to create Transporter logger and set node id.
   - Acceptance: Transport works without a prebuilt logger; logs include node id context.
 
-- [ ] Reduce noisy logs under non-debug levels; remove emojis.
+- [x] Reduce noisy logs under non-debug levels; remove emojis.
   - Files: transport and discovery
   - Action: gate very verbose logs behind debug level; remove emojis from messages.
   - Acceptance: Info-level logs are succinct; debug retains detail, no emojis.
@@ -116,9 +116,9 @@ what options we have for mobile for auto p2p network discovery.. without a centr
 
 ### 9) Tests to add/adjust (pre-FFI)
 - [x] Message size limit respected (custom limit and default).
-- [ ] Handshake timeout configurable.
-- [ ] Address iteration connects via fallback.
-- [ ] Strict TLS default rejects mismatched identity (behind real PKI or test CA).
+- [x] Handshake timeout configurable.
+- [x] Address iteration connects via fallback.
+- [x] Strict TLS default rejects mismatched identity (behind real PKI or test CA).
 - [ ] Start/stop idempotence and no task leaks.
 - [ ] Discovery announce/listen happy-path with serialization errors handled.
 
@@ -137,7 +137,7 @@ what options we have for mobile for auto p2p network discovery.. without a centr
   - [x] `with_max_message_size(usize)` (or derive from `TransportOptions` consistently)
   - [ ] `with_key_manager(Arc<dyn KeyManager>)` or `with_identity_profile(&str)` (preferred over raw certs)
   - [x] `with_logger_from_node_id(node_id: String, level: LogLevel)` (used only if `with_logger` not provided)
-  - [ ] Deprecate: `with_certificates`, `with_private_key`, `with_root_certificates` for non-test usage; keep for tests.
+  - [x] Deprecate: `with_certificates`, `with_private_key`, `with_root_certificates` for non-test usage; keep for tests.
 
 ---
 
