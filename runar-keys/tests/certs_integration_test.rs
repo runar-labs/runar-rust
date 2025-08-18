@@ -17,8 +17,8 @@ use runar_keys::{
 };
 use std::sync::Arc;
 
-fn create_test_logger(component: &str) -> Arc<Logger> {
-    Arc::new(Logger::new_root(Component::Custom("Keys"), component))
+fn create_test_logger() -> Arc<Logger> {
+    Arc::new(Logger::new_root(Component::Custom("Keys")))
 }
 
 /// Test the complete certificate workflow from mobile to nodes
@@ -31,7 +31,7 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     // ==========================================
     println!("\n📱 Phase 1: Initializing Mobile CA");
 
-    let mobile_logger = create_test_logger("mobile-test");
+    let mobile_logger = create_test_logger();
     let mut mobile_key_manager = MobileKeyManager::new(mobile_logger)?;
 
     // Initialize user identity
@@ -60,8 +60,11 @@ async fn test_complete_certificate_workflow() -> Result<()> {
     println!("\n🖥️  Phase 2: Setting up nodes and generating CSRs");
 
     // Create two nodes for demonstration
-    let node1_logger = create_test_logger("node1-test");
-    let node2_logger = create_test_logger("node2-test");
+    let node1_logger = create_test_logger();
+    node1_logger.set_node_id("node1".to_string());
+    let node2_logger = create_test_logger();
+    node2_logger.set_node_id("node2".to_string());
+
     let mut node1 = NodeKeyManager::new(node1_logger)?;
     let mut node2 = NodeKeyManager::new(node2_logger)?;
 
@@ -112,18 +115,18 @@ async fn test_complete_certificate_workflow() -> Result<()> {
         node1_cert_message.metadata.validity_days
     );
 
-    let safe_node_id_1 = node1.dns_safe_node_id(&node1.get_node_id());
-    let safe_node_id_2 = node2.dns_safe_node_id(&node2.get_node_id());
+    let safe_node_id_1 = &node1.get_node_id();
+    let safe_node_id_2 = &node2.get_node_id();
 
     // Verify certificate contents
     assert!(node1_cert_message
         .node_certificate
         .subject()
-        .contains(&safe_node_id_1));
+        .contains(safe_node_id_1));
     assert!(node2_cert_message
         .node_certificate
         .subject()
-        .contains(&safe_node_id_2));
+        .contains(safe_node_id_2));
     // Note: For this demo, we're creating self-signed certificates, so the CA certificate check is relaxed
     println!("      ✅ Certificate subjects verified correctly");
 
@@ -230,29 +233,31 @@ async fn test_complete_certificate_workflow() -> Result<()> {
 async fn test_certificate_validation_edge_cases() -> Result<()> {
     println!("🧪 Testing certificate validation edge cases");
 
-    let mobile_logger = create_test_logger("mobile-edge-test");
-    let node_logger = create_test_logger("node-edge-test");
+    let mobile_logger = create_test_logger();
+    mobile_logger.set_node_id("mobile".to_string());
+    let node_logger = create_test_logger();
+    node_logger.set_node_id("node".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
-    let mut node = NodeKeyManager::new(node_logger)?;
+    let mut node_keys = NodeKeyManager::new(node_logger)?;
 
     // Use the proper CSR-based certificate workflow
-    let setup_token = node.generate_csr()?;
+    let setup_token = node_keys.generate_csr()?;
     let cert_message = mobile.process_setup_token(&setup_token)?;
-    node.install_certificate(cert_message)?;
+    node_keys.install_certificate(cert_message)?;
 
     // Test peer validation
     let node_cert = X509Certificate::from_der(
-        node.get_quic_certificate_config()?.certificate_chain[0].to_vec(),
+        node_keys.get_quic_certificate_config()?.certificate_chain[0].to_vec(),
     )?;
 
     // Valid validation
-    node.validate_peer_certificate(&node_cert)?;
+    node_keys.validate_peer_certificate(&node_cert)?;
     println!("   ✅ Self-validation passed");
 
     // Test signature verification
     let test_data = b"Test signature data";
-    let signature = node.sign_data(test_data)?;
-    node.verify_peer_signature(test_data, &signature, &node_cert)?;
+    let signature = node_keys.sign_data(test_data)?;
+    node_keys.verify_peer_signature(test_data, &signature, &node_cert)?;
     println!("   ✅ Signature verification passed");
 
     Ok(())
@@ -263,7 +268,7 @@ async fn test_certificate_validation_edge_cases() -> Result<()> {
 async fn test_certificate_authority_operations() -> Result<()> {
     println!("🏛️  Testing Certificate Authority operations");
 
-    let mobile_logger = create_test_logger("mobile-ca-test");
+    let mobile_logger = create_test_logger();
     let mobile = MobileKeyManager::new(mobile_logger)?;
     let ca_cert = mobile.get_ca_certificate();
 
@@ -286,13 +291,15 @@ async fn test_certificate_authority_operations() -> Result<()> {
 async fn test_multiple_network_scenario() -> Result<()> {
     println!("🌐 Testing multiple network scenario");
 
-    let mobile_logger = create_test_logger("mobile-multi-test");
+    let mobile_logger = create_test_logger();
+    mobile_logger.set_node_id("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
 
     // Create multiple nodes
     let mut nodes = Vec::new();
     for i in 1..=3 {
-        let node_logger = create_test_logger(&format!("node-multi-{i}"));
+        let node_logger = create_test_logger();
+        node_logger.set_node_id(format!("node-{i}"));
         let mut node = NodeKeyManager::new(node_logger)?;
 
         // Use the proper CSR-based certificate workflow
@@ -359,7 +366,8 @@ async fn test_certificate_performance() -> Result<()> {
 
     // Measure mobile CA creation
     let ca_start = std::time::Instant::now();
-    let mobile_logger = create_test_logger("mobile-perf-test");
+    let mobile_logger = create_test_logger();
+    mobile_logger.set_node_id("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let ca_duration = ca_start.elapsed();
 
@@ -368,7 +376,8 @@ async fn test_certificate_performance() -> Result<()> {
     const NUM_NODES: usize = 10;
 
     for i in 1..=NUM_NODES {
-        let node_logger = create_test_logger(&format!("node-perf-{i}"));
+        let node_logger = create_test_logger();
+        node_logger.set_node_id(format!("node-{i}"));
         let mut node = NodeKeyManager::new(node_logger)?;
 
         // Use the proper CSR-based certificate workflow
@@ -412,8 +421,10 @@ async fn test_certificate_performance() -> Result<()> {
 async fn test_enhanced_key_management() -> Result<()> {
     println!("🔐 Testing enhanced key management features");
 
-    let mobile_logger = create_test_logger("mobile-enhanced");
-    let node_logger = create_test_logger("node-enhanced");
+    let mobile_logger = create_test_logger();
+    mobile_logger.set_node_id("mobile".to_string());
+    let node_logger = create_test_logger();
+    node_logger.set_node_id("node".to_string());
 
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let mut node = NodeKeyManager::new(node_logger)?;
@@ -585,10 +596,9 @@ async fn test_enhanced_key_management() -> Result<()> {
 
 #[test]
 fn test_symmetric_key_management() {
-    let logger = Arc::new(Logger::new_root(
-        runar_common::logging::Component::System,
+    let logger = Arc::new(Logger::new_root(runar_common::logging::Component::Custom(
         "test",
-    ));
+    )));
     let mut node_manager = NodeKeyManager::new(logger).expect("Failed to create NodeKeyManager");
 
     // Test symmetric key management

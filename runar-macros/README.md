@@ -82,7 +82,7 @@ use runar_node::{Node, NodeConfig};
 async fn main() -> anyhow::Result<()> {
     // Configure and create node
     let config = NodeConfig::new("my-node", "default-network");
-    let mut node = Node::new(config).await?;
+    let  node = Node::new(config).await?;
 
     // Add service
     node.add_service(EchoService).await?;

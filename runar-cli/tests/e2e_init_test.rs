@@ -241,7 +241,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
 
     println!("📁 Using test config directory: {config_dir:?}");
 
-    let logger = Arc::new(Logger::new_root(Component::CLI, "e2e-test"));
+    let logger = Arc::new(Logger::new_root(Component::CLI));
 
     // ==========================================
     // STEP 1: Initialize mobile device (simulate mobile app)

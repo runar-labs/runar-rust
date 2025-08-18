@@ -129,6 +129,45 @@ pub struct MobileKeyManagerState {
 }
 
 impl MobileKeyManager {
+    /// Transform an arbitrary node id into a DNS-safe label that can be used
+    /// inside Subject Alternative Name DNSName entries and CN.
+    fn dns_safe_node_id(&self, node_id: &str) -> String {
+        // Lowercase, replace invalid chars with hyphen, collapse repeats, trim edges
+        let mut out = String::with_capacity(node_id.len());
+        let mut last_dash = false;
+        for ch in node_id.chars() {
+            let mapped = match ch {
+                'a'..='z' | '0'..='9' => ch,
+                'A'..='Z' => ch.to_ascii_lowercase(),
+                '-' => {
+                    if last_dash {
+                        continue;
+                    }
+                    '-'
+                }
+                _ => {
+                    if last_dash {
+                        continue;
+                    }
+                    '-'
+                }
+            };
+            last_dash = mapped == '-';
+            out.push(mapped);
+        }
+        // Trim leading/trailing '-'
+        while out.starts_with('-') {
+            out.remove(0);
+        }
+        while out.ends_with('-') {
+            out.pop();
+        }
+        if out.is_empty() {
+            "node".to_string()
+        } else {
+            out
+        }
+    }
     /// Create a new Mobile Key Manager
     pub fn new(logger: Arc<Logger>) -> Result<Self> {
         // Create Certificate Authority with user identity
@@ -151,19 +190,6 @@ impl MobileKeyManager {
             serial_counter: 1, // Start at 1 to avoid 0
             logger,
         })
-    }
-
-    /// Convert a compact ID to a DNS-safe format by replacing invalid characters
-    fn dns_safe_node_id(&self, node_id: &str) -> String {
-        node_id
-            .chars()
-            .map(|c| match c {
-                '-' => 'x',                    // Replace hyphen with 'x'
-                '_' => 'y',                    // Replace underscore with 'y'
-                c if c.is_alphanumeric() => c, // Keep alphanumeric
-                _ => 'z',                      // Replace any other invalid chars with 'z'
-            })
-            .collect()
     }
 
     pub fn install_network_public_key(&mut self, network_public_key: &[u8]) -> Result<()> {
@@ -640,7 +666,7 @@ impl MobileKeyManager {
 
             if !cn_matches {
                 return Err(KeyError::InvalidOperation(format!(
-                    "CSR CN does not match node ID '{node_id}' (DNS-safe: '{dns_safe_node_id}')",
+                    "CSR CN does not match node ID '{node_id}'",
                 )));
             }
         }

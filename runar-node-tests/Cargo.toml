@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 runar_node = { path = "../runar-node" }
+runar_transporter = { path = "../runar-transporter" }
 runar_macros_common = { path = "../runar-macros-common" }
 runar_test_utils = { path = "../runar-test-utils" }
 runar-schemas = { path = "../runar-schemas" }
@@ -18,6 +19,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_cbor = "0.11"
 rustls = { version = "0.23.28" }
+rustls-pki-types = "1.12.0"
 async-trait = "0.1.80"
 runar-serializer = { path = "../runar-serializer" }
 runar_common = { path = "../runar-common" }

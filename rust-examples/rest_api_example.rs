@@ -280,7 +280,7 @@ async fn main() -> Result<()> {
     logger.info("🚀 Starting REST API Example");
     
     // Create a node
-    let mut node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
+    let  node = runar_node::Node::new(runar_node::NodeConfig::default()).await?;
     
     // Create and register services
     let invoice_service = InvoiceService::new();

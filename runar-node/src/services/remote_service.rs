@@ -10,14 +10,15 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::network::transport::{MessageContext, NetworkTransport};
-use crate::routing::TopicPath;
 use crate::services::abstract_service::AbstractService;
-use crate::services::service_registry::EventHandler;
+
 use crate::services::{ActionHandler, LifecycleContext};
 use runar_common::logging::Logger;
+use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
+use runar_serializer::{ArcValue, SerializationContext};
+use runar_transporter::transport::NetworkTransport;
 
 // No direct key-store or label resolver – encryption handled by transport layer
 
@@ -43,8 +44,10 @@ pub struct RemoteService {
     /// Logger instance
     logger: Arc<Logger>,
 
-    /// Request timeout in milliseconds
-    request_timeout_ms: u64,
+    /// Keystore for encryption/decryption
+    keystore: Arc<dyn runar_serializer::EnvelopeCrypto>,
+    /// Resolver for labels
+    resolver: Arc<dyn runar_serializer::LabelResolver>,
 }
 
 /// Configuration for creating a RemoteService instance.
@@ -62,6 +65,8 @@ pub struct RemoteServiceDependencies {
     pub network_transport: Arc<dyn NetworkTransport>,
     pub local_node_id: String, // ID of the local node
     pub logger: Arc<Logger>,
+    pub keystore: Arc<dyn runar_serializer::EnvelopeCrypto>,
+    pub resolver: Arc<dyn runar_serializer::LabelResolver>,
 }
 
 /// Configuration for creating multiple RemoteService instances from capabilities.
@@ -85,7 +90,8 @@ impl RemoteService {
             network_transport: dependencies.network_transport,
             actions: Arc::new(DashMap::new()),
             logger: dependencies.logger,
-            request_timeout_ms: config.request_timeout_ms,
+            keystore: dependencies.keystore.clone(),
+            resolver: dependencies.resolver.clone(),
         }
     }
 
@@ -142,6 +148,8 @@ impl RemoteService {
                 // no keystore/resolver
                 local_node_id: dependencies.local_node_id.clone(),
                 logger: dependencies.logger.clone(),
+                keystore: dependencies.keystore.clone(),
+                resolver: dependencies.resolver.clone(),
             };
 
             // Create the remote service
@@ -183,69 +191,6 @@ impl RemoteService {
         Ok(())
     }
 
-    /// Create a handler for a remote event
-    pub fn create_event_handler(&self, event_path: String) -> EventHandler {
-        let service = self.clone();
-
-        // Create a handler that forwards events to the remote service
-        Arc::new(move |_event_context, event_data| {
-            let service_clone = service.clone();
-            let event_path_clone = event_path.clone();
-
-            Box::pin(async move {
-                // Generate a unique event ID
-                let event_id = Uuid::new_v4().to_string();
-
-                log_debug!(
-                    service_clone.logger,
-                    "🚀 [RemoteService] Starting remote event - Event: {event_path_clone}, Event ID: {event_id}, Target: {}",
-                    service_clone.peer_node_id
-                );
-
-                // Create the event topic path
-                let event_topic_path = match service_clone
-                    .service_topic
-                    .new_event_topic(&event_path_clone)
-                {
-                    Ok(path) => path,
-                    Err(e) => {
-                        log_error!(
-                            service_clone.logger,
-                            "Failed to create event topic path for {event_path_clone}: {e}"
-                        );
-                        return Err(anyhow::anyhow!("Invalid event topic path: {e}"));
-                    }
-                };
-
-                // Clone necessary fields
-                let peer_node_id = service_clone.peer_node_id.clone();
-                let network_transport = service_clone.network_transport.clone();
-                let logger = service_clone.logger.clone();
-
-                // Send the event to the remote node
-                match network_transport
-                    .publish(&event_topic_path, event_data, &peer_node_id)
-                    .await
-                {
-                    Ok(_) => {
-                        log_info!(
-                            logger,
-                            "✅ [RemoteService] Event published successfully - ID: {event_id}"
-                        );
-                        Ok(())
-                    }
-                    Err(e) => {
-                        log_error!(
-                            logger,
-                            "❌ [RemoteService] Remote event failed {event_id}: {e}"
-                        );
-                        Err(anyhow::anyhow!("Remote event error: {e}"))
-                    }
-                }
-            })
-        })
-    }
-
     /// Create a handler for a remote action
     pub fn create_action_handler(&self, action_name: String) -> ActionHandler {
         let service = self.clone();
@@ -265,38 +210,71 @@ impl RemoteService {
             let peer_node_id = service.peer_node_id.clone();
             let network_transport = service.network_transport.clone();
             // no keystore/resolver
-            let _request_timeout_ms = service.request_timeout_ms;
+            //let _request_timeout_ms = service.request_timeout_ms;
             let logger = service.logger.clone();
+            let keystore = service.keystore.clone();
+            let resolver = service.resolver.clone();
 
             Box::pin(async move {
                 // Generate a unique request ID
-                let request_id = Uuid::new_v4().to_string();
+                let correlation_id = Uuid::new_v4().to_string();
 
                 log_debug!(
                     logger,
-                    "🚀 [RemoteService] Starting remote request - Action: {action}, Request ID: {request_id}, Target: {peer_node_id}"
+                    "🚀 [RemoteService] Starting remote request - Action: {action} Target: {peer_node_id} Correlation ID: {correlation_id}"
                 );
 
                 let profile_public_key = request_context.user_profile_public_key;
 
-                let context = MessageContext { profile_public_key };
-
                 // Send the request
+                let topic_path_str = action_topic_path.as_str();
+                // Create serialization context with network ID from the topic path
+                let network_id = action_topic_path.network_id();
+                let serialization_context = SerializationContext {
+                    keystore: keystore.clone(),
+                    resolver: resolver.clone(),
+                    network_id,
+                    profile_public_key: Some(profile_public_key.clone()),
+                };
+
+                let params_bytes = params
+                    .unwrap_or(ArcValue::null())
+                    .serialize(Some(&serialization_context))
+                    .unwrap_or_default();
                 match network_transport
-                    .request(&action_topic_path, params, &peer_node_id, context)
+                    .request(
+                        topic_path_str,
+                        &correlation_id,
+                        params_bytes,
+                        &peer_node_id,
+                        profile_public_key,
+                    )
                     .await
                 {
-                    Ok(response) => {
-                        log_info!(
+                    Ok(response_bytes) => {
+                        log_debug!(
                             logger,
-                            "✅ [RemoteService] Response received successfully - ID: {request_id}"
+                            "✅ [RemoteService] Response received successfully correlation_id: {correlation_id}"
                         );
-                        Ok(response)
+                        // Deserialize the response bytes back to ArcValue
+                        match ArcValue::deserialize(
+                            &response_bytes,
+                            Some(Arc::clone(&serialization_context.keystore)),
+                        ) {
+                            Ok(response_value) => Ok(response_value),
+                            Err(e) => {
+                                log_error!(
+                                    logger,
+                                    "❌ [RemoteService] Failed to deserialize response correlation_id: {correlation_id}: {e}"
+                                );
+                                Err(anyhow::anyhow!("Response deserialization error: {e}"))
+                            }
+                        }
                     }
                     Err(e) => {
                         log_error!(
                             logger,
-                            "❌ [RemoteService] Remote request failed {request_id}: {e}"
+                            "❌ [RemoteService] Remote request failed correlation_id: {correlation_id}: {e}"
                         );
                         Err(anyhow::anyhow!("Remote service error: {e}"))
                     }

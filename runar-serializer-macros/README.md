@@ -80,7 +80,7 @@ user_mobile.initialize_user_root_key()?;
 let profile_pk = user_mobile.derive_user_profile_key("user")?;
 user_mobile.install_network_public_key(&network_pub)?;
 
-let mut node = NodeKeyManager::new(logger.clone())?;
+let  node = NodeKeyManager::new(logger.clone())?;
 let token = node.generate_csr()?;
 let nk_msg = network_master.create_network_key_message(&network_id, &token.node_agreement_public_key)?;
 node.install_network_key(nk_msg)?;

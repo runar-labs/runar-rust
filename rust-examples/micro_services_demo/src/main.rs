@@ -1,7 +1,7 @@
 use anyhow::Result;
 use runar_common::logging::{Component, Logger};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_macros_common::params;
-use runar_node::config::{LogLevel, LoggingConfig};
 use runar_node::Node;
 
 use runar_serializer::ArcValue;
@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Info);
     logging_config.apply();
 
-    let logger = Arc::new(Logger::new_root(Component::System, "microservices-demo"));
+    let logger = Arc::new(Logger::new_root(Component::System));
 
     logger.info("🚀 Starting Runar Encryption Demo with Database");
     logger.info("================================================");
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
 
     // Use the config from the simulator
     let config = config.with_logging_config(logging_config);
-    let mut node = Node::new(config).await?;
+    let node = Node::new(config).await?;
 
     // Setup database services
     let (sqlite_service, crud_service) = db_services::setup_database_services();

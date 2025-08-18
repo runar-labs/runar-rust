@@ -6,6 +6,26 @@ use runar_serializer_macros::Plain;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Information about a node in the network
+///
+/// INTENTION: Represents a snapshot of a node's presence and capabilities
+/// within one or more networks. This information is shared via discovery mechanisms.
+#[derive(Clone, Serialize, Deserialize, Debug, Plain)]
+pub struct NodeInfo {
+    /// The node's unique identifier
+    pub node_public_key: Vec<u8>,
+    /// The list of network IDs this node participates in and handles traffic for.
+    /// A node can be part of multiple networks simultaneously.
+    pub network_ids: Vec<String>,
+    /// The node's  network addressess (e.g., "IP:PORT") - ordered by preference
+    pub addresses: Vec<String>,
+    /// Node services representing the services provided by this node
+    pub node_metadata: NodeMetadata,
+    /// incremental version counter that change everytime the node changes (new services added, new event subscriptions, etc)
+    /// when that happens a new version is published to known peers.. and that is how peers know if  they need to update their own version of it
+    pub version: i64,
+}
+
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
 pub struct ActionMetadata {
     pub name: String,

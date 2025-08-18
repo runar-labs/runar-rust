@@ -367,8 +367,7 @@ mod tests {
 
     use super::*;
     use runar_common::logging::{Component, Logger};
-    use runar_node::config::LogLevel;
-    use runar_node::config::LoggingConfig;
+    use runar_node::config::{LogLevel, LoggingConfig};
     use runar_node::Node;
     use runar_serializer::ValueCategory;
     use runar_test_utils::create_node_test_config;
@@ -396,7 +395,7 @@ mod tests {
 
         let default_network_id = config.default_network_id.clone();
 
-        let mut node = Node::new(config).await.unwrap();
+        let node = Node::new(config).await.unwrap();
 
         let store = Arc::new(Mutex::new(HashMap::new()));
 

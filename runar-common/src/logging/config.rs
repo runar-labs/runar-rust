@@ -2,7 +2,7 @@
 //
 // This module provides configuration options for logging in the Runar system.
 
-use runar_common::logging::Component;
+use super::Component;
 use std::collections::HashMap;
 
 /// Logging configuration options
@@ -115,6 +115,11 @@ impl LoggingConfig {
 
         // Disable reading from environment variables
         builder.parse_default_env();
+
+        // Customize the log format to remove module path and simplify output
+        builder.format_module_path(false);
+        builder.format_target(false);
+        builder.format_timestamp(Some(env_logger::TimestampPrecision::Millis));
 
         // Set the default level
         builder.filter_level(self.default_level.to_level_filter());

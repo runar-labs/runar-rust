@@ -1,5 +1,5 @@
 use anyhow::Result;
-use runar_node::config::{LogLevel, LoggingConfig};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::ArcValue;
 use runar_services::{
@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
     let config = create_node_test_config()
         .expect("Error creating test config")
         .with_logging_config(logging_config);
-    let mut node = Node::new(config).await.unwrap();
+    let node = Node::new(config).await.unwrap();
 
     node.add_service(sqlite_service).await?;
     node.start().await?;

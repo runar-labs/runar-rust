@@ -47,7 +47,7 @@ impl StartCommand {
         let runar_config = self.create_runar_config(&config, &node_key_manager)?;
 
         // Create and start the node
-        let mut node = Node::new(runar_config)
+        let node = Node::new(runar_config)
             .await
             .context("Failed to create Runar node")?;
 
@@ -67,7 +67,7 @@ impl StartCommand {
         println!("🛑 Press Ctrl+C to stop the node");
 
         // Wait for shutdown signal
-        self.wait_for_shutdown(&mut node).await?;
+        self.wait_for_shutdown(&node).await?;
 
         Ok(())
     }
@@ -106,7 +106,7 @@ impl StartCommand {
             .context("Failed to deserialize node state")?;
 
         // Create logger for the key manager
-        let key_logger = Arc::new(Logger::new_root(Component::Keys, &config.node_id));
+        let key_logger = Arc::new(Logger::new_root(Component::Keys));
 
         // Create node key manager from state
         let node_key_manager = NodeKeyManager::from_state(node_state, key_logger)
@@ -132,8 +132,7 @@ impl StartCommand {
             .context("Failed to serialize node state for Runar config")?;
 
         // Create Runar node configuration using production constructor
-        let mut runar_config =
-            NodeConfig::new(config.node_id.clone(), config.default_network_id.clone());
+        let mut runar_config = NodeConfig::new(config.default_network_id.clone());
         runar_config = runar_config
             .with_additional_networks(config.network_ids.clone())
             .with_request_timeout(config.request_timeout_ms)
@@ -142,7 +141,7 @@ impl StartCommand {
         Ok(runar_config)
     }
 
-    async fn wait_for_shutdown(&self, node: &mut Node) -> Result<()> {
+    async fn wait_for_shutdown(&self, node: &Node) -> Result<()> {
         // Set up signal handling for graceful shutdown (cross-platform)
         let ctrl_c = tokio::signal::ctrl_c();
         ctrl_c

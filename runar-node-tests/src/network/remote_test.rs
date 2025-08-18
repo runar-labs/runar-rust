@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::{Component, Logger};
+use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_macros_common::params;
-use runar_node::config::{LogLevel, LoggingConfig};
 use runar_serializer::ArcValue; // needed by params! macro
 
 use runar_node::node::Node;
@@ -33,33 +33,14 @@ async fn test_remote_action_call() -> Result<()> {
     logging_config.apply();
 
     // Set up logger
-    let logger = Arc::new(Logger::new_root(
-        Component::Custom("remote_action_test"),
-        "",
-    ));
+    let logger = Arc::new(Logger::new_root(Component::Custom("remote_action_test")));
 
-    let mut configs =
+    let configs =
         create_networked_node_test_config(2).expect("Failed to create multiple node test configs");
-    // Assign a unique multicast port for this test instance to isolate from other tests
-    let unique_port: u16 = 47000 + (rand::random::<u16>() % 1000);
-    let unique_group = format!("239.255.42.98:{unique_port}");
-    if let Some(net) = &mut configs[0].network_config {
-        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
-            multicast_group: unique_group.clone(),
-            ..Default::default()
-        });
-    }
-    if let Some(net) = &mut configs[1].network_config {
-        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
-            multicast_group: unique_group,
-            ..Default::default()
-        });
-    }
 
     let node1_config = configs[0].clone();
-    let node1_id = node1_config.node_id.clone();
     let node2_config = configs[1].clone();
-    let node2_id = node2_config.node_id.clone();
+
     // Create math services with different paths using the fixture
     let math_service1 = MathService::new("math1", "math1");
     let math_service2 = MathService::new("math2", "math2");
@@ -67,7 +48,7 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug(format!("Node1 config: {node1_config}"));
     logger.debug(format!("Node2 config: {node2_config}"));
 
-    let mut node1 = Node::new(node1_config).await?;
+    let node1 = Node::new(node1_config).await?;
     node1.add_service(math_service1).await?;
 
     // Start the subscription in the background (hold join handle)
@@ -85,7 +66,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     logger.debug("✅ Node 1 started");
 
-    let mut node2 = Node::new(node2_config).await?;
+    let node2 = Node::new(node2_config).await?;
     node2.add_service(math_service2).await?;
 
     node2.start().await?;
@@ -93,21 +74,38 @@ async fn test_remote_action_call() -> Result<()> {
 
     logger.debug("⏳ Waiting for nodes to discover each other via multicast and establish QUIC connections...");
     let peer_future2 = node2.on(
-        format!("$registry/peer/{node1_id}/discovered"),
+        format!(
+            "$registry/peer/{node1_id}/discovered",
+            node1_id = node1.node_id()
+        ),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(3),
             include_past: None,
         }),
     );
     let peer_future1 = node1.on(
-        format!("$registry/peer/{node2_id}/discovered"),
+        format!(
+            "$registry/peer/{node2_id}/discovered",
+            node2_id = node2.node_id()
+        ),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(3),
             include_past: None,
         }),
     );
     //join both futures and wait for both to complete
-    let _ = tokio::join!(peer_future2, peer_future1);
+    let (peer_result2, peer_result1) = tokio::join!(peer_future2, peer_future1);
+
+    // Check for timeout errors and panic if any occurred
+    match peer_result2 {
+        Ok(_) => logger.debug("✅ Node2 successfully discovered Node1"),
+        Err(e) => panic!("❌ Node2 failed to discover Node1 within timeout: {e}"),
+    }
+
+    match peer_result1 {
+        Ok(_) => logger.debug("✅ Node1 successfully discovered Node2"),
+        Err(e) => panic!("❌ Node1 failed to discover Node2 within timeout: {e}"),
+    }
 
     // Create subscription for math1/math/added BEFORE calling the math operation
     logger.debug("📥 Setting up subscription for math1/math/added event on node1...");
@@ -278,15 +276,13 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logging_config.apply();
 
         // Set up logger
-        let logger = Arc::new(Logger::new_root(Component::Custom("stop_restart_test"), ""));
+        let logger = Arc::new(Logger::new_root(Component::Custom("stop_restart_test")));
 
         let configs = create_networked_node_test_config(2)
             .expect("Failed to create multiple node test configs");
 
         let node1_config = configs[0].clone();
-        let node1_id = node1_config.node_id.clone();
         let node2_config = configs[1].clone();
-        let node2_id = node2_config.node_id.clone();
 
         // Create math services with different paths using the fixture
         let math_service1 = MathService::new("math1", "math1");
@@ -295,12 +291,12 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.debug(format!("Node1 config: {node1_config}"));
         logger.debug(format!("Node2 config: {node2_config}"));
 
-        let mut node1 = Node::new(node1_config.clone()).await?;
+        let node1 = Node::new(node1_config.clone()).await?;
         node1.add_service(math_service1.clone()).await?;
         node1.start().await?;
         logger.debug("✅ Node 1 started");
 
-        let mut node2 = Node::new(node2_config).await?;
+        let node2 = Node::new(node2_config).await?;
         node2.add_service(math_service2).await?;
         node2.start().await?;
         logger.debug("✅ Node 2 started");
@@ -308,14 +304,20 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         // Wait for nodes to discover each other
         logger.debug("⏳ Waiting for nodes to discover each other...");
         let peer_future2 = node2.on(
-            format!("$registry/peer/{node1_id}/discovered"),
+            format!(
+                "$registry/peer/{node1_id}/discovered",
+                node1_id = node1.node_id()
+            ),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(3),
                 include_past: None,
             }),
         );
         let peer_future1 = node1.on(
-            format!("$registry/peer/{node2_id}/discovered"),
+            format!(
+                "$registry/peer/{node2_id}/discovered",
+                node2_id = node2.node_id()
+            ),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(3),
                 include_past: None,
@@ -384,7 +386,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         //sleep(Duration::from_millis(1000)).await;
 
         // Create a fresh node using the same config (preserves node_id, keys, etc.)
-        let mut node1 = Node::new(node1_config.clone()).await?;
+        let node1 = Node::new(node1_config.clone()).await?;
         node1.add_service(math_service1.clone()).await?;
         node1.start().await?;
         // Ensure background service start completion before remote requests
@@ -394,14 +396,20 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         // Wait for nodes to discover each other again - same as initial setup
         logger.debug("⏳ Waiting for nodes to rediscover each other...");
         let on_node1_found = node2.on(
-            format!("$registry/peer/{node1_id}/discovered"),
+            format!(
+                "$registry/peer/{node1_id}/discovered",
+                node1_id = node1.node_id()
+            ),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(10),
                 include_past: None,
             }),
         );
         let on_node2_found = node1.on(
-            format!("$registry/peer/{node2_id}/discovered"),
+            format!(
+                "$registry/peer/{node2_id}/discovered",
+                node2_id = node2.node_id()
+            ),
             Some(runar_node::services::OnOptions {
                 timeout: Duration::from_secs(10),
                 include_past: None,

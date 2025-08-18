@@ -1,6 +1,6 @@
 use anyhow::Result;
-use runar_node::config::{LogLevel, LoggingConfig};
-use runar_node::node::Node;
+use runar_common::logging::{LogLevel, LoggingConfig};
+use runar_node::{node::Node, DiscoveryOptions};
 use runar_test_utils::create_networked_node_test_config;
 use std::time::Duration;
 
@@ -9,7 +9,7 @@ use crate::fixtures::math_service::MathService;
 #[tokio::test]
 async fn test_remote_service_running_event_include_past() -> Result<()> {
     // Configure logging to ensure visibility if it fails
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     // Unique multicast group per run to avoid test cross-talk
@@ -17,13 +17,13 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     let unique_port: u16 = 48000 + (rand::random::<u16>() % 1000);
     let unique_group = format!("239.255.42.98:{unique_port}");
     if let Some(net) = &mut configs[0].network_config {
-        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
+        net.discovery_options = Some(DiscoveryOptions {
             multicast_group: unique_group.clone(),
             ..Default::default()
         });
     }
     if let Some(net) = &mut configs[1].network_config {
-        net.discovery_options = Some(runar_node::network::discovery::DiscoveryOptions {
+        net.discovery_options = Some(DiscoveryOptions {
             multicast_group: unique_group,
             ..Default::default()
         });
@@ -33,7 +33,7 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
     let node2_config = configs[1].clone();
 
     // Node 1 with a service
-    let mut node1 = Node::new(node1_config.clone()).await?;
+    let node1 = Node::new(node1_config.clone()).await?;
     node1
         .add_service(MathService::new("math1", "math1"))
         .await?;
@@ -46,14 +46,14 @@ async fn test_remote_service_running_event_include_past() -> Result<()> {
 
     // Wait for nodes to discover each other
     let on1 = node2.on(
-        format!("$registry/peer/{}/discovered", node1_config.node_id),
+        format!("$registry/peer/{}/discovered", node1.node_id()),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(10),
             include_past: None,
         }),
     );
     let on2 = node1.on(
-        format!("$registry/peer/{}/discovered", node2_config.node_id),
+        format!("$registry/peer/{}/discovered", node2.node_id()),
         Some(runar_node::services::OnOptions {
             timeout: Duration::from_secs(10),
             include_past: None,

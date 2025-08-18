@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Create logger
-    let logger = Arc::new(Logger::new_root(Component::CLI, "main"));
+    let logger = Arc::new(Logger::new_root(Component::CLI));
 
     // Determine config directory
     let config_dir = cli.config_dir.unwrap_or_else(|| {

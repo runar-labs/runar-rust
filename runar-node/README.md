@@ -32,7 +32,7 @@ use runar_node::{Node, NodeConfig};
 
 # async fn run() -> anyhow::Result<()> {
 let config = NodeConfig::new("my-node", "default-network");
-let mut node = Node::new(config).await?;
+let  node = Node::new(config).await?;
 
 // Add your services here (see runar-macros for easy definitions)
 // node.add_service(MyService::new()).await?;

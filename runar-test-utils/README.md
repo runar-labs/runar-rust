@@ -19,7 +19,7 @@ Quick start
 use runar_test_utils::create_node_test_config;
 
 let config = create_node_test_config()?;
-// let mut node = runar_node::Node::new(config).await?;
+// let  node = runar_node::Node::new(config).await?;
 ```
 
 Mobile simulator
