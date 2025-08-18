@@ -3538,10 +3538,12 @@ version = "0.1.0"
 dependencies = [
  "once_cell",
  "runar-keys",
+ "runar-schemas",
  "runar_common 0.1.0",
  "runar_transporter",
  "serde",
  "serde_cbor",
+ "tokio",
 ]
 
 [[package]]

@@ -11,6 +11,7 @@ use runar_keys::{
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::{NodeKeyManager, NodeKeyManagerState},
 };
+use runar_transporter::{QuicTransport, QuicTransportOptions};
 use serde_cbor as _; // keep dependency linked for now
 
 #[repr(C)]
@@ -36,13 +37,20 @@ pub extern "C" fn rn_string_free(s: *const c_char) {
 // Placeholders for handles to satisfy linkage while we implement
 #[repr(C)]
 pub struct FfiTransportHandle {
-    _priv: *mut c_void,
+    inner: *mut TransportInner,
 }
 
 struct KeysInner {
     logger: Arc<Logger>,
-    node: NodeKeyManager,
+    node_owned: Option<NodeKeyManager>,
+    node_shared: Option<Arc<NodeKeyManager>>, // set after transport construction
     mobile: Option<MobileKeyManager>,
+}
+
+#[allow(dead_code)]
+struct TransportInner {
+    logger: Arc<Logger>,
+    transport: Arc<QuicTransport>,
 }
 
 #[repr(C)]
@@ -111,11 +119,7 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
     let node_id = node.get_node_id();
     logger.set_node_id(node_id);
 
-    let inner = KeysInner {
-        logger,
-        node,
-        mobile: None,
-    };
+    let inner = KeysInner { logger, node_owned: Some(node), node_shared: None, mobile: None };
     let boxed = Box::new(inner);
     let handle = FfiKeysHandle {
         inner: Box::into_raw(boxed),
@@ -163,7 +167,14 @@ pub extern "C" fn rn_keys_node_get_public_key(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    let pk = inner.node.get_node_public_key();
+    let pk = if let Some(node) = inner.node_owned.as_ref() {
+        node.get_node_public_key()
+    } else if let Some(shared) = inner.node_shared.as_ref() {
+        shared.get_node_public_key()
+    } else {
+        set_error(err, 1, "node not initialized");
+        return 1;
+    };
     if !alloc_bytes(out, out_len, &pk) {
         set_error(err, 3, "invalid out pointers");
         return 3;
@@ -182,7 +193,14 @@ pub extern "C" fn rn_keys_node_get_node_id(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    let node_id = inner.node.get_node_id();
+    let node_id = if let Some(node) = inner.node_owned.as_ref() {
+        node.get_node_id()
+    } else if let Some(shared) = inner.node_shared.as_ref() {
+        shared.get_node_id()
+    } else {
+        set_error(err, 1, "node not initialized");
+        return 1;
+    };
     if !alloc_string(out_str, out_len, &node_id) {
         set_error(err, 3, "invalid out pointers or string alloc failed");
         return 3;
@@ -201,11 +219,17 @@ pub extern "C" fn rn_keys_node_generate_csr(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    let token = match inner.node.generate_csr() {
-        Ok(t) => t,
-        Err(e) => {
-            set_error(err, 2, &format!("Failed to generate CSR: {e}"));
-            return 2;
+    let token = match inner.node_owned.as_mut() {
+        Some(n) => match n.generate_csr() {
+            Ok(t) => t,
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to generate CSR: {e}"));
+                return 2;
+            }
+        },
+        None => {
+            set_error(err, 1, "node is shared; CSR not available");
+            return 1;
         }
     };
     let cbor = match serde_cbor::to_vec(&token) {
@@ -302,7 +326,13 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
             return 2;
         }
     };
-    if let Err(e) = inner.node.install_certificate(msg) {
+    let res = if let Some(n) = inner.node_owned.as_mut() {
+        n.install_certificate(msg)
+    } else {
+        set_error(err, 1, "node is shared; install_certificate not available");
+        return 1;
+    };
+    if let Err(e) = res {
         set_error(err, 2, &format!("Failed to install certificate: {e}"));
         return 2;
     }
@@ -320,7 +350,14 @@ pub extern "C" fn rn_keys_node_export_state(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    let state = inner.node.export_state();
+    let state = if let Some(node) = inner.node_owned.as_ref() {
+        node.export_state()
+    } else if let Some(shared) = inner.node_shared.as_ref() {
+        shared.export_state()
+    } else {
+        set_error(err, 1, "node not initialized");
+        return 1;
+    };
     let cbor = match serde_cbor::to_vec(&state) {
         Ok(v) => v,
         Err(e) => {
@@ -373,7 +410,7 @@ pub unsafe extern "C" fn rn_keys_node_import_state(
     if !handle.inner.is_null() {
         let _old = Box::from_raw(handle.inner);
     }
-    handle.inner = Box::into_raw(Box::new(KeysInner { logger, node, mobile: None }));
+    handle.inner = Box::into_raw(Box::new(KeysInner { logger, node_owned: Some(node), node_shared: None, mobile: None }));
     0
 }
 
@@ -448,17 +485,86 @@ pub unsafe extern "C" fn rn_keys_mobile_import_state(
 }
 
 #[no_mangle]
-pub extern "C" fn rn_transport_new_with_keys(
-    _keys: *mut c_void,
-    _options_cbor: *const u8,
-    _options_len: usize,
-    _out_transport: *mut *mut c_void,
-    _err: *mut RnError,
+pub unsafe extern "C" fn rn_transport_new_with_keys(
+    keys: *mut c_void,
+    options_cbor: *const u8,
+    options_len: usize,
+    out_transport: *mut *mut c_void,
+    err: *mut RnError,
 ) -> i32 {
-    -1
+    if keys.is_null() || options_cbor.is_null() || out_transport.is_null() {
+        set_error(err, 1, "null argument");
+        return 1;
+    }
+    // Read keys
+    let Some(keys_inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "invalid keys handle");
+        return 1;
+    };
+    // Parse options from CBOR map { bind_addr, timeouts, max_message_size }
+    let slice = std::slice::from_raw_parts(options_cbor, options_len);
+    let mut options = QuicTransportOptions::new();
+    // Minimal: expect a CBOR map with optional fields
+    let value: serde_cbor::Value = match serde_cbor::from_slice(slice) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(err, 2, &format!("Failed to decode options: {e}"));
+            return 2;
+        }
+    };
+    if let serde_cbor::Value::Map(m) = value {
+        for (k, v) in m {
+            if let serde_cbor::Value::Text(s) = k {
+                match s.as_str() {
+                    "bind_addr" => {
+                        if let serde_cbor::Value::Text(addr) = v {
+                            if let Ok(sock) = addr.parse() {
+                                options = options.with_bind_addr(sock);
+                            }
+                        }
+                    }
+                    "handshake_timeout_ms" => if let serde_cbor::Value::Integer(ms) = v { if ms > 0 { options = options.with_handshake_response_timeout(std::time::Duration::from_millis(ms as u64)); } },
+                    "open_stream_timeout_ms" => if let serde_cbor::Value::Integer(ms) = v { if ms > 0 { options = options.with_open_stream_timeout(std::time::Duration::from_millis(ms as u64)); } },
+                    "max_message_size" => if let serde_cbor::Value::Integer(sz) = v { if sz > 0 { options = options.with_max_message_size(sz as usize); } },
+                    _ => {}
+                }
+            }
+        }
+    }
+    // Wire key manager and local pk/logger
+    let node_arc = if let Some(n) = keys_inner.node_owned.take() {
+        let arc = Arc::new(n);
+        keys_inner.node_shared = Some(arc.clone());
+        arc
+    } else if let Some(arc) = keys_inner.node_shared.as_ref() {
+        arc.clone()
+    } else { set_error(err, 1, "node not initialized"); return 1; };
+    let node_id = node_arc.get_node_id();
+    options = options
+        .with_key_manager(node_arc.clone())
+        .with_local_node_public_key(node_arc.get_node_public_key())
+        .with_logger_from_node_id(node_id);
+    // Construct transport
+    let transport = match QuicTransport::new(options) {
+        Ok(t) => Arc::new(t),
+        Err(e) => {
+            set_error(err, 2, &format!("Failed to create transport: {e}"));
+            return 2;
+        }
+    };
+    let inner = TransportInner { logger: keys_inner.logger.clone(), transport };
+    let handle = FfiTransportHandle { inner: Box::into_raw(Box::new(inner)) };
+    *out_transport = Box::into_raw(Box::new(handle)) as *mut c_void;
+    0
 }
 
 #[no_mangle]
-pub extern "C" fn rn_transport_free(_transport: *mut c_void) {}
+pub extern "C" fn rn_transport_free(transport: *mut c_void) {
+    if transport.is_null() { return; }
+    unsafe {
+        let handle = Box::from_raw(transport as *mut FfiTransportHandle);
+        if !handle.inner.is_null() { let _ = Box::from_raw(handle.inner); }
+    }
+}
 
 
