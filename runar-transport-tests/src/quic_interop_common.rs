@@ -3,7 +3,7 @@ use clap::Parser;
 use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
 use runar_schemas::NodeInfo;
-use runar_transporter::transport::{MessageContext, NetworkMessage, NetworkMessagePayloadItem};
+use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 // Intentionally not importing QuicTransportOptions here
 use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
 use runar_serializer::traits::{
@@ -174,13 +174,11 @@ pub fn make_echo_request(source_id: &str, dest_id: &str, payload: &[u8]) -> Netw
         source_node_id: source_id.to_string(),
         destination_node_id: dest_id.to_string(),
         message_type: MESSAGE_TYPE_REQUEST,
-        payloads: vec![NetworkMessagePayloadItem {
+        payload: NetworkMessagePayloadItem {
             path: topic_echo().as_str().to_string(),
             payload_bytes: payload.to_vec(),
             correlation_id: uuid::Uuid::new_v4().to_string(),
-            context: Some(MessageContext {
-                profile_public_key: vec![],
-            }),
-        }],
+            profile_public_key: vec![],
+        },
     }
 }

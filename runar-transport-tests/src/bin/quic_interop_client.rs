@@ -9,10 +9,8 @@ use runar_macros_common::log_info;
 use runar_schemas::NodeInfo;
 use runar_serializer::ArcValue;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
-use runar_transporter::transport::{
-    MessageContext, MessageHandler, NetworkMessage, NetworkTransport,
-};
-use runar_transporter::transport::{OneWayMessageHandler, QuicTransport, QuicTransportOptions};
+use runar_transporter::transport::{EventCallback, NetworkTransport, RequestCallback};
+use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
 
 use runar_transport_tests::quic_interop_common::{
     build_node_info, default_label_resolver, default_logger, make_echo_request, read_pem_certs,
@@ -49,10 +47,16 @@ async fn main() -> Result<()> {
     let node_id = args.node_id.unwrap_or_else(|| "rust-client".to_string());
 
     // Simple handlers; client mostly initiates request and event
-    let handler: MessageHandler =
-        Box::new(move |_msg: NetworkMessage| Box::pin(async move { Ok(None) }));
-    let one_way: OneWayMessageHandler =
-        Box::new(move |_msg: NetworkMessage| Box::pin(async move { Ok(()) }));
+    let request_handler: RequestCallback = Arc::new(move |_req| {
+        Box::pin(async move {
+            Ok(runar_transporter::transport::ResponseMessage {
+                correlation_id: "".to_string(),
+                payload_bytes: vec![],
+                profile_public_key: vec![],
+            })
+        })
+    });
+    let event_handler: EventCallback = Arc::new(move |_event| Box::pin(async move { Ok(()) }));
 
     let keystore = Arc::new(NoCrypto);
     let label_resolver = default_label_resolver();
@@ -68,8 +72,8 @@ async fn main() -> Result<()> {
             Box::pin(async move { Ok(local_info) })
         }))
         .with_bind_addr(bind_addr)
-        .with_message_handler(handler)
-        .with_one_way_message_handler(one_way)
+        .with_request_callback(request_handler)
+        .with_event_callback(event_handler)
         .with_logger(logger.clone())
         .with_keystore(keystore)
         .with_label_resolver(label_resolver)
@@ -93,22 +97,27 @@ async fn main() -> Result<()> {
     // Build and send request
     let topic = topic_echo();
     let payload_bytes = b"hello from rust".to_vec();
-    let ctx = MessageContext {
-        profile_public_key: vec![],
-    };
 
     // We need the destination id as the peer compact id; we used remote_id above.
     let _ = make_echo_request(&node_id, &remote_id, &payload_bytes);
     // Use high-level request API by embedding payload into ArcValue and relying on transport serialization
     let av = ArcValue::new_json(serde_json::json!({ "msg": "hello" }));
+    let correlation_id = uuid::Uuid::new_v4().to_string();
     let _ = transport
-        .request(&topic, Some(av), &remote_id, ctx)
+        .request(
+            topic.as_str(),
+            &correlation_id,
+            av.serialize(None).unwrap_or_default(),
+            &remote_id,
+            vec![],
+        )
         .await
         .map_err(|e| anyhow!("request failed: {e}"))?;
 
     // Also send a one-way event
+    let event_correlation_id = uuid::Uuid::new_v4().to_string();
     transport
-        .publish(&topic, None, &remote_id)
+        .publish(topic.as_str(), &event_correlation_id, vec![], &remote_id)
         .await
         .map_err(|e| anyhow!("publish failed: {e}"))?;
 

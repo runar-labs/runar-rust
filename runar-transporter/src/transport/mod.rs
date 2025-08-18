@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rand;
 use runar_schemas::NodeInfo;
-use runar_serializer::ArcValue;
+
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -81,7 +81,6 @@ impl ServerCertVerifier for SkipServerVerification {
 pub use quic_transport::{QuicTransport, QuicTransportOptions};
 
 use super::discovery::multicast_discovery::PeerInfo;
-use runar_common::routing::TopicPath;
 
 /// Type alias for async-returning function
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -212,7 +211,7 @@ pub struct NetworkMessage {
     pub payload: NetworkMessagePayloadItem,
 }
 
-/// Handler function type for incoming network messages that may return a response
+// Handler function type for incoming network messages that may return a response
 // pub type MessageHandler = Box<
 //     dyn Fn(
 //             NetworkMessage,
@@ -225,7 +224,7 @@ pub struct NetworkMessage {
 //         + Sync,
 // >;
 
-/// Handler function type for one-way network messages (fire-and-forget)
+// Handler function type for one-way network messages (fire-and-forget)
 // pub type OneWayMessageHandler = Box<
 //     dyn Fn(
 //             NetworkMessage,
@@ -297,7 +296,7 @@ pub trait NetworkTransport: Send + Sync {
 
     /// Perform an RPC request/response exchange (pattern A). The transport
     /// opens a fresh bidirectional stream, writes the request, finishes the
-    /// send half, reads the response and returns the deserialized `ArcValue`.
+    /// send half, reads the response and returns the deserialized payload bytes.
     async fn request(
         &self,
         topic_path: &str,

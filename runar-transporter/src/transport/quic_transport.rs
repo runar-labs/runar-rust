@@ -1346,10 +1346,10 @@ impl QuicTransport {
                     destination_node_id: msg.source_node_id,
                     message_type: super::MESSAGE_TYPE_RESPONSE,
                     payload: NetworkMessagePayloadItem {
-                        path: path,
+                        path,
                         payload_bytes: response.payload_bytes,
                         correlation_id: correlation_id.clone(),
-                        profile_public_key: profile_public_key,
+                        profile_public_key,
                     },
                 };
                 let now = Instant::now();
@@ -2219,7 +2219,7 @@ impl NetworkTransport for QuicTransport {
             message_type: super::MESSAGE_TYPE_HANDSHAKE,
             payload: super::NetworkMessagePayloadItem {
                 path: "handshake".to_string(),
-                payload_bytes: payload_bytes,
+                payload_bytes,
                 correlation_id: uuid::Uuid::new_v4().to_string(),
                 profile_public_key: vec![],
             },

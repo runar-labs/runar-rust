@@ -1820,18 +1820,18 @@ impl Node {
                 let serialization_context = runar_serializer::traits::SerializationContext {
                     keystore: self.keys_manager.clone(),
                     resolver: self.label_resolver.clone(),
-                    network_id: network_id,
+                    network_id,
                     profile_public_key: Some(profile_public_key.clone()),
                 };
 
                 // Serialize the response data
                 let serialized_data = response.serialize(Some(&serialization_context))?;
 
-                return Ok(ResponseMessage {
+                Ok(ResponseMessage {
                     correlation_id: message.correlation_id,
                     payload_bytes: serialized_data,
-                    profile_public_key: profile_public_key,
-                });
+                    profile_public_key,
+                })
             }
             Err(e) => {
                 log_error!(self.logger, "❌ [handle_network_request] Local request failed correlation_id: {correlation_id} - Error: {e}", correlation_id=message.correlation_id);
@@ -1840,7 +1840,7 @@ impl Node {
                 let serialization_context = runar_serializer::traits::SerializationContext {
                     keystore: self.keys_manager.clone(),
                     resolver: self.label_resolver.clone(),
-                    network_id: network_id,
+                    network_id,
                     profile_public_key: Some(profile_public_key.clone()),
                 };
                 //TODO improve this by having a proper error type
@@ -1856,16 +1856,16 @@ impl Node {
                 // Serialize the error value
                 let serialized_error = error_value.serialize(Some(&serialization_context))?;
 
-                return Ok(ResponseMessage {
+                Ok(ResponseMessage {
                     correlation_id: message.correlation_id,
                     payload_bytes: serialized_error,
-                    profile_public_key: profile_public_key,
-                });
+                    profile_public_key,
+                })
             }
         }
     }
 
-    /// Handle a network response
+    // Handle a network response
     // async fn handle_network_response(
     //     &self,
     //     message: NetworkMessage,
@@ -2467,7 +2467,7 @@ impl Node {
             let serialization_context = SerializationContext {
                 keystore: self.keys_manager.clone(),
                 resolver: self.label_resolver.clone(),
-                network_id: network_id,
+                network_id,
                 profile_public_key: None,
             };
             let transport_arc = transport_arc.clone();
@@ -2672,7 +2672,7 @@ impl Node {
                 let serialization_context = SerializationContext {
                     keystore: self.keys_manager.clone(),
                     resolver: self.label_resolver.clone(),
-                    network_id: network_id,
+                    network_id,
                     profile_public_key: None,
                 };
 
