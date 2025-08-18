@@ -87,6 +87,8 @@ pub struct MulticastDiscovery {
     tx: Arc<Mutex<Option<Sender<MulticastMessage>>>>,
     // Task fields
     announce_task: Mutex<Option<JoinHandle<()>>>,
+    listener_task: Mutex<Option<JoinHandle<()>>>,
+    sender_task: Mutex<Option<JoinHandle<()>>>,
     // Multicast address field
     multicast_addr: Arc<Mutex<SocketAddr>>,
     // Logger
@@ -146,14 +148,18 @@ impl MulticastDiscovery {
             tx: Arc::new(Mutex::new(None)),
             multicast_addr: Arc::new(Mutex::new(socket_addr)),
             announce_task: Mutex::new(None),
+            listener_task: Mutex::new(None),
+            sender_task: Mutex::new(None),
             logger: logger.clone(),
         };
 
         // Initialize the tasks
-        instance.start_listener_task();
+        let listener_handle = instance.start_listener_task();
+        *instance.listener_task.lock().await = Some(listener_handle);
 
         // Call start_sender_task and store results
-        let (_sender_handle, tx) = instance.start_sender_task();
+        let (sender_handle, tx) = instance.start_sender_task();
+        *instance.sender_task.lock().await = Some(sender_handle);
         *instance.tx.lock().await = Some(tx);
 
         Ok(instance)
@@ -190,7 +196,13 @@ impl MulticastDiscovery {
         socket.bind(&bind_addr.into())?;
 
         // Join the multicast group
-        socket.join_multicast_v4(&multicast_ip, &Ipv4Addr::UNSPECIFIED)?;
+        socket
+            .join_multicast_v4(&multicast_ip, &Ipv4Addr::UNSPECIFIED)
+            .map_err(|e| {
+                anyhow!(
+                    "Failed to join multicast group {multicast_ip}: {e}. On some platforms (iOS/Android), multicast may require special entitlements or may be unavailable."
+                )
+            })?;
 
         // Convert to std socket and then to tokio socket
         let std_socket: std::net::UdpSocket = socket.into();
@@ -522,6 +534,19 @@ impl NodeDiscovery for MulticastDiscovery {
                 "Error stopping announcements during shutdown: {e}"
             );
         }
+
+        // Stop listener task
+        if let Some(task) = self.listener_task.lock().await.take() {
+            task.abort();
+        }
+
+        // Stop sender task
+        if let Some(task) = self.sender_task.lock().await.take() {
+            task.abort();
+        }
+
+        // Drop sender channel to free resources
+        *self.tx.lock().await = None;
 
         Ok(())
     }
