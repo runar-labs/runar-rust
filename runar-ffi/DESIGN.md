@@ -31,7 +31,7 @@ This document specifies a single FFI crate and ABI that exposes both key-managem
 - Memory & Errors
   - Every return buffer is owned by caller; paired `*_free` functions
   - `ErrorOut { code:int, message:const char* }`, plus `string_free` for message
-  - v1 status: last-error ring (`rn_last_error`) and memory helpers implemented; panic guards via `catch_unwind` planned next (map panic to generic error code)
+  - v1 status: last-error ring (`rn_last_error`) and memory helpers implemented; panic guards via `catch_unwind` added for discovery FFI and being rolled out across all exports (panics mapped to code 1000)
 
 ## Key Manager State Persistence (Device-bound, Host-encrypted)
 
@@ -171,7 +171,7 @@ Decision (v1): use a single shared runtime inside `runar_ffi` (Option C), expose
   - [x] Wrap `NodeKeyManager` (+ optional `MobileKeyManager`) into `FfiKeysHandle`
   - [x] Implement: `rn_keys_new/free`, `rn_keys_node_get_public_key`, `rn_keys_node_get_node_id`
   - [x] Implement CSR/cert flow: `rn_keys_node_generate_csr`, `rn_keys_mobile_process_setup_token`, `rn_keys_node_install_certificate`
-  - [ ] (Optional) Envelope helpers: encrypt/decrypt via CBOR EED
+  - [x] Envelope helpers: encrypt/decrypt via CBOR EED (`rn_keys_encrypt_with_envelope`, `rn_keys_decrypt_envelope`)
   - [x] State persistence APIs: `rn_keys_{node,mobile}_{export,import}_state`
 
 - Transport bridge
@@ -186,7 +186,8 @@ Decision (v1): use a single shared runtime inside `runar_ffi` (Option C), expose
   - [ ] callback-based delivery with a single dispatcher thread (removed from v1 scope; polling is the standard)
 
 - Discovery
-  - [ ] Add `rn_discovery_*` for Rust multicast discovery provider (construction, lifecycle, subscribe via poll)
+  - [x] Add `rn_discovery_*` for Rust multicast discovery provider (construction, lifecycle, update local info)
+  - [x] Bind discovery events to the transport poll queue (`PeerDiscovered`, `PeerUpdated`, `PeerLost`)
 
 - Build and CI
   - [ ] Set up `crate-type` for Apple (xcframework slices), Android (per-ABI .so), Node (napi or plain C + node-ffi)
@@ -195,6 +196,27 @@ Decision (v1): use a single shared runtime inside `runar_ffi` (Option C), expose
 - Docs and Samples
   - [ ] Generate a unified C header; provide mapping notes for Swift `Data`/Kotlin `ByteArray`
   - [ ] Version all CBOR schemas; include `v` in every top-level map
+
+## Platform Integration Readiness (Swift/Kotlin/Node)
+
+- Header and Linking
+  - Header `runar_ffi.h` is generated at build into OUT_DIR and also to `runar-ffi/include/runar_ffi.h`
+  - Link the produced shared library (`.dylib/.so/.dll`) into the host app (XCFramework/AAR packaging to be handled in build scripts)
+
+- Lifecycle (Swift outline)
+  - Create keys: `rn_keys_new`; optionally import state; otherwise run CSR → NCM flow with mobile authority
+  - Construct transport with options CBOR (bind_addr, timeouts, sizes, retries) via `rn_transport_new_with_keys`
+  - Start transport; poll events on a background queue using `rn_transport_poll_event`
+  - Create discovery with multicast options, call `rn_discovery_bind_events_to_transport` to receive discovery events in the same poll stream, then `init` and `start_announcing`
+  - Use `rn_transport_connect_peer` on discovered peers; request/publish as needed; complete requests via `rn_transport_complete_request`
+  - Persist keys state by export CBOR → host keystore AEAD → store blob; restore on boot
+
+- Data exchange
+  - All complex types (options, events, PeerInfo/NodeInfo, EED) are canonical CBOR buffers
+  - Strings UTF-8; binary as pointer + length; free returned buffers with `rn_free` and strings with `rn_string_free`
+
+- Error handling
+  - Check return codes; on non-zero, read `err->code` and `err->message`; `rn_last_error` available as fallback
 
 - Host persistence (platform work outside Rust FFI)
   - [ ] iOS/macOS: Keystore AES‑GCM device‑bound key; encrypt state CBOR; persist blob; decrypt on restore
