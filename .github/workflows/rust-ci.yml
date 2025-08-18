@@ -43,21 +43,5 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: runar-nodejs-ffi/package-lock.json
-
-      - name: Install dependencies
-        run: |
-          cd runar-nodejs-ffi
-          rm -rf node_modules package-lock.json
-          npm install
-
-      - name: Build Node.js FFI
-        run: cd runar-nodejs-ffi && npm run build
-
-      - name: Test Node.js FFI
-        run: cd runar-nodejs-ffi && npm test
+      - name: Build runar_ffi (generate header)
+        run: cargo build -p runar_ffi --all-targets --all-features --verbose

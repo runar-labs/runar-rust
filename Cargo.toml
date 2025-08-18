@@ -12,7 +12,6 @@ members = [
     "rust-examples/simple",
     "runar-serializer-macros",
     "runar-serializer",
-    "runar-nodejs-ffi",
     "runar-cli", 
     "runar-test-utils",
     "runar-node-tests",
