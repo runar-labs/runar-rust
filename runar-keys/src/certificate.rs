@@ -11,17 +11,10 @@ use rcgen::{Certificate as RcgenCertificate, CertificateParams, KeyPair};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use x509_parser::prelude::*;
 
-// OpenSSL for proper CA operations
-use openssl::asn1::Asn1Integer;
-use openssl::bn::{BigNum, MsbOption};
-use openssl::hash::MessageDigest;
-use openssl::nid::Nid;
-use openssl::pkey::{PKey, Private};
-use openssl::x509::extension::{
-    AuthorityKeyIdentifier, BasicConstraints as OpenSslBasicConstraints, ExtendedKeyUsage,
-    KeyUsage, SubjectAlternativeName, SubjectKeyIdentifier,
-};
-use openssl::x509::{X509Builder, X509NameBuilder, X509Req, X509};
+// OpenSSL path removed
+
+// Pure Rust path (issuance)
+use crate::pure_x509;
 
 // Cryptographic support
 use p256::ecdsa::{signature::Verifier, Signature, SigningKey, VerifyingKey};
@@ -286,17 +279,20 @@ impl<'de> Deserialize<'de> for X509Certificate {
 pub struct CertificateAuthority {
     ca_key_pair: EcdsaKeyPair,
     ca_certificate: X509Certificate,
+    #[allow(dead_code)]
+    ca_subject: String,
 }
 
 impl CertificateAuthority {
     /// Create new CA with self-signed certificate
     pub fn new(subject: &str) -> Result<Self> {
         let ca_key_pair = EcdsaKeyPair::new()?;
-        let ca_certificate = Self::create_self_signed_certificate(&ca_key_pair, subject)?;
+        let ca_certificate = pure_x509::create_self_signed_ca(&ca_key_pair, subject)?;
 
         Ok(Self {
             ca_key_pair,
             ca_certificate,
+            ca_subject: subject.to_string(),
         })
     }
 
@@ -305,6 +301,7 @@ impl CertificateAuthority {
         Self {
             ca_key_pair,
             ca_certificate,
+            ca_subject: "".to_string(),
         }
     }
 
@@ -341,170 +338,19 @@ impl CertificateAuthority {
         validity_days: u32,
         serial_override: Option<u64>,
     ) -> Result<X509Certificate> {
-        // Parse CSR and extract public key
-        let req = X509Req::from_der(csr_der)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to parse CSR DER: {e}")))?;
-
-        // Build certificate
-        let mut cert_builder = X509Builder::new().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create X509 builder: {e}"))
-        })?;
-
-        // Subject / issuer / public key
-        let req_public_key = req.public_key().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to extract public key from CSR: {e}"))
-        })?;
-
-        // ----- New security check: verify CSR signature -----
-        // Ensures the included public key actually matches the private key
-        // that signed the CSR, protecting against tampering in transit.
-        if !req.verify(&req_public_key)? {
-            return Err(KeyError::CertificateError(
-                "CSR signature verification failed".to_string(),
-            ));
-        }
-
-        cert_builder
-            .set_pubkey(&req_public_key)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set pubkey: {e}")))?;
-        cert_builder
-            .set_subject_name(req.subject_name())
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set subject: {e}")))?;
-        let ca_name = self.create_ca_name()?;
-        cert_builder
-            .set_issuer_name(&ca_name)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set issuer: {e}")))?;
-
-        // Validity
-        let not_before = openssl::asn1::Asn1Time::days_from_now(0).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to set certificate not_before: {e}"))
-        })?;
-        let not_after = openssl::asn1::Asn1Time::days_from_now(validity_days).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to set certificate not_after: {e}"))
-        })?;
-        cert_builder
-            .set_not_before(&not_before)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to apply not_before: {e}")))?;
-        cert_builder
-            .set_not_after(&not_after)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to apply not_after: {e}")))?;
-
-        // Extensions
-        // BasicConstraints: not a CA, pathLen not present
-        cert_builder
-            .append_extension(
-                OpenSslBasicConstraints::new()
-                    .critical()
-                    .build()
-                    .map_err(|e| {
-                        KeyError::CertificateError(format!("Failed to build BasicConstraints: {e}"))
-                    })?,
-            )
-            .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to append BasicConstraints: {e}"))
-            })?;
-
-        cert_builder
-            .append_extension(
-                KeyUsage::new()
-                    .digital_signature()
-                    .critical()
-                    .build()
-                    .map_err(|e| {
-                        KeyError::CertificateError(format!("Failed to build KeyUsage ext: {e}"))
-                    })?,
-            )
-            .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to append KeyUsage ext: {e}"))
-            })?;
-        cert_builder
-            .append_extension(
-                ExtendedKeyUsage::new()
-                    .server_auth()
-                    .client_auth()
-                    .build()
-                    .map_err(|e| {
-                        KeyError::CertificateError(format!("Failed to build EKU ext: {e}"))
-                    })?,
-            )
-            .map_err(|e| KeyError::CertificateError(format!("Failed to append EKU ext: {e}")))?;
-
-        // Subject Key Identifier (SKI)
-        let subject_ctx = cert_builder.x509v3_context(None, None);
-        let ski = SubjectKeyIdentifier::new()
-            .build(&subject_ctx)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to build SKI: {e}")))?;
-        cert_builder
-            .append_extension(ski)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to append SKI: {e}")))?;
-
-        // Authority Key Identifier (AKI)
-        let ca_x509 = X509::from_der(self.ca_certificate.der_bytes()).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to parse CA certificate DER: {e}"))
-        })?;
-        let issuer_ctx = cert_builder.x509v3_context(Some(&ca_x509), None);
-        let aki = AuthorityKeyIdentifier::new()
-            .keyid(true)
-            .issuer(true)
-            .build(&issuer_ctx)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to build AKI: {e}")))?;
-        cert_builder
-            .append_extension(aki)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to append AKI: {e}")))?;
-
-        // Serial number
-        let serial_asn1 = match serial_override {
-            Some(s) => Self::u64_to_asn1(s)?,
-            None => self.random_serial()?,
-        };
-        cert_builder
-            .set_serial_number(&serial_asn1)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set serial number: {e}")))?;
-
-        // Sign & return
-        let ca_pkey = self.ca_key_pair_to_openssl_pkey()?;
-        // Add SAN DNS equal to CSR's CN (if present)
-        {
-            let mut cn_value: Option<String> = None;
-            for entry in req.subject_name().entries() {
-                if entry.object().nid() == Nid::COMMONNAME {
-                    if let Ok(data) = entry.data().as_utf8() {
-                        cn_value = Some(data.to_string());
-                        break;
-                    }
-                }
-            }
-            if let Some(cn) = cn_value {
-                let subject_ctx = cert_builder.x509v3_context(None, None);
-                let san = SubjectAlternativeName::new()
-                    .dns(&cn)
-                    .build(&subject_ctx)
-                    .map_err(|e| KeyError::CertificateError(format!("Failed to build SAN: {e}")))?;
-                cert_builder.append_extension(san).map_err(|e| {
-                    KeyError::CertificateError(format!("Failed to append SAN: {e}"))
-                })?;
-            }
-        }
-
-        cert_builder
-            .sign(&ca_pkey, MessageDigest::sha256())
-            .map_err(|e| KeyError::CertificateError(format!("Failed to sign certificate: {e}")))?;
-        let cert_der = cert_builder.build().to_der().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to serialize certificate DER: {e}"))
-        })?;
-        X509Certificate::from_der(cert_der)
+        pure_x509::sign_csr_with_ca(
+            &self.ca_key_pair,
+            self.ca_certificate.der_bytes(),
+            csr_der,
+            validity_days,
+            serial_override,
+        )
     }
 
-    fn random_serial(&self) -> Result<Asn1Integer> {
-        let mut bn = BigNum::new()
-            .map_err(|e| KeyError::CertificateError(format!("Failed to create BigNum: {e}")))?;
-        bn.rand(64, MsbOption::MAYBE_ZERO, false).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to generate random serial: {e}"))
-        })?;
-        bn.to_asn1_integer()
-            .map_err(|e| KeyError::CertificateError(format!("Failed to convert serial: {e}")))
-    }
+    // OpenSSL random_serial removed
 
+    // OpenSSL serial helpers removed
+    /*
     fn u64_to_asn1(value: u64) -> Result<Asn1Integer> {
         let bn = BigNum::from_dec_str(&value.to_string()).map_err(|e| {
             KeyError::CertificateError(format!("Failed to create BigNum from u64: {e}"))
@@ -512,166 +358,17 @@ impl CertificateAuthority {
         bn.to_asn1_integer()
             .map_err(|e| KeyError::CertificateError(format!("Failed to convert serial: {e}")))
     }
+    */
 
-    /// Convert our ECDSA key pair to OpenSSL PKey format
-    fn ca_key_pair_to_openssl_pkey(&self) -> Result<PKey<Private>> {
-        // Get the private key in PKCS#8 DER format
-        let private_key_der = self.ca_key_pair.private_key_der()?;
+    // OpenSSL key conversion helper removed
 
-        // Create OpenSSL PKey from the DER data
-        PKey::private_key_from_der(&private_key_der).map_err(|e| {
-            KeyError::InvalidKeyFormat(format!("Failed to convert key to OpenSSL format: {e}"))
-        })
-    }
-
-    /// Create the CA name for certificate issuer
-    fn create_ca_name(&self) -> Result<openssl::x509::X509Name> {
-        let mut name_builder = X509NameBuilder::new().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create name builder: {e}"))
-        })?;
-
-        name_builder
-            .append_entry_by_nid(Nid::COUNTRYNAME, "US")
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set country: {e}")))?;
-        name_builder
-            .append_entry_by_nid(Nid::ORGANIZATIONNAME, "Runar")
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set organization: {e}")))?;
-        name_builder
-            .append_entry_by_nid(Nid::COMMONNAME, "Runar User CA")
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set common name: {e}")))?;
-
-        Ok(name_builder.build())
-    }
-
-    /// Create self-signed CA certificate
+    /// Create self-signed CA certificate (delegates to pure implementation)
+    #[allow(dead_code)]
     fn create_self_signed_certificate(
         key_pair: &EcdsaKeyPair,
         _subject: &str,
     ) -> Result<X509Certificate> {
-        // Build CA cert with OpenSSL to include SKI/AKI and pathLen=0
-        let mut builder = X509Builder::new().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to create X509 builder: {e}"))
-        })?;
-
-        // Subject/Issuer
-        let ca_name = {
-            let mut nb = X509NameBuilder::new().map_err(|e| {
-                KeyError::CertificateError(format!("Failed to create name builder: {e}"))
-            })?;
-            nb.append_entry_by_nid(Nid::COUNTRYNAME, "US")
-                .map_err(|e| KeyError::CertificateError(format!("Failed to set country: {e}")))?;
-            nb.append_entry_by_nid(Nid::ORGANIZATIONNAME, "Runar")
-                .map_err(|e| {
-                    KeyError::CertificateError(format!("Failed to set organization: {e}"))
-                })?;
-            nb.append_entry_by_nid(Nid::COMMONNAME, "Runar User CA")
-                .map_err(|e| {
-                    KeyError::CertificateError(format!("Failed to set common name: {e}"))
-                })?;
-            nb.build()
-        };
-        builder
-            .set_subject_name(&ca_name)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set subject: {e}")))?;
-        builder
-            .set_issuer_name(&ca_name)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set issuer: {e}")))?;
-
-        // Public key
-        let ca_pkey = {
-            let der = key_pair.private_key_der()?;
-            PKey::private_key_from_der(&der)
-                .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to load CA key: {e}")))?
-        };
-        builder
-            .set_pubkey(&ca_pkey)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set pubkey: {e}")))?;
-
-        // Validity
-        let not_before = openssl::asn1::Asn1Time::days_from_now(0).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to set certificate not_before: {e}"))
-        })?;
-        let not_after = openssl::asn1::Asn1Time::days_from_now(365 * 10).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to set certificate not_after: {e}"))
-        })?;
-        builder
-            .set_not_before(&not_before)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to apply not_before: {e}")))?;
-        builder
-            .set_not_after(&not_after)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to apply not_after: {e}")))?;
-
-        // Serial
-        let mut bn = BigNum::new()
-            .map_err(|e| KeyError::CertificateError(format!("Failed to create BigNum: {e}")))?;
-        bn.rand(64, MsbOption::MAYBE_ZERO, false).map_err(|e| {
-            KeyError::CertificateError(format!("Failed to generate random serial: {e}"))
-        })?;
-        let serial_asn1 = Asn1Integer::from_bn(&bn)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to convert serial: {e}")))?;
-        builder
-            .set_serial_number(&serial_asn1)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to set serial number: {e}")))?;
-
-        // Extensions
-        builder
-            .append_extension(
-                OpenSslBasicConstraints::new()
-                    .ca()
-                    .pathlen(0)
-                    .critical()
-                    .build()
-                    .map_err(|e| {
-                        KeyError::CertificateError(format!(
-                            "Failed to build CA BasicConstraints: {e}"
-                        ))
-                    })?,
-            )
-            .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to append CA BasicConstraints: {e}"))
-            })?;
-        builder
-            .append_extension(
-                KeyUsage::new()
-                    .key_cert_sign()
-                    .crl_sign()
-                    .critical()
-                    .build()
-                    .map_err(|e| {
-                        KeyError::CertificateError(format!("Failed to build CA KeyUsage: {e}"))
-                    })?,
-            )
-            .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to append CA KeyUsage: {e}"))
-            })?;
-
-        let ctx1 = builder.x509v3_context(None, None);
-        let ski = SubjectKeyIdentifier::new()
-            .build(&ctx1)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to build CA SKI: {e}")))?;
-        builder
-            .append_extension(ski)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to append CA SKI: {e}")))?;
-        let ctx2 = builder.x509v3_context(None, None);
-        let aki = AuthorityKeyIdentifier::new()
-            .keyid(true)
-            .issuer(true)
-            .build(&ctx2)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to build CA AKI: {e}")))?;
-        builder
-            .append_extension(aki)
-            .map_err(|e| KeyError::CertificateError(format!("Failed to append CA AKI: {e}")))?;
-
-        // Sign
-        builder
-            .sign(&ca_pkey, MessageDigest::sha256())
-            .map_err(|e| {
-                KeyError::CertificateError(format!("Failed to sign CA certificate: {e}"))
-            })?;
-        let der = builder.build().to_der().map_err(|e| {
-            KeyError::CertificateError(format!("Failed to DER-encode CA certificate: {e}"))
-        })?;
-        X509Certificate::from_der(der)
+        pure_x509::create_self_signed_ca(key_pair, _subject)
     }
 }
 
@@ -768,6 +465,7 @@ impl CertificateRequest {
 
         // Parse subject DN properly
         let mut distinguished_name = rcgen::DistinguishedName::new();
+        let mut cn_value: Option<String> = None;
 
         for component in subject.split(',') {
             let component = component.trim();
@@ -776,7 +474,10 @@ impl CertificateRequest {
                 let value = value.trim();
 
                 match key {
-                    "CN" => distinguished_name.push(rcgen::DnType::CommonName, value),
+                    "CN" => {
+                        distinguished_name.push(rcgen::DnType::CommonName, value);
+                        cn_value = Some(value.to_string());
+                    }
                     "O" => distinguished_name.push(rcgen::DnType::OrganizationName, value),
                     "C" => distinguished_name.push(rcgen::DnType::CountryName, value),
                     "ST" => distinguished_name.push(rcgen::DnType::StateOrProvinceName, value),
@@ -790,6 +491,10 @@ impl CertificateRequest {
         }
 
         params.distinguished_name = distinguished_name;
+        // Ensure SAN present in CSR: include CN as DNS SAN for strict issuance policy
+        if let Some(cn) = cn_value {
+            params.subject_alt_names = vec![rcgen::SanType::DnsName(cn)];
+        }
 
         let rcgen_key_pair = key_pair.to_rcgen_key_pair()?;
         params.key_pair = Some(rcgen_key_pair);

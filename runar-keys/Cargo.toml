@@ -27,11 +27,16 @@ chacha20poly1305 = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 
-# Certificate generation and parsing - OpenSSL for proper CA operations
-openssl = { version = "0.10", features = ["vendored"] }
-rcgen = "0.12"  # Still needed for CSR generation and self-signed CA certs
+# Certificate generation and parsing (pure Rust)
+rcgen = "0.12"  # CSR generation
 x509-parser = { version = "0.16", features = ["verify"] }
 rustls-pki-types = "1.0"
+x509-cert = { version = "0.2", features = ["builder"] }
+spki = "0.7"
+der = { version = "0.7", features = ["std"] }
+const-oid = "0.9"
+sha1 = "0.10"
+time = { version = "0.3", features = ["formatting"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -54,10 +59,14 @@ tokio = { version = "1.0", features = ["full"] }
 # Optional dependencies for testing
 [dev-dependencies]
 tempfile = "3.0"
+rustls = "0.23"
+rustls-pemfile = "2"
 
 [features]
 default = []
 macros = []
+
+
 
 [package.metadata.docs.rs]
 all-features = true

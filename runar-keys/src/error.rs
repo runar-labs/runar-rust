@@ -38,9 +38,7 @@ pub enum KeyError {
     #[error("ECDSA error: {0}")]
     EcdsaError(#[from] p256::ecdsa::Error),
 
-    #[error("OpenSSL error: {0}")]
-    OpenSslError(#[from] openssl::error::ErrorStack),
-
+    // OpenSSL path removed
     #[error("X509 parser error: {0}")]
     X509ParserError(String),
 
