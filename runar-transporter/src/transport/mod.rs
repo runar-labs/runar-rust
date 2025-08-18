@@ -53,6 +53,19 @@ impl Default for TransportOptions {
     }
 }
 
+impl TransportOptions {
+    pub fn validate(&self) -> Result<(), NetworkError> {
+        if let Some(ms) = self.max_message_size {
+            if ms == 0 {
+                return Err(NetworkError::ConfigurationError(
+                    "max_message_size must be > 0".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Find a free port in the given range using a randomized approach
 pub fn pick_free_port(port_range: Range<u16>) -> Option<u16> {
     use rand::Rng;
@@ -131,7 +144,7 @@ pub struct NetworkMessage {
     /// Message type (Request, Response, Event, etc.)
     pub message_type: u32,
 
-    /// List of payloads  
+    /// Single payload for this message
     pub payload: NetworkMessagePayloadItem,
 }
 

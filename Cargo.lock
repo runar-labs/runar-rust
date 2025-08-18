@@ -3745,7 +3745,6 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
- "bincode",
  "bytes",
  "chrono",
  "criterion",
@@ -3759,10 +3758,8 @@ dependencies = [
  "once_cell",
  "p256",
  "pkcs8",
- "prost",
  "quinn",
  "rand 0.9.1",
- "rcgen 0.11.3",
  "ring 0.17.14",
  "runar-keys",
  "runar-schemas",
@@ -3772,7 +3769,6 @@ dependencies = [
  "runar_macros_common",
  "runar_test_utils",
  "rustls 0.23.28",
- "rustls-native-certs 0.6.3",
  "rustls-pemfile",
  "rustls-pki-types",
  "serde",
@@ -3783,10 +3779,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-test",
- "tokio-tungstenite",
  "uuid",
- "webpki-roots 0.25.4",
- "x509-parser",
 ]
 
 [[package]]

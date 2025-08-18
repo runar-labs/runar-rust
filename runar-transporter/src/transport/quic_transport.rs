@@ -525,7 +525,7 @@ impl QuicTransport {
         responder_nonce: u64,
     ) -> bool {
         let new_id = new_conn.stable_id();
-        log_debug!(self.logger, "🔁 [dup] evaluate peer={peer_node_id} new_id={new_id} init=({initiator_peer_id},{initiator_nonce}) resp=({responder_peer_id},{responder_nonce})");
+        log_debug!(self.logger, "[dup] evaluate peer={peer_node_id} new_id={new_id} init=({initiator_peer_id},{initiator_nonce}) resp=({responder_peer_id},{responder_nonce})");
         // Cancel any pending outbound dial to this peer and reset backoff on successful inbound
         {
             if let Some((_, n)) = self.state.dial_cancel.remove(peer_node_id) {
@@ -541,10 +541,18 @@ impl QuicTransport {
             .get(peer_node_id)
             .map(|entry| entry.value().clone());
         if let Some(existing) = existing_opt {
-            log_debug!(self.logger, "🔁 [dup] existing for peer={peer_node_id} existing_id={} init=({},{}) resp=({},{})", existing.connection_id, existing.initiator_peer_id, existing.initiator_nonce, existing.responder_peer_id, existing.responder_nonce);
+            log_debug!(
+                self.logger,
+                "[dup] existing for peer={peer_node_id} existing_id={} init=({},{}) resp=({},{})",
+                existing.connection_id,
+                existing.initiator_peer_id,
+                existing.initiator_nonce,
+                existing.responder_peer_id,
+                existing.responder_nonce
+            );
             // If existing entry is a placeholder (no dup-metadata), always replace with the real connection
             if existing.initiator_nonce == 0 && existing.responder_nonce == 0 {
-                log_debug!(self.logger, "🔁 [dup] Replacing placeholder connection for peer {peer_node_id} with established connection");
+                log_debug!(self.logger, "[dup] Replacing placeholder connection for peer {peer_node_id} with established connection");
                 // If the placeholder refers to the same underlying connection, do NOT close it.
                 let existing_id = existing.connection_id;
                 let new_id = new_conn.stable_id();
@@ -611,7 +619,7 @@ impl QuicTransport {
             };
 
             if pick_candidate {
-                log_debug!(self.logger, "🔁 [dup] Candidate wins (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}");
+                log_debug!(self.logger, "[dup] Candidate wins (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}");
                 let new_state = PeerState::new(
                     new_conn,
                     existing.node_info_version,
@@ -635,7 +643,7 @@ impl QuicTransport {
                 }
                 true
             } else {
-                log_debug!(self.logger, "🔁 [dup] Existing kept (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}; evaluating close on new");
+                log_debug!(self.logger, "[dup] Existing kept (desired={desired_local_role:?}, existing={existing_local_role:?}, candidate={candidate_local_role:?}) for peer {peer_node_id}; evaluating close on new");
                 // If the \"new\" connection refers to the same underlying connection as the existing one,
                 // do NOT close it. This situation happens for update handshakes sent over an already-active conn.
                 let existing_id = existing.connection_id;
@@ -643,7 +651,7 @@ impl QuicTransport {
                 if new_id != existing_id {
                     new_conn.close(0u32.into(), b"duplicate-loser");
                 } else {
-                    log_debug!(self.logger, "🔁 [dup] Skipping close for duplicate-loser: same connection id={new_id} for peer {peer_node_id}");
+                    log_debug!(self.logger, "[dup] Skipping close for duplicate-loser: same connection id={new_id} for peer {peer_node_id}");
                 }
                 false
             }
@@ -689,6 +697,24 @@ impl QuicTransport {
             rustls::crypto::ring::default_provider()
                 .install_default()
                 .expect("Failed to install default crypto provider");
+        }
+
+        // Basic configuration validation
+        if options.max_message_size.unwrap_or(0) == 0 {
+            return Err("max_message_size must be > 0".into());
+        }
+        if options.handshake_response_timeout == Duration::from_millis(0) {
+            return Err("handshake_response_timeout must be > 0".into());
+        }
+        if options.open_stream_timeout == Duration::from_millis(0) {
+            return Err("open_stream_timeout must be > 0".into());
+        }
+        if options.key_manager.is_none()
+            && (options.certificates.is_none() || options.private_key.is_none())
+        {
+            return Err(
+                "either key_manager or (certificates and private_key) must be provided".into(),
+            );
         }
 
         let peer_connected_callback = options.peer_connected_callback.take();
@@ -972,7 +998,7 @@ impl QuicTransport {
                 continue;
             }
 
-            log_error!(self.logger, "🔍 [uni_accept_loop] Received message of unknown type: {type} correlation_id: {correlation_id}", type=msg.message_type, correlation_id=msg.payload.correlation_id);
+            log_error!(self.logger, "[uni_accept_loop] Received message of unknown type: {type} correlation_id: {correlation_id}", type=msg.message_type, correlation_id=msg.payload.correlation_id);
         }
     }
 
@@ -985,7 +1011,7 @@ impl QuicTransport {
 
         log_debug!(
             self.logger,
-            "🔍 [write_message] Encoding message: type={}, source={}, dest={}",
+            "[write_message] Encoding message: type={}, source={}, dest={}",
             msg.message_type,
             msg.source_node_id,
             msg.destination_node_id
@@ -994,7 +1020,7 @@ impl QuicTransport {
         let framed = encode_message(msg)?;
         log_debug!(
             self.logger,
-            "🔍 [write_message] Encoded message size: {} bytes",
+            "[write_message] Encoded message size: {} bytes",
             framed.len()
         );
 
@@ -1002,15 +1028,12 @@ impl QuicTransport {
             Ok(_) => {
                 log_debug!(
                     self.logger,
-                    "✅ [write_message] Successfully wrote message to stream"
+                    "[write_message] Successfully wrote message to stream"
                 );
                 Ok(())
             }
             Err(e) => {
-                log_error!(
-                    self.logger,
-                    "❌ [write_message] Failed to write message: {e}"
-                );
+                log_error!(self.logger, "[write_message] Failed to write message: {e}");
                 Err(NetworkError::MessageError(format!(
                     "failed to write message: {e}"
                 )))
@@ -1023,7 +1046,7 @@ impl QuicTransport {
         &self,
         recv: &mut quinn::RecvStream,
     ) -> Result<NetworkMessage, NetworkError> {
-        log_debug!(self.logger, "🔍 [read_message] Reading message from stream");
+        log_debug!(self.logger, "[read_message] Reading message from stream");
 
         let mut len_buf = [0u8; 4];
 
@@ -1048,7 +1071,7 @@ impl QuicTransport {
 
         log_debug!(
             self.logger,
-            "🔍 [read_message] Reading message payload of length {len}"
+            "[read_message] Reading message payload of length {len}"
         );
 
         match recv.read_exact(&mut msg_buf).await {
@@ -1062,7 +1085,7 @@ impl QuicTransport {
 
         match serde_cbor::from_slice::<NetworkMessage>(&msg_buf) {
             Ok(msg) => {
-                log_debug!(self.logger, "🔍 [read_message] Decoded message: type={type}, source={source}, dest={dest}", 
+                log_debug!(self.logger, "[read_message] Decoded message: type={type}, source={source}, dest={dest}", 
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
                 Ok(msg)
             }
@@ -1082,7 +1105,7 @@ impl QuicTransport {
 
         log_debug!(
             self.logger,
-            "🔍 [handle_event] Processing event message correlation id: {correlation_id}",
+            "[handle_event] Processing event message correlation id: {correlation_id}",
             correlation_id = event_msg.correlation_id
         );
 
@@ -1111,7 +1134,7 @@ impl QuicTransport {
 
         log_debug!(
             self.logger,
-            "🔍 [handle_request] Processing request message correlation id: {correlation_id}",
+            "[handle_request] Processing request message correlation id: {correlation_id}",
             correlation_id = request_msg.correlation_id
         );
         let correlation_id = request_msg.correlation_id.clone();
@@ -1134,7 +1157,7 @@ impl QuicTransport {
         needs_to_correlate_peer_id: bool,
     ) -> Result<(), NetworkError> {
         self.logger
-            .debug("🔍 [handle_handshake] Processing handshake message");
+            .debug("[handle_handshake] Processing handshake message");
 
         let should_send_response = send.is_some();
         let local_node_id = self.local_node_id.clone();
@@ -1156,7 +1179,7 @@ impl QuicTransport {
         if remote_nonce == 0 && send.is_none() {
             log_debug!(
                 self.logger,
-                "🔍 [handle_handshake] Received update handshake (nonce=0) over uni; skipping duplicate-resolution for peer {peer_node_id}"
+                "[handle_handshake] Received update handshake (nonce=0) over uni; skipping duplicate-resolution for peer {peer_node_id}"
             );
             if let Some(connected_callback) = &self.peer_connected_callback {
                 (connected_callback)(peer_node_id.clone(), node_info.clone()).await;
@@ -1169,7 +1192,7 @@ impl QuicTransport {
             return Ok(());
         }
 
-        log_debug!(self.logger, "🔍 [handle_handshake] from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}");
+        log_debug!(self.logger, "[handle_handshake] from {peer_node_id} ver={node_info_version} role={remote_role:?} nonce={remote_nonce}");
         let candidate_initiator = match (remote_role, local_role) {
             (ConnectionRole::Initiator, ConnectionRole::Responder) => (
                 peer_node_id.clone(),
@@ -1198,7 +1221,7 @@ impl QuicTransport {
         };
         log_debug!(
             self.logger,
-            "🔍 [handle_handshake] candidate dup key init=({},{}) resp=({},{})",
+            "[handle_handshake] candidate dup key init=({},{}) resp=({},{})",
             candidate_initiator.0,
             candidate_initiator.1,
             candidate_initiator.2,
@@ -1216,7 +1239,7 @@ impl QuicTransport {
             .await;
         if !kept {
             // New inbound lost; skip further processing for this connection
-            log_debug!(self.logger, "🔍 [handle_handshake] New inbound lost; skipping further processing for this connection");
+            log_debug!(self.logger, "[handle_handshake] New inbound lost; skipping further processing for this connection");
             return Ok(());
         }
         // Mark active after surviving dup-resolution
@@ -1236,7 +1259,7 @@ impl QuicTransport {
         // Send handshake response only if this connection is the surviving winner
         if should_send_response {
             self.logger
-                .debug("🔍 [handle_handshake] Sending handshake response");
+                .debug("[handle_handshake] Sending handshake response");
             let local_node_info = (self.get_local_node_info)()
                 .await
                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
@@ -1266,7 +1289,7 @@ impl QuicTransport {
             send.finish()
                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
             self.logger
-                .debug("✅ [handle_handshake] Handshake response sent");
+                .debug("[handle_handshake] Handshake response sent");
         }
         Ok(())
     }
@@ -1286,7 +1309,7 @@ impl QuicTransport {
             };
             let msg = self.read_message(&mut recv).await?;
 
-            log_debug!(self.logger, "🔍 [bi_accept_loop] Received message: type={type}, source={source}, dest={dest}", 
+            log_debug!(self.logger, "[bi_accept_loop] Received message: type={type}, source={source}, dest={dest}", 
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
 
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
@@ -1312,7 +1335,7 @@ impl QuicTransport {
                     let (ts, cached) = entry.value();
                     let now = Instant::now();
                     if now.saturating_duration_since(*ts) <= self.response_cache_ttl {
-                        log_debug!(self.logger, "🔍 [bi_accept_loop] Found cached response for correlation id: {correlation_id}", correlation_id=&msg.payload.correlation_id);
+                        log_debug!(self.logger, "[bi_accept_loop] Found cached response for correlation id: {correlation_id}", correlation_id=&msg.payload.correlation_id);
                         self.write_message(&mut send, cached).await?;
                         send.finish()
                             .map_err(|e| {
@@ -1352,7 +1375,7 @@ impl QuicTransport {
                 continue;
             }
 
-            log_error!(self.logger, "🔍 [bi_accept_loop] Received message of unknown type: {type}", type=msg.message_type);
+            log_error!(self.logger, "[bi_accept_loop] Received message of unknown type: {type}", type=msg.message_type);
         }
     }
 
@@ -1364,7 +1387,7 @@ impl QuicTransport {
     ) -> Result<u64, NetworkError> {
         log_debug!(
             self.logger,
-            "🔍 [handshake_outbound] Starting handshake with peer: {peer_id}"
+            "[handshake_outbound] Starting handshake with peer: {peer_id}"
         );
 
         let local_node_info = (self.get_local_node_info)()
@@ -1379,7 +1402,7 @@ impl QuicTransport {
         let payload_bytes = serde_cbor::to_vec(&hs).map_err(|e| {
             log_error!(
                 self.logger,
-                "❌ [handshake_outbound] Failed to serialize HandshakeData: {e}"
+                "[handshake_outbound] Failed to serialize HandshakeData: {e}"
             );
             NetworkError::MessageError(e.to_string())
         })?;
@@ -1400,33 +1423,33 @@ impl QuicTransport {
 
         log_debug!(
             self.logger,
-            "🔍 [handshake_outbound] Opening bi stream for handshake (v2)"
+            "[handshake_outbound] Opening bi stream for handshake (v2)"
         );
         // Open a fresh bi-directional stream for handshake
         let (mut send, mut recv) = conn.open_bi().await.map_err(|e| {
             log_error!(
                 self.logger,
-                "❌ [handshake_outbound] Failed to open bi stream: {e}"
+                "[handshake_outbound] Failed to open bi stream: {e}"
             );
             NetworkError::TransportError(e.to_string())
         })?;
 
         log_debug!(
             self.logger,
-            "🔍 [handshake_outbound] Writing handshake message"
+            "[handshake_outbound] Writing handshake message"
         );
         self.write_message(&mut send, &msg).await?;
         send.finish().map_err(|e| {
             log_error!(
                 self.logger,
-                "❌ [handshake_outbound] Failed to finish send: {e}"
+                "[handshake_outbound] Failed to finish send: {e}"
             );
             NetworkError::TransportError(e.to_string())
         })?;
 
         log_debug!(
             self.logger,
-            "🔍 [handshake_outbound] Waiting for handshake response with timeout"
+            "[handshake_outbound] Waiting for handshake response with timeout"
         );
         let reply = tokio::time::timeout(
             self.options.handshake_response_timeout,
@@ -1437,7 +1460,7 @@ impl QuicTransport {
 
         log_debug!(
             self.logger,
-            "🔍 [handshake_outbound] Received handshake response, processing..."
+            "[handshake_outbound] Received handshake response, processing..."
         );
 
         // Parse responder handshake (prefer v2), fall back to v1 NodeInfo
@@ -1445,7 +1468,7 @@ impl QuicTransport {
             serde_cbor::from_slice::<HandshakeData>(&reply.payload.payload_bytes).map_err(|e| {
                 log_error!(
                     self.logger,
-                    "❌ [handshake_outbound] Failed to parse HandshakeData: {e}"
+                    "[handshake_outbound] Failed to parse HandshakeData: {e}"
                 );
                 NetworkError::MessageError(e.to_string())
             })?;
@@ -1550,40 +1573,40 @@ impl QuicTransport {
         msg: &NetworkMessage,
     ) -> Result<NetworkMessage, NetworkError> {
         self.logger
-            .debug("🔍 [request_inner] Opening bidirectional stream");
+            .debug("[request_inner] Opening bidirectional stream");
 
         let (mut send, mut recv) = conn.open_bi().await.map_err(|e| {
             log_error!(
                 self.logger,
-                "❌ [request_inner] Failed to open bidirectional stream: {e}"
+                "[request_inner] Failed to open bidirectional stream: {e}"
             );
             NetworkError::TransportError(e.to_string())
         })?;
 
         log_debug!(
             self.logger,
-            "🔍 [request_inner] Bidirectional stream opened successfully"
+            "[request_inner] Bidirectional stream opened successfully"
         );
 
-        log_debug!(self.logger, "🔍 [request_inner] Writing message to stream");
+        log_debug!(self.logger, "[request_inner] Writing message to stream");
         self.write_message(&mut send, msg).await?;
 
-        log_debug!(self.logger, "🔍 [request_inner] Finishing send stream");
+        log_debug!(self.logger, "[request_inner] Finishing send stream");
         send.finish().map_err(|e| {
             log_error!(
                 self.logger,
-                "❌ [request_inner] Failed to finish send stream: {e}"
+                "[request_inner] Failed to finish send stream: {e}"
             );
             NetworkError::TransportError(e.to_string())
         })?;
 
-        log_debug!(self.logger, "🔍 [request_inner] Reading response message");
+        log_debug!(self.logger, "[request_inner] Reading response message");
         // Read the response message first
         let response_msg = self.read_message(&mut recv).await?;
 
         log_debug!(
             self.logger,
-            "🔍 [request_inner] Response message read successfully, draining remaining data"
+            "[request_inner] Response message read successfully, draining remaining data"
         );
 
         // Then spawn a task to drain any remaining data from the stream
@@ -1595,7 +1618,7 @@ impl QuicTransport {
         let _ = drain_task.await;
 
         self.logger
-            .debug("✅ [request_inner] Request completed successfully");
+            .debug("[request_inner] Request completed successfully");
         Ok(response_msg)
     }
 
@@ -1756,7 +1779,7 @@ impl NetworkTransport for QuicTransport {
     ) -> Result<Vec<u8>, NetworkError> {
         log_info!(
             self.logger,
-            "🔍 [request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id}"
+            "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id}"
         );
 
         // let serialization_context = SerializationContext {
@@ -1785,7 +1808,7 @@ impl NetworkTransport for QuicTransport {
         let response_msg = loop {
             log_debug!(
                 self.logger,
-                "🔍 [request] Opening bidirectional stream correlation_id: {correlation_id}",
+                "[request] Opening bidirectional stream correlation_id: {correlation_id}",
                 correlation_id = &msg.payload.correlation_id
             );
             let (mut send, mut recv) = tokio::time::timeout(
@@ -1796,24 +1819,28 @@ impl NetworkTransport for QuicTransport {
             .map_err(|_| NetworkError::TransportError("open_bi timeout".into()))??;
 
             if let Err(e) = self.write_message(&mut send, &msg).await {
-                log_error!(self.logger, "❌ [request] Failed to write request correlation_id: {correlation_id} error: {e}", correlation_id=&msg.payload.correlation_id);
+                log_error!(
+                    self.logger,
+                    "[request] Failed to write request correlation_id: {correlation_id} error: {e}",
+                    correlation_id = &msg.payload.correlation_id
+                );
                 break Err(e);
             }
 
             log_debug!(
                 self.logger,
-                "🔍 [request] Finishing send stream correlation_id: {correlation_id}",
+                "[request] Finishing send stream correlation_id: {correlation_id}",
                 correlation_id = &msg.payload.correlation_id
             );
             if let Err(e) = send.finish() {
                 log_error!(
                     self.logger,
-                    "❌ [request] Failed to finish send stream correlation_id: {correlation_id} error: {e} - retry_count: {retry_count}",
+                    "[request] Failed to finish send stream correlation_id: {correlation_id} error: {e} - retry_count: {retry_count}",
                     correlation_id=&msg.payload.correlation_id
                 );
                 retry_count += 1;
                 if retry_count > self.max_request_retries {
-                    log_error!(self.logger, "❌ [request] Failed to finish send stream correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id);
+                    log_error!(self.logger, "[request] Failed to finish send stream correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id);
                     break Err(NetworkError::TransportError(format!("failed to finish send stream correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id)));
                 }
                 tokio::time::sleep(Duration::from_millis(70)).await;
@@ -1823,7 +1850,7 @@ impl NetworkTransport for QuicTransport {
             retry_count = 0;
             log_debug!(
                 self.logger,
-                "🔍 [request] Reading response message correlation_id: {correlation_id}",
+                "[request] Reading response message correlation_id: {correlation_id}",
                 correlation_id = &msg.payload.correlation_id
             );
             match self.read_message(&mut recv).await {
@@ -1837,20 +1864,20 @@ impl NetworkTransport for QuicTransport {
                     if should_retry {
                         retry_count += 1;
                         if retry_count > self.max_request_retries {
-                            log_error!(self.logger, "❌ [request] Failed to read response message correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id);
+                            log_error!(self.logger, "[request] Failed to read response message correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id);
                             break Err(NetworkError::TransportError(format!("failed to read response message correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id)));
                         }
                         tokio::time::sleep(Duration::from_millis(70)).await;
                         continue;
                     }
-                    log_error!(self.logger, "❌ [request] Failed to read response message correlation_id: {correlation_id} error: {e} - non retryable error", correlation_id=&msg.payload.correlation_id);
+                    log_error!(self.logger, "[request] Failed to read response message correlation_id: {correlation_id} error: {e} - non retryable error", correlation_id=&msg.payload.correlation_id);
                     break Err(e);
                 }
             }
         }?;
         log_debug!(
             self.logger,
-            "🔍 [request] Received response message correlation_id: {correlation_id} type={message_type} payload_bytes={payload_bytes}",
+            "[request] Received response message correlation_id: {correlation_id} type={message_type} payload_bytes={payload_bytes}",
             correlation_id=&msg.payload.correlation_id,
             message_type=response_msg.message_type,
             payload_bytes=response_msg.payload.payload_bytes.len()
@@ -1911,14 +1938,14 @@ impl NetworkTransport for QuicTransport {
         if self.state.peers.contains_key(&peer_node_id) {
             log_debug!(
                 self.logger,
-                "🔍 [connect_peer] Peer already connected: {peer_node_id}"
+                "[connect_peer] Peer already connected: {peer_node_id}"
             );
             return Ok(());
         }
 
         log_debug!(
             self.logger,
-            "🔍 [connect_peer] Starting connection to peer: {peer_node_id}"
+            "[connect_peer] Starting connection to peer: {peer_node_id}"
         );
         let endpoint = {
             let guard = self.endpoint.read().await;
@@ -1932,7 +1959,7 @@ impl NetworkTransport for QuicTransport {
         };
 
         if discovery_msg.addresses.is_empty() {
-            log_error!(self.logger, "❌ [connect_peer] No addresses in PeerInfo");
+            log_error!(self.logger, "[connect_peer] No addresses in PeerInfo");
             return Err(NetworkError::ConfigurationError(
                 "no addresses in PeerInfo".into(),
             ));
@@ -2031,12 +2058,12 @@ impl NetworkTransport for QuicTransport {
                 let wait_ms = until.saturating_duration_since(now).as_millis();
                 log_debug!(
                     self.logger,
-                    "⏳ [backoff] peer={peer_node_id} attempts={attempts} remaining_ms={wait_ms}"
+                    "[backoff] peer={peer_node_id} attempts={attempts} remaining_ms={wait_ms}"
                 );
                 tokio::select! {
                     _ = tokio::time::sleep(until.saturating_duration_since(now)) => {},
                     _ = cancel_notify.notified() => {
-                        log_debug!(self.logger, "🚫 [dial-cancel] peer={peer_node_id} reason=inbound-connected");
+                        log_debug!(self.logger, "[dial-cancel] peer={peer_node_id} reason=inbound-connected");
                         return Ok(());
                     }
                 }
@@ -2057,7 +2084,7 @@ impl NetworkTransport for QuicTransport {
             Ok(c) => c,
             Err(e) => {
                 let err_str = e.to_string();
-                log_error!(self.logger, "❌ [connect_peer] Handshake failed: {err_str}");
+                log_error!(self.logger, "[connect_peer] Handshake failed: {err_str}");
                 // If the server refused because a connection already exists (race), treat as OK if we have (or soon get) an inbound mapping
                 if err_str.contains("the server refused to accept a new connection") {
                     // Soft wait for inbound to correlate
@@ -2146,7 +2173,7 @@ impl NetworkTransport for QuicTransport {
             Err(e) => {
                 log_error!(
                     self.logger,
-                    "❌ [connect_peer] Application handshake failed: {e}"
+                    "[connect_peer] Application handshake failed: {e}"
                 );
                 log_error!(self.logger, "handshake failed: {e}");
                 // If an inbound connection was established concurrently, accept that.
