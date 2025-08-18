@@ -25,11 +25,11 @@ use runar_transporter::{
     DiscoveryOptions, MulticastDiscovery, NetworkTransport, NodeDiscovery, QuicTransport,
 };
 use socket2;
-use uuid::Uuid;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
+use uuid::Uuid;
 
 use dashmap::DashMap;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
@@ -2556,7 +2556,7 @@ impl Node {
 
         let rs_dependencies = RemoteServiceDependencies {
             network_transport: transport_arc.clone(),
-            local_node_id: local_peer_id, 
+            local_node_id: local_peer_id,
             logger: self.logger.clone(),
             keystore: self.keys_manager.clone(),
             resolver: self.label_resolver.clone(),
@@ -2692,9 +2692,14 @@ impl Node {
                                 .unwrap_or(ArcValue::null())
                                 .serialize(Some(&serialization_context))
                                 .unwrap_or_default();
-                            nt.publish(topic_path_str, &correlation_id, payload_bytes, &peer_node_id)
-                                .await
-                                .map_err(|e| anyhow!(e))?;
+                            nt.publish(
+                                topic_path_str,
+                                &correlation_id,
+                                payload_bytes,
+                                &peer_node_id,
+                            )
+                            .await
+                            .map_err(|e| anyhow!(e))?;
                             log_debug!(logger, "✅ [RemoteEvent] Event forwarded - Event: {topic_path}, Target: {peer_node_id} correlation_id: {correlation_id}");
                             Ok(())
                         })

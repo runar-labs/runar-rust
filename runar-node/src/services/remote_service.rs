@@ -7,8 +7,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use std::sync::Arc;
 use uuid::Uuid;
-use std::sync::Arc; 
 
 use crate::services::abstract_service::AbstractService;
 
@@ -89,7 +89,7 @@ impl RemoteService {
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
             actions: Arc::new(DashMap::new()),
-            logger: dependencies.logger, 
+            logger: dependencies.logger,
             keystore: dependencies.keystore.clone(),
             resolver: dependencies.resolver.clone(),
         }
@@ -257,7 +257,10 @@ impl RemoteService {
                             "✅ [RemoteService] Response received successfully correlation_id: {correlation_id}"
                         );
                         // Deserialize the response bytes back to ArcValue
-                        match ArcValue::deserialize(&response_bytes, Some(Arc::clone(&serialization_context.keystore))) {
+                        match ArcValue::deserialize(
+                            &response_bytes,
+                            Some(Arc::clone(&serialization_context.keystore)),
+                        ) {
                             Ok(response_value) => Ok(response_value),
                             Err(e) => {
                                 log_error!(
