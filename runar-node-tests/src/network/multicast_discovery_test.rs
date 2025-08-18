@@ -713,3 +713,150 @@ async fn test_discovery_provider_stateless_behavior() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_multicast_listener_survives_invalid_cbor() -> Result<()> {
+    use std::net::SocketAddr as StdSocketAddr;
+    use tokio::net::UdpSocket;
+
+    // Unique multicast group to avoid cross-test interference
+    let unique_port: u16 = 48000 + (rand::random::<u16>() % 1000);
+    let group = format!("{DEFAULT_MULTICAST_ADDR}:{unique_port}");
+
+    let options = DiscoveryOptions {
+        multicast_group: group.clone(),
+        announce_interval: Duration::from_millis(80),
+        discovery_timeout: Duration::from_secs(1),
+        debounce_window: Duration::from_millis(100),
+        ..DiscoveryOptions::default()
+    };
+
+    let logger = Logger::new_root(Component::Custom("Test"));
+
+    // Two peers
+    let node1_pk: [u8; 32] = rand::random();
+    let node2_pk: [u8; 32] = rand::random();
+    let node2_id = compact_id(&node2_pk);
+
+    let mk_peer_info = |pk: &[u8]| PeerInfo {
+        public_key: pk.to_vec(),
+        addresses: vec!["127.0.0.1:0".to_string()],
+    };
+
+    // Create discovery instances
+    let disc1 =
+        MulticastDiscovery::new(mk_peer_info(&node1_pk), options.clone(), logger.clone()).await?;
+    let disc2 =
+        MulticastDiscovery::new(mk_peer_info(&node2_pk), options.clone(), logger.clone()).await?;
+
+    // Subscribe for Discovered from node2
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let done_tx = Arc::new(tokio::sync::Mutex::new(Some(done_tx)));
+    disc1
+        .subscribe(Arc::new(move |event| {
+            let done_tx = done_tx.clone();
+            let node2_id = node2_id.clone();
+            Box::pin(async move {
+                if let DiscoveryEvent::Discovered(pi) | DiscoveryEvent::Updated(pi) = event {
+                    if compact_id(&pi.public_key) == node2_id {
+                        if let Some(tx) = done_tx.lock().await.take() {
+                            let _ = tx.send(());
+                        }
+                    }
+                }
+            })
+        }))
+        .await?;
+
+    // Start listener is already running; send invalid CBOR to the multicast group
+    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+    let target: StdSocketAddr = group.parse().expect("valid multicast group addr");
+    let _ = sock.send_to(&[0xff, 0x00, 0xff, 0x00], target).await?;
+
+    // Now start announcing and expect discovery to still work
+    disc1.start_announcing().await?;
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    disc2.start_announcing().await?;
+
+    tokio::time::timeout(Duration::from_secs(3), done_rx)
+        .await
+        .expect("listener should survive invalid CBOR and still receive discovery")?;
+
+    // Cleanup
+    disc1.stop_announcing().await?;
+    disc2.stop_announcing().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_multicast_start_stop_idempotence() -> Result<()> {
+    // Unique multicast group
+    let unique_port: u16 = 48100 + (rand::random::<u16>() % 1000);
+    let group = format!("{DEFAULT_MULTICAST_ADDR}:{unique_port}");
+
+    let options = DiscoveryOptions {
+        multicast_group: group.clone(),
+        announce_interval: Duration::from_millis(60),
+        discovery_timeout: Duration::from_secs(1),
+        debounce_window: Duration::from_millis(80),
+        ..DiscoveryOptions::default()
+    };
+
+    let logger = Logger::new_root(Component::Custom("IdemTest"));
+
+    let node1_pk: [u8; 32] = rand::random();
+    let node2_pk: [u8; 32] = rand::random();
+    let node2_id = compact_id(&node2_pk);
+
+    let mk_peer_info = |pk: &[u8]| PeerInfo {
+        public_key: pk.to_vec(),
+        addresses: vec!["127.0.0.1:0".to_string()],
+    };
+
+    let disc1 =
+        MulticastDiscovery::new(mk_peer_info(&node1_pk), options.clone(), logger.clone()).await?;
+
+    // Start/stop cycles should be idempotent and not error
+    for _ in 0..3u8 {
+        disc1.start_announcing().await?;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        disc1.stop_announcing().await?;
+    }
+
+    // After cycles, discovery should still be functional
+    let disc2 =
+        MulticastDiscovery::new(mk_peer_info(&node2_pk), options.clone(), logger.clone()).await?;
+
+    // Subscribe for Discovered from node2
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+    let done_tx = Arc::new(tokio::sync::Mutex::new(Some(done_tx)));
+    disc1
+        .subscribe(Arc::new(move |event| {
+            let done_tx = done_tx.clone();
+            let node2_id = node2_id.clone();
+            Box::pin(async move {
+                if let DiscoveryEvent::Discovered(pi) | DiscoveryEvent::Updated(pi) = event {
+                    if compact_id(&pi.public_key) == node2_id {
+                        if let Some(tx) = done_tx.lock().await.take() {
+                            let _ = tx.send(());
+                        }
+                    }
+                }
+            })
+        }))
+        .await?;
+
+    // Start announcements and expect discovery
+    disc1.start_announcing().await?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    disc2.start_announcing().await?;
+
+    tokio::time::timeout(Duration::from_secs(3), done_rx)
+        .await
+        .expect("should discover after idempotent start/stop cycles")?;
+
+    // Cleanup
+    disc1.stop_announcing().await?;
+    disc2.stop_announcing().await?;
+    Ok(())
+}

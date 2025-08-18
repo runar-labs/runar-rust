@@ -94,12 +94,12 @@ BEFORE DOING THSI.. STOP AND do an indepth analisys and solutions options before
 wHAT IS THE ISSUE WITH iOS and Android ? that UDP needs entitlements ? or that thney do not work at all ?
 what options we have for mobile for auto p2p network discovery.. without a centralized server ?
 
-- [ ] Multicast opt-in behavior and clear errors.
+- [x] Multicast opt-in behavior and clear errors.
   - Files: `src/discovery/*`
   - Action: ensure discovery runs only when configured; when multicast unavailable, return actionable errors, not tight loops.
   - Acceptance: Discovery tests pass on platforms without multicast by skipping or reporting cleanly.
 
-- [ ] Listener lifecycle improvements.
+- [x] Listener lifecycle improvements.
   - Files: `src/discovery/multicast_discovery.rs`
   - Action: ensure tasks are stopped on `shutdown`; confirm no stray tasks after stop; add missing unsubscription if needed.
   - Acceptance: Repeated init/start/stop cycles are clean.

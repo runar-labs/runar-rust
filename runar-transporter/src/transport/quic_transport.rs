@@ -168,9 +168,6 @@ impl QuicTransportOptions {
     // Original builder methods - DEPRECATED: Use with_key_manager instead
     /// DEPRECATED: Use `with_key_manager()` instead for production code.
     /// This method is kept for testing purposes only.
-    #[deprecated(
-        note = "Use with_key_manager() instead for production code. This method is for testing only."
-    )]
     pub fn with_certificates(mut self, certs: Vec<CertificateDer<'static>>) -> Self {
         self.certificates = Some(certs);
         self
@@ -178,9 +175,6 @@ impl QuicTransportOptions {
 
     /// DEPRECATED: Use `with_key_manager()` instead for production code.
     /// This method is kept for testing purposes only.
-    #[deprecated(
-        note = "Use with_key_manager() instead for production code. This method is for testing only."
-    )]
     pub fn with_private_key(mut self, key: PrivateKeyDer<'static>) -> Self {
         self.private_key = Some(key);
         self
@@ -188,9 +182,6 @@ impl QuicTransportOptions {
 
     /// DEPRECATED: Use `with_key_manager()` instead for production code.
     /// This method is kept for testing purposes only.
-    #[deprecated(
-        note = "Use with_key_manager() instead for production code. This method is for testing only."
-    )]
     pub fn with_root_certificates(mut self, certs: Vec<CertificateDer<'static>>) -> Self {
         self.root_certificates = Some(certs);
         self
@@ -694,19 +685,27 @@ impl QuicTransport {
         mut options: QuicTransportOptions,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Extract required parameters from options
-        let local_node_public_key = options
-            .local_node_public_key
-            .take()
-            .ok_or("local_node_public_key is required")?;
+        let local_node_public_key = options.local_node_public_key.take().ok_or_else(|| {
+            NetworkError::ConfigurationError("local_node_public_key is required".into())
+        })?;
         let local_node_id = compact_id(&local_node_public_key);
-        let bind_addr = options.bind_addr.take().ok_or("bind_addr is required")?;
-        let logger = (options.logger.take().ok_or("logger is required")?)
-            .with_component(runar_common::Component::Transporter);
-        let keystore = options.keystore.take().ok_or("keystore is required")?;
+        let bind_addr = options
+            .bind_addr
+            .take()
+            .ok_or_else(|| NetworkError::ConfigurationError("bind_addr is required".into()))?;
+        let logger = (options
+            .logger
+            .take()
+            .ok_or_else(|| NetworkError::ConfigurationError("logger is required".into()))?)
+        .with_component(runar_common::Component::Transporter);
+        let keystore = options
+            .keystore
+            .take()
+            .ok_or_else(|| NetworkError::ConfigurationError("keystore is required".into()))?;
         let label_resolver = options
             .label_resolver
             .take()
-            .ok_or("label_resolver is required")?;
+            .ok_or_else(|| NetworkError::ConfigurationError("label_resolver is required".into()))?;
 
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             rustls::crypto::ring::default_provider()
@@ -716,37 +715,43 @@ impl QuicTransport {
 
         // Basic configuration validation
         if options.max_message_size.unwrap_or(0) == 0 {
-            return Err("max_message_size must be > 0".into());
+            return Err(
+                NetworkError::ConfigurationError("max_message_size must be > 0".into()).into(),
+            );
         }
         if options.handshake_response_timeout == Duration::from_millis(0) {
-            return Err("handshake_response_timeout must be > 0".into());
+            return Err(NetworkError::ConfigurationError(
+                "handshake_response_timeout must be > 0".into(),
+            )
+            .into());
         }
         if options.open_stream_timeout == Duration::from_millis(0) {
-            return Err("open_stream_timeout must be > 0".into());
+            return Err(
+                NetworkError::ConfigurationError("open_stream_timeout must be > 0".into()).into(),
+            );
         }
         if options.key_manager.is_none()
             && (options.certificates.is_none() || options.private_key.is_none())
         {
-            return Err(
+            return Err(NetworkError::ConfigurationError(
                 "either key_manager or (certificates and private_key) must be provided".into(),
-            );
+            )
+            .into());
         }
 
         let peer_connected_callback = options.peer_connected_callback.take();
         let peer_disconnected_callback = options.peer_disconnected_callback.take();
-        let request_callback = options
-            .request_callback
-            .take()
-            .ok_or("request_callback is required")?;
+        let request_callback = options.request_callback.take().ok_or_else(|| {
+            NetworkError::ConfigurationError("request_callback is required".into())
+        })?;
         let event_callback = options
             .event_callback
             .take()
-            .ok_or("event_callback is required")?;
+            .ok_or_else(|| NetworkError::ConfigurationError("event_callback is required".into()))?;
 
-        let get_local_node_info = options
-            .get_local_node_info
-            .take()
-            .ok_or("get_local_node_info is required")?;
+        let get_local_node_info = options.get_local_node_info.take().ok_or_else(|| {
+            NetworkError::ConfigurationError("get_local_node_info is required".into())
+        })?;
 
         let cache_ttl = options.response_cache_ttl();
 

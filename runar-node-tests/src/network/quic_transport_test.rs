@@ -556,1080 +556,62 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         version: 1,
     };
 
-    let transport1_options = QuicTransportOptions::new()
-        .with_certificates(node1_cert_config.certificate_chain)
-        .with_private_key(node1_cert_config.private_key)
-        .with_root_certificates(vec![ca_certificate.clone()]);
-
-    let transport2_options = QuicTransportOptions::new()
-        .with_certificates(node2_cert_config.certificate_chain)
-        .with_private_key(node2_cert_config.private_key)
-        .with_root_certificates(vec![ca_certificate]);
-
-    let empty_resolver: Arc<dyn LabelResolver> =
+    // Insert resolver and local node info callbacks
+    let resolver: Arc<dyn LabelResolver> =
         Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
             label_mappings: HashMap::new(),
         }));
 
-    let node1_info_clone = node1_info.clone();
+    let node1_info_clone2 = node1_info.clone();
     let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
-        let node1_info_clone = node1_info_clone.clone();
-        Box::pin(async move { Ok(node1_info_clone.clone()) })
+        let info = node1_info_clone2.clone();
+        Box::pin(async move { Ok(info) })
     });
-    let node2_info_clone = node2_info.clone();
+    let node2_info_clone2 = node2_info.clone();
     let get_local_node_info_t2: GetLocalNodeInfoCallback = Arc::new(move || {
-        let node2_info_clone = node2_info_clone.clone();
-        Box::pin(async move { Ok(node2_info_clone.clone()) })
+        let info = node2_info_clone2.clone();
+        Box::pin(async move { Ok(info) })
     });
-    let transport1_options = transport1_options
-        .with_local_node_public_key(node1_public_key_bytes.clone())
+
+    let transport1_options = QuicTransportOptions::new()
+        .with_certificates(node1_cert_config.certificate_chain)
+        .with_private_key(node1_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate.clone()])
+        .with_local_node_public_key(node_key_manager_1.get_node_public_key())
         .with_get_local_node_info(get_local_node_info_t1)
         .with_bind_addr("127.0.0.1:50069".parse::<SocketAddr>()?)
         .with_request_callback(node1_request_handler)
         .with_event_callback(node1_event_handler)
         .with_logger(logger.clone())
         .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver(empty_resolver.clone());
+        .with_label_resolver(resolver.clone())
+        .with_handshake_response_timeout(std::time::Duration::from_millis(500))
+        .with_max_message_size(1024);
 
-    let transport1 = Arc::new(QuicTransport::new(transport1_options)?);
-
-    let transport2_options = transport2_options
-        .with_local_node_public_key(node2_public_key_bytes.clone())
+    let t2_opts = QuicTransportOptions::new()
+        .with_certificates(node2_cert_config.certificate_chain)
+        .with_private_key(node2_cert_config.private_key)
+        .with_root_certificates(vec![ca_certificate])
+        .with_local_node_public_key(node_key_manager_2.get_node_public_key())
         .with_get_local_node_info(get_local_node_info_t2)
         .with_bind_addr("127.0.0.1:50044".parse::<SocketAddr>()?)
         .with_request_callback(node2_request_handler)
         .with_event_callback(node2_event_handler)
         .with_logger(logger.clone())
         .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver(empty_resolver.clone());
-
-    let transport2 = Arc::new(QuicTransport::new(transport2_options)?);
-
-    // ==================================================
-    // STEP 8: Start Transport Services
-    // ==================================================
-
-    logger.debug("Starting transport services...");
-    // Start transports concurrently
-    let (r1, r2) = tokio::join!(transport1.clone().start(), transport2.clone().start());
-    r1?;
-    r2?;
-    // Small readiness wait to ensure endpoint is bound before connect
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    logger.debug("Started both transport services");
-
-    // Allow transport services to initialize
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // ==================================================
-    // STEP 9: Test Transport API - Connection Management
-    // ==================================================
-
-    logger.debug("Connecting peers...");
-
-    // Test connection establishment (single initiator)
-    let peer_info_2 = PeerInfo::new(node2_public_key_bytes.clone(), node2_info.addresses.clone());
-
-    // Single initiator to avoid simultaneous dial races
-    logger.debug(" Establishing connection from Transport1 to Transport2...");
-    transport1.clone().connect_peer(peer_info_2).await?;
-
-    logger.debug("⏱️  Waiting for connections to establish...");
-    // Bounded wait loop to allow duplicate-resolution/handshake to settle
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let (t1_connected, t2_connected) = loop {
-        let t1 = transport1.is_connected(&node2_id).await;
-        let t2 = transport2.is_connected(&node1_id).await;
-        if t1 && t2 {
-            break (t1, t2);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            break (t1, t2);
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    logger.debug(format!(
-        " Connection status: T1→T2={t1_connected}, T2→T1={t2_connected}"
-    ));
-
-    // Both directions should be connected
-    assert!(
-        t1_connected && t2_connected,
-        "Both connections should be established for bidirectional communication"
-    );
-
-    logger.debug("Connection management working correctly");
-
-    // ==================================================
-    // STEP 10: Test Handshake
-    // ==================================================
-
-    logger.info(" Testing handshake...");
-
-    let node1_msgs = match tokio::time::timeout(Duration::from_secs(2), node1_messages.lock()).await
-    {
-        Ok(guard) => guard,
-        Err(_) => {
-            logger.error("Timeout acquiring lock on node1_messages");
-            panic!("Timeout acquiring lock on node1_messages");
-        }
-    };
-    logger.info(" Acquired lock on node1_messages, about to lock node2_messages...");
-
-    let node2_msgs = match tokio::time::timeout(Duration::from_secs(2), node2_messages.lock()).await
-    {
-        Ok(guard) => guard,
-        Err(_) => {
-            logger.error("Timeout acquiring lock on node2_messages");
-            panic!("Timeout acquiring lock on node2_messages");
-        }
-    };
-
-    logger.info("Handshake completed successfully");
-    drop(node1_msgs);
-    drop(node2_msgs);
-
-    // ==================================================
-    // STEP 11: Test Request-Response Messaging
-    // ==================================================
-
-    // Determine which transport to use for sending (both should be connected now)
-    let (sender_transport, sender_info, receiver_info) =
-        (transport1.clone(), &node1_info, &node2_info);
-
-    // Reconfirm connectivity just before request; attempt idempotent reconnect if needed
-    if !sender_transport
-        .is_connected(&compact_id(&receiver_info.node_public_key))
-        .await
-    {
-        let peer_info = PeerInfo::new(
-            receiver_info.node_public_key.clone(),
-            receiver_info.addresses.clone(),
-        );
-        let _ = sender_transport.clone().connect_peer(peer_info).await; // best-effort
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            if sender_transport
-                .is_connected(&compact_id(&receiver_info.node_public_key))
-                .await
-            {
-                break;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    }
-
-    // Create a test request
-    let test_data = ArcValue::new_primitive("test_value".to_string());
-
-    logger.info(format!(
-        "sending request from Sender: {}, to Receiver: {}",
-        compact_id(&sender_info.node_public_key),
-        compact_id(&receiver_info.node_public_key)
-    ));
-
-    // Check message counts before sending
-    let node1_count_before = node1_messages.lock().await.len();
-    let node2_count_before = node2_messages.lock().await.len();
-    logger.info(format!(
-        "📊 Message counts before request: Node1={node1_count_before}, Node2={node2_count_before}"
-    ));
-
-    // Send request using the transport's request method with timeout
-    let response = sender_transport
-        .request(
-            "test:api1/get",
-            "test_request_corr",
-            test_data.serialize(None).unwrap_or_default(),
-            &compact_id(&receiver_info.node_public_key),
-            sender_info.node_public_key.clone(),
-        )
-        .await?;
-
-    // Check message counts after sending
-    let node1_count_after = node1_messages.lock().await.len();
-    let node2_count_after = node2_messages.lock().await.len();
-    logger.info(format!(
-        "📊 Message counts after request: Node1={node1_count_after}, Node2={node2_count_after}"
-    ));
-
-    // Verify we got a response
-    assert!(!response.is_empty(), "Should receive a response");
-
-    logger.info("Request-response working correctly");
-
-    // ==================================================
-    // STEP 12: Test Event Publishing
-    // ==================================================
-
-    logger.info("📡 Testing event publishing...");
-
-    let event_data = ArcValue::new_primitive("event_data".to_string());
-
-    let topic_path = TopicPath::new("test:api1/data_processed", "test")?;
-    sender_transport
-        .publish(
-            topic_path.as_str(),
-            "test_event_corr",
-            event_data.serialize(None).unwrap_or_default(),
-            &compact_id(&receiver_info.node_public_key),
-        )
-        .await?;
-
-    // Allow message to be processed
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Check that event was received
-    let receiver_msgs = if t1_connected {
-        &node2_messages
-    } else {
-        &node1_messages
-    };
-    let event_msgs = receiver_msgs.lock().await;
-    let event_received = event_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
-    assert!(event_received, "Event message should be received");
-    drop(event_msgs);
-
-    logger.info("Event publishing working correctly");
-
-    // ==================================================
-    // STEP 14: Comprehensive Analysis
-    // ==================================================
-
-    logger.debug("\n🔍 DATAFLOW ANALYSIS");
-    logger.debug(
-        "====================================================================================",
-    );
-
-    // Analyze message flows
-    let node1_msgs = node1_messages.lock().await;
-    let node2_msgs = node2_messages.lock().await;
-
-    logger.debug("\nMESSAGE FLOW ANALYSIS:");
-    logger.debug(format!(
-        "  - Node 1 received {} messages:",
-        node1_msgs.len()
-    ));
-    for msg in node1_msgs.iter() {
-        logger.debug(format!(
-            "    - {type}: from {source}",
-            type=map_message_type_to_string(msg.message_type), source=msg.source_node_id
-        ));
-    }
-
-    logger.debug(format!(
-        "  - Node 2 received {} messages:",
-        node2_msgs.len()
-    ));
-    for msg in node2_msgs.iter() {
-        logger.debug(format!(
-            "    - {type}: from {source}",
-            type=map_message_type_to_string(msg.message_type), source=msg.source_node_id
-        ));
-    }
-
-    // Check connection status
-    let a_connected_to_b = transport1.is_connected(&node2_id).await;
-    let b_connected_to_a = transport2.is_connected(&node1_id).await;
-
-    logger.info("\n CONNECTION STATUS:");
-    logger.info(format!("  - Node 1 → Node 2: {a_connected_to_b}"));
-    logger.info(format!("  - Node 2 → Node 1: {b_connected_to_a}"));
-
-    // ==================================================
-    // STEP 15: Validation and Assertions
-    // ==================================================
-
-    logger.info("\nDATAFLOW VALIDATION:");
-
-    // Validate connection establishment
-    assert!(
-        a_connected_to_b || b_connected_to_a,
-        "At least one direction should be connected"
-    );
-    logger.info("QUIC connections established successfully");
-
-    // Validate message reception
-    assert!(
-        !node1_msgs.is_empty() || !node2_msgs.is_empty(),
-        "At least one node should have received messages"
-    );
-    logger.info("Message callbacks invoked successfully");
-
-    // Validate different message types
-    let has_handshake = node1_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_HANDSHAKE)
-        || node2_msgs
-            .iter()
-            .any(|msg| msg.message_type == MESSAGE_TYPE_HANDSHAKE);
-    let has_request = node1_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_REQUEST)
-        || node2_msgs
-            .iter()
-            .any(|msg| msg.message_type == MESSAGE_TYPE_REQUEST);
-    let has_response = node1_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_RESPONSE)
-        || node2_msgs
-            .iter()
-            .any(|msg| msg.message_type == MESSAGE_TYPE_RESPONSE);
-    let has_event = node1_msgs
-        .iter()
-        .any(|msg| msg.message_type == MESSAGE_TYPE_EVENT)
-        || node2_msgs
-            .iter()
-            .any(|msg| msg.message_type == MESSAGE_TYPE_EVENT);
-
-    if has_handshake {
-        logger.info("Handshake messages processed successfully");
-    }
-    if has_request && has_response {
-        logger.info("Request and response messages processed successfully");
-    }
-    if has_event {
-        logger.info("Event messages processed successfully");
-    }
-
-    // Clean up
-    logger.info("\nCleaning up...");
-    transport1.stop().await?;
-    transport2.stop().await?;
-    logger.info("Transports stopped successfully!");
-    // Cancel watchdog on success
-    watchdog.abort();
-    let _ = watchdog.await;
-
-    Ok(())
-}
-
-/// Ensures server-side idempotency: two REQUESTs with the same correlation_id
-/// must invoke the handler only once and the second request must be served from
-/// the transport response cache.
-#[tokio::test]
-async fn test_request_dedup_same_correlation_id_two_sends(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use runar_common::compact_ids::compact_id;
-    use runar_common::logging::{Component, Logger};
-    use runar_common::logging::{LogLevel, LoggingConfig};
-    use runar_keys::{MobileKeyManager, NodeKeyManager};
-    // Local test-only verifier to bypass TLS verification in raw-client scenarios
-    #[derive(Debug)]
-    struct SkipServerVerification;
-    impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-        fn verify_server_cert(
-            &self,
-            _end_entity: &rustls_pki_types::CertificateDer<'_>,
-            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-            _server_name: &rustls_pki_types::ServerName<'_>,
-            _ocsp_response: &[u8],
-            _now: rustls_pki_types::UnixTime,
-        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-            Ok(rustls::client::danger::ServerCertVerified::assertion())
-        }
-        fn verify_tls12_signature(
-            &self,
-            _message: &[u8],
-            _cert: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-        fn verify_tls13_signature(
-            &self,
-            _message: &[u8],
-            _cert: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            vec![
-                rustls::SignatureScheme::RSA_PKCS1_SHA256,
-                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-                rustls::SignatureScheme::RSA_PSS_SHA256,
-                rustls::SignatureScheme::RSA_PSS_SHA384,
-                rustls::SignatureScheme::RSA_PSS_SHA512,
-                rustls::SignatureScheme::ED25519,
-            ]
-        }
-    }
-    use runar_transporter::transport::{
-        NetworkMessage, NetworkMessagePayloadItem, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
-    };
-    use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
-
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
-    logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("dedup_test")));
-
-    // CA + node certs
-    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
-    let _ = mobile_ca.initialize_user_root_key()?;
-    let mut km_server = NodeKeyManager::new(logger.clone())?;
-    let csr_server = km_server.generate_csr()?;
-    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
-    km_server.install_certificate(cert_server)?;
-
-    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
-
-    // Minimal NodeInfo
-    let mk_info = |addr: &str| NodeInfo {
-        node_public_key: rand::random::<[u8; 32]>().to_vec(),
-        network_ids: vec!["main".to_string()],
-        addresses: vec![addr.to_string()],
-        node_metadata: runar_schemas::NodeMetadata {
-            services: vec![],
-            subscriptions: vec![],
-        },
-        version: 0,
-    };
-
-    // Bind server transport
-    let server_addr = "127.0.0.1:50161".parse().unwrap();
-    let server_info = mk_info("127.0.0.1:0");
-
-    let invocation_count = Arc::new(AtomicUsize::new(0));
-    let count_clone = invocation_count.clone();
-    let request_handler: RequestCallback = Arc::new(move |req: RequestMessage| {
-        let count_clone = count_clone.clone();
-        Box::pin(async move {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-            let response_value = ArcValue::new_primitive("ok".to_string());
-            let reply = ResponseMessage {
-                correlation_id: req.correlation_id,
-                payload_bytes: response_value.serialize(None).unwrap_or_default(),
-                profile_public_key: req.profile_public_key,
-            };
-            Ok(reply)
-        })
-    });
-    let event_handler: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
-
-    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
-        label_mappings: HashMap::new(),
-    }));
-    let server_info_clone = server_info.clone();
-    let get_local_node_info_server: GetLocalNodeInfoCallback = Arc::new(move || {
-        let server_info_clone = server_info_clone.clone();
-        Box::pin(async move { Ok(server_info_clone.clone()) })
-    });
-    let server_opts = QuicTransportOptions::new()
-        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
-        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
-        .with_root_certificates(vec![ca_cert])
-        .with_local_node_public_key(km_server.get_node_public_key())
-        .with_get_local_node_info(get_local_node_info_server)
-        .with_bind_addr(server_addr)
-        .with_response_cache_ttl(Duration::from_secs(3))
-        .with_request_callback(request_handler)
-        .with_event_callback(event_handler)
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver(resolver)
-        .with_logger(logger.clone());
-    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
-    let server_id = compact_id(&km_server.get_node_public_key());
-    server_transport.clone().start().await?;
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    // Build a raw QUIC client using SkipServerVerification to simplify TLS
-    let client_endpoint = {
-        let transport_config = quinn::TransportConfig::default();
-        let client_rustls = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
-            .with_no_client_auth();
-        let quic_client = quinn::crypto::rustls::QuicClientConfig::try_from(client_rustls)?;
-        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client));
-        client_config.transport_config(Arc::new(transport_config));
-
-        let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse::<SocketAddr>()?)?;
-        endpoint.set_default_client_config(client_config);
-        endpoint
-    };
-
-    let server_sock: SocketAddr = server_transport.get_local_address().parse()?;
-    let dns_name = "test.local"; // SNI arbitrary; server does not validate it
-
-    // Helper to encode a request message with given correlation id
-    fn encode_len_prefixed(msg: &NetworkMessage) -> Vec<u8> {
-        let mut buf = serde_cbor::to_vec(msg).expect("cbor");
-        let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
-        framed.append(&mut buf);
-        framed
-    }
-
-    // Create a request with fixed correlation id
-    let correlation_id = "corr-123".to_string();
-    let request_msg = NetworkMessage {
-        source_node_id: "raw_client".to_string(),
-        destination_node_id: server_id.clone(),
-        message_type: MESSAGE_TYPE_REQUEST,
-        payload: NetworkMessagePayloadItem {
-            path: "$test/path".to_string(),
-            payload_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
-            correlation_id: correlation_id.clone(),
-            profile_public_key: vec![],
-        },
-    };
-    let framed = encode_len_prefixed(&request_msg);
-
-    // First send: write request then drop the connection without reading the response
-    {
-        let connecting = client_endpoint.connect(server_sock, dns_name)?;
-        let conn = connecting.await?;
-        let (mut send, _recv) = conn.open_bi().await?;
-        // Write part of the frame to simulate a mid-write drop
-        let half = framed.len() / 2;
-        send.write_all(&framed[..half]).await?;
-        // drop without finishing, then close connection
-        conn.close(0u32.into(), b"test-drop");
-    }
-
-    // Small delay to allow server to process
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    // Second send with the same correlation id: should be served from cache; handler count must remain 1
-    {
-        let connecting = client_endpoint.connect(server_sock, dns_name)?;
-        let conn = connecting.await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(&framed).await?;
-        send.finish()?;
-
-        // Read length-prefixed response
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut data = vec![0u8; len];
-        recv.read_exact(&mut data).await?;
-        let reply: NetworkMessage = serde_cbor::from_slice(&data)?;
-        assert_eq!(reply.message_type, MESSAGE_TYPE_RESPONSE);
-        assert_eq!(reply.payload.correlation_id, correlation_id);
-    }
-
-    assert_eq!(
-        invocation_count.load(Ordering::SeqCst),
-        1,
-        "handler must be invoked exactly once"
-    );
-
-    server_transport.stop().await?;
-    Ok(())
-}
-
-/// Force failure on write path (open_bi ok but connection closed before any write)
-/// Ensure no cache insert occurs and handler invoked once upon later success.
-#[tokio::test]
-async fn test_write_failure_then_success_does_not_cache_until_sent(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use runar_common::compact_ids::compact_id;
-    use runar_common::logging::{Component, Logger};
-    use runar_common::logging::{LogLevel, LoggingConfig};
-    use runar_keys::{MobileKeyManager, NodeKeyManager};
-
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
-    logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("write_fail_test")));
-
-    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
-    let _ = mobile_ca.initialize_user_root_key()?;
-    let mut km_server = NodeKeyManager::new(logger.clone())?;
-    let csr_server = km_server.generate_csr()?;
-    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
-    km_server.install_certificate(cert_server)?;
-    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
-
-    let mk_info = |addr: &str| NodeInfo {
-        node_public_key: rand::random::<[u8; 32]>().to_vec(),
-        network_ids: vec!["main".to_string()],
-        addresses: vec![addr.to_string()],
-        node_metadata: runar_schemas::NodeMetadata {
-            services: vec![],
-            subscriptions: vec![],
-        },
-        version: 0,
-    };
-    let server_addr = "127.0.0.1:50162".parse().unwrap();
-    let server_info = mk_info("127.0.0.1:0");
-
-    let invocation_count = Arc::new(AtomicUsize::new(0));
-    let count_clone = invocation_count.clone();
-    let request_handler: RequestCallback = Arc::new(move |req: RequestMessage| {
-        let count_clone = count_clone.clone();
-        Box::pin(async move {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-            let response_value = ArcValue::new_primitive("ok".to_string());
-            let reply = ResponseMessage {
-                correlation_id: req.correlation_id,
-                payload_bytes: response_value.serialize(None).unwrap_or_default(),
-                profile_public_key: req.profile_public_key,
-            };
-            Ok(reply)
-        })
-    });
-    let event_handler: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
-
-    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
-        label_mappings: HashMap::new(),
-    }));
-
-    let server_info_clone = server_info.clone();
-    let get_local_node_info_server: GetLocalNodeInfoCallback = Arc::new(move || {
-        let server_info_clone = server_info_clone.clone();
-        Box::pin(async move { Ok(server_info_clone.clone()) })
-    });
-    let server_opts = QuicTransportOptions::new()
-        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
-        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
-        .with_root_certificates(vec![ca_cert])
-        .with_local_node_public_key(km_server.get_node_public_key())
-        .with_get_local_node_info(get_local_node_info_server)
-        .with_bind_addr(server_addr)
-        .with_response_cache_ttl(Duration::from_secs(3))
-        .with_request_callback(request_handler)
-        .with_event_callback(event_handler)
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver(resolver)
-        .with_logger(logger.clone());
-    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
-    let server_id = compact_id(&km_server.get_node_public_key());
-    server_transport.clone().start().await?;
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    // Build client endpoint with SkipServerVerification
-    // Local test-only verifier to bypass TLS verification in raw-client scenarios
-    #[derive(Debug)]
-    struct SkipServerVerification;
-    impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-        fn verify_server_cert(
-            &self,
-            _end_entity: &rustls_pki_types::CertificateDer<'_>,
-            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-            _server_name: &rustls_pki_types::ServerName<'_>,
-            _ocsp_response: &[u8],
-            _now: rustls_pki_types::UnixTime,
-        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-            Ok(rustls::client::danger::ServerCertVerified::assertion())
-        }
-        fn verify_tls12_signature(
-            &self,
-            _message: &[u8],
-            _cert: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-        fn verify_tls13_signature(
-            &self,
-            _message: &[u8],
-            _cert: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            vec![
-                rustls::SignatureScheme::RSA_PKCS1_SHA256,
-                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-                rustls::SignatureScheme::RSA_PSS_SHA256,
-                rustls::SignatureScheme::RSA_PSS_SHA384,
-                rustls::SignatureScheme::RSA_PSS_SHA512,
-                rustls::SignatureScheme::ED25519,
-            ]
-        }
-    }
-    let endpoint = {
-        let client_rustls = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
-            .with_no_client_auth();
-        let quic_client = quinn::crypto::rustls::QuicClientConfig::try_from(client_rustls)?;
-        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client));
-        client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
-        let mut ep = quinn::Endpoint::client("127.0.0.1:0".parse::<SocketAddr>()?)?;
-        ep.set_default_client_config(client_config);
-        ep
-    };
-    let server_sock: SocketAddr = server_transport.get_local_address().parse()?;
-
-    // Prepare message
-    let correlation_id = "corr-write-fail".to_string();
-    let request_msg = NetworkMessage {
-        source_node_id: "raw_client".to_string(),
-        destination_node_id: server_id.clone(),
-        message_type: MESSAGE_TYPE_REQUEST,
-        payload: NetworkMessagePayloadItem {
-            path: "$test/path".to_string(),
-            payload_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
-            correlation_id: correlation_id.clone(),
-            profile_public_key: vec![],
-        },
-    };
-    let mut framed = serde_cbor::to_vec(&request_msg)?;
-    let mut len = (framed.len() as u32).to_be_bytes().to_vec();
-    len.append(&mut framed);
-
-    // First attempt: open then immediately close before any write
-    {
-        let conn = endpoint.connect(server_sock, "test.local")?.await?;
-        let (_send, _recv) = conn.open_bi().await?;
-        // Immediately close before writing to simulate write failure
-        conn.close(0u32.into(), b"abort-before-write");
-    }
-
-    tokio::time::sleep(Duration::from_millis(120)).await;
-
-    // Second attempt: send fully and read response
-    {
-        let conn = endpoint.connect(server_sock, "test.local")?.await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(&len).await?;
-        send.finish()?;
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await?;
-        let resp_len = u32::from_be_bytes(len_buf) as usize;
-        let mut data = vec![0u8; resp_len];
-        recv.read_exact(&mut data).await?;
-        let reply: NetworkMessage = serde_cbor::from_slice(&data)?;
-        assert_eq!(reply.message_type, MESSAGE_TYPE_RESPONSE);
-        assert_eq!(reply.payload.correlation_id, correlation_id);
-    }
-
-    // Handler must have been invoked exactly once
-    assert_eq!(invocation_count.load(Ordering::SeqCst), 1);
-    server_transport.stop().await?;
-    Ok(())
-}
-
-/// Verify cache expiry: after TTL, the same correlation_id triggers the handler again
-#[tokio::test]
-async fn test_cache_expiry_triggers_handler_again(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use runar_common::compact_ids::compact_id;
-    use runar_common::logging::{Component, Logger};
-    use runar_common::logging::{LogLevel, LoggingConfig};
-    use runar_keys::{MobileKeyManager, NodeKeyManager};
-
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
-    logging_config.apply();
-    let logger = Arc::new(Logger::new_root(Component::Custom("expiry_test")));
-
-    let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
-    let _ = mobile_ca.initialize_user_root_key()?;
-    let mut km_server = NodeKeyManager::new(logger.clone())?;
-    let csr_server = km_server.generate_csr()?;
-    let cert_server = mobile_ca.process_setup_token(&csr_server)?;
-    km_server.install_certificate(cert_server)?;
-    let ca_cert = mobile_ca.get_ca_certificate().to_rustls_certificate();
-
-    let mk_info = |addr: &str| NodeInfo {
-        node_public_key: rand::random::<[u8; 32]>().to_vec(),
-        network_ids: vec!["main".to_string()],
-        addresses: vec![addr.to_string()],
-        node_metadata: runar_schemas::NodeMetadata {
-            services: vec![],
-            subscriptions: vec![],
-        },
-        version: 0,
-    };
-    let server_addr = "127.0.0.1:50163".parse().unwrap();
-    let server_info = mk_info("127.0.0.1:0");
-
-    let invocation_count = Arc::new(AtomicUsize::new(0));
-    let count_clone = invocation_count.clone();
-    let request_handler: RequestCallback = Arc::new(move |req: RequestMessage| {
-        let count_clone = count_clone.clone();
-        Box::pin(async move {
-            count_clone.fetch_add(1, Ordering::SeqCst);
-            let response_value = ArcValue::new_primitive("ok".to_string());
-            let reply = ResponseMessage {
-                correlation_id: req.correlation_id,
-                payload_bytes: response_value.serialize(None).unwrap_or_default(),
-                profile_public_key: req.profile_public_key,
-            };
-            Ok(reply)
-        })
-    });
-    let event_handler: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
-
-    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
-        label_mappings: HashMap::new(),
-    }));
-    let ttl = Duration::from_secs(2);
-
-    let server_info_clone = server_info.clone();
-    let get_local_node_info_server: GetLocalNodeInfoCallback = Arc::new(move || {
-        let server_info_clone = server_info_clone.clone();
-        Box::pin(async move { Ok(server_info_clone.clone()) })
-    });
-    let server_opts = QuicTransportOptions::new()
-        .with_certificates(km_server.get_quic_certificate_config()?.certificate_chain)
-        .with_private_key(km_server.get_quic_certificate_config()?.private_key)
-        .with_root_certificates(vec![ca_cert])
-        .with_local_node_public_key(km_server.get_node_public_key())
-        .with_get_local_node_info(get_local_node_info_server)
-        .with_bind_addr(server_addr)
-        .with_response_cache_ttl(ttl)
-        .with_request_callback(request_handler)
-        .with_event_callback(event_handler)
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver(resolver)
-        .with_logger(logger.clone());
-    let server_transport = Arc::new(QuicTransport::new(server_opts)?);
-    let server_id = compact_id(&km_server.get_node_public_key());
-    server_transport.clone().start().await?;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Client setup with SkipServerVerification
-    // Local test-only verifier to bypass TLS verification in raw-client scenarios
-    #[derive(Debug)]
-    struct SkipServerVerification;
-    impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-        fn verify_server_cert(
-            &self,
-            _end_entity: &rustls_pki_types::CertificateDer<'_>,
-            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
-            _server_name: &rustls_pki_types::ServerName<'_>,
-            _ocsp_response: &[u8],
-            _now: rustls_pki_types::UnixTime,
-        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-            Ok(rustls::client::danger::ServerCertVerified::assertion())
-        }
-        fn verify_tls12_signature(
-            &self,
-            _message: &[u8],
-            _cert: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-        fn verify_tls13_signature(
-            &self,
-            _message: &[u8],
-            _cert: &rustls_pki_types::CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-        }
-        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            vec![
-                rustls::SignatureScheme::RSA_PKCS1_SHA256,
-                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-                rustls::SignatureScheme::RSA_PSS_SHA256,
-                rustls::SignatureScheme::RSA_PSS_SHA384,
-                rustls::SignatureScheme::RSA_PSS_SHA512,
-                rustls::SignatureScheme::ED25519,
-            ]
-        }
-    }
-    let client_endpoint = {
-        let client_rustls = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipServerVerification {}))
-            .with_no_client_auth();
-        let quic_client = quinn::crypto::rustls::QuicClientConfig::try_from(client_rustls)?;
-        let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client));
-        client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
-        let mut ep = quinn::Endpoint::client("127.0.0.1:0".parse::<SocketAddr>()?)?;
-        ep.set_default_client_config(client_config);
-        ep
-    };
-    let server_sock: SocketAddr = server_transport.get_local_address().parse()?;
-    let corr = "corr-expiry".to_string();
-
-    let mk_req = || NetworkMessage {
-        source_node_id: "raw_client".to_string(),
-        destination_node_id: server_id.clone(),
-        message_type: MESSAGE_TYPE_REQUEST,
-        payload: NetworkMessagePayloadItem {
-            path: "$x".to_string(),
-            payload_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
-            correlation_id: corr.clone(),
-            profile_public_key: vec![],
-        },
-    };
-    let encode = |m: &NetworkMessage| {
-        let mut b = serde_cbor::to_vec(m).unwrap();
-        let mut f = (b.len() as u32).to_be_bytes().to_vec();
-        f.append(&mut b);
-        f
-    };
-
-    // First call
-    {
-        let conn = client_endpoint.connect(server_sock, "test.local")?.await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        // no extra imports needed
-        let framed = encode(&mk_req());
-        send.write_all(&framed).await?;
-        send.finish()?;
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await?;
-        let resp_len = u32::from_be_bytes(len_buf) as usize;
-        let mut data = vec![0u8; resp_len];
-        recv.read_exact(&mut data).await?;
-        let _reply: NetworkMessage = serde_cbor::from_slice(&data)?;
-    }
-
-    // Wait past TTL
-    tokio::time::sleep(ttl + Duration::from_millis(300)).await;
-
-    // Second call with same correlation id should invoke handler again
-    {
-        let conn = client_endpoint.connect(server_sock, "test.local")?.await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        // read_exact is used below via fully qualified path
-        let framed = encode(&mk_req());
-        send.write_all(&framed).await?;
-        send.finish()?;
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await?;
-        let resp_len = u32::from_be_bytes(len_buf) as usize;
-        let mut data = vec![0u8; resp_len];
-        recv.read_exact(&mut data).await?;
-        let _reply: NetworkMessage = serde_cbor::from_slice(&data)?;
-    }
-
-    assert_eq!(invocation_count.load(Ordering::SeqCst), 2);
-    server_transport.stop().await?;
-    Ok(())
-}
-
-fn map_message_type_to_string(message_type: u32) -> String {
-    match message_type {
-        MESSAGE_TYPE_HANDSHAKE => "HANDSHAKE".to_string(),
-        MESSAGE_TYPE_REQUEST => "REQUEST".to_string(),
-        MESSAGE_TYPE_RESPONSE => "RESPONSE".to_string(),
-        MESSAGE_TYPE_EVENT => "EVENT".to_string(),
-        _ => "UNKNOWN".to_string(),
-    }
-}
-
-/// Verify transports work with proper certs from key managers and new options are honored
-#[tokio::test]
-async fn test_quic_transport_with_limits_and_timeouts(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use runar_common::logging::{Component, Logger};
-    use runar_common::logging::{LogLevel, LoggingConfig};
-    use runar_keys::{MobileKeyManager, NodeKeyManager};
-    use std::net::SocketAddr;
-
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
-    logging_config.apply();
-    let logger = std::sync::Arc::new(Logger::new_root(Component::Custom("limits_test")));
-
-    // CA and node certs via key managers (no SkipServerVerification anywhere)
-    let mut ca = MobileKeyManager::new(logger.clone())?;
-    let _ = ca.initialize_user_root_key()?;
-    let mut km1 = NodeKeyManager::new(logger.clone())?;
-    let cert1 = ca.process_setup_token(&km1.generate_csr()?)?;
-    km1.install_certificate(cert1)?;
-    let mut km2 = NodeKeyManager::new(logger.clone())?;
-    let cert2 = ca.process_setup_token(&km2.generate_csr()?)?;
-    km2.install_certificate(cert2)?;
-    let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
-
-    // Node infos
-    let pk1 = km1.get_node_public_key();
-    let pk2 = km2.get_node_public_key();
-    let info1 = runar_schemas::NodeInfo {
-        node_public_key: pk1.clone(),
-        network_ids: vec!["test".into()],
-        addresses: vec!["127.0.0.1:50301".parse::<SocketAddr>()?.to_string()],
-        node_metadata: runar_schemas::NodeMetadata {
-            services: vec![],
-            subscriptions: vec![],
-        },
-        version: 0,
-    };
-    let info2 = runar_schemas::NodeInfo {
-        node_public_key: pk2.clone(),
-        network_ids: vec!["test".into()],
-        addresses: vec!["127.0.0.1:50302".parse::<SocketAddr>()?.to_string()],
-        node_metadata: runar_schemas::NodeMetadata {
-            services: vec![],
-            subscriptions: vec![],
-        },
-        version: 0,
-    };
-
-    // Minimal handlers
-    let request_handler: RequestCallback = std::sync::Arc::new(|req: RequestMessage| {
-        Box::pin(async move {
-            Ok(ResponseMessage {
-                correlation_id: req.correlation_id,
-                payload_bytes: req.payload_bytes,
-                profile_public_key: req.profile_public_key,
-            })
-        })
-    });
-    let event_handler: EventCallback = std::sync::Arc::new(|_e| Box::pin(async { Ok(()) }));
-    let resolver: std::sync::Arc<dyn runar_serializer::traits::LabelResolver> =
-        std::sync::Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
-            runar_serializer::traits::KeyMappingConfig {
-                label_mappings: std::collections::HashMap::new(),
-            },
-        ));
-
-    let info1c = info1.clone();
-    let info2c = info2.clone();
-    let get_local_node_info_t1: GetLocalNodeInfoCallback = std::sync::Arc::new(move || {
-        let info1c = info1c.clone();
-        Box::pin(async move { Ok(info1c.clone()) })
-    });
-    let get_local_node_info_t2: GetLocalNodeInfoCallback = std::sync::Arc::new(move || {
-        let info2c = info2c.clone();
-        Box::pin(async move { Ok(info2c.clone()) })
-    });
-
-    // Use new options: small max_message_size and explicit handshake timeout
-    let t1_opts = QuicTransportOptions::new()
-        .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
-        .with_private_key(km1.get_quic_certificate_config()?.private_key)
-        .with_root_certificates(vec![ca_cert.clone()])
-        .with_local_node_public_key(pk1.clone())
-        .with_get_local_node_info(get_local_node_info_t1)
-        .with_bind_addr("127.0.0.1:50301".parse::<SocketAddr>()?)
-        .with_request_callback(request_handler.clone())
-        .with_event_callback(event_handler.clone())
-        .with_logger(logger.clone())
-        .with_keystore(std::sync::Arc::new(NoCrypto))
         .with_label_resolver(resolver.clone())
         .with_handshake_response_timeout(std::time::Duration::from_millis(500))
         .with_max_message_size(1024);
 
-    let t2_opts = QuicTransportOptions::new()
-        .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
-        .with_private_key(km2.get_quic_certificate_config()?.private_key)
-        .with_root_certificates(vec![ca_cert])
-        .with_local_node_public_key(pk2.clone())
-        .with_get_local_node_info(get_local_node_info_t2)
-        .with_bind_addr("127.0.0.1:50302".parse::<SocketAddr>()?)
-        .with_request_callback(request_handler.clone())
-        .with_event_callback(event_handler.clone())
-        .with_logger(logger.clone())
-        .with_keystore(std::sync::Arc::new(NoCrypto))
-        .with_label_resolver(resolver.clone())
-        .with_handshake_response_timeout(std::time::Duration::from_millis(500))
-        .with_max_message_size(1024);
-
-    let t1 = std::sync::Arc::new(QuicTransport::new(t1_opts)?);
+    let t1 = std::sync::Arc::new(QuicTransport::new(transport1_options)?);
     let t2 = std::sync::Arc::new(QuicTransport::new(t2_opts)?);
     let (_a, _b) = tokio::join!(t1.clone().start(), t2.clone().start());
 
     // Connect and wait briefly
     t1.clone()
         .connect_peer(PeerInfo::new(
-            info2.node_public_key.clone(),
-            info2.addresses.clone(),
+            node2_info.node_public_key.clone(),
+            node2_info.addresses.clone(),
         ))
         .await?;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -1641,8 +623,8 @@ async fn test_quic_transport_with_limits_and_timeouts(
             "test:limits/echo",
             "corr-limits",
             large_payload,
-            &runar_common::compact_ids::compact_id(&info2.node_public_key),
-            info1.node_public_key.clone(),
+            &runar_common::compact_ids::compact_id(&node2_info.node_public_key),
+            node1_info.node_public_key.clone(),
         )
         .await;
     assert!(
@@ -2556,5 +1538,82 @@ async fn test_transport_message_header_bounds_checking(
     // Cancel watchdog on success
     watchdog.abort();
     let _ = watchdog.await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_transport_start_stop_idempotence(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::logging::{Component, Logger};
+    use runar_common::logging::{LogLevel, LoggingConfig};
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = Arc::new(Logger::new_root(Component::Custom("transport_idem")));
+
+    // Prepare key manager with installed certificate (required for QUIC config)
+    let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
+    let _ = ca.initialize_user_root_key()?;
+    let mut km = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let csr = km.generate_csr()?;
+    let cert = ca.process_setup_token(&csr)?;
+    km.install_certificate(cert)?;
+
+    // Build transport directly from Node's network config pieces
+    let keystore = Arc::new(NoCrypto);
+    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+        label_mappings: HashMap::new(),
+    }));
+
+    let local_pk = km.get_node_public_key();
+
+    // Minimal NodeInfo provider
+    let node_info = NodeInfo {
+        node_public_key: local_pk.clone(),
+        network_ids: vec!["test_network".to_string()],
+        addresses: vec!["127.0.0.1:50201".to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 1,
+    };
+    let get_local_node_info: GetLocalNodeInfoCallback = Arc::new(move || {
+        let info = node_info.clone();
+        Box::pin(async move { Ok(info) })
+    });
+
+    let request_cb: RequestCallback = Arc::new(|_req| {
+        Box::pin(async move {
+            Ok(ResponseMessage {
+                correlation_id: "c".into(),
+                payload_bytes: vec![1],
+                profile_public_key: vec![],
+            })
+        })
+    });
+    let event_cb: EventCallback = Arc::new(|_e| Box::pin(async move { Ok(()) }));
+
+    let t = Arc::new(QuicTransport::new(
+        QuicTransportOptions::new()
+            .with_key_manager(Arc::new(km))
+            .with_local_node_public_key(local_pk)
+            .with_get_local_node_info(get_local_node_info)
+            .with_bind_addr("127.0.0.1:50201".parse()?)
+            .with_request_callback(request_cb)
+            .with_event_callback(event_cb)
+            .with_logger(logger.clone())
+            .with_keystore(keystore)
+            .with_label_resolver(resolver),
+    )?);
+
+    for _ in 0..3u8 {
+        t.clone().start().await?;
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        t.stop().await?;
+    }
+
+    t.clone().start().await?;
+    t.stop().await?;
     Ok(())
 }
