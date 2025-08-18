@@ -126,22 +126,58 @@ fn compare_issuance_parity() -> Result<()> {
         _ => panic!("SAN missing or mismatched"),
     }
 
-    // SKI and AKI presence
-    matches!(
-        find_ext(&x_op, &oid_ski),
-        ParsedExtension::SubjectKeyIdentifier(_)
+    // SKI equality
+    match (find_ext(&x_op, &oid_ski), find_ext(&x_pr, &oid_ski)) {
+        (ParsedExtension::SubjectKeyIdentifier(a), ParsedExtension::SubjectKeyIdentifier(b)) => {
+            assert_eq!(a.0, b.0);
+        }
+        _ => panic!("SKI missing/mismatch"),
+    }
+
+    // AKI issuer/serial and keyid equality
+    match (find_ext(&x_op, &oid_aki), find_ext(&x_pr, &oid_aki)) {
+        (
+            ParsedExtension::AuthorityKeyIdentifier(a),
+            ParsedExtension::AuthorityKeyIdentifier(b),
+        ) => {
+            assert_eq!(a.key_identifier, b.key_identifier);
+            assert_eq!(a.authority_cert_serial, b.authority_cert_serial);
+            let i1 = a
+                .authority_cert_issuer
+                .as_ref()
+                .map(|v| v.iter().map(|g| g.to_string()).collect::<Vec<_>>());
+            let i2 = b
+                .authority_cert_issuer
+                .as_ref()
+                .map(|v| v.iter().map(|g| g.to_string()).collect::<Vec<_>>());
+            assert_eq!(i1, i2);
+        }
+        _ => panic!("AKI missing/mismatch"),
+    }
+
+    // Serial equality
+    assert_eq!(
+        x_op.tbs_certificate.raw_serial(),
+        x_pr.tbs_certificate.raw_serial()
     );
-    matches!(
-        find_ext(&x_pr, &oid_ski),
-        ParsedExtension::SubjectKeyIdentifier(_)
+
+    // Signature algorithm OID must be ecdsa-with-SHA256 and match
+    let sig_oid = x_op.signature_algorithm.algorithm;
+    assert_eq!(sig_oid, x_pr.signature_algorithm.algorithm);
+    assert_eq!(sig_oid, OID_SIG_ECDSA_WITH_SHA256);
+
+    // SPKI algorithm OID must be id-ecPublicKey and match; and public key bytes must match
+    assert_eq!(
+        x_op.tbs_certificate.subject_pki.algorithm.algorithm,
+        x_pr.tbs_certificate.subject_pki.algorithm.algorithm
     );
-    matches!(
-        find_ext(&x_op, &oid_aki),
-        ParsedExtension::AuthorityKeyIdentifier(_)
+    assert_eq!(
+        x_op.tbs_certificate.subject_pki.algorithm.algorithm,
+        OID_PKCS1_EC_PUBLIC_KEY
     );
-    matches!(
-        find_ext(&x_pr, &oid_aki),
-        ParsedExtension::AuthorityKeyIdentifier(_)
+    assert_eq!(
+        x_op.tbs_certificate.subject_pki.subject_public_key.data,
+        x_pr.tbs_certificate.subject_pki.subject_public_key.data
     );
 
     Ok(())
