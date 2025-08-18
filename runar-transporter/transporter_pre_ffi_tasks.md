@@ -10,19 +10,15 @@ Goal: harden and simplify the `runar-transporter` API and implementation before 
 ---
 
 ### 1) Security and TLS/PKI integration
-- [ ] Remove `SkipServerVerification` from production code paths; restrict to tests/dev-only.
-  - Files: `src/transport/mod.rs`
-  - Action: move the type behind `#[cfg(any(test, feature = "insecure_dev"))]`. Default build must not compile it.
-  - Acceptance: Release build cannot reference or compile the skip verifier; tests can enable via feature or test cfg.
+- [x] Remove `SkipServerVerification` from production code paths; restrict to tests/dev-only.
+  - Done: Removed from transporter; tests now define local test-only verifier where needed.
 
-- [ ] Replace `dangerous().with_custom_certificate_verifier(...)` default with strict verification.
-  - Files: `src/transport/quic_transport.rs::build_quinn_configs`
-  - Action: create rustls client config from trusted roots and peer-auth using PKI from runar-keys (see next item). Keep an opt-in `feature = "insecure_dev"` to use the custom verifier only in tests/dev.
-  - Acceptance: By default, chain/hostname validation occurs; integration test covers failure on mismatched identity.
+- [x] Replace `dangerous().with_custom_certificate_verifier(...)` default with strict verification.
+  - Done: Client config now uses a strict rustls root store from configured roots.
 
 - [ ] Integrate `runar-keys` directly for identity and trust.
   - Files: `src/transport/quic_transport.rs`, `src/transport/mod.rs`
-  - Action: add an identity/trust provider path so callers do not pass raw certs/keys. Keep current cert/key options for tests but deprecate.
+  - Action: add an identity/trust provider path (`with_key_manager(...)`) so callers do not pass raw certs/keys. Keep current cert/key options for tests but deprecate.
   - Suggested API: extend `QuicTransportOptions` with either
     - `with_key_manager(Arc<dyn KeyManager>)` (trait from runar-keys), or
     - `with_identity_profile(profile_id: &str)` and `with_network_id(&str)` so transporter asks runar-keys for the chain + verification policy.
@@ -32,25 +28,23 @@ Goal: harden and simplify the `runar-transporter` API and implementation before 
 ---
 
 ### 2) Message model and framing correctness
-- [ ] Enforce message size limits from options (not hard-coded 1MB).
+- [x] Enforce message size limits from options (not hard-coded 1MB).
   - Files: `src/transport/quic_transport.rs::read_message`, `src/transport/mod.rs::TransportOptions`
-  - Action: thread an effective `max_message_size` (from `TransportOptions.max_message_size` with a sane default) into read/write validation. Reject too-large frames early with `NetworkError::MessageError`.
-  - Acceptance: Unit test verifies configurable limit; exceeding size returns error; default aligns with options default.
+  - Done: Added `QuicTransportOptions::with_max_message_size` and enforce in `read_message`. Added test.
 
-- [ ] Remove `NetworkMessageType` enum in favor of numeric constants.
+- [x] Remove `NetworkMessageType` enum in favor of numeric constants.
   - Files: `src/transport/mod.rs`
-  - Action: delete the enum; keep and document the numeric constants; update any vestigial references (the code already uses numeric constants).
-  - Acceptance: No remaining references to the enum; docs clearly state message codes and their semantics.
+  - Done: Enum removed; numeric codes retained. Re-exports updated.
 
 - [ ] Fix doc/comments about payloads: single payload only.
   - Files: `src/transport/mod.rs` (`NetworkMessage` comment), any other references.
   - Action: update comments to reflect `payload: NetworkMessagePayloadItem` (not list). If a vector is reintroduced later, do it deliberately.
-  - Acceptance: Docs consistent; no misleading comments.
+  - Status: Pending (code already single-payload; docs need updating).
 
 - [ ] Make handshake and stream timeouts configurable.
   - Files: `src/transport/quic_transport.rs`
   - Action: introduce options on `QuicTransportOptions`: `handshake_response_timeout`, `open_stream_timeout` (Durations). Replace hard-coded `2s` and other implicit timings.
-  - Acceptance: Tests cover altered timeouts; defaults match current behavior.
+  - Status: Handshake response timeout added and used; open_stream timeout pending.
 
 ---
 
@@ -68,10 +62,10 @@ Goal: harden and simplify the `runar-transporter` API and implementation before 
   - Action: extend options to accept either `Arc<Logger>` or `{ node_id: String, level: LogLevel }`. If `Logger` not provided, build one with component `Transporter` and ambient `node_id` context in Rust layer.
   - Acceptance: Transport works without a prebuilt logger; logs include node id context.
 
-- [ ] Reduce noisy/emoji logs under non-debug levels.
+- [ ] Reduce noisy logs under non-debug levels; remove emojis.
   - Files: transport and discovery
-  - Action: gate very verbose/emoji logs behind debug level.
-  - Acceptance: Info-level logs are succinct; debug retains detail.
+  - Action: gate very verbose logs behind debug level; remove emojis from messages.
+  - Acceptance: Info-level logs are succinct; debug retains detail, no emojis.
 remove all emojis FROM LOGS.. THIS IS A BAD PRACTICE.
 ---
 
@@ -121,7 +115,7 @@ what options we have for mobile for auto p2p network discovery.. without a centr
 ---
 
 ### 9) Tests to add/adjust (pre-FFI)
-- [ ] Message size limit respected (custom limit and default).
+- [x] Message size limit respected (custom limit and default).
 - [ ] Handshake timeout configurable.
 - [ ] Address iteration connects via fallback.
 - [ ] Strict TLS default rejects mismatched identity (behind real PKI or test CA).
@@ -138,9 +132,9 @@ what options we have for mobile for auto p2p network discovery.. without a centr
 
 ### Proposed option additions (pre-FFI, Rust-only)
 - QuicTransportOptions
-  - [ ] `with_handshake_response_timeout(Duration)`
+  - [x] `with_handshake_response_timeout(Duration)`
   - [ ] `with_open_stream_timeout(Duration)`
-  - [ ] `with_max_message_size(usize)` (or derive from `TransportOptions` consistently)
+  - [x] `with_max_message_size(usize)` (or derive from `TransportOptions` consistently)
   - [ ] `with_key_manager(Arc<dyn KeyManager>)` or `with_identity_profile(&str)` (preferred over raw certs)
   - [ ] `with_logger_from_node_id(node_id: String, level: LogLevel)` (used only if `with_logger` not provided)
   - [ ] Deprecate: `with_certificates`, `with_private_key`, `with_root_certificates` for non-test usage; keep for tests.
@@ -148,11 +142,11 @@ what options we have for mobile for auto p2p network discovery.. without a centr
 ---
 
 ### Execution plan (suggested order)
-1. Remove insecure verifier by default; feature-gate.
-2. Enforce message size from options; fix payload comments; remove enum.
-3. Add configurable timeouts.
+1. Remove insecure verifier by default; feature-gate. [Done]
+2. Enforce message size from options; fix payload comments; remove enum. [Partially done]
+3. Add configurable timeouts (handshake done; stream open pending).
 4. Implement address iteration/backoff.
-5. Logger-from-node-id path; reduce noisy logs.
+5. Logger-from-node-id path; reduce noisy logs; remove emojis.
 6. Integrate runar-keys identity/trust path and deprecate explicit certs.
 7. Discovery polish.
 8. Dependency cleanup.

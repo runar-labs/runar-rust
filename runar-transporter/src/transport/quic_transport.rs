@@ -21,6 +21,7 @@ use crate::discovery::multicast_discovery::PeerInfo;
 use crate::transport::{EventMessage, NetworkMessagePayloadItem, RequestMessage, ResponseMessage};
 use crate::transport::{GetLocalNodeInfoCallback, NetworkError, NetworkMessage, NetworkTransport};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use runar_keys::NodeKeyManager;
 
 // No direct use of ServerName; rely on rustls SNI handling.
 
@@ -54,6 +55,8 @@ pub struct QuicTransportOptions {
     handshake_response_timeout: Duration,
     // Effective maximum message size (bytes) enforced by framing
     max_message_size: Option<usize>,
+    // Optional: use key manager directly for certs/keys/roots
+    key_manager: Option<Arc<NodeKeyManager>>,
 }
 
 impl std::fmt::Debug for QuicTransportOptions {
@@ -149,6 +152,7 @@ impl Default for QuicTransportOptions {
             max_request_retries: None,
             handshake_response_timeout: Duration::from_secs(2),
             max_message_size: Some(1024 * 1024),
+            key_manager: None,
         }
     }
 }
@@ -267,6 +271,11 @@ impl QuicTransportOptions {
         self
     }
 
+    pub fn with_key_manager(mut self, key_manager: Arc<NodeKeyManager>) -> Self {
+        self.key_manager = Some(key_manager);
+        self
+    }
+
     // Getters for original options
     pub fn certificates(&self) -> Option<&Vec<CertificateDer<'static>>> {
         self.certificates.as_ref()
@@ -308,6 +317,10 @@ impl QuicTransportOptions {
     pub fn max_message_size(&self) -> Option<usize> {
         self.max_message_size
     }
+
+    pub fn key_manager(&self) -> Option<&Arc<NodeKeyManager>> {
+        self.key_manager.as_ref()
+    }
 }
 
 impl Clone for QuicTransportOptions {
@@ -332,6 +345,7 @@ impl Clone for QuicTransportOptions {
             max_request_retries: self.max_request_retries,
             handshake_response_timeout: self.handshake_response_timeout,
             max_message_size: self.max_message_size,
+            key_manager: self.key_manager.clone(),
         }
     }
 }
@@ -704,15 +718,25 @@ impl QuicTransport {
     }
 
     fn build_quinn_configs(&self) -> Result<(ServerConfig, ClientConfig), NetworkError> {
-        let certs = self
-            .options
-            .certificates()
-            .ok_or(NetworkError::ConfigurationError("no certs".into()))?;
-        let key = self
-            .options
-            .private_key()
-            .ok_or(NetworkError::ConfigurationError("no key".into()))?
-            .clone_key();
+        // Resolve certificates and private key either from key manager or explicit options
+        let (certs, key): (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) = if let Some(km) = self.options.key_manager() {
+            let cfg = km
+                .get_quic_certificate_config()
+                .map_err(|e| NetworkError::ConfigurationError(format!("Failed to get QUIC certificate config from key manager: {e}")))?;
+            (cfg.certificate_chain, cfg.private_key)
+        } else {
+            let certs = self
+                .options
+                .certificates()
+                .ok_or(NetworkError::ConfigurationError("no certs".into()))?
+                .clone();
+            let key = self
+                .options
+                .private_key()
+                .ok_or(NetworkError::ConfigurationError("no key".into()))?
+                .clone_key();
+            (certs, key)
+        };
 
         let mut transport_config = quinn::TransportConfig::default();
 
@@ -741,13 +765,23 @@ impl QuicTransport {
             })?;
         server_config.transport_config(transport_config.clone());
 
-        // Build a strict rustls client config with provided root certificates.
+        // Build a strict rustls client config with provided root certificates (or CA from key manager).
         // Server name verification is handled by rustls using SNI; certificates must match peer_id DNS name.
         let mut root_store = rustls::RootCertStore::empty();
         if let Some(roots) = self.options.root_certificates() {
             for der in roots.iter() {
                 root_store.add(der.clone()).map_err(|e| {
                     NetworkError::ConfigurationError(format!("Failed to add root certificate: {e}"))
+                })?;
+            }
+        } else if let Some(km) = self.options.key_manager() {
+            // Use CA from key manager certificate chain (append all for simplicity)
+            let cfg = km
+                .get_quic_certificate_config()
+                .map_err(|e| NetworkError::ConfigurationError(format!("Failed to get certs for roots: {e}")))?;
+            for der in cfg.certificate_chain.iter() {
+                root_store.add(der.clone()).map_err(|e| {
+                    NetworkError::ConfigurationError(format!("Failed to add key-manager root: {e}"))
                 })?;
             }
         } else {
