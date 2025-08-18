@@ -12,6 +12,8 @@ use runar_keys::{
     node::{NodeKeyManager, NodeKeyManagerState},
 };
 use runar_transporter::{NetworkTransport, QuicTransport, QuicTransportOptions};
+use runar_transporter::discovery::multicast_discovery::PeerInfo;
+use runar_schemas::NodeInfo;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use once_cell::sync::OnceCell;
@@ -590,6 +592,184 @@ pub unsafe extern "C" fn rn_transport_start(transport: *mut c_void, err: *mut Rn
     0
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_event(
+    transport: *mut c_void,
+    out_event: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() { set_error(err, 1, "transport is null"); return 1; }
+    if out_event.is_null() || out_len.is_null() { set_error(err, 1, "null out"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let inner = &*handle.inner;
+    let mut rx = runtime().block_on(inner.events_rx.lock());
+    match rx.try_recv() {
+        Ok(buf) => {
+            if !alloc_bytes(out_event, out_len, &buf) { set_error(err, 3, "alloc failed"); return 3; }
+            0
+        }
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_event = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => { set_error(err, 2, "event channel closed"); 2 }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_connect_peer(
+    transport: *mut c_void,
+    peer_info_cbor: *const u8,
+    len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() || peer_info_cbor.is_null() { set_error(err, 1, "null argument"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let slice = std::slice::from_raw_parts(peer_info_cbor, len);
+    let peer: PeerInfo = match serde_cbor::from_slice(slice) { Ok(p) => p, Err(e) => { set_error(err, 2, &format!("decode PeerInfo: {e}")); return 2; } };
+    let t = (&*handle.inner).transport.clone();
+    let res = runtime().block_on(async move { Arc::clone(&t).connect_peer(peer).await });
+    if let Err(e) = res { set_error(err, 2, &format!("connect_peer failed: {e}")); return 2; }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_disconnect_peer(
+    transport: *mut c_void,
+    peer_node_id: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() || peer_node_id.is_null() { set_error(err, 1, "null argument"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let id = match std::ffi::CStr::from_ptr(peer_node_id).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let res = runtime().block_on((&*handle.inner).transport.disconnect(&id));
+    if let Err(e) = res { set_error(err, 2, &format!("disconnect failed: {e}")); return 2; }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_is_connected(
+    transport: *mut c_void,
+    peer_node_id: *const c_char,
+    out_connected: *mut bool,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() || peer_node_id.is_null() || out_connected.is_null() { set_error(err, 1, "null argument"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let id = match std::ffi::CStr::from_ptr(peer_node_id).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let r = runtime().block_on((&*handle.inner).transport.is_connected(&id));
+    *out_connected = r;
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_update_local_node_info(
+    transport: *mut c_void,
+    node_info_cbor: *const u8,
+    len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() || node_info_cbor.is_null() { set_error(err, 1, "null argument"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let slice = std::slice::from_raw_parts(node_info_cbor, len);
+    let node_info: NodeInfo = match serde_cbor::from_slice(slice) { Ok(v) => v, Err(e) => { set_error(err, 2, &format!("decode NodeInfo: {e}")); return 2; } };
+    let res = runtime().block_on((&*handle.inner).transport.update_peers(node_info));
+    if let Err(e) = res { set_error(err, 2, &format!("update_peers failed: {e}")); return 2; }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_request(
+    transport: *mut c_void,
+    path: *const c_char,
+    correlation_id: *const c_char,
+    payload: *const u8,
+    payload_len: usize,
+    dest_peer_id: *const c_char,
+    profile_pk: *const u8,
+    pk_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() || path.is_null() || correlation_id.is_null() || payload.is_null() || dest_peer_id.is_null() || profile_pk.is_null() { set_error(err, 1, "null argument"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let path = match std::ffi::CStr::from_ptr(path).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let cid = match std::ffi::CStr::from_ptr(correlation_id).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let peer = match std::ffi::CStr::from_ptr(dest_peer_id).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
+    let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
+    let t = (&*handle.inner).transport.clone();
+    let events = (&*handle.inner).events_tx.clone();
+    runtime().spawn(async move {
+        match t.request(&path, &cid, data, &peer, pk).await {
+            Ok(resp) => {
+                let mut map = std::collections::BTreeMap::new();
+                map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("ResponseReceived".into()));
+                map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+                map.insert(serde_cbor::Value::Text("correlation_id".into()), serde_cbor::Value::Text(cid));
+                map.insert(serde_cbor::Value::Text("payload".into()), serde_cbor::Value::Bytes(resp));
+                let _ = events.send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default()).await;
+            }
+            Err(_e) => {}
+        }
+    });
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_publish(
+    transport: *mut c_void,
+    path: *const c_char,
+    correlation_id: *const c_char,
+    payload: *const u8,
+    payload_len: usize,
+    dest_peer_id: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() || path.is_null() || correlation_id.is_null() || payload.is_null() || dest_peer_id.is_null() { set_error(err, 1, "null argument"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let path = match std::ffi::CStr::from_ptr(path).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let cid = match std::ffi::CStr::from_ptr(correlation_id).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let peer = match std::ffi::CStr::from_ptr(dest_peer_id).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
+    let t = (&*handle.inner).transport.clone();
+    runtime().spawn(async move { let _ = t.publish(&path, &cid, data, &peer).await; });
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_complete_request(
+    transport: *mut c_void,
+    request_id: *const c_char,
+    response_payload: *const u8,
+    len: usize,
+    profile_pk: *const u8,
+    pk_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() || request_id.is_null() || response_payload.is_null() || profile_pk.is_null() { set_error(err, 1, "null argument"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let req_id = match std::ffi::CStr::from_ptr(request_id).to_str() { Ok(s) => s.to_string(), Err(_) => { set_error(err, 2, "invalid utf8"); return 2; } };
+    let data = std::slice::from_raw_parts(response_payload, len).to_vec();
+    let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
+    let mut map = runtime().block_on((&*handle.inner).pending.lock());
+    if let Some(sender) = map.remove(&req_id) {
+        let _ = sender.send(runar_transporter::transport::ResponseMessage { correlation_id: String::new(), payload_bytes: data, profile_public_key: pk });
+        0
+    } else {
+        set_error(err, 2, "unknown request_id");
+        2
+    }
+}
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_stop(transport: *mut c_void, err: *mut RnError) -> i32 {
     if transport.is_null() { set_error(err, 1, "transport is null"); return 1; }
