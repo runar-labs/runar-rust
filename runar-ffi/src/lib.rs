@@ -17,6 +17,7 @@ use runar_schemas::NodeInfo;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use once_cell::sync::OnceCell;
+use std::sync::atomic::AtomicU64;
 use serde_cbor as _; // keep dependency linked for now
 
 #[repr(C)]
@@ -58,7 +59,8 @@ struct TransportInner {
     transport: Arc<QuicTransport>,
     events_tx: mpsc::Sender<Vec<u8>>,
     events_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
-    pending: Mutex<std::collections::HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>>,
+    pending: Arc<Mutex<std::collections::HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>>>,
+    request_id_seq: Arc<AtomicU64>,
 }
 
 #[repr(C)]
@@ -550,11 +552,84 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     let node_id = node_arc.get_node_id();
     let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
 
-    // For now, we don't wire callbacks here; will enable in later iteration
+    // Build callbacks to emit events
+    let pc_tx = tx.clone();
+    let pc_cb: runar_transporter::transport::PeerConnectedCallback = Arc::new(move |peer_id, node_info| {
+        let pc_tx = pc_tx.clone();
+        Box::pin(async move {
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("PeerConnected".into()));
+            map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+            map.insert(serde_cbor::Value::Text("peer_node_id".into()), serde_cbor::Value::Text(peer_id));
+            let ni = serde_cbor::to_vec(&node_info).unwrap_or_default();
+            map.insert(serde_cbor::Value::Text("node_info".into()), serde_cbor::Value::Bytes(ni));
+            let _ = pc_tx.send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default()).await;
+        })
+    });
+
+    let pd_tx = tx.clone();
+    let pd_cb: runar_transporter::transport::PeerDisconnectedCallback = Arc::new(move |peer_id| {
+        let pd_tx = pd_tx.clone();
+        Box::pin(async move {
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("PeerDisconnected".into()));
+            map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+            map.insert(serde_cbor::Value::Text("peer_node_id".into()), serde_cbor::Value::Text(peer_id));
+            let _ = pd_tx.send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default()).await;
+        })
+    });
+
+    let req_tx = tx.clone();
+    let pending: Arc<Mutex<std::collections::HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>>> = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let pending_cb = pending.clone();
+    let rq_cb: runar_transporter::transport::RequestCallback = Arc::new(move |req| {
+        let req_tx = req_tx.clone();
+        let pending_cb = pending_cb.clone();
+        Box::pin(async move {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let (tx_resp, rx_resp) = oneshot::channel();
+            pending_cb.lock().await.insert(request_id.clone(), tx_resp);
+
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("RequestReceived".into()));
+            map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+            map.insert(serde_cbor::Value::Text("request_id".into()), serde_cbor::Value::Text(request_id));
+            map.insert(serde_cbor::Value::Text("path".into()), serde_cbor::Value::Text(req.path));
+            map.insert(serde_cbor::Value::Text("correlation_id".into()), serde_cbor::Value::Text(req.correlation_id));
+            map.insert(serde_cbor::Value::Text("payload".into()), serde_cbor::Value::Bytes(req.payload_bytes));
+            map.insert(serde_cbor::Value::Text("profile_public_key".into()), serde_cbor::Value::Bytes(req.profile_public_key));
+            let _ = req_tx.send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default()).await;
+
+            match rx_resp.await {
+                Ok(resp) => Ok(resp),
+                Err(_) => Ok(runar_transporter::transport::ResponseMessage { correlation_id: String::new(), payload_bytes: Vec::new(), profile_public_key: Vec::new() }),
+            }
+        })
+    });
+
+    let ev_tx = tx.clone();
+    let ev_cb: runar_transporter::transport::EventCallback = Arc::new(move |ev| {
+        let ev_tx = ev_tx.clone();
+        Box::pin(async move {
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("EventReceived".into()));
+            map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+            map.insert(serde_cbor::Value::Text("path".into()), serde_cbor::Value::Text(ev.path));
+            map.insert(serde_cbor::Value::Text("correlation_id".into()), serde_cbor::Value::Text(ev.correlation_id));
+            map.insert(serde_cbor::Value::Text("payload".into()), serde_cbor::Value::Bytes(ev.payload_bytes));
+            let _ = ev_tx.send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default()).await;
+            Ok(())
+        })
+    });
+
     options = options
         .with_key_manager(node_arc.clone())
         .with_local_node_public_key(node_arc.get_node_public_key())
-        .with_logger_from_node_id(node_id);
+        .with_logger_from_node_id(node_id)
+        .with_peer_connected_callback(pc_cb)
+        .with_peer_disconnected_callback(pd_cb)
+        .with_request_callback(rq_cb)
+        .with_event_callback(ev_cb);
     // Construct transport
     let transport = match QuicTransport::new(options) {
         Ok(t) => Arc::new(t),
@@ -563,7 +638,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             return 2;
         }
     };
-    let inner = TransportInner { logger: keys_inner.logger.clone(), transport, events_tx: tx, events_rx: Mutex::new(rx), pending: Mutex::new(std::collections::HashMap::new()) };
+    let inner = TransportInner { logger: keys_inner.logger.clone(), transport, events_tx: tx, events_rx: Mutex::new(rx), pending, request_id_seq: Arc::new(AtomicU64::new(1)) };
     let handle = FfiTransportHandle { inner: Box::into_raw(Box::new(inner)) };
     *out_transport = Box::into_raw(Box::new(handle)) as *mut c_void;
     0
