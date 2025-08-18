@@ -250,8 +250,7 @@ pub fn sign_csr_with_ca(
         const_oid::ObjectIdentifier::new_unwrap("2.5.29.14");
     const OID_AKI: const_oid::ObjectIdentifier =
         const_oid::ObjectIdentifier::new_unwrap("2.5.29.35");
-    const OID_SAN: const_oid::ObjectIdentifier =
-        const_oid::ObjectIdentifier::new_unwrap("2.5.29.17");
+    // OID_SAN not used directly; SAN is added conditionally from CSR parsing
 
     let bc = BasicConstraints {
         ca: false,

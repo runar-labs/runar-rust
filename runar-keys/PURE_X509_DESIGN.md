@@ -6,47 +6,45 @@ This document defines the plan to remove OpenSSL from `runar-keys` while preserv
 - No loss of features: retain all current certificate behaviors and extensions
   - Self‑signed CA cert (CA=true, pathLen=0)
   - CSR verification before issuance
-  - Leaf issuance with: BasicConstraints (CA=false), KeyUsage, ExtendedKeyUsage, SAN (from CSR or CN fallback), SKI, AKI (keyid + issuer/serial), controlled serial, validity bounds
+  - Leaf issuance with: BasicConstraints (CA=false), KeyUsage, ExtendedKeyUsage, SAN (from CSR), SKI, AKI (keyid + issuer/serial), controlled serial, validity bounds
 - Pure Rust issuance and parsing path
 - Maintain current public API surface and semantics
 
 ### Crate Stack (Pure Rust)
 - `p256` + `pkcs8`: signing and key material (already used)
-- `pkcs10`: CSR parsing + signature verification
 - `x509-cert`: build `TbsCertificate` and `Certificate`, add extensions
 - `spki`, `der`, `const-oid`: SPKI/ASN.1/OID helpers
 - `sha1`: compute SKI as SHA‑1 over SPKI (standard practice)
-- Optional: keep `x509-parser` for read/validate paths already in use
+- `x509-parser`: used for parsing CSRs and certs in tests/validation
 
 ### Mapping current functionality → Pure Rust
-1. Self‑signed CA
+1. Self‑signed CA [IMPLEMENTED]
    - Produce `TbsCertificate` with subject=issuer=Runar User CA
    - Extensions:
      - BasicConstraints: CA=true, pathLen=0, critical
      - KeyUsage: keyCertSign + cRLSign, critical
      - SKI: SHA‑1 of SubjectPublicKey
-     - AKI: keyid from SKI; include issuer/serial fields
+     - AKI: keyid from SKI (issuer/serial not included for self-signed)
    - Sign with ECDSA P‑256 + SHA‑256 → DER‐encoded certificate bytes
 
-2. CSR verification and leaf issuance
-   - Parse CSR via `pkcs10`, extract subject and SPKI
-   - Verify CSR signature using the embedded algorithm and SPKI
-   - Subject: copy from CSR
+2. CSR verification and leaf issuance [IMPLEMENTED]
+   - Parse CSR via `x509-cert` and verify signature manually using `p256`
+   - Subject: copied from CSR
    - Issuer: CA subject
-   - Serial: use provided `u64` or random 64‑bit; encode as positive ASN.1 INTEGER
-   - Validity: not_before=now, not_after=now+days (UTCTime/GeneralizedTime as appropriate)
+   - Serial: provided `u64` or deterministic fallback in tests; encoded as positive ASN.1 INTEGER
+   - Validity: not_before=now, not_after=now+days (UTCTime)
    - Extensions:
      - BasicConstraints: CA=false, critical
      - KeyUsage: digitalSignature, critical
      - ExtendedKeyUsage: serverAuth + clientAuth
-     - SAN: prefer CSR SANs; if absent, add DNS=CN (matching current behavior)
+     - SAN: required, strictly parsed from CSR extensions (no CN fallback)
      - SKI: SHA‑1 of leaf SPKI
-     - AKI: keyid from CA SKI; include issuer/serial
+     - AKI: keyid from CA SKI; includes issuer DirectoryName and serial (parity with OpenSSL)
    - Sign with CA key (ECDSA P‑256 + SHA‑256)
 
-3. Validation path
-   - Continue using existing `X509Certificate` wrapper and `x509-parser` for parsing/validation
-   - Preserve DN normalization and signature verification logic already in place
+3. Validation path [UNCHANGED]
+   - Use existing `X509Certificate` wrapper and `x509-parser` for parsing/validation
+   - DN normalization and signature verification logic retained
 
 ### Pitfalls to avoid
 - ASN.1 INTEGER serial must be positive; prepend 0x00 if high bit set
@@ -55,18 +53,22 @@ This document defines the plan to remove OpenSSL from `runar-keys` while preserv
 - AlgorithmIdentifier for ECDSA w/ SHA‑256 is OID `1.2.840.10045.4.3.2`; ensure parameters handling conforms
 
 ### Feature gating and migration
-- Add feature flags: `pure-x509` and `openssl-x509` (default remains `openssl-x509` during transition)
-- Implement a parallel issuance module (e.g., `pure_x509.rs`) with identical public functions used by `CertificateAuthority`
-- Switch default to `pure-x509` once tests pass across targets; remove OpenSSL dependency afterward
+- Feature flags in place: `pure-x509` and `openssl-x509` (default still `openssl-x509` during transition)
+- Parallel issuance module implemented: `pure_x509.rs`; `CertificateAuthority` dispatches based on feature
+- Next: flip default to `pure-x509` after transporter tests pass; then remove OpenSSL code path
 
-### Tests (must remain green)
-- Unit tests:
-  - CA self‑sign: check extensions, AKI/SKI correctness, and signature validity
-  - CSR roundtrip: generate CSR (existing rcgen path), verify, and issue leaf
-  - Leaf cert contains expected subject, SANs, KU/EKU, validity and serial
-  - Signature verification using CA public key
-- Integration/QUIC tests:
-  - Ensure rustls accepts the chain (node + CA) and handshakes succeed
+### Tests (status)
+- Unit/integration:
+  - Pure issuance end-to-end used by existing tests [PASS]
+  - Parity test comparing OpenSSL vs pure for extensions, serial, SPKI, signature OIDs [PASS]
+- Transport/QUIC:
+  - To run with `pure-x509` and verify rustls handshakes in existing transporter tests [PENDING]
+
+### Remaining Work
+- Make `pure-x509` the default feature and gate OpenSSL behind opt-in [PENDING]
+- Run full transporter/QUIC tests with `pure-x509` on CI and local [PENDING]
+- Remove OpenSSL code path after sustained green runs [PENDING]
+- FFI: proceed with `runar-keys-ffi` crate exposing stable C ABI (CBOR for complex types) [NEXT PHASE]
 
 ### Implementation Steps
 1. Add dependencies: `x509-cert`, `pkcs10`, `spki`, `der`, `const-oid`, `sha1`
