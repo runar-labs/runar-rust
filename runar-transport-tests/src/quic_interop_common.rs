@@ -176,7 +176,7 @@ pub fn make_echo_request(source_id: &str, dest_id: &str, payload: &[u8]) -> Netw
         message_type: MESSAGE_TYPE_REQUEST,
         payloads: vec![NetworkMessagePayloadItem {
             path: topic_echo().as_str().to_string(),
-            value_bytes: payload.to_vec(),
+            payload_bytes: payload.to_vec(),
             correlation_id: uuid::Uuid::new_v4().to_string(),
             context: Some(MessageContext {
                 profile_public_key: vec![],

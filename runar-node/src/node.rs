@@ -14,19 +14,18 @@ use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
-use runar_serializer::{ArcValue, LabelKeyInfo};
+use runar_serializer::{ArcValue, LabelKeyInfo, SerializationContext};
 use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
 use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
 use runar_transporter::transport::{
-    GetLocalNodeInfoCallback, NetworkError, NetworkMessagePayloadItem, OneWayMessageHandler,
-    PeerConnectedCallback, PeerDisconnectedCallback, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_REQUEST,
-    MESSAGE_TYPE_RESPONSE,
+    EventCallback, EventMessage, GetLocalNodeInfoCallback, PeerConnectedCallback,
+    PeerDisconnectedCallback, RequestCallback, RequestMessage, ResponseMessage,
 };
 use runar_transporter::{
-    DiscoveryOptions, MessageHandler, MulticastDiscovery, NetworkMessage, NetworkTransport,
-    NodeDiscovery, QuicTransport,
+    DiscoveryOptions, MulticastDiscovery, NetworkTransport, NodeDiscovery, QuicTransport,
 };
 use socket2;
+use uuid::Uuid;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::Instant;
@@ -36,7 +35,7 @@ use dashmap::DashMap;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
@@ -157,16 +156,16 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-/// use runar_node::NodeConfig;
-///
-/// // Basic configuration
-/// let config = NodeConfig::new("my-node");
-///
-/// // Production configuration requires key manager state
-/// let serialized_keys = vec![1, 2, 3, 4]; // Example key data
-/// let config = NodeConfig::new("my-node")
-///     .with_key_manager_state(serialized_keys);
-/// ```
+    /// use runar_node::NodeConfig;
+    ///
+    /// // Basic configuration
+    /// let config = NodeConfig::new("my-node");
+    ///
+    /// // Production configuration requires key manager state
+    /// let serialized_keys = vec![1, 2, 3, 4]; // Example key data
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_key_manager_state(serialized_keys);
+    /// ```
     pub fn new(default_network_id: impl Into<String>) -> Self {
         Self {
             default_network_id: default_network_id.into(),
@@ -187,12 +186,12 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-/// use runar_node::NodeConfig;
-/// use runar_transporter::network_config::NetworkConfig;
-///
-/// let config = NodeConfig::new("my-node")
-///     .with_network_config(NetworkConfig::default());
-/// ```
+    /// use runar_node::NodeConfig;
+    /// use runar_transporter::network_config::NetworkConfig;
+    ///
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_network_config(NetworkConfig::default());
+    /// ```
     pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
         self.network_config = Some(config);
         self
@@ -207,12 +206,12 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-/// use runar_node::NodeConfig;
-/// use runar_common::logging::LoggingConfig;
-///
-/// let config = NodeConfig::new("my-node")
-///     .with_logging_config(LoggingConfig::default_info());
-/// ```
+    /// use runar_node::NodeConfig;
+    /// use runar_common::logging::LoggingConfig;
+    ///
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_logging_config(LoggingConfig::default_info());
+    /// ```
     pub fn with_logging_config(mut self, config: LoggingConfig) -> Self {
         self.logging_config = Some(config);
         self
@@ -230,11 +229,11 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-/// use runar_node::NodeConfig;
-///
-/// let config = NodeConfig::new("my-node")
-///     .with_additional_networks(vec!["backup".to_string(), "testing".to_string()]);
-/// ```
+    /// use runar_node::NodeConfig;
+    ///
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_additional_networks(vec!["backup".to_string(), "testing".to_string()]);
+    /// ```
     pub fn with_additional_networks(mut self, network_ids: Vec<String>) -> Self {
         self.network_ids = network_ids;
         self
@@ -252,11 +251,11 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-/// use runar_node::NodeConfig;
-///
-/// let config = NodeConfig::new("my-node")
-///     .with_request_timeout(5000); // 5 second timeout
-/// ```
+    /// use runar_node::NodeConfig;
+    ///
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_request_timeout(5000); // 5 second timeout
+    /// ```
     pub fn with_request_timeout(mut self, timeout_ms: u64) -> Self {
         self.request_timeout_ms = timeout_ms;
         self
@@ -279,12 +278,12 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-/// use runar_node::NodeConfig;
-///
-/// let secure_key_bytes = vec![1, 2, 3, 4]; // Example key data
-/// let config = NodeConfig::new("my-node")
-///     .with_key_manager_state(secure_key_bytes);
-/// ```
+    /// use runar_node::NodeConfig;
+    ///
+    /// let secure_key_bytes = vec![1, 2, 3, 4]; // Example key data
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_key_manager_state(secure_key_bytes);
+    /// ```
     pub fn with_key_manager_state(mut self, key_state_bytes: Vec<u8>) -> Self {
         self.key_manager_state = Some(key_state_bytes);
         self
@@ -431,9 +430,6 @@ pub struct Node {
 
     /// Load balancer for selecting remote handlers
     load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
-
-    /// Pending requests waiting for responses, keyed by correlation ID
-    pending_requests: Arc<DashMap<String, oneshot::Sender<Result<ArcValue>>>>,
 
     label_resolver: Arc<dyn LabelResolver>,
 
@@ -603,7 +599,7 @@ impl Node {
             network_transport: Arc::new(RwLock::new(None)),
             network_discovery_providers: Arc::new(RwLock::new(None)),
             load_balancer: Arc::new(RwLock::new(RoundRobinLoadBalancer::new())),
-            pending_requests: Arc::new(DashMap::new()),
+            // pending_requests: Arc::new(DashMap::new()),
             label_resolver,
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager,
@@ -1444,30 +1440,30 @@ impl Node {
                 // Use bind address and options from config
                 let bind_addr = network_config.transport_options.bind_address;
 
-                let self_arc_for_message = self_arc.clone();
-                let message_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
-                    let self_arc = self_arc_for_message.clone();
-                    Box::pin(async move {
-                        self_arc
-                            .handle_network_message(message)
-                            .await
-                            .map_err(|e| NetworkError::TransportError(e.to_string()))
-                    })
-                });
+                // let self_arc_for_message = self_arc.clone();
+                // let message_handler: MessageHandler = Box::new(move |message: NetworkMessage| {
+                //     let self_arc = self_arc_for_message.clone();
+                //     Box::pin(async move {
+                //         self_arc
+                //             .handle_network_message(message)
+                //             .await
+                //             .map_err(|e| NetworkError::TransportError(e.to_string()))
+                //     })
+                // });
 
-                let self_arc_for_message = self_arc.clone();
-                let one_way_message_handler: OneWayMessageHandler =
-                    Box::new(move |message: NetworkMessage| {
-                        let self_arc = self_arc_for_message.clone();
-                        Box::pin(async move {
-                            // For one-way messages, we call the same handler but ignore the response
-                            let _response = self_arc
-                                .handle_network_message(message)
-                                .await
-                                .map_err(|e| NetworkError::TransportError(e.to_string()))?;
-                            Ok(())
-                        })
-                    });
+                // let self_arc_for_message = self_arc.clone();
+                // let one_way_message_handler: OneWayMessageHandler =
+                //     Box::new(move |message: NetworkMessage| {
+                //         let self_arc = self_arc_for_message.clone();
+                //         Box::pin(async move {
+                //             // For one-way messages, we call the same handler but ignore the response
+                //             let _response = self_arc
+                //                 .handle_network_message(message)
+                //                 .await
+                //                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+                //             Ok(())
+                //         })
+                //     });
 
                 let self_arc_for_callback = self_arc.clone();
                 let peer_connected_callback: PeerConnectedCallback =
@@ -1496,6 +1492,18 @@ impl Node {
                     Box::pin(async move { node.get_local_node_info().await })
                 });
 
+                let self_arc_for_callback = self_arc.clone();
+                let request_callback: RequestCallback = Arc::new(move |request: RequestMessage| {
+                    let node = self_arc_for_callback.clone();
+                    Box::pin(async move { node.handle_network_request(request).await })
+                });
+
+                let self_arc_for_callback = self_arc.clone();
+                let event_callback: EventCallback = Arc::new(move |event: EventMessage| {
+                    let node = self_arc_for_callback.clone();
+                    Box::pin(async move { node.handle_network_event(event).await })
+                });
+
                 let cert_config = self
                     .keys_manager
                     .get_quic_certificate_config()
@@ -1515,14 +1523,14 @@ impl Node {
                 let transport_options = configured_quic_options
                     .with_local_node_public_key(local_node_info.node_public_key.clone())
                     .with_bind_addr(bind_addr)
-                    .with_message_handler(message_handler)
-                    .with_one_way_message_handler(one_way_message_handler)
                     .with_peer_connected_callback(peer_connected_callback)
                     .with_peer_disconnected_callback(peer_disconnected_callback)
                     .with_get_local_node_info(get_local_node_info)
                     .with_logger(self.logger.clone())
                     .with_keystore(self.keys_manager.clone())
-                    .with_label_resolver(self.label_resolver.clone());
+                    .with_label_resolver(self.label_resolver.clone())
+                    .with_request_callback(request_callback)
+                    .with_event_callback(event_callback);
 
                 let transport = QuicTransport::new(transport_options)
                     .map_err(|e| anyhow!("Failed to create QUIC transport: {e}"))?;
@@ -1675,51 +1683,51 @@ impl Node {
         Ok(())
     }
 
-    /// Handle a network message
-    async fn handle_network_message(
-        &self,
-        message: NetworkMessage,
-    ) -> Result<Option<NetworkMessage>> {
-        // Skip if networking is not enabled
-        if !self.supports_networking {
-            log_warn!(
-                self.logger,
-                "Received network message but networking is disabled"
-            );
-            return Ok(None);
-        }
+    // /// Handle a network message
+    // async fn handle_network_message(
+    //     &self,
+    //     message: NetworkMessage,
+    // ) -> Result<Option<NetworkMessage>> {
+    //     // Skip if networking is not enabled
+    //     if !self.supports_networking {
+    //         log_warn!(
+    //             self.logger,
+    //             "Received network message but networking is disabled"
+    //         );
+    //         return Ok(None);
+    //     }
 
-        log_debug!(
-            self.logger,
-            "Received network message: {}",
-            message.message_type
-        );
+    //     log_debug!(
+    //         self.logger,
+    //         "Received network message: {}",
+    //         message.message_type
+    //     );
 
-        // Match on message type
-        match message.message_type {
-            MESSAGE_TYPE_REQUEST => {
-                let response = self.handle_network_request(message).await?;
-                if let Some(response_message) = response {
-                    Ok(Some(response_message))
-                } else {
-                    Ok(None)
-                }
-            }
-            MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
-            MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
-            _ => {
-                log_warn!(
-                    self.logger,
-                    "Unknown message type: {}",
-                    message.message_type
-                );
-                Err(anyhow!(
-                    "Unknown message type: {message_type}",
-                    message_type = message.message_type
-                ))
-            }
-        }
-    }
+    //     // Match on message type
+    //     match message.message_type {
+    //         // MESSAGE_TYPE_REQUEST => {
+    //         //     let response = self.handle_network_request(message).await?;
+    //         //     if let Some(response_message) = response {
+    //         //         Ok(Some(response_message))
+    //         //     } else {
+    //         //         Ok(None)
+    //         //     }
+    //         // }
+    //         // MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
+    //         MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
+    //         _ => {
+    //             log_warn!(
+    //                 self.logger,
+    //                 "Unknown message type: {}",
+    //                 message.message_type
+    //             );
+    //             Err(anyhow!(
+    //                 "Unknown message type: {message_type}",
+    //                 message_type = message.message_type
+    //             ))
+    //         }
+    //     }
+    // }
 
     /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
     /// and forget the peer from known_peers and discovery caches.
@@ -1773,296 +1781,226 @@ impl Node {
     }
 
     /// Handle a network request
-    async fn handle_network_request(
-        &self,
-        message: NetworkMessage,
-    ) -> Result<Option<NetworkMessage>> {
-        // Skip if networking is not enabled
-        if !self.supports_networking {
-            log_warn!(
-                self.logger,
-                "Received network request but networking is disabled"
-            );
-            return Ok(None);
-        }
+    async fn handle_network_request(&self, message: RequestMessage) -> Result<ResponseMessage> {
+        log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_key size: {profile_public_key_size}", path=message.path, correlation_id=message.correlation_id, profile_public_key_size=message.profile_public_key.len());
 
-        log_debug!(
-            self.logger,
-            "📥 [Node] Handling network request from {} - Type: {}, Payloads: {}",
-            message.source_node_id,
-            message.message_type,
-            message.payloads.len()
-        );
-
-        if message.payloads.is_empty() {
-            log_error!(
-                self.logger,
-                "❌ [Node] Received request message with no payloads"
-            );
-            return Err(anyhow!("Received request message with no payloads"));
-        }
-
-        let mut responses: Vec<NetworkMessagePayloadItem> =
-            Vec::with_capacity(message.payloads.len());
-        let local_peer_id = self.node_id.clone();
-
-        for payload in &message.payloads {
-            let params =
-                ArcValue::deserialize(&payload.value_bytes, Some(self.keys_manager.clone()))?;
-            let params_option = if params.is_null() { None } else { Some(params) };
-
-            // Process the request locally using extracted topic and params
-            log_debug!(
-                self.logger,
-                "[handle_network_request] will call local_request for path {}",
-                &payload.path
-            );
-
-            let topic_path = match TopicPath::from_full_path(&payload.path) {
-                Ok(tp) => tp,
-                Err(e) => {
-                    log_error!(
-                        self.logger,
-                        "Failed to parse topic path: {} : {}",
-                        &payload.path,
-                        e
-                    );
-                    continue;
-                }
-            };
-            let network_id = topic_path.network_id();
-            let profile_public_key = payload
-                .context
-                .as_ref()
-                .map(|c| c.profile_public_key.clone())
-                .context("No context found in payload")?;
-
-            match self.local_request(topic_path.as_str(), params_option).await {
-                Ok(response) => {
-                    self.logger
-                        .info("✅ [Node] Local request completed successfully");
-
-                    // Create serialization context for encryption
-                    let serialization_context = runar_serializer::traits::SerializationContext {
-                        keystore: self.keys_manager.clone(),
-                        resolver: self.label_resolver.clone(),
-                        network_id: network_id.clone(),
-                        profile_public_key: Some(profile_public_key.clone()),
-                    };
-
-                    // Serialize the response data
-                    let serialized_data = response.serialize(Some(&serialization_context))?;
-
-                    log_info!(
-                        self.logger,
-                        "📤 [Node] Sending response - To: {}, Correlation: {}, Size: {} bytes",
-                        message.source_node_id,
-                        message.payloads[0].correlation_id,
-                        serialized_data.len()
-                    );
-
-                    // Create a payload item with the serialized response
-                    let response_payload = NetworkMessagePayloadItem {
-                        path: message.payloads[0].path.clone(),
-                        value_bytes: serialized_data,
-                        correlation_id: message.payloads[0].correlation_id.clone(),
-                        context: payload.context.clone(),
-                    };
-
-                    responses.push(response_payload);
-                }
-                Err(e) => {
-                    log_error!(self.logger, "❌ [Node] Local request failed - Error: {e}");
-
-                    // Create serialization context for encryption
-                    let serialization_context = runar_serializer::traits::SerializationContext {
-                        keystore: self.keys_manager.clone(),
-                        resolver: self.label_resolver.clone(),
-                        network_id: network_id.clone(),
-                        profile_public_key: Some(profile_public_key.clone()),
-                    };
-
-                    // Create a map for the error response
-                    let mut error_map = HashMap::new();
-                    error_map.insert("error".to_string(), ArcValue::new_primitive(true));
-                    error_map.insert(
-                        "message".to_string(),
-                        ArcValue::new_primitive(e.to_string()),
-                    );
-                    let error_value = ArcValue::new_map(error_map);
-
-                    // Serialize the error value
-                    let serialized_error = error_value.serialize(Some(&serialization_context))?;
-
-                    log_debug!(
-                        self.logger,
-                        "📤 [Node] Sending error response - To: {}, Size: {} bytes",
-                        message.source_node_id,
-                        serialized_error.len()
-                    );
-
-                    // Create payload item with serialized error
-                    let error_payload = NetworkMessagePayloadItem {
-                        path: message.payloads[0].path.clone(),
-                        value_bytes: serialized_error,
-                        correlation_id: message.payloads[0].correlation_id.clone(),
-                        context: payload.context.clone(),
-                    };
-
-                    responses.push(error_payload);
-                }
-            }
-        }
-
-        // Create response message - destination is the original source
-        let response_message = NetworkMessage {
-            source_node_id: local_peer_id, // Source is now self
-            destination_node_id: message.source_node_id.clone(), // Destination is the original request source
-            message_type: MESSAGE_TYPE_RESPONSE,
-            payloads: responses,
+        let payload =
+            ArcValue::deserialize(&message.payload_bytes, Some(self.keys_manager.clone()))?;
+        let params_option = if payload.is_null() {
+            None
+        } else {
+            Some(payload)
         };
 
-        // Transport will handle writing the response on the incoming stream; just return it.
+        let topic_path = match TopicPath::from_full_path(&message.path) {
+            Ok(tp) => tp,
+            Err(e) => {
+                log_error!(
+                    self.logger,
+                    "[handle_network_request] Failed to parse topic path: {path} correlation_id: {correlation_id} : {e}",
+                    path=&message.path,
+                    correlation_id=message.correlation_id,
+                    e=e
+                );
+                return Err(anyhow!(
+                    "Failed to parse topic path: {path} correlation_id: {correlation_id} : {e}",
+                    path = &message.path,
+                    correlation_id = message.correlation_id
+                ));
+            }
+        };
+        let network_id = topic_path.network_id();
+        let profile_public_key = message.profile_public_key;
 
-        Ok(Some(response_message))
+        match self.local_request(topic_path.as_str(), params_option).await {
+            Ok(response) => {
+                log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=message.correlation_id);
+
+                // Create serialization context for encryption
+                let serialization_context = runar_serializer::traits::SerializationContext {
+                    keystore: self.keys_manager.clone(),
+                    resolver: self.label_resolver.clone(),
+                    network_id: network_id,
+                    profile_public_key: Some(profile_public_key.clone()),
+                };
+
+                // Serialize the response data
+                let serialized_data = response.serialize(Some(&serialization_context))?;
+
+                return Ok(ResponseMessage {
+                    correlation_id: message.correlation_id,
+                    payload_bytes: serialized_data,
+                    profile_public_key: profile_public_key,
+                });
+            }
+            Err(e) => {
+                log_error!(self.logger, "❌ [handle_network_request] Local request failed correlation_id: {correlation_id} - Error: {e}", correlation_id=message.correlation_id);
+
+                // Create serialization context for encryption
+                let serialization_context = runar_serializer::traits::SerializationContext {
+                    keystore: self.keys_manager.clone(),
+                    resolver: self.label_resolver.clone(),
+                    network_id: network_id,
+                    profile_public_key: Some(profile_public_key.clone()),
+                };
+                //TODO improve this by having a proper error type
+                // Create a map for the error response
+                let mut error_map = HashMap::new();
+                error_map.insert("error".to_string(), ArcValue::new_primitive(true));
+                error_map.insert(
+                    "message".to_string(),
+                    ArcValue::new_primitive(e.to_string()),
+                );
+                let error_value = ArcValue::new_map(error_map);
+
+                // Serialize the error value
+                let serialized_error = error_value.serialize(Some(&serialization_context))?;
+
+                return Ok(ResponseMessage {
+                    correlation_id: message.correlation_id,
+                    payload_bytes: serialized_error,
+                    profile_public_key: profile_public_key,
+                });
+            }
+        }
     }
 
     /// Handle a network response
-    async fn handle_network_response(
-        &self,
-        message: NetworkMessage,
-    ) -> Result<Option<NetworkMessage>> {
-        // Skip if networking is not enabled
-        if !self.supports_networking {
-            log_warn!(
-                self.logger,
-                "Received network response but networking is disabled"
-            );
-            return Ok(None);
-        }
+    // async fn handle_network_response(
+    //     &self,
+    //     message: NetworkMessage,
+    // ) -> Result<Option<NetworkMessage>> {
+    //     // Skip if networking is not enabled
+    //     if !self.supports_networking {
+    //         log_warn!(
+    //             self.logger,
+    //             "Received network response but networking is disabled"
+    //         );
+    //         return Ok(None);
+    //     }
 
-        let payload_item = &message.payloads[0];
-        let topic = &payload_item.path;
-        let correlation_id = &payload_item.correlation_id;
+    //     let payload_item = &message.payloads[0];
+    //     let topic = &payload_item.path;
+    //     let correlation_id = &payload_item.correlation_id;
 
-        // Only process if we have an actual correlation ID
-        log_debug!(
-            self.logger,
-            "Processing response for topic {topic}, correlation ID: {correlation_id}"
-        );
+    //     // Only process if we have an actual correlation ID
+    //     log_debug!(
+    //         self.logger,
+    //         "Processing response for topic {topic}, correlation ID: {correlation_id}"
+    //     );
 
-        // Find any pending response handlers
-        if let Some((_, pending_request_sender)) = self.pending_requests.remove(correlation_id) {
-            log_debug!(
-                self.logger,
-                "Found response handler for correlation ID: {correlation_id}"
-            );
+    //     // Find any pending response handlers
+    //     if let Some((_, pending_request_sender)) = self.pending_requests.remove(correlation_id) {
+    //         log_debug!(
+    //             self.logger,
+    //             "Found response handler for correlation ID: {correlation_id}"
+    //         );
 
-            // Deserialize the payload data
-            let payload_data =
-                ArcValue::deserialize(&payload_item.value_bytes, Some(self.keys_manager.clone()))?;
+    //         // Deserialize the payload data
+    //         let payload_data =
+    //             ArcValue::deserialize(&payload_item.value_bytes, Some(self.keys_manager.clone()))?;
 
-            // Send the response (which is ArcValue) through the oneshot channel
-            // payload_data is already ArcValue. If the original response was 'None',
-            // serializer.deserialize_value should produce ArcValue::null().
-            match pending_request_sender.send(Ok(payload_data)) {
-                Ok(_) => log_debug!(
-                    self.logger,
-                    "Successfully sent response for correlation ID: {correlation_id}"
-                ),
-                Err(e) => log_error!(
-                    self.logger,
-                    "Failed to send response data for correlation ID {correlation_id}: {e:?}"
-                ),
-            } // Closes match pending_request_sender.send(Ok(payload_data))
-        } else {
-            // This is the else for `if let Some((_, pending_request_sender))`
-            log_warn!(
-                self.logger,
-                "No response handler found for correlation ID: {correlation_id}"
-            );
-        } // Closes else block for if let Some
-        Ok(None)
-    } // Closes async fn handle_network_response
+    //         // Send the response (which is ArcValue) through the oneshot channel
+    //         // payload_data is already ArcValue. If the original response was 'None',
+    //         // serializer.deserialize_value should produce ArcValue::null().
+    //         match pending_request_sender.send(Ok(payload_data)) {
+    //             Ok(_) => log_debug!(
+    //                 self.logger,
+    //                 "Successfully sent response for correlation ID: {correlation_id}"
+    //             ),
+    //             Err(e) => log_error!(
+    //                 self.logger,
+    //                 "Failed to send response data for correlation ID {correlation_id}: {e:?}"
+    //             ),
+    //         } // Closes match pending_request_sender.send(Ok(payload_data))
+    //     } else {
+    //         // This is the else for `if let Some((_, pending_request_sender))`
+    //         log_warn!(
+    //             self.logger,
+    //             "No response handler found for correlation ID: {correlation_id}"
+    //         );
+    //     } // Closes else block for if let Some
+    //     Ok(None)
+    // } // Closes async fn handle_network_response
 
     /// Handle a network event
-    async fn handle_network_event(
-        &self,
-        message: NetworkMessage,
-    ) -> Result<Option<NetworkMessage>> {
-        // Skip if networking is not enabled
-        if !self.supports_networking {
-            log_warn!(
-                self.logger,
-                "Received network event but networking is disabled"
-            );
-            return Ok(None);
-        }
-
+    async fn handle_network_event(&self, message: EventMessage) -> Result<()> {
         log_debug!(
             self.logger,
-            "Handling network event message_type: {}",
-            message.message_type
+            "[handle_network_event] correlation_id: {correlation_id}",
+            correlation_id = message.correlation_id
         );
 
-        // Process each payload separately
-        for payload_item in &message.payloads {
-            let topic = &payload_item.path;
-
-            // Skip processing if topic is empty
-            if topic.is_empty() {
-                log_warn!(self.logger, "Received event with empty topic, skipping");
-                continue; // Continues the for loop in handle_network_event
+        // Create topic path
+        let topic_path = match TopicPath::from_full_path(&message.path) {
+            Ok(tp) => tp,
+            Err(e) => {
+                log_error!(self.logger, "[handle_network_event] Invalid topic path for event correlation_id: {correlation_id} error: {e}", correlation_id=message.correlation_id, e=e);
+                return Err(anyhow!(
+                    "Invalid topic path for event correlation_id: {correlation_id} error: {e}",
+                    correlation_id = message.correlation_id,
+                    e = e
+                ));
             }
+        };
 
-            // Create topic path
-            let topic_path = match TopicPath::new(topic, &self.network_id) {
-                Ok(tp) => tp,
-                Err(e) => {
-                    log_error!(self.logger, "Invalid topic path for event: {e}");
-                    continue;
-                }
-            };
+        // Deserialize the payload data
+        let payload =
+            ArcValue::deserialize(&message.payload_bytes, Some(self.keys_manager.clone()))?;
 
-            // Deserialize the payload data
-            let payload =
-                ArcValue::deserialize(&payload_item.value_bytes, Some(self.keys_manager.clone()))?;
+        // Create proper event context
+        let event_context = Arc::new(EventContext::new(
+            &topic_path,
+            Arc::new(self.clone()),
+            false,
+            self.logger.clone(),
+        ));
 
-            // Create proper event context
-            let event_context = Arc::new(EventContext::new(
-                &topic_path,
-                Arc::new(self.clone()),
-                false,
-                self.logger.clone(),
-            ));
+        // Get subscribers for this topic
+        let subscribers = self
+            .service_registry
+            .get_local_event_subscribers(&topic_path)
+            .await;
 
-            // Get subscribers for this topic
-            let subscribers = self
-                .service_registry
-                .get_local_event_subscribers(&topic_path)
-                .await;
+        if subscribers.is_empty() {
+            log_debug!(
+                self.logger,
+                "[handle_network_event] No subscribers found for topic: {topic}",
+                topic = topic_path.as_str()
+            );
+            return Ok(());
+        }
+        let payload_option = if payload.is_null() {
+            None
+        } else {
+            Some(payload)
+        };
+        let mut delivery_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
-            if subscribers.is_empty() {
-                log_debug!(self.logger, "No subscribers found for topic: {topic}");
-                continue;
-            }
-            let payload_option = if payload.is_null() {
-                None
-            } else {
-                Some(payload)
-            };
-            // Notify all subscribers
-            for (_subscription_id, callback, _options) in subscribers {
-                let ctx = event_context.clone();
+        // Notify all subscribers
+        for (subscriber_id, callback, _options) in subscribers {
+            let ctx = event_context.clone();
+            let logger_arc = self.logger.clone();
+            let correlation_id = message.correlation_id.clone();
+            let path = message.path.clone();
+            let payload_option = payload_option.clone();
+            delivery_tasks.push(tokio::spawn(async move {
+                log_debug!(logger_arc, "[handle_network_event] delivering event to subscriber correlation_id: {correlation_id} subscriber_id: {subscriber_id} path: {path}");
                 // Invoke callback. errors are logged but not propagated to avoid affecting other subscribers
-                let result = callback(ctx, payload_option.clone()).await;
+                let result = callback(ctx, payload_option).await;
                 if let Err(e) = result {
-                    log_error!(self.logger, "Error in subscriber callback: {e}");
+                    log_error!(logger_arc, "Error in subscriber callback: {e}");
                 }
+            }));
+        }
+        for task in delivery_tasks {
+            let result = task.await;
+            if let Err(e) = result {
+                log_error!(self.logger, "[handle_network_event] error in delivery task correlation_id: {correlation_id} error: {e}", correlation_id=message.correlation_id, e=e);
             }
         }
 
-        Ok(None)
+        Ok(())
     }
 
     pub async fn local_request(
@@ -2390,9 +2328,11 @@ impl Node {
                 };
 
                 let rs_dependencies = RemoteServiceDependencies {
-                    network_transport: transport_arc.clone(),
+                    network_transport: transport_arc,
                     local_node_id: local_peer_id,
                     logger: self.logger.clone(),
+                    keystore: self.keys_manager.clone(),
+                    resolver: self.label_resolver.clone(),
                 };
 
                 if let Ok(remote_services) =
@@ -2502,50 +2442,64 @@ impl Node {
 
         log_debug!(self.logger, "Subscription diffing for peer {peer_node_id}: old_set={old_set:?}, new_set={new_set:?}");
 
+        let transport_arc = self
+            .network_transport
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("Network transport not available"))?;
+
         // Paths to add
         for path in new_set.difference(&old_set) {
-            let topic_path = Arc::new(
-                TopicPath::from_full_path(path)
-                    .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?,
-            );
             log_info!(
                 self.logger,
                 "Adding new remote subscription: {path} for peer: {peer_node_id}"
             );
-            let tp_arc = topic_path.clone();
             // create remote handler same as add_new_peer logic (reuse closure building)
-            let transport_arc = self
-                .network_transport
-                .read()
-                .await
-                .clone()
-                .ok_or_else(|| anyhow!("Network transport not available"))?;
             let logger = self.logger.clone();
             let peer_clone = peer_node_id.clone();
-            let tp_clone = tp_arc.clone();
-            let handler: RemoteEventHandler = Arc::new(move |data: Option<ArcValue>| {
-                let nt = transport_arc.clone();
-                let tp = tp_clone.clone();
+            let path_arc = Arc::new(path.clone());
+            let topic_path = Arc::new(
+                TopicPath::from_full_path(path)
+                    .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?,
+            );
+            let network_id = topic_path.network_id();
+            let serialization_context = SerializationContext {
+                keystore: self.keys_manager.clone(),
+                resolver: self.label_resolver.clone(),
+                network_id: network_id,
+                profile_public_key: None,
+            };
+            let transport_arc = transport_arc.clone();
+            let handler: RemoteEventHandler = Arc::new(move |payload_opt: Option<ArcValue>| {
+                let transport_arc: Arc<dyn NetworkTransport> = transport_arc.clone();
+                let payload = payload_opt.unwrap_or(ArcValue::null());
+                let payload_bytes = payload.serialize(Some(&serialization_context)).unwrap();
                 let peer = peer_clone.clone();
                 let logger = logger.clone();
+                let path_arc = path_arc.clone();
                 Box::pin(async move {
-                    nt.publish(tp.as_ref(), data, &peer)
+                    let topic_path_str = path_arc.as_str();
+                    let correlation_id = Uuid::new_v4().to_string();
+                    transport_arc
+                        .publish(topic_path_str, &correlation_id, payload_bytes, &peer)
                         .await
                         .map_err(|e| anyhow!(e))?;
-                    log_debug!(logger, "Forwarded event {tp} to peer {peer}");
+                    log_debug!(logger, "Forwarded event {path_arc} to peer {peer} correlation_id: {correlation_id}");
                     Ok(())
                 })
             });
+
             let sub_id = self
                 .service_registry
                 .register_remote_event_subscription(
-                    tp_arc.as_ref(),
+                    &topic_path,
                     handler,
                     EventRegistrationOptions::default(),
                 )
                 .await?;
             self.service_registry
-                .upsert_remote_peer_subscription(&peer_node_id, tp_arc.as_ref(), sub_id)
+                .upsert_remote_peer_subscription(&peer_node_id, topic_path.as_ref(), sub_id)
                 .await;
         }
 
@@ -2602,9 +2556,10 @@ impl Node {
 
         let rs_dependencies = RemoteServiceDependencies {
             network_transport: transport_arc.clone(),
-            local_node_id: local_peer_id,
-            // pending_requests: self.pending_requests.clone(),
+            local_node_id: local_peer_id, 
             logger: self.logger.clone(),
+            keystore: self.keys_manager.clone(),
+            resolver: self.label_resolver.clone(),
         };
 
         let remote_services =
@@ -2712,6 +2667,15 @@ impl Node {
                 let logger_cloned = self.logger.clone();
                 let topic_path_handler = topic_path_arc.clone();
 
+                // Create serialization context for this subscription
+                let network_id = topic_path.network_id();
+                let serialization_context = SerializationContext {
+                    keystore: self.keys_manager.clone(),
+                    resolver: self.label_resolver.clone(),
+                    network_id: network_id,
+                    profile_public_key: None,
+                };
+
                 // Create event handler forwarding events to remote peer
                 let event_handler: RemoteEventHandler = Arc::new(
                     move |event_data: Option<ArcValue>| {
@@ -2719,12 +2683,19 @@ impl Node {
                         let peer_node_id = peer_node_id_cloned.clone();
                         let topic_path = topic_path_handler.clone();
                         let nt = network_transport_cloned.clone();
+                        let serialization_context = serialization_context.clone();
                         Box::pin(async move {
-                            log_debug!(logger, "🚀 [RemoteEvent] Sending remote event - Event: {topic_path}, Target: {peer_node_id}");
-                            nt.publish(topic_path.as_ref(), event_data, &peer_node_id)
+                            let correlation_id = Uuid::new_v4().to_string();
+                            log_debug!(logger, "🚀 [RemoteEvent] Sending remote event - Event: {topic_path}, Target: {peer_node_id} correlation_id: {correlation_id}");
+                            let topic_path_str = topic_path.as_str();
+                            let payload_bytes = event_data
+                                .unwrap_or(ArcValue::null())
+                                .serialize(Some(&serialization_context))
+                                .unwrap_or_default();
+                            nt.publish(topic_path_str, &correlation_id, payload_bytes, &peer_node_id)
                                 .await
                                 .map_err(|e| anyhow!(e))?;
-                            log_debug!(logger, "✅ [RemoteEvent] Event forwarded - Event: {topic_path}, Target: {peer_node_id}");
+                            log_debug!(logger, "✅ [RemoteEvent] Event forwarded - Event: {topic_path}, Target: {peer_node_id} correlation_id: {correlation_id}");
                             Ok(())
                         })
                     },
@@ -3383,7 +3354,7 @@ impl Clone for Node {
             network_transport: self.network_transport.clone(),
             network_discovery_providers: self.network_discovery_providers.clone(),
             load_balancer: self.load_balancer.clone(),
-            pending_requests: self.pending_requests.clone(),
+            // pending_requests: self.pending_requests.clone(),
             label_resolver: self.label_resolver.clone(),
             registry_version: self.registry_version.clone(),
             keys_manager: self.keys_manager.clone(),

@@ -169,10 +169,10 @@ pub enum NetworkMessageType {
     Heartbeat,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MessageContext {
-    pub profile_public_key: Vec<u8>,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct MessageContext {
+//     pub profile_public_key: Vec<u8>,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMessagePayloadItem {
@@ -180,29 +180,12 @@ pub struct NetworkMessagePayloadItem {
     pub path: String,
 
     /// The serialized value/payload data as bytes
-    pub value_bytes: Vec<u8>,
+    pub payload_bytes: Vec<u8>,
 
-    pub context: Option<MessageContext>,
-
-    /// Correlation ID for request/response tracking
+    /// Correlation ID
     pub correlation_id: String,
-}
 
-impl NetworkMessagePayloadItem {
-    /// Create a new NetworkMessagePayloadItem
-    pub fn new(
-        path: String,
-        value_bytes: Vec<u8>,
-        correlation_id: String,
-        context: MessageContext,
-    ) -> Self {
-        Self {
-            path,
-            value_bytes,
-            correlation_id,
-            context: Some(context),
-        }
-    }
+    pub profile_public_key: Vec<u8>,
 }
 
 pub const MESSAGE_TYPE_DISCOVERY: u32 = 1;
@@ -226,31 +209,31 @@ pub struct NetworkMessage {
     pub message_type: u32,
 
     /// List of payloads  
-    pub payloads: Vec<NetworkMessagePayloadItem>,
+    pub payload: NetworkMessagePayloadItem,
 }
 
 /// Handler function type for incoming network messages that may return a response
-pub type MessageHandler = Box<
-    dyn Fn(
-            NetworkMessage,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<Output = Result<Option<NetworkMessage>, NetworkError>>
-                    + Send,
-            >,
-        > + Send
-        + Sync,
->;
+// pub type MessageHandler = Box<
+//     dyn Fn(
+//             NetworkMessage,
+//         ) -> std::pin::Pin<
+//             Box<
+//                 dyn std::future::Future<Output = Result<Option<NetworkMessage>, NetworkError>>
+//                     + Send,
+//             >,
+//         > + Send
+//         + Sync,
+// >;
 
 /// Handler function type for one-way network messages (fire-and-forget)
-pub type OneWayMessageHandler = Box<
-    dyn Fn(
-            NetworkMessage,
-        )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send>>
-        + Send
-        + Sync,
->;
+// pub type OneWayMessageHandler = Box<
+//     dyn Fn(
+//             NetworkMessage,
+//         )
+//             -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), NetworkError>> + Send>>
+//         + Send
+//         + Sync,
+// >;
 
 /// Callback type for message handling with future
 pub type MessageCallback =
@@ -272,21 +255,22 @@ pub type GetLocalNodeInfoCallback =
 pub struct RequestMessage {
     pub path: String,
     pub correlation_id: String,
-    pub params_bytes: Vec<u8>,
+    pub payload_bytes: Vec<u8>,
     pub profile_public_key: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseMessage {
     pub correlation_id: String,
-    pub params_bytes: Vec<u8>,
+    pub payload_bytes: Vec<u8>,
     pub profile_public_key: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventMessage {
+    pub path: String,
     pub correlation_id: String,
-    pub params_bytes: Vec<u8>,
+    pub payload_bytes: Vec<u8>,
 }
 
 pub type RequestCallback =
@@ -316,18 +300,20 @@ pub trait NetworkTransport: Send + Sync {
     /// send half, reads the response and returns the deserialized `ArcValue`.
     async fn request(
         &self,
-        topic_path: &TopicPath,
-        params: Option<ArcValue>,
+        topic_path: &str,
+        correlation_id: &str,
+        payload: Vec<u8>,
         peer_node_id: &str,
-        context: MessageContext,
-    ) -> Result<ArcValue, NetworkError>;
+        profile_public_key: Vec<u8>,
+    ) -> Result<Vec<u8>, NetworkError>;
 
     /// Fire-and-forget / broadcast message (pattern B)  
     /// events or heart-beats.
     async fn publish(
         &self,
-        topic_path: &TopicPath,
-        params: Option<ArcValue>,
+        topic_path: &str,
+        correlation_id: &str,
+        payload: Vec<u8>,
         peer_node_id: &str,
     ) -> Result<(), NetworkError>;
 

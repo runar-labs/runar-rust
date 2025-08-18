@@ -68,7 +68,7 @@ async fn test_dial_cancel_on_inbound_connect(
                     message_type: MESSAGE_TYPE_RESPONSE,
                     payloads: vec![NetworkMessagePayloadItem {
                         path,
-                        value_bytes: response_value.serialize(None).unwrap_or_default(),
+                        payload_bytes: response_value.serialize(None).unwrap_or_default(),
                         context: None,
                         correlation_id: corr,
                     }],
@@ -386,7 +386,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
                             ));
                             NetworkMessagePayloadItem {
                                 path: payload.path.clone(),
-                                value_bytes: response_value.serialize(None).unwrap_or_default(),
+                                payload_bytes: response_value.serialize(None).unwrap_or_default(),
                                 correlation_id: payload.correlation_id.clone(),
                                 context: payload.context.clone(),
                             }
@@ -437,7 +437,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
                             ));
                             NetworkMessagePayloadItem {
                                 path: payload.path.clone(),
-                                value_bytes: response_value.serialize(None).unwrap_or_default(),
+                                payload_bytes: response_value.serialize(None).unwrap_or_default(),
                                 correlation_id: payload.correlation_id.clone(),
                                 context: payload.context.clone(),
                             }
@@ -1020,7 +1020,7 @@ async fn test_request_dedup_same_correlation_id_two_sends(
                 message_type: MESSAGE_TYPE_RESPONSE,
                 payloads: vec![NetworkMessagePayloadItem {
                     path,
-                    value_bytes: response_value.serialize(None).unwrap_or_default(),
+                    payload_bytes: response_value.serialize(None).unwrap_or_default(),
                     context: None,
                     correlation_id: corr,
                 }],
@@ -1091,7 +1091,7 @@ async fn test_request_dedup_same_correlation_id_two_sends(
         message_type: MESSAGE_TYPE_REQUEST,
         payloads: vec![NetworkMessagePayloadItem {
             path: "$test/path".to_string(),
-            value_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
+            payload_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
             context: Some(MessageContext {
                 profile_public_key: vec![],
             }),
@@ -1203,7 +1203,7 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
                 message_type: MESSAGE_TYPE_RESPONSE,
                 payloads: vec![NetworkMessagePayloadItem {
                     path,
-                    value_bytes: response_value.serialize(None).unwrap_or_default(),
+                    payload_bytes: response_value.serialize(None).unwrap_or_default(),
                     context: None,
                     correlation_id: corr,
                 }],
@@ -1264,7 +1264,7 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
         message_type: MESSAGE_TYPE_REQUEST,
         payloads: vec![NetworkMessagePayloadItem {
             path: "$test/path".to_string(),
-            value_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
+            payload_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
             context: Some(MessageContext {
                 profile_public_key: vec![],
             }),
@@ -1364,7 +1364,7 @@ async fn test_cache_expiry_triggers_handler_again(
                 message_type: MESSAGE_TYPE_RESPONSE,
                 payloads: vec![NetworkMessagePayloadItem {
                     path,
-                    value_bytes: response_value.serialize(None).unwrap_or_default(),
+                    payload_bytes: response_value.serialize(None).unwrap_or_default(),
                     context: None,
                     correlation_id: corr,
                 }],
@@ -1425,7 +1425,7 @@ async fn test_cache_expiry_triggers_handler_again(
         message_type: MESSAGE_TYPE_REQUEST,
         payloads: vec![NetworkMessagePayloadItem {
             path: "$x".to_string(),
-            value_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
+            payload_bytes: ArcValue::null().serialize(None).unwrap_or_default(),
             context: Some(MessageContext {
                 profile_public_key: vec![],
             }),
@@ -2270,7 +2270,7 @@ async fn test_transport_message_header_bounds_checking(
         message_type: MESSAGE_TYPE_REQUEST,
         payloads: vec![NetworkMessagePayloadItem {
             path: "test".to_string(),
-            value_bytes: vec![1, 2, 3, 4],
+            payload_bytes: vec![1, 2, 3, 4],
             correlation_id: "test_corr".to_string(),
             context: None,
         }],
@@ -2308,7 +2308,7 @@ async fn test_transport_message_header_bounds_checking(
         message_type: MESSAGE_TYPE_REQUEST,
         payloads: vec![NetworkMessagePayloadItem {
             path: "test".to_string(),
-            value_bytes: large_payload,
+            payload_bytes: large_payload,
             correlation_id: "test_corr".to_string(),
             context: None,
         }],

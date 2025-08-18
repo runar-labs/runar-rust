@@ -7,6 +7,6 @@ pub mod transport;
 pub use discovery::{DiscoveryListener, DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 pub use runar_schemas::{ActionMetadata, ServiceMetadata};
 pub use transport::{
-    MessageHandler, NetworkMessage, NetworkMessageType, NetworkTransport, QuicTransport,
-    QuicTransportOptions, TransportOptions,
+    NetworkMessage, NetworkMessageType, NetworkTransport, QuicTransport, QuicTransportOptions,
+    TransportOptions,
 };
