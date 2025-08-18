@@ -28,7 +28,7 @@ pub mod node;
 #[macro_use]
 mod macros;
 #[cfg(feature = "pure-x509")]
-mod pure_x509;
+pub mod pure_x509;
 
 // Re-export key types for convenience
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};

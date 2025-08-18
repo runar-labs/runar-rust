@@ -1,19 +1,21 @@
 #![cfg(all(feature = "openssl-x509", feature = "pure-x509"))]
 
+use der_parser::oid::Oid;
 use runar_keys::certificate::{
     CertificateAuthority, CertificateRequest, EcdsaKeyPair, X509Certificate,
 };
 use runar_keys::error::Result;
+use x509_parser::certificate::X509Certificate as XpCert;
 use x509_parser::extensions::{GeneralName as XpGeneralName, ParsedExtension};
+use x509_parser::oid_registry::{
+    OID_SIG_ECDSA_WITH_SHA256, OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER,
+    OID_X509_EXT_BASIC_CONSTRAINTS, OID_X509_EXT_EXTENDED_KEY_USAGE, OID_X509_EXT_KEY_USAGE,
+    OID_X509_EXT_SUBJECT_ALT_NAME, OID_X509_EXT_SUBJECT_KEY_IDENTIFIER,
+};
 use x509_parser::prelude::*;
 
 fn get_subject() -> &'static str {
     "C=US,O=Runar,CN=Runar User CA"
-}
-
-fn parse_cert(cert: &X509Certificate) -> X509Certificate<'_> {
-    let (_, c) = X509Certificate::from_der(cert.der_bytes()).expect("parse cert");
-    c
 }
 
 #[test]
@@ -23,7 +25,7 @@ fn compare_issuance_parity() -> Result<()> {
     let ca = CertificateAuthority::new(ca_subj)?;
     let ca_der = ca.ca_certificate().der_bytes().to_vec();
 
-    // Generate CSR (CN set; our issuance policy will include SAN=DNS:CN)
+    // Generate CSR with SAN (CN used as DNS SAN)
     let node_pair = EcdsaKeyPair::new()?;
     let subject = "CN=testnode.example,O=Runar Node,C=US";
     let csr_der = CertificateRequest::create(&node_pair, subject)?;
@@ -49,9 +51,11 @@ fn compare_issuance_parity() -> Result<()> {
     cert_openssl.validate(ca_pub)?;
     cert_pure.validate(ca_pub)?;
 
-    // Parse both
-    let x_op = parse_cert(&cert_openssl);
-    let x_pr = parse_cert(&cert_pure);
+    // Parse both (keep DER buffers alive)
+    let op_der = cert_openssl.der_bytes().to_vec();
+    let pr_der = cert_pure.der_bytes().to_vec();
+    let (_, x_op) = XpCert::from_der(&op_der).expect("parse openssl cert");
+    let (_, x_pr) = XpCert::from_der(&pr_der).expect("parse pure cert");
 
     // Subject/issuer equality
     assert_eq!(
@@ -64,11 +68,9 @@ fn compare_issuance_parity() -> Result<()> {
     );
 
     // Extensions parity: BasicConstraints, KeyUsage, EKU, SAN, SKI, AKI
-    fn find_ext<'a>(c: &'a X509Certificate<'a>, oid: &Oid<'a>) -> &'a ParsedExtension<'a> {
-        c.tbs_certificate
-            .extensions()
-            .expect("ext")
-            .iter()
+    fn find_ext<'a>(c: &'a XpCert<'a>, oid: &Oid<'a>) -> &'a ParsedExtension<'a> {
+        let exts = c.tbs_certificate.extensions();
+        exts.iter()
             .find(|e| e.oid == *oid)
             .map(|e| e.parsed_extension())
             .expect("ext present")
@@ -94,8 +96,8 @@ fn compare_issuance_parity() -> Result<()> {
     // KeyUsage: digitalSignature
     match (find_ext(&x_op, &oid_ku), find_ext(&x_pr, &oid_ku)) {
         (ParsedExtension::KeyUsage(ku1), ParsedExtension::KeyUsage(ku2)) => {
-            assert_eq!(ku1.digital_signature(), true);
-            assert_eq!(ku2.digital_signature(), true);
+            assert!(ku1.digital_signature());
+            assert!(ku2.digital_signature());
         }
         _ => panic!("KU missing or mismatched"),
     }
@@ -103,8 +105,9 @@ fn compare_issuance_parity() -> Result<()> {
     // EKU: serverAuth + clientAuth
     match (find_ext(&x_op, &oid_eku), find_ext(&x_pr, &oid_eku)) {
         (ParsedExtension::ExtendedKeyUsage(eku1), ParsedExtension::ExtendedKeyUsage(eku2)) => {
-            assert_eq!(eku1.any, eku2.any);
-            assert_eq!(eku1.oids, eku2.oids);
+            assert_eq!(eku1.server_auth, eku2.server_auth);
+            assert_eq!(eku1.client_auth, eku2.client_auth);
+            assert!(eku1.server_auth && eku1.client_auth);
         }
         _ => panic!("EKU missing or mismatched"),
     }
@@ -116,9 +119,7 @@ fn compare_issuance_parity() -> Result<()> {
             ParsedExtension::SubjectAlternativeName(s2),
         ) => {
             let has_dns = |s: &Vec<XpGeneralName>| {
-                s.iter().any(
-                    |g| matches!(g, XpGeneralName::DNSName(d) if d.as_str() == "testnode.example"),
-                )
+                s.iter().any(|g| matches!(g, XpGeneralName::DNSName(d) if d.to_string() == "testnode.example"))
             };
             assert!(has_dns(&s1.general_names));
             assert!(has_dns(&s2.general_names));
@@ -166,14 +167,26 @@ fn compare_issuance_parity() -> Result<()> {
     assert_eq!(sig_oid, x_pr.signature_algorithm.algorithm);
     assert_eq!(sig_oid, OID_SIG_ECDSA_WITH_SHA256);
 
-    // SPKI algorithm OID must be id-ecPublicKey and match; and public key bytes must match
+    // SPKI algorithm OID must be id-ecPublicKey and match by OID string; and public key bytes must match
     assert_eq!(
-        x_op.tbs_certificate.subject_pki.algorithm.algorithm,
-        x_pr.tbs_certificate.subject_pki.algorithm.algorithm
+        x_op.tbs_certificate
+            .subject_pki
+            .algorithm
+            .algorithm
+            .to_id_string(),
+        x_pr.tbs_certificate
+            .subject_pki
+            .algorithm
+            .algorithm
+            .to_id_string()
     );
     assert_eq!(
-        x_op.tbs_certificate.subject_pki.algorithm.algorithm,
-        OID_PKCS1_EC_PUBLIC_KEY
+        x_op.tbs_certificate
+            .subject_pki
+            .algorithm
+            .algorithm
+            .to_id_string(),
+        "1.2.840.10045.2.1"
     );
     assert_eq!(
         x_op.tbs_certificate.subject_pki.subject_public_key.data,
