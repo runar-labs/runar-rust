@@ -11,7 +11,10 @@ use runar_keys::{
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::{NodeKeyManager, NodeKeyManagerState},
 };
-use runar_transporter::{QuicTransport, QuicTransportOptions};
+use runar_transporter::{NetworkTransport, QuicTransport, QuicTransportOptions};
+use tokio::runtime::Runtime;
+use tokio::sync::{mpsc, oneshot, Mutex};
+use once_cell::sync::OnceCell;
 use serde_cbor as _; // keep dependency linked for now
 
 #[repr(C)]
@@ -51,6 +54,9 @@ struct KeysInner {
 struct TransportInner {
     logger: Arc<Logger>,
     transport: Arc<QuicTransport>,
+    events_tx: mpsc::Sender<Vec<u8>>,
+    events_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
+    pending: Mutex<std::collections::HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>>,
 }
 
 #[repr(C)]
@@ -540,6 +546,9 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         arc.clone()
     } else { set_error(err, 1, "node not initialized"); return 1; };
     let node_id = node_arc.get_node_id();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
+
+    // For now, we don't wire callbacks here; will enable in later iteration
     options = options
         .with_key_manager(node_arc.clone())
         .with_local_node_public_key(node_arc.get_node_public_key())
@@ -552,7 +561,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             return 2;
         }
     };
-    let inner = TransportInner { logger: keys_inner.logger.clone(), transport };
+    let inner = TransportInner { logger: keys_inner.logger.clone(), transport, events_tx: tx, events_rx: Mutex::new(rx), pending: Mutex::new(std::collections::HashMap::new()) };
     let handle = FfiTransportHandle { inner: Box::into_raw(Box::new(inner)) };
     *out_transport = Box::into_raw(Box::new(handle)) as *mut c_void;
     0
@@ -566,5 +575,43 @@ pub extern "C" fn rn_transport_free(transport: *mut c_void) {
         if !handle.inner.is_null() { let _ = Box::from_raw(handle.inner); }
     }
 }
+// Shared runtime (Option C)
+static RUNTIME: OnceCell<Runtime> = OnceCell::new();
+fn runtime() -> &'static Runtime { RUNTIME.get_or_init(|| Runtime::new().expect("tokio runtime")) }
 
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_start(transport: *mut c_void, err: *mut RnError) -> i32 {
+    if transport.is_null() { set_error(err, 1, "transport is null"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let t = (&*handle.inner).transport.clone();
+    let res = runtime().block_on(async move { Arc::clone(&t).start().await });
+    if let Err(e) = res { set_error(err, 2, &format!("Failed to start transport: {e}")); return 2; }
+    0
+}
 
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_stop(transport: *mut c_void, err: *mut RnError) -> i32 {
+    if transport.is_null() { set_error(err, 1, "transport is null"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let res = runtime().block_on((&*handle.inner).transport.stop());
+    if let Err(e) = res { set_error(err, 2, &format!("Failed to stop transport: {e}")); return 2; }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_local_addr(
+    transport: *mut c_void,
+    out_str: *mut *mut c_char,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if transport.is_null() { set_error(err, 1, "transport is null"); return 1; }
+    if out_str.is_null() || out_len.is_null() { set_error(err, 1, "null out"); return 1; }
+    let handle = &mut *(transport as *mut FfiTransportHandle);
+    if handle.inner.is_null() { set_error(err, 1, "invalid transport handle"); return 1; }
+    let addr = (&*handle.inner).transport.get_local_address();
+    if !alloc_string(out_str, out_len, &addr) { set_error(err, 3, "alloc failed"); return 3; }
+    0
+}
