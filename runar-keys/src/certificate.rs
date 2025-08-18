@@ -850,6 +850,7 @@ impl CertificateRequest {
 
         // Parse subject DN properly
         let mut distinguished_name = rcgen::DistinguishedName::new();
+        let mut cn_value: Option<String> = None;
 
         for component in subject.split(',') {
             let component = component.trim();
@@ -858,7 +859,10 @@ impl CertificateRequest {
                 let value = value.trim();
 
                 match key {
-                    "CN" => distinguished_name.push(rcgen::DnType::CommonName, value),
+                    "CN" => {
+                        distinguished_name.push(rcgen::DnType::CommonName, value);
+                        cn_value = Some(value.to_string());
+                    }
                     "O" => distinguished_name.push(rcgen::DnType::OrganizationName, value),
                     "C" => distinguished_name.push(rcgen::DnType::CountryName, value),
                     "ST" => distinguished_name.push(rcgen::DnType::StateOrProvinceName, value),
@@ -872,6 +876,10 @@ impl CertificateRequest {
         }
 
         params.distinguished_name = distinguished_name;
+        // Ensure SAN present in CSR: include CN as DNS SAN for strict issuance policy
+        if let Some(cn) = cn_value {
+            params.subject_alt_names = vec![rcgen::SanType::DnsName(cn)];
+        }
 
         let rcgen_key_pair = key_pair.to_rcgen_key_pair()?;
         params.key_pair = Some(rcgen_key_pair);
