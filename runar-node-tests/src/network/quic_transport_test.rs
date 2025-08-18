@@ -10,7 +10,7 @@ async fn test_dial_cancel_on_inbound_connect(
     use std::sync::Arc;
     use std::time::Duration;
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("dial_cancel_test")));
 
@@ -231,7 +231,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         tokio::time::sleep(Duration::from_secs(5)).await;
         panic!("test_quic_transport timed out");
     });
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     let logger = Arc::new(Logger::new_root(Component::Custom("quic_test")));
@@ -926,7 +926,7 @@ async fn test_request_dedup_same_correlation_id_two_sends(
     };
     use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("dedup_test")));
 
@@ -1095,7 +1095,7 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
     use runar_common::logging::{LogLevel, LoggingConfig};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("write_fail_test")));
 
@@ -1238,7 +1238,7 @@ async fn test_cache_expiry_triggers_handler_again(
     use runar_common::logging::{LogLevel, LoggingConfig};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("expiry_test")));
 
@@ -1403,7 +1403,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         panic!("test_quic_duplicate_resolution_simultaneous_dial timed out");
     });
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("dup_test")));
 
@@ -1604,7 +1604,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         panic!("test_quic_lifecycle_callbacks timed out");
     });
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
     let logger = Arc::new(Logger::new_root(Component::Custom("lifecycle_test")));
 

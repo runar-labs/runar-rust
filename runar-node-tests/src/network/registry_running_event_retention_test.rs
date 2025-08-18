@@ -9,7 +9,7 @@ use crate::fixtures::math_service::MathService;
 #[tokio::test]
 async fn test_remote_service_running_event_include_past() -> Result<()> {
     // Configure logging to ensure visibility if it fails
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();
 
     // Unique multicast group per run to avoid test cross-talk
