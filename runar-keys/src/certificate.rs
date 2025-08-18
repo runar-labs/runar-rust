@@ -362,15 +362,13 @@ impl CertificateAuthority {
 
     // OpenSSL key conversion helper removed
 
-    /// Create the CA name for certificate issuer
-    // OpenSSL CA name helper removed
-
     /// Create self-signed CA certificate (delegates to pure implementation)
+    #[allow(dead_code)]
     fn create_self_signed_certificate(
         key_pair: &EcdsaKeyPair,
         _subject: &str,
     ) -> Result<X509Certificate> {
-        return pure_x509::create_self_signed_ca(key_pair, _subject);
+        pure_x509::create_self_signed_ca(key_pair, _subject)
     }
 }
 

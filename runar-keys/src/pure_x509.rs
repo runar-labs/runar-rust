@@ -116,8 +116,7 @@ pub fn create_self_signed_ca(
     };
 
     let ku = KeyUsage(
-        (x509_cert::ext::pkix::KeyUsages::KeyCertSign | x509_cert::ext::pkix::KeyUsages::CRLSign)
-            .into(),
+        x509_cert::ext::pkix::KeyUsages::KeyCertSign | x509_cert::ext::pkix::KeyUsages::CRLSign,
     );
     let ext_ku = Extension {
         extn_id: OID_KEY_USAGE,
