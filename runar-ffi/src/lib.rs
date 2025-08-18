@@ -11,8 +11,9 @@ use runar_keys::{
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::{NodeKeyManager, NodeKeyManagerState},
 };
-use runar_transporter::{NetworkTransport, QuicTransport, QuicTransportOptions};
+use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
+use runar_transporter::discovery::{DiscoveryOptions, MulticastDiscovery};
 use runar_schemas::NodeInfo;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -20,6 +21,7 @@ use once_cell::sync::OnceCell;
 use std::sync::atomic::AtomicU64;
 use std::sync::Mutex as StdMutex;
 use serde_cbor as _; // keep dependency linked for now
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 #[repr(C)]
 pub struct RnError {
@@ -66,8 +68,16 @@ struct TransportInner {
     request_id_seq: Arc<AtomicU64>,
 }
 
+#[allow(dead_code)]
+struct DiscoveryInner {
+    logger: Arc<Logger>,
+    discovery: Arc<MulticastDiscovery>,
+}
+
 #[repr(C)]
 pub struct FfiKeysHandle { inner: *mut KeysInner }
+#[repr(C)]
+pub struct FfiDiscoveryHandle { inner: *mut DiscoveryInner }
 
 fn set_error(err: *mut RnError, code: i32, message: &str) {
     if err.is_null() {
@@ -151,6 +161,297 @@ fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool
     }
 }
 
+// Envelope helpers (CBOR EED)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(
+    keys: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    network_id_or_null: *const c_char,
+    profile_pks: *const *const u8,
+    profile_lens: *const usize,
+    profiles_count: usize,
+    out_eed_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || data.is_null() || out_eed_cbor.is_null() || out_len.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else { set_error(err,1, "invalid keys handle"); return 1; };
+        let data_slice = std::slice::from_raw_parts(data, data_len);
+        let network_id_opt = if network_id_or_null.is_null() { None } else {
+            match std::ffi::CStr::from_ptr(network_id_or_null).to_str() { Ok(s) => Some(s.to_string()), Err(_) => { set_error(err, 2, "invalid utf8 network id"); return 2; } }
+        };
+        // Collect profile keys
+        let mut profiles: Vec<Vec<u8>> = Vec::new();
+        if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
+            for i in 0..profiles_count {
+                let pk_ptr = unsafe { *profile_pks.add(i) };
+                let len = unsafe { *profile_lens.add(i) };
+                if pk_ptr.is_null() { continue; }
+                let pk = unsafe { std::slice::from_raw_parts(pk_ptr, len) };
+                profiles.push(pk.to_vec());
+            }
+        }
+        // Prefer node-owned crypto trait
+        let eed = if let Some(node) = inner.node_owned.as_ref() {
+            match node.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+                Ok(e) => e,
+                Err(e) => { set_error(err,2, &format!("encrypt_with_envelope failed: {e}")); return 2; }
+            }
+        } else if let Some(shared) = inner.node_shared.as_ref() {
+            match shared.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+                Ok(e) => e,
+                Err(e) => { set_error(err,2, &format!("encrypt_with_envelope failed: {e}")); return 2; }
+            }
+        } else if let Some(m) = inner.mobile.as_ref() {
+            match m.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+                Ok(e) => e,
+                Err(e) => { set_error(err,2, &format!("encrypt_with_envelope failed: {e}")); return 2; }
+            }
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let cbor = match serde_cbor::to_vec(&eed) { Ok(v) => v, Err(e) => { set_error(err,2, &format!("encode EED failed: {e}")); return 2; } };
+        if !alloc_bytes(out_eed_cbor, out_len, &cbor) { set_error(err,3, "alloc failed"); return 3; }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_decrypt_envelope(
+    keys: *mut c_void,
+    eed_cbor: *const u8,
+    eed_len: usize,
+    out_plain: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || eed_cbor.is_null() || out_plain.is_null() || out_len.is_null() { set_error(err,1, "null argument"); return 1; }
+        let Some(inner) = with_keys_inner(keys) else { set_error(err,1, "invalid keys handle"); return 1; };
+        let slice = std::slice::from_raw_parts(eed_cbor, eed_len);
+        let eed: runar_keys::mobile::EnvelopeEncryptedData = match serde_cbor::from_slice(slice) { Ok(v) => v, Err(e) => { set_error(err,2, &format!("decode EED failed: {e}")); return 2; } };
+        let plain = if let Some(node) = inner.node_owned.as_ref() {
+            match node.decrypt_envelope_data(&eed) { Ok(p) => p, Err(e) => { set_error(err,2,&format!("decrypt failed: {e}")); return 2; } }
+        } else if let Some(shared) = inner.node_shared.as_ref() {
+            match shared.decrypt_envelope_data(&eed) { Ok(p) => p, Err(e) => { set_error(err,2,&format!("decrypt failed: {e}")); return 2; } }
+        } else if let Some(m) = inner.mobile.as_ref() {
+            match m.decrypt_envelope_data(&eed) { Ok(p) => p, Err(e) => { set_error(err,2,&format!("decrypt failed: {e}")); return 2; } }
+        } else { set_error(err,1, "no key manager available"); return 1; };
+        if !alloc_bytes(out_plain, out_len, &plain) { set_error(err,3, "alloc failed"); return 3; }
+        0
+    })
+}
+fn parse_discovery_options(cbor: &[u8]) -> DiscoveryOptions {
+    let mut opts = DiscoveryOptions::default();
+    if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(cbor)
+    {
+        for (k, v) in m {
+            if let serde_cbor::Value::Text(s) = k {
+                match s.as_str() {
+                    "announce_interval_ms" => {
+                        if let serde_cbor::Value::Integer(ms) = v {
+                            if ms > 0 {
+                                opts.announce_interval = std::time::Duration::from_millis(ms as u64)
+                            }
+                        }
+                    }
+                    "discovery_timeout_ms" => {
+                        if let serde_cbor::Value::Integer(ms) = v {
+                            if ms > 0 {
+                                opts.discovery_timeout = std::time::Duration::from_millis(ms as u64)
+                            }
+                        }
+                    }
+                    "debounce_window_ms" => {
+                        if let serde_cbor::Value::Integer(ms) = v {
+                            if ms > 0 {
+                                opts.debounce_window = std::time::Duration::from_millis(ms as u64)
+                            }
+                        }
+                    }
+                    "use_multicast" => {
+                        if let serde_cbor::Value::Bool(b) = v {
+                            opts.use_multicast = b
+                        }
+                    }
+                    "local_network_only" => {
+                        if let serde_cbor::Value::Bool(b) = v {
+                            opts.local_network_only = b
+                        }
+                    }
+                    "multicast_group" => {
+                        if let serde_cbor::Value::Text(addr) = v {
+                            opts.multicast_group = addr
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    opts
+}
+
+fn ffi_guard<F>(err: *mut RnError, f: F) -> i32
+where
+    F: FnOnce() -> i32,
+{
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(code) => code,
+        Err(_) => {
+            set_error(err, 1000, "panic in FFI call");
+            1000
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_new_with_multicast(
+    keys: *mut c_void,
+    options_cbor: *const u8,
+    options_len: usize,
+    out_discovery: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || options_cbor.is_null() || out_discovery.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(keys_inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let slice = std::slice::from_raw_parts(options_cbor, options_len);
+        let opts = parse_discovery_options(slice);
+
+        // Build local peer info from node keys and provided addresses if any
+        let mut addresses: Vec<String> = Vec::new();
+        if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(slice)
+        {
+            for (k, v) in m {
+                if let serde_cbor::Value::Text(s) = k {
+                    if s == "local_addresses" {
+                        if let serde_cbor::Value::Array(arr) = v {
+                            for it in arr {
+                                if let serde_cbor::Value::Text(a) = it {
+                                    addresses.push(a)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let node_pk = if let Some(n) = keys_inner.node_owned.as_ref() {
+            n.get_node_public_key()
+        } else if let Some(shared) = keys_inner.node_shared.as_ref() {
+            shared.get_node_public_key()
+        } else {
+            set_error(err, 1, "node not initialized");
+            return 1;
+        };
+
+        let local_peer = PeerInfo { public_key: node_pk, addresses };
+        let logger = keys_inner.logger.as_ref().clone();
+        let disc = match runtime().block_on(MulticastDiscovery::new(local_peer, opts, logger)) {
+            Ok(d) => Arc::new(d),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create discovery: {e}"));
+                return 2;
+            }
+        };
+        let inner = DiscoveryInner { logger: keys_inner.logger.clone(), discovery: disc };
+        let handle = FfiDiscoveryHandle { inner: Box::into_raw(Box::new(inner)) };
+        *out_discovery = Box::into_raw(Box::new(handle)) as *mut c_void;
+        0
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn rn_discovery_free(discovery: *mut c_void) {
+    if discovery.is_null() { return; }
+    unsafe {
+        let h = Box::from_raw(discovery as *mut FfiDiscoveryHandle);
+        if !h.inner.is_null() { let _ = Box::from_raw(h.inner); }
+    }
+}
+
+fn with_discovery_inner<'a>(d: *mut c_void) -> Option<&'a mut DiscoveryInner> {
+    if d.is_null() { return None; }
+    unsafe {
+        let h = &mut *(d as *mut FfiDiscoveryHandle);
+        if h.inner.is_null() { None } else { Some(&mut *h.inner) }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_init(
+    discovery: *mut c_void,
+    options_cbor: *const u8,
+    options_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if discovery.is_null() || options_cbor.is_null() { set_error(err,1, "null argument"); return 1; }
+        let Some(inner) = with_discovery_inner(discovery) else { set_error(err,1, "invalid discovery handle"); return 1; };
+        let slice = std::slice::from_raw_parts(options_cbor, options_len);
+        let opts = parse_discovery_options(slice);
+        if let Err(e) = runtime().block_on(inner.discovery.init(opts)) { set_error(err,2, &format!("init failed: {e}")); return 2; }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_start_announcing(discovery: *mut c_void, err: *mut RnError) -> i32 {
+    ffi_guard(err, || {
+        let Some(inner) = with_discovery_inner(discovery) else { set_error(err,1, "invalid discovery handle"); return 1; };
+        if let Err(e) = runtime().block_on(inner.discovery.start_announcing()) { set_error(err,2, &format!("start_announcing failed: {e}")); return 2; }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_stop_announcing(discovery: *mut c_void, err: *mut RnError) -> i32 {
+    ffi_guard(err, || {
+        let Some(inner) = with_discovery_inner(discovery) else { set_error(err,1, "invalid discovery handle"); return 1; };
+        if let Err(e) = runtime().block_on(inner.discovery.stop_announcing()) { set_error(err,2, &format!("stop_announcing failed: {e}")); return 2; }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_shutdown(discovery: *mut c_void, err: *mut RnError) -> i32 {
+    ffi_guard(err, || {
+        let Some(inner) = with_discovery_inner(discovery) else { set_error(err,1, "invalid discovery handle"); return 1; };
+        if let Err(e) = runtime().block_on(inner.discovery.shutdown()) { set_error(err,2, &format!("shutdown failed: {e}")); return 2; }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_update_local_peer_info(
+    discovery: *mut c_void,
+    peer_info_cbor: *const u8,
+    len: usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if discovery.is_null() || peer_info_cbor.is_null() { set_error(err,1, "null argument"); return 1; }
+        let Some(inner) = with_discovery_inner(discovery) else { set_error(err,1, "invalid discovery handle"); return 1; };
+        let slice = std::slice::from_raw_parts(peer_info_cbor, len);
+        let peer: PeerInfo = match serde_cbor::from_slice(slice) { Ok(p) => p, Err(e) => { set_error(err,2, &format!("decode PeerInfo: {e}")); return 2; } };
+        if let Err(e) = runtime().block_on(inner.discovery.update_local_peer_info(peer)) { set_error(err,2, &format!("update_local_peer_info failed: {e}")); return 2; }
+        0
+    })
+}
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnError) -> i32 {
     if out_keys.is_null() {

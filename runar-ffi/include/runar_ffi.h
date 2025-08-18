@@ -39,6 +39,48 @@ int32_t rn_last_error(char *out, size_t out_len);
 
 void rn_set_log_level(int32_t level);
 
+int32_t rn_keys_encrypt_with_envelope(void *keys,
+                                      const uint8_t *data,
+                                      size_t data_len,
+                                      const char *network_id_or_null,
+                                      const uint8_t *const *profile_pks,
+                                      const size_t *profile_lens,
+                                      size_t profiles_count,
+                                      uint8_t **out_eed_cbor,
+                                      size_t *out_len,
+                                      struct RNAPIRnError *err);
+
+int32_t rn_keys_decrypt_envelope(void *keys,
+                                 const uint8_t *eed_cbor,
+                                 size_t eed_len,
+                                 uint8_t **out_plain,
+                                 size_t *out_len,
+                                 struct RNAPIRnError *err);
+
+int32_t rn_discovery_new_with_multicast(void *keys,
+                                        const uint8_t *options_cbor,
+                                        size_t options_len,
+                                        void **out_discovery,
+                                        struct RNAPIRnError *err);
+
+void rn_discovery_free(void *discovery);
+
+int32_t rn_discovery_init(void *discovery,
+                          const uint8_t *options_cbor,
+                          size_t options_len,
+                          struct RNAPIRnError *err);
+
+int32_t rn_discovery_start_announcing(void *discovery, struct RNAPIRnError *err);
+
+int32_t rn_discovery_stop_announcing(void *discovery, struct RNAPIRnError *err);
+
+int32_t rn_discovery_shutdown(void *discovery, struct RNAPIRnError *err);
+
+int32_t rn_discovery_update_local_peer_info(void *discovery,
+                                            const uint8_t *peer_info_cbor,
+                                            size_t len,
+                                            struct RNAPIRnError *err);
+
 int32_t rn_keys_new(void **out_keys, struct RNAPIRnError *err);
 
 void rn_keys_free(void *keys);

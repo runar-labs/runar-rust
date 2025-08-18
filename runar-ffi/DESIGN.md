@@ -31,7 +31,7 @@ This document specifies a single FFI crate and ABI that exposes both key-managem
 - Memory & Errors
   - Every return buffer is owned by caller; paired `*_free` functions
   - `ErrorOut { code:int, message:const char* }`, plus `string_free` for message
-  - All exported functions wrapped in `catch_unwind` -> map panic to a generic error code
+  - v1 status: last-error ring (`rn_last_error`) and memory helpers implemented; panic guards via `catch_unwind` planned next (map panic to generic error code)
 
 ## Key Manager State Persistence (Device-bound, Host-encrypted)
 
@@ -162,31 +162,31 @@ Decision (v1): use a single shared runtime inside `runar_ffi` (Option C), expose
 ## Implementation Tasks
 
 - Bootstrapping
-  - [ ] Create `runar-ffi` crate (crate name `runar_ffi`, type `cdylib, staticlib`), wire workspace
-  - [ ] Add cbindgen config to emit a single header
-  - [ ] Add panic guard and error mapping utilities
-  - [ ] Add memory helpers (`rn_free`, `rn_string_free`)
+  - [x] Create `runar-ffi` crate (crate name `runar_ffi`, type `cdylib, staticlib`), wire workspace
+  - [x] Add cbindgen config to emit a single header (build.rs emits to OUT_DIR and `include/runar_ffi.h`)
+  - [ ] Add panic guard and error mapping utilities (pending)
+  - [x] Add memory helpers (`rn_free`, `rn_string_free`) and `rn_last_error`
 
 - Keys bridge
-  - [ ] Wrap `NodeKeyManager` (+ optional `MobileKeyManager`) into `FfiKeysHandle`
-  - [ ] Implement: `rn_keys_new/free`, `rn_keys_node_get_public_key`, `rn_keys_node_get_node_id`
-  - [ ] Implement CSR/cert flow: `rn_keys_node_generate_csr`, `rn_keys_mobile_process_setup_token`, `rn_keys_node_install_certificate`
+  - [x] Wrap `NodeKeyManager` (+ optional `MobileKeyManager`) into `FfiKeysHandle`
+  - [x] Implement: `rn_keys_new/free`, `rn_keys_node_get_public_key`, `rn_keys_node_get_node_id`
+  - [x] Implement CSR/cert flow: `rn_keys_node_generate_csr`, `rn_keys_mobile_process_setup_token`, `rn_keys_node_install_certificate`
   - [ ] (Optional) Envelope helpers: encrypt/decrypt via CBOR EED
-  - [ ] State persistence APIs: `rn_keys_{node,mobile}_{export,import}_state`
+  - [x] State persistence APIs: `rn_keys_{node,mobile}_{export,import}_state`
 
 - Transport bridge
-  - [ ] Add `FfiTransportHandle` and constructor `rn_transport_new_with_keys` (consumes `FfiKeysHandle*` and options CBOR)
-  - [ ] Implement lifecycle: start/stop/local_addr
-  - [ ] Implement messaging: connect_peer/disconnect/is_connected/request/publish/update_local_node_info
-  - [ ] Implement deferred request completion map and request-id generation
+  - [x] Add `FfiTransportHandle` and constructor `rn_transport_new_with_keys` (consumes `FfiKeysHandle*` and options CBOR)
+  - [x] Implement lifecycle: start/stop/local_addr
+  - [x] Implement messaging: connect_peer/disconnect/is_connected/request/publish/update_local_node_info
+  - [x] Implement deferred request completion map and request-id generation
 
 - Events subsystem
-  - [ ] Internal bounded channel for events; CBOR encode `PeerConnected/PeerDisconnected/RequestReceived/ResponseReceived`
-  - [ ] Implement polling API `rn_transport_poll_event`
-  - [ ] (Optional) callback-based delivery with a single dispatcher thread
+  - [x] Internal bounded channel for events; CBOR encode `PeerConnected/PeerDisconnected/RequestReceived/ResponseReceived`
+  - [x] Implement polling API `rn_transport_poll_event`
+  - [ ] callback-based delivery with a single dispatcher thread (removed from v1 scope; polling is the standard)
 
-- Discovery (future; optional)
-  - [ ] Add `rn_discovery_*` if we expose Rust multicast discovery; for mobile preferred to implement native mDNS and call `connect_peer` from host
+- Discovery
+  - [ ] Add `rn_discovery_*` for Rust multicast discovery provider (construction, lifecycle, subscribe via poll)
 
 - Build and CI
   - [ ] Set up `crate-type` for Apple (xcframework slices), Android (per-ABI .so), Node (napi or plain C + node-ffi)
