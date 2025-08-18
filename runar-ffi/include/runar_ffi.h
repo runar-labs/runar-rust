@@ -70,6 +70,10 @@ int32_t rn_discovery_init(void *discovery,
                           size_t options_len,
                           struct RNAPIRnError *err);
 
+int32_t rn_discovery_bind_events_to_transport(void *discovery,
+                                              void *transport,
+                                              struct RNAPIRnError *err);
+
 int32_t rn_discovery_start_announcing(void *discovery, struct RNAPIRnError *err);
 
 int32_t rn_discovery_stop_announcing(void *discovery, struct RNAPIRnError *err);

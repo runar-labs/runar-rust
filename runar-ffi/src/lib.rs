@@ -11,9 +11,10 @@ use runar_keys::{
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::{NodeKeyManager, NodeKeyManagerState},
 };
+use runar_keys::EnvelopeCrypto;
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
-use runar_transporter::discovery::{DiscoveryOptions, MulticastDiscovery};
+use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_schemas::NodeInfo;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -72,6 +73,7 @@ struct TransportInner {
 struct DiscoveryInner {
     logger: Arc<Logger>,
     discovery: Arc<MulticastDiscovery>,
+    events_tx: Option<mpsc::Sender<Vec<u8>>>,
 }
 
 #[repr(C)]
@@ -198,12 +200,12 @@ pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(
         }
         // Prefer node-owned crypto trait
         let eed = if let Some(node) = inner.node_owned.as_ref() {
-            match node.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+            match node.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
                 Ok(e) => e,
                 Err(e) => { set_error(err,2, &format!("encrypt_with_envelope failed: {e}")); return 2; }
             }
         } else if let Some(shared) = inner.node_shared.as_ref() {
-            match shared.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+            match shared.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
                 Ok(e) => e,
                 Err(e) => { set_error(err,2, &format!("encrypt_with_envelope failed: {e}")); return 2; }
             }
@@ -368,7 +370,7 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
                 return 2;
             }
         };
-        let inner = DiscoveryInner { logger: keys_inner.logger.clone(), discovery: disc };
+        let inner = DiscoveryInner { logger: keys_inner.logger.clone(), discovery: disc, events_tx: None };
         let handle = FfiDiscoveryHandle { inner: Box::into_raw(Box::new(inner)) };
         *out_discovery = Box::into_raw(Box::new(handle)) as *mut c_void;
         0
@@ -405,6 +407,54 @@ pub unsafe extern "C" fn rn_discovery_init(
         let slice = std::slice::from_raw_parts(options_cbor, options_len);
         let opts = parse_discovery_options(slice);
         if let Err(e) = runtime().block_on(inner.discovery.init(opts)) { set_error(err,2, &format!("init failed: {e}")); return 2; }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_bind_events_to_transport(
+    discovery: *mut c_void,
+    transport: *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        let Some(disc) = with_discovery_inner(discovery) else { set_error(err,1, "invalid discovery handle"); return 1; };
+        if transport.is_null() { set_error(err,1, "null transport"); return 1; }
+        let t = &mut *(transport as *mut FfiTransportHandle);
+        if t.inner.is_null() { set_error(err,1, "invalid transport handle"); return 1; }
+        let tx = unsafe { &*t.inner }.events_tx.clone();
+        disc.events_tx = Some(tx.clone());
+
+        // Subscribe discovery events to emit into transport poll channel
+        let emitter = tx.clone();
+        let listener: runar_transporter::discovery::DiscoveryListener = Arc::new(move |ev| {
+            let emitter = emitter.clone();
+            Box::pin(async move {
+                let mut map = std::collections::BTreeMap::new();
+                match ev {
+                    DiscoveryEvent::Discovered(peer) => {
+                        map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("PeerDiscovered".into()));
+                        map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+                        let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
+                        map.insert(serde_cbor::Value::Text("peer_info".into()), serde_cbor::Value::Bytes(pi));
+                    }
+                    DiscoveryEvent::Updated(peer) => {
+                        map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("PeerUpdated".into()));
+                        map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+                        let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
+                        map.insert(serde_cbor::Value::Text("peer_info".into()), serde_cbor::Value::Bytes(pi));
+                    }
+                    DiscoveryEvent::Lost(node_id) => {
+                        map.insert(serde_cbor::Value::Text("type".into()), serde_cbor::Value::Text("PeerLost".into()));
+                        map.insert(serde_cbor::Value::Text("v".into()), serde_cbor::Value::Integer(1));
+                        map.insert(serde_cbor::Value::Text("peer_node_id".into()), serde_cbor::Value::Text(node_id));
+                    }
+                }
+                let _ = emitter.send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default()).await;
+            })
+        });
+        // Register subscription
+        if let Err(e) = runtime().block_on(disc.discovery.subscribe(listener)) { set_error(err,2, &format!("subscribe failed: {e}")); return 2; }
         0
     })
 }
