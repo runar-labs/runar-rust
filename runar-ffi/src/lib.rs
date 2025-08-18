@@ -105,23 +105,18 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
 }
 
 #[no_mangle]
-pub extern "C" fn rn_last_error(out: *mut c_char, out_len: usize) -> i32 {
+pub unsafe extern "C" fn rn_last_error(out: *mut c_char, out_len: usize) -> i32 {
     if out.is_null() || out_len == 0 {
         return 1;
     }
     let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-    let msg_opt = cell.lock().unwrap().clone();
-    let msg = match msg_opt {
-        Some(s) => s,
-        None => String::new(),
-    };
+    let msg = cell.lock().unwrap().clone().unwrap_or_default();
     let bytes = msg.as_bytes();
     // ensure space for NUL terminator
     let copy_len = bytes.len().min(out_len.saturating_sub(1));
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy_len);
-        *(out.add(copy_len)) = 0;
-    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy_len);
+    let end = out.add(copy_len);
+    *end = 0;
     0
 }
 
@@ -581,6 +576,31 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
                     "handshake_timeout_ms" => if let serde_cbor::Value::Integer(ms) = v { if ms > 0 { options = options.with_handshake_response_timeout(std::time::Duration::from_millis(ms as u64)); } },
                     "open_stream_timeout_ms" => if let serde_cbor::Value::Integer(ms) = v { if ms > 0 { options = options.with_open_stream_timeout(std::time::Duration::from_millis(ms as u64)); } },
                     "max_message_size" => if let serde_cbor::Value::Integer(sz) = v { if sz > 0 { options = options.with_max_message_size(sz as usize); } },
+                    "response_cache_ttl_ms" => if let serde_cbor::Value::Integer(ms) = v { if ms > 0 { options = options.with_response_cache_ttl(std::time::Duration::from_millis(ms as u64)); } },
+                    "max_request_retries" => if let serde_cbor::Value::Integer(n) = v { if n >= 0 { options = options.with_max_request_retries(n as u32); } },
+                    "log_level" => if let serde_cbor::Value::Integer(lvl) = v { let lf = match lvl { 0=>log::LevelFilter::Off,1=>log::LevelFilter::Error,2=>log::LevelFilter::Warn,3=>log::LevelFilter::Info,4=>log::LevelFilter::Debug,_=>log::LevelFilter::Info }; log::set_max_level(lf); },
+                    // Inline certs (discouraged in production; for testing)
+                    "cert_chain_der" => {
+                        if let serde_cbor::Value::Array(arr) = v {
+                            let mut certs = Vec::new();
+                            for item in arr { if let serde_cbor::Value::Bytes(b) = item { certs.push(rustls_pki_types::CertificateDer::from(b)); } }
+                            options = options.with_certificates(certs);
+                        }
+                    }
+                    "private_key_der" => {
+                        if let serde_cbor::Value::Bytes(b) = v {
+                            // Assume PKCS#8 for FFI simplicity
+                            let pk = rustls_pki_types::PrivatePkcs8KeyDer::from(b);
+                            options = options.with_private_key(pk.into());
+                        }
+                    }
+                    "root_certs_der" => {
+                        if let serde_cbor::Value::Array(arr) = v {
+                            let mut certs = Vec::new();
+                            for item in arr { if let serde_cbor::Value::Bytes(b) = item { certs.push(rustls_pki_types::CertificateDer::from(b)); } }
+                            options = options.with_root_certificates(certs);
+                        }
+                    }
                     _ => {}
                 }
             }

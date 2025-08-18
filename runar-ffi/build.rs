@@ -5,9 +5,9 @@ fn main() {
 
     // Rebuild if inputs change
     println!("cargo:rerun-if-changed={}", config_path.display());
-    println!("cargo:rerun-if-changed={}/src", crate_dir);
-    println!("cargo:rerun-if-changed={}/Cargo.toml", crate_dir);
-    println!("cargo:rerun-if-changed={}/build.rs", crate_dir);
+    println!("cargo:rerun-if-changed={crate_dir}/src");
+    println!("cargo:rerun-if-changed={crate_dir}/Cargo.toml");
+    println!("cargo:rerun-if-changed={crate_dir}/build.rs");
 
     let config = cbindgen::Config::from_file(&config_path).unwrap_or_default();
 
@@ -20,7 +20,9 @@ fn main() {
     // Always write to OUT_DIR
     let out_header = std::path::Path::new(&out_dir).join("runar_ffi.h");
     if !bindings.write_to_file(&out_header) {
-        println!("cargo:warning=Failed to write header to OUT_DIR: {}", out_header.display());
+        println!("cargo:rerun-if-changed={}", out_header.display());
+    } else {
+        println!("cargo:warning=Generated header at OUT_DIR: {}", out_header.display());
     }
 
     // Also write to a stable include/ path in the crate for packaging/CI convenience
@@ -34,7 +36,7 @@ fn main() {
     if bindings.write_to_file(&dest) {
         println!("cargo:warning=Generated header at {}", dest.display());
     } else {
-        println!("cargo:warning=Failed to write header to {}", dest.display());
+        // up-to-date; no message
     }
 }
 
