@@ -189,7 +189,7 @@ use runar_transporter::transport::{
     RequestCallback,
 };
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+// Removed unused imports: AtomicUsize, Ordering
 use std::time::Duration;
 
 // Dummy crypto that performs no-op encryption for tests
@@ -227,7 +227,7 @@ impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
 #[tokio::test]
 async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Watchdog to prevent indefinite hangs
-    let watchdog = tokio::spawn(async {
+    let _watchdog = tokio::spawn(async {
         tokio::time::sleep(Duration::from_secs(5)).await;
         panic!("test_quic_transport timed out");
     });
