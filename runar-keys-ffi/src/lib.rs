@@ -7,6 +7,6 @@
 mod tests {
     #[test]
     fn compiles() {
-        assert!(true);
+        // assert!(true);
     }
 }
