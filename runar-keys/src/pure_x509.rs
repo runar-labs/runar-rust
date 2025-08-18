@@ -279,6 +279,66 @@ pub fn sign_csr_with_ca(
     };
 
     let mut extensions = vec![ext_basic, ext_ku, ext_eku];
+    // Strict: require SAN in CSR and copy raw DER into cert
+    {
+        use x509_parser::certification_request::X509CertificationRequest as XpCsr;
+        use x509_parser::prelude::FromDer;
+        let (_, xp) = XpCsr::from_der(csr_der).map_err(|e| {
+            KeyError::CertificateError(format!("Failed to parse CSR (x509-parser): {e}"))
+        })?;
+        let mut san_added = false;
+        if let Some(exts) = xp.requested_extensions() {
+            for ext in exts {
+                if ext.oid == x509_parser::oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME {
+                    // Reconstruct SAN extension DER from parsed content
+                    if let x509_parser::extensions::ParsedExtension::SubjectAlternativeName(san) =
+                        ext.parsed_extension()
+                    {
+                        // Encode SAN as DER from names
+                        let mut dns_list: Vec<String> = Vec::new();
+                        let mut ip_list: Vec<Vec<u8>> = Vec::new();
+                        for g in &san.general_names {
+                            match g {
+                                x509_parser::extensions::GeneralName::DNSName(dns) => {
+                                    dns_list.push(dns.to_string())
+                                }
+                                x509_parser::extensions::GeneralName::IPAddress(ip) => {
+                                    ip_list.push(ip.to_vec())
+                                }
+                                _ => {
+                                    return Err(KeyError::CertificateError(
+                                        "Unsupported SAN type in CSR".to_string(),
+                                    ))
+                                }
+                            }
+                        }
+                        // Build SAN ext using x509-cert types
+                        let mut names = Vec::<GeneralName>::new();
+                        for d in dns_list {
+                            names.push(GeneralName::DnsName(Ia5String::new(&d).unwrap()));
+                        }
+                        for ip in ip_list {
+                            names.push(GeneralName::IpAddress(OctetString::new(ip).unwrap()));
+                        }
+                        let san_enc = SubjectAltName(names);
+                        let ext_san = Extension {
+                            extn_id: const_oid::ObjectIdentifier::new_unwrap("2.5.29.17"),
+                            critical: ext.critical,
+                            extn_value: OctetString::new(san_enc.to_der().unwrap()).unwrap(),
+                        };
+                        extensions.push(ext_san);
+                        san_added = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !san_added {
+            return Err(KeyError::CertificateError(
+                "CSR missing SAN extension".to_string(),
+            ));
+        }
+    }
 
     let ext_ski = Extension {
         extn_id: OID_SKI,

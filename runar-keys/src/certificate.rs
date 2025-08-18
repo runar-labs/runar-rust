@@ -493,29 +493,74 @@ impl CertificateAuthority {
 
             // Sign & return
             let ca_pkey = self.ca_key_pair_to_openssl_pkey()?;
-            // Add SAN DNS equal to CSR's CN (if present)
+            // Strict: parse CSR for SAN and embed it; error if missing
             {
-                let mut cn_value: Option<String> = None;
-                for entry in req.subject_name().entries() {
-                    if entry.object().nid() == Nid::COMMONNAME {
-                        if let Ok(data) = entry.data().as_utf8() {
-                            cn_value = Some(data.to_string());
-                            break;
+                use x509_parser::certification_request::X509CertificationRequest as XpCsr;
+                use x509_parser::extensions::ParsedExtension as XpParsedExt;
+                use x509_parser::prelude::FromDer;
+                let (_, xp) = XpCsr::from_der(&csr_der).map_err(|e| {
+                    KeyError::CertificateError(format!("Failed to parse CSR for SAN: {e}"))
+                })?;
+                let mut dns_list: Vec<String> = Vec::new();
+                let mut ip_list: Vec<String> = Vec::new();
+                if let Some(exts) = xp.requested_extensions() {
+                    for ext in exts {
+                        if let XpParsedExt::SubjectAlternativeName(san) = ext {
+                            for g in &san.general_names {
+                                match g {
+                                    x509_parser::extensions::GeneralName::DNSName(dns) => {
+                                        dns_list.push(dns.to_string());
+                                    }
+                                    x509_parser::extensions::GeneralName::IPAddress(raw) => {
+                                        let s = match raw.len() {
+                                            4 => {
+                                                let a = [raw[0], raw[1], raw[2], raw[3]];
+                                                std::net::IpAddr::from(std::net::Ipv4Addr::from(a))
+                                                    .to_string()
+                                            }
+                                            16 => {
+                                                let mut a = [0u8; 16];
+                                                a.copy_from_slice(raw);
+                                                std::net::IpAddr::from(std::net::Ipv6Addr::from(a))
+                                                    .to_string()
+                                            }
+                                            _ => {
+                                                return Err(KeyError::CertificateError(
+                                                    "Invalid IP in SAN".to_string(),
+                                                ))
+                                            }
+                                        };
+                                        ip_list.push(s);
+                                    }
+                                    _ => {
+                                        return Err(KeyError::CertificateError(
+                                            "Unsupported SAN type in CSR".to_string(),
+                                        ));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                if let Some(cn) = cn_value {
-                    let subject_ctx = cert_builder.x509v3_context(None, None);
-                    let san = SubjectAlternativeName::new()
-                        .dns(&cn)
-                        .build(&subject_ctx)
-                        .map_err(|e| {
-                            KeyError::CertificateError(format!("Failed to build SAN: {e}"))
-                        })?;
-                    cert_builder.append_extension(san).map_err(|e| {
-                        KeyError::CertificateError(format!("Failed to append SAN: {e}"))
-                    })?;
+                if dns_list.is_empty() && ip_list.is_empty() {
+                    return Err(KeyError::CertificateError(
+                        "CSR missing SAN extension".to_string(),
+                    ));
                 }
+                let subject_ctx = cert_builder.x509v3_context(None, None);
+                let mut sanb = SubjectAlternativeName::new();
+                for d in dns_list {
+                    sanb.dns(&d);
+                }
+                for ip in ip_list {
+                    sanb.ip(&ip);
+                }
+                let san = sanb
+                    .build(&subject_ctx)
+                    .map_err(|e| KeyError::CertificateError(format!("Failed to build SAN: {e}")))?;
+                cert_builder.append_extension(san).map_err(|e| {
+                    KeyError::CertificateError(format!("Failed to append SAN: {e}"))
+                })?;
             }
 
             cert_builder
