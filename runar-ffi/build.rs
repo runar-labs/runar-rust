@@ -22,7 +22,10 @@ fn main() {
     if !bindings.write_to_file(&out_header) {
         println!("cargo:rerun-if-changed={}", out_header.display());
     } else {
-        println!("cargo:warning=Generated header at OUT_DIR: {}", out_header.display());
+        println!(
+            "cargo:warning=Generated header at OUT_DIR: {}",
+            out_header.display()
+        );
     }
 
     // Also write to a stable include/ path in the crate for packaging/CI convenience
@@ -39,5 +42,3 @@ fn main() {
         // up-to-date; no message
     }
 }
-
-
