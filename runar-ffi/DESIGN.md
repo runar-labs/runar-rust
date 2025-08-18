@@ -140,7 +140,24 @@ State export/import (plaintext CBOR; host encrypts+persist):
 - Optional: `RNAPI void rn_set_log_callback(void(*cb)(void* ctx, int level, const char* msg), void* ctx);`
 
 ## Runtime Ownership
-- Minimal v1: reuse host runtime (Swift/Kotlin provide threads) or spawn a dedicated single-runtime inside `runar_ffi` (documented cost). Ensure `stop()` drains tasks. Long term: a shared `FfiRuntimeHandle` for multiple transports/discoveries.
+
+Decision (v1): use a single shared runtime inside `runar_ffi` (Option C), exposed as `FfiRuntimeHandle` with lazy-global initialization. This fits mobile (Swift/Kotlin) well and keeps thread usage minimal while ensuring `stop()` drains tasks deterministically.
+
+- Defaults (mobile-friendly)
+  - Lazy global runtime created on first use
+  - Small worker pool (2–4 threads; configurable)
+  - Dedicated callback dispatcher thread (never call back into host on worker threads)
+  - Bounded event queues with backpressure
+  - `stop()` drains tasks; runtime shuts down when all dependent handles are dropped
+
+- Node/JS path (future)
+  - Target Option A (adopt external runtime) for Node backends that already own a Tokio runtime (via napi/neon integration). This will be delivered either as:
+    - a Node-specific integration crate that links to `runar_ffi` and adopts an existing runtime, or
+    - a build feature that attempts to adopt the current Tokio runtime (`Handle::try_current()`) when present and skips creating the shared runtime.
+  - Rationale: backend deployments may require higher concurrency and tighter runtime control.
+
+- Option B (per-instance runtime)
+  - Not planned for production; may be enabled only for isolated testing scenarios if needed.
 
 ## Implementation Tasks
 
