@@ -65,10 +65,12 @@ pure-x509 = [
     "dep:der",
     "dep:const-oid",
     "dep:sha1",
+    "dep:time",
 ]
 
 [dependencies.x509-cert]
 version = "0.2"
+features = ["builder"]
 optional = true
 
 [dependencies.spki]
@@ -86,6 +88,11 @@ optional = true
 
 [dependencies.sha1]
 version = "0.10"
+optional = true
+
+[dependencies.time]
+version = "0.3"
+features = ["formatting"]
 optional = true
 
 [package.metadata.docs.rs]
