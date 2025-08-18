@@ -279,6 +279,7 @@ impl<'de> Deserialize<'de> for X509Certificate {
 pub struct CertificateAuthority {
     ca_key_pair: EcdsaKeyPair,
     ca_certificate: X509Certificate,
+    #[allow(dead_code)]
     ca_subject: String,
 }
 
@@ -339,7 +340,6 @@ impl CertificateAuthority {
     ) -> Result<X509Certificate> {
         pure_x509::sign_csr_with_ca(
             &self.ca_key_pair,
-            &self.ca_subject,
             self.ca_certificate.der_bytes(),
             csr_der,
             validity_days,

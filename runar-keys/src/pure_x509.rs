@@ -178,7 +178,6 @@ pub fn create_self_signed_ca(
 
 pub fn sign_csr_with_ca(
     ca_key_pair: &EcdsaKeyPair,
-    ca_subject_str: &str,
     ca_der: &[u8],
     csr_der: &[u8],
     validity_days: u32,
@@ -229,8 +228,11 @@ pub fn sign_csr_with_ca(
     let spki = spki_from_verifying_key(&vk)?;
 
     let leaf_ski = compute_ski(&spki);
-    let issuer = Name::from_str(ca_subject_str)
-        .map_err(|e| KeyError::CertificateError(format!("Failed to build issuer subject: {e}")))?;
+    // Prefer issuer from CA certificate DER to avoid string parsing issues
+    let ca_cert = x509_cert::Certificate::from_der(ca_der).map_err(|e| {
+        KeyError::CertificateError(format!("Failed to parse CA DER for issuer: {e}"))
+    })?;
+    let issuer: Name = ca_cert.tbs_certificate.subject.clone();
 
     let serial = match serial_override {
         Some(s) => serial_from_u64(s)?,
@@ -339,8 +341,6 @@ pub fn sign_csr_with_ca(
     extensions.push(ext_ski);
 
     let ca_ski = compute_ski(&spki_from_verifying_key(ca_key_pair.verifying_key())?);
-    let ca_cert = x509_cert::Certificate::from_der(ca_der)
-        .map_err(|e| KeyError::CertificateError(format!("Failed to parse CA DER for AKI: {e}")))?;
     let ext_aki = Extension {
         extn_id: OID_AKI,
         critical: false,
