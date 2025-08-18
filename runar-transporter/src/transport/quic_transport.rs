@@ -15,15 +15,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
-use x509_parser::parse_x509_certificate;
-use x509_parser::prelude::{GeneralName, ParsedExtension};
+// Removed custom certificate parsing; rely on rustls standard verification.
 
 use crate::discovery::multicast_discovery::PeerInfo;
 use crate::transport::{EventMessage, NetworkMessagePayloadItem, RequestMessage, ResponseMessage};
 use crate::transport::{GetLocalNodeInfoCallback, NetworkError, NetworkMessage, NetworkTransport};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
-use rustls_pki_types::ServerName;
+// No direct use of ServerName; rely on rustls SNI handling.
 
 pub struct QuicTransportOptions {
     // Original QUIC/TLS options
@@ -51,6 +50,10 @@ pub struct QuicTransportOptions {
     response_cache_ttl: Duration,
     // Maximum number of retries for failed requests
     max_request_retries: Option<u32>,
+    // Timeout for waiting a handshake response from peer
+    handshake_response_timeout: Duration,
+    // Effective maximum message size (bytes) enforced by framing
+    max_message_size: Option<usize>,
 }
 
 impl std::fmt::Debug for QuicTransportOptions {
@@ -144,6 +147,8 @@ impl Default for QuicTransportOptions {
             label_resolver: None,
             response_cache_ttl: Duration::from_secs(5),
             max_request_retries: None,
+            handshake_response_timeout: Duration::from_secs(2),
+            max_message_size: Some(1024 * 1024),
         }
     }
 }
@@ -252,6 +257,16 @@ impl QuicTransportOptions {
         self
     }
 
+    pub fn with_handshake_response_timeout(mut self, timeout: Duration) -> Self {
+        self.handshake_response_timeout = timeout;
+        self
+    }
+
+    pub fn with_max_message_size(mut self, max: usize) -> Self {
+        self.max_message_size = Some(max);
+        self
+    }
+
     // Getters for original options
     pub fn certificates(&self) -> Option<&Vec<CertificateDer<'static>>> {
         self.certificates.as_ref()
@@ -289,6 +304,10 @@ impl QuicTransportOptions {
     pub fn response_cache_ttl(&self) -> Duration {
         self.response_cache_ttl
     }
+
+    pub fn max_message_size(&self) -> Option<usize> {
+        self.max_message_size
+    }
 }
 
 impl Clone for QuicTransportOptions {
@@ -311,6 +330,8 @@ impl Clone for QuicTransportOptions {
             label_resolver: self.label_resolver.clone(),
             response_cache_ttl: self.response_cache_ttl,
             max_request_retries: self.max_request_retries,
+            handshake_response_timeout: self.handshake_response_timeout,
+            max_message_size: self.max_message_size,
         }
     }
 }
@@ -384,109 +405,7 @@ fn encode_message(msg: &NetworkMessage) -> Result<Vec<u8>, NetworkError> {
     Ok(framed)
 }
 
-#[derive(Debug)]
-struct NodeIdServerNameVerifier;
-
-impl rustls::client::danger::ServerCertVerifier for NodeIdServerNameVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls_pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        // DNS names are our chunked representation; remove dots to compare with raw node_id.
-        let expected_chunked = match server_name {
-            ServerName::DnsName(dns) => dns.as_ref(),
-            _ => {
-                return Err(rustls::Error::General(
-                    "Unsupported server name type in verifier".into(),
-                ));
-            }
-        };
-
-        // The server name is already in DNS-safe format, and certificates now contain DNS-safe format
-        // So we can compare directly without conversion
-        let expected_raw = expected_chunked.to_string();
-
-        // Parse end-entity certificate DER to inspect subject/SAN
-        let (_, parsed) = parse_x509_certificate(end_entity.as_ref())
-            .map_err(|_| rustls::Error::General("Unable to parse X509 certificate".into()))?;
-
-        // Check SubjectAlternativeName DNS entries
-        let san_match = parsed
-            .extensions()
-            .iter()
-            .filter_map(|ext| {
-                if let ParsedExtension::SubjectAlternativeName(san) = &ext.parsed_extension() {
-                    Some(san.general_names.iter().any(|gn| match gn {
-                        GeneralName::DNSName(name) => {
-                            let candidate: String = name.chars().filter(|c| *c != '.').collect();
-                            candidate == expected_raw
-                        }
-                        _ => false,
-                    }))
-                } else {
-                    None
-                }
-            })
-            .any(|b| b);
-
-        // Check CommonName as fallback (legacy)
-        let cn_match = parsed
-            .subject()
-            .iter_common_name()
-            .any(|cn| cn.as_str().map(|s| s == expected_raw).unwrap_or(false));
-
-        if !(san_match || cn_match) {
-            return Err(rustls::Error::General(
-                "Certificate subject/SAN does not match node_id".into(),
-            ));
-        }
-
-        // Further chain validation can be added here (TODO) – currently handled at
-        // the application layer after handshake.
-
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA1,
-            rustls::SignatureScheme::ECDSA_SHA1_Legacy,
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-        ]
-    }
-}
+// Custom server name verification is removed from production; rely on rustls standard verification.
 
 pub struct QuicTransport {
     // immutable configuration
@@ -822,9 +741,22 @@ impl QuicTransport {
             })?;
         server_config.transport_config(transport_config.clone());
 
+        // Build a strict rustls client config with provided root certificates.
+        // Server name verification is handled by rustls using SNI; certificates must match peer_id DNS name.
+        let mut root_store = rustls::RootCertStore::empty();
+        if let Some(roots) = self.options.root_certificates() {
+            for der in roots.iter() {
+                root_store.add(der.clone()).map_err(|e| {
+                    NetworkError::ConfigurationError(format!("Failed to add root certificate: {e}"))
+                })?;
+            }
+        } else {
+            return Err(NetworkError::ConfigurationError(
+                "no root certificates configured".into(),
+            ));
+        }
         let rustls_client_config = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NodeIdServerNameVerifier))
+            .with_root_certificates(root_store)
             .with_no_client_auth();
 
         let mut client_config = ClientConfig::new(Arc::new(
@@ -1052,9 +984,11 @@ impl QuicTransport {
         }
 
         let len = u32::from_be_bytes(len_buf) as usize;
-
-        if len > 1024 * 1024 {
-            return Err(NetworkError::MessageError("message too large".into()));
+        let max = self.options.max_message_size().unwrap_or(1024 * 1024);
+        if len > max {
+            return Err(NetworkError::MessageError(format!(
+                "message too large: {len} > {max}"
+            )));
         }
 
         let mut msg_buf = vec![0u8; len];
@@ -1441,9 +1375,12 @@ impl QuicTransport {
             self.logger,
             "🔍 [handshake_outbound] Waiting for handshake response with timeout"
         );
-        let reply = tokio::time::timeout(Duration::from_secs(2), self.read_message(&mut recv))
-            .await
-            .map_err(|_| NetworkError::TransportError("handshake response timeout".into()))??;
+        let reply = tokio::time::timeout(
+            self.options.handshake_response_timeout,
+            self.read_message(&mut recv),
+        )
+        .await
+        .map_err(|_| NetworkError::TransportError("handshake response timeout".into()))??;
 
         log_debug!(
             self.logger,

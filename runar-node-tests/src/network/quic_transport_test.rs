@@ -920,7 +920,47 @@ async fn test_request_dedup_same_correlation_id_two_sends(
     use runar_common::logging::{Component, Logger};
     use runar_common::logging::{LogLevel, LoggingConfig};
     use runar_keys::{MobileKeyManager, NodeKeyManager};
-    use runar_transporter::transport::SkipServerVerification;
+    // Local test-only verifier to bypass TLS verification in raw-client scenarios
+    #[derive(Debug)]
+    struct SkipServerVerification;
+    impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls_pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+            _server_name: &rustls_pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls_pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::RSA_PKCS1_SHA256,
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA384,
+                rustls::SignatureScheme::RSA_PSS_SHA512,
+                rustls::SignatureScheme::ED25519,
+            ]
+        }
+    }
     use runar_transporter::transport::{
         NetworkMessage, NetworkMessagePayloadItem, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
     };
@@ -1165,7 +1205,47 @@ async fn test_write_failure_then_success_does_not_cache_until_sent(
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     // Build client endpoint with SkipServerVerification
-    use runar_transporter::transport::SkipServerVerification;
+    // Local test-only verifier to bypass TLS verification in raw-client scenarios
+    #[derive(Debug)]
+    struct SkipServerVerification;
+    impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls_pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+            _server_name: &rustls_pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls_pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::RSA_PKCS1_SHA256,
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA384,
+                rustls::SignatureScheme::RSA_PSS_SHA512,
+                rustls::SignatureScheme::ED25519,
+            ]
+        }
+    }
     let endpoint = {
         let client_rustls = rustls::ClientConfig::builder()
             .dangerous()
@@ -1309,7 +1389,47 @@ async fn test_cache_expiry_triggers_handler_again(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Client setup with SkipServerVerification
-    use runar_transporter::transport::SkipServerVerification;
+    // Local test-only verifier to bypass TLS verification in raw-client scenarios
+    #[derive(Debug)]
+    struct SkipServerVerification;
+    impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls_pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+            _server_name: &rustls_pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls_pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::RSA_PKCS1_SHA256,
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA384,
+                rustls::SignatureScheme::RSA_PSS_SHA512,
+                rustls::SignatureScheme::ED25519,
+            ]
+        }
+    }
     let client_endpoint = {
         let client_rustls = rustls::ClientConfig::builder()
             .dangerous()

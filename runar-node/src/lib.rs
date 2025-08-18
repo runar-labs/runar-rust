@@ -97,7 +97,7 @@ pub use runar_common::routing::TopicPath;
 
 pub use runar_transporter::discovery::{DiscoveryOptions, NodeDiscovery};
 pub use runar_transporter::transport::{
-    GetLocalNodeInfoCallback, NetworkMessage, NetworkMessageType, NetworkTransport,
+    GetLocalNodeInfoCallback, NetworkMessage, NetworkTransport,
 };
 
 // Version information
