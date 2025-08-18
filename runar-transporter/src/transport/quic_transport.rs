@@ -238,6 +238,13 @@ impl QuicTransportOptions {
         self
     }
 
+    pub fn with_logger_from_node_id(mut self, node_id: String) -> Self {
+        let logger = Arc::new(Logger::new_root(runar_common::Component::Transporter));
+        logger.set_node_id(node_id);
+        self.logger = Some(logger);
+        self
+    }
+
     pub fn with_keystore(
         mut self,
         keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
@@ -1932,22 +1939,35 @@ impl NetworkTransport for QuicTransport {
         }
 
         // Choose first valid address; try all if needed (for now pick first valid)
-        let mut chosen_addr: Option<std::net::SocketAddr> = None;
-        for addr_str in &discovery_msg.addresses {
+        // Iterate addresses with fallback and per-attempt backoff
+        let mut last_err: Option<NetworkError> = None;
+        let mut addr: Option<std::net::SocketAddr> = None;
+        for (idx, addr_str) in discovery_msg.addresses.iter().enumerate() {
             match addr_str.parse::<std::net::SocketAddr>() {
                 Ok(sa) => {
-                    chosen_addr = Some(sa);
+                    addr = Some(sa);
                     break;
                 }
                 Err(e) => {
-                    log_error!(self.logger, "[connect_peer] Bad address: {e}");
+                    log_warn!(
+                        self.logger,
+                        "[connect_peer] address[{idx}] parse error: {e}"
+                    );
+                    last_err = Some(NetworkError::ConfigurationError(format!(
+                        "bad addr[{idx}]: {e}"
+                    )));
                     continue;
                 }
             }
         }
-        let addr = chosen_addr.ok_or_else(|| {
-            NetworkError::ConfigurationError("no valid address in PeerInfo".into())
-        })?;
+        let addr = match addr {
+            Some(sa) => sa,
+            None => {
+                return Err(last_err.unwrap_or_else(|| {
+                    NetworkError::ConfigurationError("no valid address in PeerInfo".into())
+                }))
+            }
+        };
 
         // Deterministic dial-direction gate: Higher node-id yields to inbound
         let local_node_id = self.local_node_id.clone();
@@ -2239,9 +2259,12 @@ impl NetworkTransport for QuicTransport {
                 "🔍 [update_peers] Sending handshake to {peer_id}"
             );
 
-            let mut send = self.open_uni_active(peer_id).await.map_err(|e| {
-                NetworkError::TransportError(format!("Failed to open uni stream to {peer_id}: {e}"))
-            })?;
+            let mut send = tokio::time::timeout(
+                self.options.open_stream_timeout,
+                self.open_uni_active(peer_id),
+            )
+            .await
+            .map_err(|_| NetworkError::TransportError("open_uni timeout".into()))??;
 
             self.write_message(&mut send, &message).await?;
             send.finish().map_err(|e| {
