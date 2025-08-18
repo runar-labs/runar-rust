@@ -20,8 +20,8 @@ use tokio::sync::RwLock;
 use crate::discovery::multicast_discovery::PeerInfo;
 use crate::transport::{EventMessage, NetworkMessagePayloadItem, RequestMessage, ResponseMessage};
 use crate::transport::{GetLocalNodeInfoCallback, NetworkError, NetworkMessage, NetworkTransport};
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use runar_keys::NodeKeyManager;
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 // No direct use of ServerName; rely on rustls SNI handling.
 
@@ -53,6 +53,8 @@ pub struct QuicTransportOptions {
     max_request_retries: Option<u32>,
     // Timeout for waiting a handshake response from peer
     handshake_response_timeout: Duration,
+    // Timeout for opening streams
+    open_stream_timeout: Duration,
     // Effective maximum message size (bytes) enforced by framing
     max_message_size: Option<usize>,
     // Optional: use key manager directly for certs/keys/roots
@@ -151,6 +153,7 @@ impl Default for QuicTransportOptions {
             response_cache_ttl: Duration::from_secs(5),
             max_request_retries: None,
             handshake_response_timeout: Duration::from_secs(2),
+            open_stream_timeout: Duration::from_secs(1),
             max_message_size: Some(1024 * 1024),
             key_manager: None,
         }
@@ -266,6 +269,11 @@ impl QuicTransportOptions {
         self
     }
 
+    pub fn with_open_stream_timeout(mut self, timeout: Duration) -> Self {
+        self.open_stream_timeout = timeout;
+        self
+    }
+
     pub fn with_max_message_size(mut self, max: usize) -> Self {
         self.max_message_size = Some(max);
         self
@@ -344,6 +352,7 @@ impl Clone for QuicTransportOptions {
             response_cache_ttl: self.response_cache_ttl,
             max_request_retries: self.max_request_retries,
             handshake_response_timeout: self.handshake_response_timeout,
+            open_stream_timeout: self.open_stream_timeout,
             max_message_size: self.max_message_size,
             key_manager: self.key_manager.clone(),
         }
@@ -719,24 +728,27 @@ impl QuicTransport {
 
     fn build_quinn_configs(&self) -> Result<(ServerConfig, ClientConfig), NetworkError> {
         // Resolve certificates and private key either from key manager or explicit options
-        let (certs, key): (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) = if let Some(km) = self.options.key_manager() {
-            let cfg = km
-                .get_quic_certificate_config()
-                .map_err(|e| NetworkError::ConfigurationError(format!("Failed to get QUIC certificate config from key manager: {e}")))?;
-            (cfg.certificate_chain, cfg.private_key)
-        } else {
-            let certs = self
-                .options
-                .certificates()
-                .ok_or(NetworkError::ConfigurationError("no certs".into()))?
-                .clone();
-            let key = self
-                .options
-                .private_key()
-                .ok_or(NetworkError::ConfigurationError("no key".into()))?
-                .clone_key();
-            (certs, key)
-        };
+        let (certs, key): (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) =
+            if let Some(km) = self.options.key_manager() {
+                let cfg = km.get_quic_certificate_config().map_err(|e| {
+                    NetworkError::ConfigurationError(format!(
+                        "Failed to get QUIC certificate config from key manager: {e}"
+                    ))
+                })?;
+                (cfg.certificate_chain, cfg.private_key)
+            } else {
+                let certs = self
+                    .options
+                    .certificates()
+                    .ok_or(NetworkError::ConfigurationError("no certs".into()))?
+                    .clone();
+                let key = self
+                    .options
+                    .private_key()
+                    .ok_or(NetworkError::ConfigurationError("no key".into()))?
+                    .clone_key();
+                (certs, key)
+            };
 
         let mut transport_config = quinn::TransportConfig::default();
 
@@ -776,9 +788,9 @@ impl QuicTransport {
             }
         } else if let Some(km) = self.options.key_manager() {
             // Use CA from key manager certificate chain (append all for simplicity)
-            let cfg = km
-                .get_quic_certificate_config()
-                .map_err(|e| NetworkError::ConfigurationError(format!("Failed to get certs for roots: {e}")))?;
+            let cfg = km.get_quic_certificate_config().map_err(|e| {
+                NetworkError::ConfigurationError(format!("Failed to get certs for roots: {e}"))
+            })?;
             for der in cfg.certificate_chain.iter() {
                 root_store.add(der.clone()).map_err(|e| {
                     NetworkError::ConfigurationError(format!("Failed to add key-manager root: {e}"))
@@ -1769,7 +1781,12 @@ impl NetworkTransport for QuicTransport {
                 "🔍 [request] Opening bidirectional stream correlation_id: {correlation_id}",
                 correlation_id = &msg.payload.correlation_id
             );
-            let (mut send, mut recv) = self.open_bi_active(peer_node_id).await?;
+            let (mut send, mut recv) = tokio::time::timeout(
+                self.options.open_stream_timeout,
+                self.open_bi_active(peer_node_id),
+            )
+            .await
+            .map_err(|_| NetworkError::TransportError("open_bi timeout".into()))??;
 
             if let Err(e) = self.write_message(&mut send, &msg).await {
                 log_error!(self.logger, "❌ [request] Failed to write request correlation_id: {correlation_id} error: {e}", correlation_id=&msg.payload.correlation_id);
@@ -1864,7 +1881,12 @@ impl NetworkTransport for QuicTransport {
             },
         };
 
-        let mut send = self.open_uni_active(peer_node_id).await?;
+        let mut send = tokio::time::timeout(
+            self.options.open_stream_timeout,
+            self.open_uni_active(peer_node_id),
+        )
+        .await
+        .map_err(|_| NetworkError::TransportError("open_uni timeout".into()))??;
         self.write_message(&mut send, &message).await?;
         send.finish()
             .map_err(|e| NetworkError::TransportError(format!("finish uni failed: {e}")))?;
@@ -1909,12 +1931,23 @@ impl NetworkTransport for QuicTransport {
             ));
         }
 
-        let addr = discovery_msg.addresses[0] // take first
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| {
-                log_error!(self.logger, "❌ [connect_peer] Bad address: {e}");
-                NetworkError::ConfigurationError(format!("bad addr: {e}"))
-            })?;
+        // Choose first valid address; try all if needed (for now pick first valid)
+        let mut chosen_addr: Option<std::net::SocketAddr> = None;
+        for addr_str in &discovery_msg.addresses {
+            match addr_str.parse::<std::net::SocketAddr>() {
+                Ok(sa) => {
+                    chosen_addr = Some(sa);
+                    break;
+                }
+                Err(e) => {
+                    log_error!(self.logger, "[connect_peer] Bad address: {e}");
+                    continue;
+                }
+            }
+        }
+        let addr = chosen_addr.ok_or_else(|| {
+            NetworkError::ConfigurationError("no valid address in PeerInfo".into())
+        })?;
 
         // Deterministic dial-direction gate: Higher node-id yields to inbound
         let local_node_id = self.local_node_id.clone();
@@ -1954,7 +1987,7 @@ impl NetworkTransport for QuicTransport {
         }
         log_debug!(
             self.logger,
-            "🔍 [connect_peer] Connecting to {peer_node_id} at {addr}"
+            "[connect_peer] Connecting to {peer_node_id} at {addr}"
         );
 
         // Per-peer cancel Notify (created if absent)
