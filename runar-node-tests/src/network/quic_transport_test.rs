@@ -1513,6 +1513,148 @@ fn map_message_type_to_string(message_type: u32) -> String {
     }
 }
 
+/// Verify transports work with proper certs from key managers and new options are honored
+#[tokio::test]
+async fn test_quic_transport_with_limits_and_timeouts(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use runar_common::logging::{Component, Logger};
+    use runar_common::logging::{LogLevel, LoggingConfig};
+    use runar_keys::{MobileKeyManager, NodeKeyManager};
+    use std::net::SocketAddr;
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    logging_config.apply();
+    let logger = std::sync::Arc::new(Logger::new_root(Component::Custom("limits_test")));
+
+    // CA and node certs via key managers (no SkipServerVerification anywhere)
+    let mut ca = MobileKeyManager::new(logger.clone())?;
+    let _ = ca.initialize_user_root_key()?;
+    let mut km1 = NodeKeyManager::new(logger.clone())?;
+    let cert1 = ca.process_setup_token(&km1.generate_csr()?)?;
+    km1.install_certificate(cert1)?;
+    let mut km2 = NodeKeyManager::new(logger.clone())?;
+    let cert2 = ca.process_setup_token(&km2.generate_csr()?)?;
+    km2.install_certificate(cert2)?;
+    let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
+
+    // Node infos
+    let pk1 = km1.get_node_public_key();
+    let pk2 = km2.get_node_public_key();
+    let info1 = runar_schemas::NodeInfo {
+        node_public_key: pk1.clone(),
+        network_ids: vec!["test".into()],
+        addresses: vec!["127.0.0.1:50301".parse::<SocketAddr>()?.to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+    let info2 = runar_schemas::NodeInfo {
+        node_public_key: pk2.clone(),
+        network_ids: vec!["test".into()],
+        addresses: vec!["127.0.0.1:50302".parse::<SocketAddr>()?.to_string()],
+        node_metadata: runar_schemas::NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 0,
+    };
+
+    // Minimal handlers
+    let request_handler: RequestCallback = std::sync::Arc::new(|req: RequestMessage| {
+        Box::pin(async move {
+            Ok(ResponseMessage {
+                correlation_id: req.correlation_id,
+                payload_bytes: req.payload_bytes,
+                profile_public_key: req.profile_public_key,
+            })
+        })
+    });
+    let event_handler: EventCallback = std::sync::Arc::new(|_e| Box::pin(async { Ok(()) }));
+    let resolver: std::sync::Arc<dyn runar_serializer::traits::LabelResolver> =
+        std::sync::Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
+            runar_serializer::traits::KeyMappingConfig {
+                label_mappings: std::collections::HashMap::new(),
+            },
+        ));
+
+    let info1c = info1.clone();
+    let info2c = info2.clone();
+    let get_local_node_info_t1: GetLocalNodeInfoCallback = std::sync::Arc::new(move || {
+        let info1c = info1c.clone();
+        Box::pin(async move { Ok(info1c.clone()) })
+    });
+    let get_local_node_info_t2: GetLocalNodeInfoCallback = std::sync::Arc::new(move || {
+        let info2c = info2c.clone();
+        Box::pin(async move { Ok(info2c.clone()) })
+    });
+
+    // Use new options: small max_message_size and explicit handshake timeout
+    let t1_opts = QuicTransportOptions::new()
+        .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km1.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert.clone()])
+        .with_local_node_public_key(pk1.clone())
+        .with_get_local_node_info(get_local_node_info_t1)
+        .with_bind_addr("127.0.0.1:50301".parse::<SocketAddr>()?)
+        .with_request_callback(request_handler.clone())
+        .with_event_callback(event_handler.clone())
+        .with_logger(logger.clone())
+        .with_keystore(std::sync::Arc::new(NoCrypto))
+        .with_label_resolver(resolver.clone())
+        .with_handshake_response_timeout(std::time::Duration::from_millis(500))
+        .with_max_message_size(1024);
+
+    let t2_opts = QuicTransportOptions::new()
+        .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
+        .with_private_key(km2.get_quic_certificate_config()?.private_key)
+        .with_root_certificates(vec![ca_cert])
+        .with_local_node_public_key(pk2.clone())
+        .with_get_local_node_info(get_local_node_info_t2)
+        .with_bind_addr("127.0.0.1:50302".parse::<SocketAddr>()?)
+        .with_request_callback(request_handler.clone())
+        .with_event_callback(event_handler.clone())
+        .with_logger(logger.clone())
+        .with_keystore(std::sync::Arc::new(NoCrypto))
+        .with_label_resolver(resolver.clone())
+        .with_handshake_response_timeout(std::time::Duration::from_millis(500))
+        .with_max_message_size(1024);
+
+    let t1 = std::sync::Arc::new(QuicTransport::new(t1_opts)?);
+    let t2 = std::sync::Arc::new(QuicTransport::new(t2_opts)?);
+    let (_a, _b) = tokio::join!(t1.clone().start(), t2.clone().start());
+
+    // Connect and wait briefly
+    t1.clone()
+        .connect_peer(PeerInfo::new(
+            info2.node_public_key.clone(),
+            info2.addresses.clone(),
+        ))
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Send a too-large payload and expect error due to max_message_size being small
+    let large_payload = vec![7u8; 4096];
+    let res = t1
+        .request(
+            "test:limits/echo",
+            "corr-limits",
+            large_payload,
+            &runar_common::compact_ids::compact_id(&info2.node_public_key),
+            info1.node_public_key.clone(),
+        )
+        .await;
+    assert!(
+        res.is_err(),
+        "large payload should be rejected by size limit"
+    );
+
+    t1.stop().await?;
+    t2.stop().await?;
+    Ok(())
+}
+
 // Duplicate-resolution and simultaneous dial scenario
 #[tokio::test]
 async fn test_quic_duplicate_resolution_simultaneous_dial(
