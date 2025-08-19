@@ -25,6 +25,19 @@ static STRUCT_REGISTRY: Lazy<DashMap<TypeId, DecryptFn>> = Lazy::new(DashMap::ne
 /// Using &'static str avoids per-registration heap allocations.
 static JSON_REGISTRY: Lazy<DashMap<&'static str, ToJsonFn>> = Lazy::new(DashMap::new);
 
+/// Wire-name registry (platform-neutral names)
+/// rust_name -> wire_name
+static TYPE_NAME_RUST_TO_WIRE: Lazy<DashMap<&'static str, &'static str>> = Lazy::new(DashMap::new);
+
+/// wire_name -> JSON conversion function
+static WIRE_NAME_JSON_REGISTRY: Lazy<DashMap<&'static str, ToJsonFn>> = Lazy::new(DashMap::new);
+
+/// wire_name -> TypeId (for dynamic flows)
+static WIRE_NAME_TO_TYPEID: Lazy<DashMap<&'static str, TypeId>> = Lazy::new(DashMap::new);
+
+/// wire_name -> rust_name (diagnostics only)
+static WIRE_NAME_TO_RUST: Lazy<DashMap<&'static str, &'static str>> = Lazy::new(DashMap::new);
+
 /// Register a decryptor for `Plain` using the encrypted representation `Enc`.
 ///
 /// This is intended to be invoked automatically by the `Encrypt` derive macro
@@ -76,6 +89,68 @@ where
     let func = to_json_impl::<T>;
 
     JSON_REGISTRY.insert(type_name, func);
+
+    // If a wire name is already registered for this type, bind the JSON converter by wire name too
+    if let Some(wire) = TYPE_NAME_RUST_TO_WIRE.get(type_name) {
+        WIRE_NAME_JSON_REGISTRY.insert(*wire.value(), func);
+    }
+}
+
+/// Register wire name for type `T` and bind its JSON converter under the wire name.
+pub fn register_type_name<T>(wire_name: &'static str)
+where
+    T: 'static + serde::Serialize + serde::de::DeserializeOwned,
+{
+    let rust_name: &'static str = std::any::type_name::<T>();
+
+    // First-registration wins. If already present, warn and return.
+    if let Some(existing) = TYPE_NAME_RUST_TO_WIRE.get(rust_name) {
+        if *existing == wire_name {
+            return;
+        }
+    }
+
+    if let Some(first) = WIRE_NAME_TO_RUST.get(wire_name) {
+        // Keep first registration, ignore the later
+        log::warn!(
+            "duplicate_wire_name name={} first_type={} second_type={}",
+            wire_name,
+            *first,
+            rust_name
+        );
+        return;
+    }
+
+    TYPE_NAME_RUST_TO_WIRE.insert(rust_name, wire_name);
+    WIRE_NAME_TO_RUST.insert(wire_name, rust_name);
+    WIRE_NAME_TO_TYPEID.insert(wire_name, TypeId::of::<T>());
+
+    // If there's a JSON converter registered for this Rust type, bind it by wire name too
+    if let Some(conv) = JSON_REGISTRY.get(rust_name) {
+        WIRE_NAME_JSON_REGISTRY.insert(wire_name, *conv.value());
+    }
+}
+
+/// Look up wire name by Rust type name
+pub fn lookup_wire_name(rust_name: &str) -> Option<&'static str> {
+    TYPE_NAME_RUST_TO_WIRE.get(rust_name).map(|e| *e.value())
+}
+
+/// Get a JSON conversion function for a wire name
+pub fn get_json_converter_by_wire_name(wire_name: &str) -> Option<ToJsonFn> {
+    WIRE_NAME_JSON_REGISTRY
+        .get(wire_name)
+        .map(|entry| *entry.value())
+}
+
+/// Look up TypeId by wire name (for dynamic flows)
+pub fn lookup_type_id_by_wire_name(wire_name: &str) -> Option<TypeId> {
+    WIRE_NAME_TO_TYPEID.get(wire_name).map(|e| *e.value())
+}
+
+/// Look up Rust type name by wire name (diagnostics)
+pub fn lookup_rust_name_by_wire_name(wire_name: &str) -> Option<&'static str> {
+    WIRE_NAME_TO_RUST.get(wire_name).map(|e| *e.value())
 }
 
 /// Attempt to decrypt the payload into `T` using the registered decryptor.
@@ -112,6 +187,46 @@ pub fn get_json_converter(type_name: &str) -> Option<ToJsonFn> {
     JSON_REGISTRY.get(type_name).map(|entry| *entry.value())
 }
 
+// -------------------------------------------------------------
+// Wire-name JSON converters for containers: list/map/json
+// -------------------------------------------------------------
+
+fn to_json_list_wire(bytes: &[u8]) -> Result<JsonValue> {
+    // Prefer Vec<ArcValue> to allow nested struct conversion
+    if let Ok(vec_av) = serde_cbor::from_slice::<Vec<ArcValue>>(bytes) {
+        let mut out = Vec::with_capacity(vec_av.len());
+        for v in vec_av.iter() {
+            out.push(v.to_json()?);
+        }
+        return Ok(JsonValue::Array(out));
+    }
+
+    // Fallback: direct CBOR -> JSON
+    let value: JsonValue = serde_cbor::from_slice(bytes)?;
+    Ok(value)
+}
+
+fn to_json_map_wire(bytes: &[u8]) -> Result<JsonValue> {
+    // Prefer HashMap<String, ArcValue> to allow nested struct conversion
+    if let Ok(map_av) = serde_cbor::from_slice::<std::collections::HashMap<String, ArcValue>>(bytes)
+    {
+        let mut obj = serde_json::Map::with_capacity(map_av.len());
+        for (k, v) in map_av.iter() {
+            obj.insert(k.clone(), v.to_json()?);
+        }
+        return Ok(JsonValue::Object(obj));
+    }
+
+    // Fallback: direct CBOR -> JSON
+    let value: JsonValue = serde_cbor::from_slice(bytes)?;
+    Ok(value)
+}
+
+fn to_json_json_wire(bytes: &[u8]) -> Result<JsonValue> {
+    let value: JsonValue = serde_cbor::from_slice(bytes)?;
+    Ok(value)
+}
+
 // Common JSON converters for Vec<V> and HashMap<K, V>
 // Using all primitive variants of K and V where V can be Vec and Map also.
 // Use CTOR to register the converters
@@ -127,6 +242,55 @@ fn register_vec_arcvalue_converter() {
     register_to_json::<Vec<HashMap<String, ArcValue>>>();
     register_to_json::<HashMap<String, Vec<ArcValue>>>();
     register_to_json::<HashMap<String, HashMap<String, ArcValue>>>();
+}
+
+// Pre-register wire names for primitives and containers
+#[ctor::ctor]
+fn register_wire_names_and_converters() {
+    // Primitives
+    register_to_json::<String>();
+    register_type_name::<String>("string");
+
+    register_to_json::<bool>();
+    register_type_name::<bool>("bool");
+
+    register_to_json::<char>();
+    register_type_name::<char>("char");
+
+    register_to_json::<i8>();
+    register_type_name::<i8>("i8");
+    register_to_json::<i16>();
+    register_type_name::<i16>("i16");
+    register_to_json::<i32>();
+    register_type_name::<i32>("i32");
+    register_to_json::<i64>();
+    register_type_name::<i64>("i64");
+    register_to_json::<i128>();
+    register_type_name::<i128>("i128");
+
+    register_to_json::<u8>();
+    register_type_name::<u8>("u8");
+    register_to_json::<u16>();
+    register_type_name::<u16>("u16");
+    register_to_json::<u32>();
+    register_type_name::<u32>("u32");
+    register_to_json::<u64>();
+    register_type_name::<u64>("u64");
+    register_to_json::<u128>();
+    register_type_name::<u128>("u128");
+
+    register_to_json::<f32>();
+    register_type_name::<f32>("f32");
+    register_to_json::<f64>();
+    register_type_name::<f64>("f64");
+
+    register_to_json::<Vec<u8>>();
+    register_type_name::<Vec<u8>>("bytes");
+
+    // Containers: bind JSON converters under wire names
+    WIRE_NAME_JSON_REGISTRY.insert("list", to_json_list_wire as ToJsonFn);
+    WIRE_NAME_JSON_REGISTRY.insert("map", to_json_map_wire as ToJsonFn);
+    WIRE_NAME_JSON_REGISTRY.insert("json", to_json_json_wire as ToJsonFn);
 }
 
 // Vec converters for primitive types

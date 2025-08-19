@@ -8,6 +8,7 @@ use serde_json::{json, Value as JsonValue};
 
 // Simple test struct without protobuf
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Plain)]
+#[runar(name = "arc_value_test.TestStructAB")]
 struct TestStruct {
     pub a: i64,
     pub b: String,
