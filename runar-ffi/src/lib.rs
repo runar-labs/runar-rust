@@ -138,6 +138,11 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
 // LabelResolver mapping hydration (CBOR-based)
 // ------------------------------
 
+/// Set label mapping from a CBOR-encoded HashMap<String, LabelKeyInfo>.
+///
+/// Returns 0 on success.
+/// Returns 1 on null/invalid arguments.
+/// Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_set_label_mapping(
     keys: *mut c_void,
@@ -154,13 +159,25 @@ pub unsafe extern "C" fn rn_keys_set_label_mapping(
     let mapping: std::collections::HashMap<String, LabelKeyInfo> =
         match serde_cbor::from_slice(slice) {
             Ok(m) => m,
-            Err(_) => return 2,
+            Err(e) => {
+                set_error(
+                    std::ptr::null_mut(),
+                    2,
+                    &format!("decode label mapping: {e}"),
+                );
+                return 2;
+            }
         };
     let resolver = runar_serializer::traits::ConfigurableLabelResolver::from_map(mapping);
     inner.label_resolver = Some(Arc::new(resolver));
     0
 }
 
+/// Set local NodeInfo from a CBOR buffer.
+///
+/// Returns 0 on success.
+/// Returns 1 on null/invalid arguments.
+/// Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_set_local_node_info(
     keys: *mut c_void,
@@ -176,7 +193,11 @@ pub unsafe extern "C" fn rn_keys_set_local_node_info(
     let slice = std::slice::from_raw_parts(node_info_cbor, len);
     let info: NodeInfo = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
-        Err(_) => return 2,
+        Err(e) => {
+            // Store human-readable error for debugging
+            set_error(std::ptr::null_mut(), 2, &format!("decode NodeInfo: {e}"));
+            return 2;
+        }
     };
     inner.local_node_info.store(Arc::new(Some(info)));
     0

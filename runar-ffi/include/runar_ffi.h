@@ -35,8 +35,22 @@ void rn_free(uint8_t *_p, size_t _len);
 
 void rn_string_free(const char *s);
 
+/**
+ * Set label mapping from a CBOR-encoded HashMap<String, LabelKeyInfo>.
+ *
+ * Returns 0 on success.
+ * Returns 1 on null/invalid arguments.
+ * Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
+ */
 int32_t rn_keys_set_label_mapping(void *keys, const uint8_t *mapping_cbor, size_t len);
 
+/**
+ * Set local NodeInfo from a CBOR buffer.
+ *
+ * Returns 0 on success.
+ * Returns 1 on null/invalid arguments.
+ * Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
+ */
 int32_t rn_keys_set_local_node_info(void *keys, const uint8_t *node_info_cbor, size_t len);
 
 int32_t rn_last_error(char *out, size_t out_len);

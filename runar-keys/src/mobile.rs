@@ -129,45 +129,6 @@ pub struct MobileKeyManagerState {
 }
 
 impl MobileKeyManager {
-    /// Transform an arbitrary node id into a DNS-safe label that can be used
-    /// inside Subject Alternative Name DNSName entries and CN.
-    fn dns_safe_node_id(&self, node_id: &str) -> String {
-        // Lowercase, replace invalid chars with hyphen, collapse repeats, trim edges
-        let mut out = String::with_capacity(node_id.len());
-        let mut last_dash = false;
-        for ch in node_id.chars() {
-            let mapped = match ch {
-                'a'..='z' | '0'..='9' => ch,
-                'A'..='Z' => ch.to_ascii_lowercase(),
-                '-' => {
-                    if last_dash {
-                        continue;
-                    }
-                    '-'
-                }
-                _ => {
-                    if last_dash {
-                        continue;
-                    }
-                    '-'
-                }
-            };
-            last_dash = mapped == '-';
-            out.push(mapped);
-        }
-        // Trim leading/trailing '-'
-        while out.starts_with('-') {
-            out.remove(0);
-        }
-        while out.ends_with('-') {
-            out.pop();
-        }
-        if out.is_empty() {
-            "node".to_string()
-        } else {
-            out
-        }
-    }
     /// Create a new Mobile Key Manager
     pub fn new(logger: Arc<Logger>) -> Result<Self> {
         // Create Certificate Authority with user identity
@@ -652,12 +613,11 @@ impl MobileKeyManager {
                 ))
             })?;
 
-            let dns_safe_node_id = self.dns_safe_node_id(node_id);
             let subject: &X509Name = &csr.certification_request_info.subject;
             let mut cn_matches = false;
             for rdn in subject.iter_common_name() {
                 if let Ok(val) = rdn.as_str() {
-                    if val == dns_safe_node_id {
+                    if val == node_id {
                         cn_matches = true;
                         break;
                     }
