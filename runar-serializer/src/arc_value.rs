@@ -112,6 +112,87 @@ impl fmt::Debug for LazyDataWithOffset {
 }
 
 impl ArcValue {
+    fn parse_generic_params(rust_type_name: &str) -> Option<Vec<String>> {
+        let start = rust_type_name.find('<')?;
+        let end = rust_type_name.rfind('>')?;
+        if end <= start + 1 {
+            return Some(Vec::new());
+        }
+        let inside = &rust_type_name[start + 1..end];
+        // Naive split on commas, sufficient for Vec<T> and HashMap<K, V>
+        let params = inside
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<_>>();
+        Some(params)
+    }
+
+    fn wire_name_for_container(inner: &ErasedArc, is_list: bool) -> Result<String> {
+        let rust_type_name = inner.type_name();
+        // If container holds ArcValue elements, it's heterogeneous
+        if is_list {
+            if rust_type_name.contains("ArcValue") {
+                return Ok("list<any>".to_string());
+            }
+            if let Some(params) = Self::parse_generic_params(rust_type_name) {
+                if let Some(elem_rust) = params.first() {
+                    if elem_rust.contains("ArcValue") {
+                        return Ok("list<any>".to_string());
+                    }
+                    if let Some(wire) = crate::registry::lookup_wire_name(elem_rust) {
+                        return Ok(format!("list<{wire}>"));
+                    }
+                    // If primitive, registry must already have it; error otherwise
+                    return Err(anyhow!(
+                        "Missing wire-name registration for list element type: {}",
+                        elem_rust
+                    ));
+                }
+            }
+            // Unknown format
+            Err(anyhow!(
+                "Unable to determine element type for list: {}",
+                rust_type_name
+            ))
+        } else {
+            // Map
+            if rust_type_name.contains("ArcValue") {
+                return Ok("map<string,any>".to_string());
+            }
+            if let Some(params) = Self::parse_generic_params(rust_type_name) {
+                if params.len() != 2 {
+                    return Err(anyhow!(
+                        "Expected two generic params for map, got {} in {}",
+                        params.len(),
+                        rust_type_name
+                    ));
+                }
+                let key_rust = &params[0];
+                let val_rust = &params[1];
+                if !is_string(key_rust)
+                    && key_rust != "alloc::string::String"
+                    && key_rust != "std::string::String"
+                {
+                    return Err(anyhow!("Map key must be String, got {}", key_rust));
+                }
+                if val_rust.contains("ArcValue") {
+                    return Ok("map<string,any>".to_string());
+                }
+                if let Some(wire) = crate::registry::lookup_wire_name(val_rust) {
+                    return Ok(format!("map<string,{wire}>"));
+                }
+                return Err(anyhow!(
+                    "Missing wire-name registration for map value type: {}",
+                    val_rust
+                ));
+            }
+            Err(anyhow!(
+                "Unable to determine key/value types for map: {}",
+                rust_type_name
+            ))
+        }
+    }
+
     /// Category of this value
     pub fn category(&self) -> ValueCategory {
         self.category
@@ -460,38 +541,18 @@ impl ArcValue {
                 };
                 wire.to_string()
             }
-            ValueCategory::List => {
-                // Determine element wire name
-                // Attempt Vec<ArcValue> first for heterogeneous containers
-                if let Ok(_vec_av) = inner.as_arc::<Vec<ArcValue>>() {
-                    "list<any>".to_string()
-                } else {
-                    // For typed containers, resolve the element type wire name via Rust type name
-                    // Without runtime generic info for element T at this point,
-                    // we conservatively mark as heterogeneous list.
-                    "list<any>".to_string()
-                }
-            }
-            ValueCategory::Map => {
-                if let Ok(_map_av) = inner.as_arc::<HashMap<String, ArcValue>>() {
-                    "map<string,any>".to_string()
-                } else {
-                    // Conservatively mark as heterogeneous map when element type is unknown here.
-                    "map<string,any>".to_string()
-                }
-            }
+            ValueCategory::List => Self::wire_name_for_container(inner, true)?,
+            ValueCategory::Map => Self::wire_name_for_container(inner, false)?,
             ValueCategory::Json => "json".to_string(),
             ValueCategory::Bytes => "bytes".to_string(),
             ValueCategory::Struct => {
                 if let Some(wire) = crate::registry::lookup_wire_name(type_name) {
                     wire.to_string()
                 } else {
-                    // Deterministic default: use simple ident when not explicitly registered
-                    type_name
-                        .rsplit("::")
-                        .next()
-                        .unwrap_or(type_name)
-                        .to_string()
+                    return Err(anyhow!(
+                        "Missing wire-name registration for struct: {}",
+                        type_name
+                    ));
                 }
             }
             ValueCategory::Null => "null".to_string(),
