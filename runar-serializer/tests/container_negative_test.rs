@@ -17,6 +17,11 @@ pub struct TestProfile {
     pub name: String,
 }
 
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct WrongPlain {
+    pub x: i32,
+}
+
 type TestContext = (
     Arc<dyn EnvelopeCrypto>,
     Arc<dyn EnvelopeCrypto>,
@@ -102,4 +107,245 @@ fn negative_unknown_primitive_wire_type() {
 
     let err = ArcValue::deserialize(&buf, None).unwrap_err();
     assert!(format!("{err}").contains("Unknown primitive wire type"));
+}
+
+#[test]
+fn negative_typed_list_payload_mismatch() -> Result<()> {
+    // Header declares typed list of TestProfile, but payload is Vec<i64>
+    let type_name = "list<TestProfile>".as_bytes();
+    let payload = serde_cbor::to_vec(&vec![1_i64, 2_i64, 3_i64])?;
+    let mut buf = Vec::new();
+    buf.push(2u8); // category: List
+    buf.push(0u8); // not encrypted
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_typed_list_ref::<TestProfile>().unwrap_err();
+    assert!(format!("{err}").contains("Unsupported list payload"));
+    Ok(())
+}
+
+#[test]
+fn negative_typed_map_non_string_keys() -> Result<()> {
+    // Header declares map<string,TestProfile> but payload has i64 keys
+    let type_name = "map<string,TestProfile>".as_bytes();
+    let mut bad_map: HashMap<i64, TestProfile> = HashMap::new();
+    bad_map.insert(
+        1,
+        TestProfile {
+            id: "1".into(),
+            name: "A".into(),
+        },
+    );
+    let payload = serde_cbor::to_vec(&bad_map)?;
+    let mut buf = Vec::new();
+    buf.push(3u8); // category: Map
+    buf.push(0u8); // not encrypted
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_typed_map_ref::<TestProfile>().unwrap_err();
+    assert!(format!("{err}").contains("Unsupported map payload"));
+    Ok(())
+}
+
+#[test]
+fn negative_typed_map_wrong_value_payload() -> Result<()> {
+    // Header declares map<string,TestProfile> but payload has map<string,i64>
+    let type_name = "map<string,TestProfile>".as_bytes();
+    let mut wrong_map: HashMap<String, i64> = HashMap::new();
+    wrong_map.insert("k".into(), 42);
+    let payload = serde_cbor::to_vec(&wrong_map)?;
+    let mut buf = Vec::new();
+    buf.push(3u8); // category: Map
+    buf.push(0u8); // not encrypted
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_typed_map_ref::<TestProfile>().unwrap_err();
+    assert!(format!("{err}").contains("Unsupported map payload"));
+    Ok(())
+}
+
+#[test]
+fn negative_malformed_typename_list() -> Result<()> {
+    let type_name = b"list<>";
+    let payload = serde_cbor::to_vec(&vec![1_i64, 2_i64])?;
+    let mut buf = Vec::new();
+    buf.push(2u8); // List
+    buf.push(0u8);
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_typed_list_ref::<TestProfile>().unwrap_err();
+    assert!(format!("{err}").contains("Unsupported list payload"));
+    Ok(())
+}
+
+#[test]
+fn negative_malformed_typename_map() -> Result<()> {
+    let type_name = b"map<string,>";
+    let payload = serde_cbor::to_vec(&HashMap::<String, i64>::new())?;
+    let mut buf = Vec::new();
+    buf.push(3u8); // Map
+    buf.push(0u8);
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_typed_map_ref::<TestProfile>().unwrap_err();
+    assert!(format!("{err}").contains("Unsupported map payload"));
+    Ok(())
+}
+
+#[test]
+fn negative_unknown_category_byte() {
+    let buf = vec![9u8, 0u8, 0u8];
+    let err = ArcValue::deserialize(&buf, None).unwrap_err();
+    assert!(format!("{err}").contains("Invalid category byte"));
+}
+
+#[test]
+fn negative_missing_decryptor_for_t() -> Result<()> {
+    let (mobile_ks, _node_ks, resolver, network_id, profile_pk) = build_test_context()?;
+
+    let items = vec![TestProfile {
+        id: "1".into(),
+        name: "A".into(),
+    }];
+    let val = ArcValue::new_list(items);
+
+    let ctx = SerializationContext {
+        keystore: mobile_ks.clone(),
+        resolver: resolver.clone(),
+        network_id: network_id.clone(),
+        profile_public_key: Some(profile_pk.clone()),
+    };
+
+    // Serialize with element encryption
+    let ser = val.serialize(Some(&ctx))?;
+    // Deserialize with keystore so decrypt path can run
+    let de = ArcValue::deserialize(&ser, Some(mobile_ks.clone()))?;
+    // Ask for WrongPlain (no decryptor registered) -> should error
+    let err = de.as_typed_list_ref::<WrongPlain>().unwrap_err();
+    assert!(format!("{err}").contains("No decryptor registered"));
+    Ok(())
+}
+
+#[test]
+fn negative_list_any_with_plain_vec_payload() -> Result<()> {
+    // Header declares list<any>, but payload is Vec<i64>
+    let type_name = b"list<any>";
+    let payload = serde_cbor::to_vec(&vec![1_i64, 2_i64])?;
+    let mut buf = Vec::new();
+    buf.push(2u8); // List
+    buf.push(0u8); // not encrypted
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_list_ref().unwrap_err();
+    // Expect an error since list<any> requires ArcValue-shaped elements
+    assert!(
+        format!("{err}").contains("Keystore required for decryptor")
+            || format!("{err}").contains("No decryptor registered")
+            || format!("{err}").contains("Unsupported")
+    );
+    Ok(())
+}
+
+#[test]
+fn negative_map_any_with_plain_values() -> Result<()> {
+    // Header declares map<string,any>, but payload is HashMap<String, i64>
+    let type_name = b"map<string,any>";
+    let mut plain: HashMap<String, i64> = HashMap::new();
+    plain.insert("k".into(), 7);
+    let payload = serde_cbor::to_vec(&plain)?;
+    let mut buf = Vec::new();
+    buf.push(3u8); // Map
+    buf.push(0u8);
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_map_ref().unwrap_err();
+    assert!(
+        format!("{err}").contains("Keystore required for decryptor")
+            || format!("{err}").contains("No decryptor registered")
+            || format!("{err}").contains("Unsupported")
+    );
+    Ok(())
+}
+
+#[test]
+fn negative_invalid_utf8_typename() {
+    // Embed invalid UTF-8 in type name
+    let category = 1u8; // Primitive
+    let is_encrypted = 0u8;
+    let type_name = [0xff, 0xfe, 0xfd];
+    let value_cbor = serde_cbor::to_vec(&"x").unwrap();
+
+    let mut buf = Vec::new();
+    buf.push(category);
+    buf.push(is_encrypted);
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(&type_name);
+    buf.extend_from_slice(&value_cbor);
+
+    let err = ArcValue::deserialize(&buf, None).unwrap_err();
+    assert!(format!("{err}").contains("Invalid UTF-8 in type name"));
+}
+
+#[test]
+fn negative_invalid_type_len_overflow() {
+    // Type length indicates more than available bytes
+    let buf = vec![1u8, 0u8, 200u8];
+    // No further bytes
+    let err = ArcValue::deserialize(&buf, None).unwrap_err();
+    assert!(format!("{err}").contains("Invalid type name length"));
+}
+
+#[test]
+fn negative_declared_list_but_payload_is_map() -> Result<()> {
+    let type_name = b"list<i64>";
+    let payload = serde_cbor::to_vec(&HashMap::<String, i64>::new())?; // map instead of list
+    let mut buf = Vec::new();
+    buf.push(2u8); // List
+    buf.push(0u8);
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_typed_list_ref::<i64>().unwrap_err();
+    assert!(format!("{err}").contains("Unsupported list payload"));
+    Ok(())
+}
+
+#[test]
+fn negative_declared_map_but_payload_is_list() -> Result<()> {
+    let type_name = b"map<string,i64>";
+    let payload = serde_cbor::to_vec(&vec![1_i64, 2_i64])?; // list instead of map
+    let mut buf = Vec::new();
+    buf.push(3u8); // Map
+    buf.push(0u8);
+    buf.push(type_name.len() as u8);
+    buf.extend_from_slice(type_name);
+    buf.extend_from_slice(&payload);
+
+    let av = ArcValue::deserialize(&buf, None)?;
+    let err = av.as_typed_map_ref::<i64>().unwrap_err();
+    assert!(format!("{err}").contains("Unsupported map payload"));
+    Ok(())
 }

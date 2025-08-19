@@ -688,21 +688,19 @@ impl ArcValue {
         let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
         if inner.is_lazy {
             // Handle lazy list with parameterized wire names
-            // Capture keystore for potential element-level decrypt
-            let lazy = inner.get_lazy_data()?;
-            let ks = lazy
-                .keystore
-                .as_ref()
-                .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
-            let ks_arc = Arc::clone(ks);
+            // Capture optional keystore for potential element-level decrypt
+            let ks_opt = inner.get_lazy_data()?.keystore.clone();
 
             return self.handle_lazy_data(|payload, type_name| {
                 if type_name.starts_with("list<") {
                     // Try encrypted-bytes element container
                     if let Ok(vec_bytes) = serde_cbor::from_slice::<Vec<Vec<u8>>>(payload) {
+                        let ks = ks_opt
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
                         let mut out: Vec<Arc<T>> = Vec::with_capacity(vec_bytes.len());
                         for b in vec_bytes.iter() {
-                            let plain: T = crate::registry::try_decrypt_into::<T>(b, &ks_arc)?;
+                            let plain: T = crate::registry::try_decrypt_into::<T>(b, ks)?;
                             out.push(Arc::new(plain));
                         }
                         return Ok(out);
@@ -759,12 +757,7 @@ impl ArcValue {
 
         let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
         if inner.is_lazy {
-            let lazy = inner.get_lazy_data()?;
-            let ks = lazy
-                .keystore
-                .as_ref()
-                .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
-            let ks_arc = Arc::clone(ks);
+            let ks_opt = inner.get_lazy_data()?.keystore.clone();
 
             return self.handle_lazy_data(|payload, type_name| {
                 if type_name.starts_with("map<") {
@@ -772,10 +765,13 @@ impl ArcValue {
                     if let Ok(map_bytes) =
                         serde_cbor::from_slice::<HashMap<String, Vec<u8>>>(payload)
                     {
+                        let ks = ks_opt
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
                         let mut out: HashMap<String, Arc<T>> =
                             HashMap::with_capacity(map_bytes.len());
                         for (k, vbytes) in map_bytes.iter() {
-                            let plain: T = crate::registry::try_decrypt_into::<T>(vbytes, &ks_arc)?;
+                            let plain: T = crate::registry::try_decrypt_into::<T>(vbytes, ks)?;
                             out.insert(k.clone(), Arc::new(plain));
                         }
                         return Ok(out);
