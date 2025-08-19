@@ -16,6 +16,68 @@ struct TestProfile {
 }
 
 #[test]
+fn test_simple_hashmap_roundtrip() -> Result<()> {
+    let mut map: HashMap<String, String> = HashMap::new();
+    map.insert("u1".into(), "Alice".into());
+    map.insert("u2".into(), "Bob".into());
+
+    let av = ArcValue::new_map(map);
+
+    // Test serialization without encryption context
+    let bytes = av.serialize(None)?;
+
+    // Test deserialization
+    let de = ArcValue::deserialize(&bytes, None)?;
+    assert_eq!(de.category(), runar_serializer::ValueCategory::Map);
+
+    // Extract typed HashMap using as_typed_map_ref
+    let typed_map: HashMap<String, String> = de.as_type()?;
+
+    // Verify the map has the correct number of entries
+    assert_eq!(typed_map.len(), 2);
+
+    // Verify user1
+    let user1 = typed_map.get("u1").expect("user1 not found");
+    assert_eq!(user1, "Alice");
+
+    // Verify user2
+    let user2 = typed_map.get("u2").expect("user2 not found");
+    assert_eq!(user2, "Bob");
+
+    Ok(())
+}
+
+#[test]
+fn test_simple_vec_roundtrip() -> Result<()> {
+    let vec: Vec<String> = vec!["Alice".into(), "Bob".into()];
+
+    let av = ArcValue::new_list(vec);
+
+    // Test serialization without encryption context
+    let bytes = av.serialize(None)?;
+
+    // Test deserialization
+    let de = ArcValue::deserialize(&bytes, None)?;
+    assert_eq!(de.category(), runar_serializer::ValueCategory::List);
+
+    // Extract typed HashMap using as_typed_map_ref
+    let typed_profiles: Vec<String> = de.as_type()?;
+
+    // Verify the map has the correct number of entries
+    assert_eq!(typed_profiles.len(), 2);
+
+    // Verify user1
+    let user1 = typed_profiles.first().expect("user1 not found");
+    assert_eq!(user1, "Alice");
+
+    // Verify user2
+    let user2 = typed_profiles.get(1).expect("user2 not found");
+    assert_eq!(user2, "Bob");
+
+    Ok(())
+}
+
+#[test]
 fn test_hashmap_of_profiles_roundtrip() -> Result<()> {
     let mut map: HashMap<String, ArcValue> = HashMap::new();
     map.insert(

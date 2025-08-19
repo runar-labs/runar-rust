@@ -307,25 +307,61 @@ impl ArcValue {
                     Cow::Borrowed(data_bytes)
                 };
 
-                // Try to deserialize as different primitive types based on type_name
+                // Try to deserialize primitives using wire names
                 match type_name.as_str() {
-                    "alloc::string::String" => {
+                    "string" => {
                         let value: String = serde_cbor::from_slice(bytes_cow.as_ref())?;
-                        Ok(ArcValue::new_primitive(value))
-                    }
-                    "i64" => {
-                        let value: i64 = serde_cbor::from_slice(bytes_cow.as_ref())?;
-                        Ok(ArcValue::new_primitive(value))
-                    }
-                    "f64" => {
-                        let value: f64 = serde_cbor::from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
                     "bool" => {
                         let value: bool = serde_cbor::from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
-                    _ => Err(anyhow!("Unknown primitive type: {}", type_name)),
+                    "bytes" => {
+                        let value: Vec<u8> = serde_cbor::from_slice(bytes_cow.as_ref())?;
+                        Ok(ArcValue::new_bytes(value))
+                    }
+                    "char" => {
+                        let value: char = serde_cbor::from_slice(bytes_cow.as_ref())?;
+                        Ok(ArcValue::new_primitive(value))
+                    }
+                    "i8" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i8>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "i16" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i16>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "i32" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i32>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "i64" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i64>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "i128" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i128>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "u8" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u8>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "u16" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u16>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "u32" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u32>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "u64" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u64>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "u128" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u128>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "f32" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<f32>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    "f64" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<f64>(
+                        bytes_cow.as_ref(),
+                    )?)),
+                    other => Err(anyhow!("Unknown primitive wire type: {}", other)),
                 }
             }
             ValueCategory::Bytes => {
@@ -385,9 +421,43 @@ impl ArcValue {
         };
 
         let mut buf = vec![category_byte];
-        let type_name_bytes = type_name.as_bytes();
+
+        // Resolve wire name
+        let wire_name: String = match self.category {
+            ValueCategory::Primitive => {
+                // For primitives we rely on pre-registered mappings
+                let rust_name = type_name;
+                let Some(wire) = crate::registry::lookup_wire_name(rust_name) else {
+                    return Err(anyhow!(
+                        "Missing wire-name registration for primitive: {}",
+                        rust_name
+                    ));
+                };
+                wire.to_string()
+            }
+            ValueCategory::List => "list".to_string(),
+            ValueCategory::Map => "map".to_string(),
+            ValueCategory::Json => "json".to_string(),
+            ValueCategory::Bytes => "bytes".to_string(),
+            ValueCategory::Struct => {
+                // Prefer registry mapping; if absent, use simple ident of the Rust type as default
+                if let Some(wire) = crate::registry::lookup_wire_name(type_name) {
+                    wire.to_string()
+                } else {
+                    // Default to the last segment after '::'
+                    type_name
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(type_name)
+                        .to_string()
+                }
+            }
+            ValueCategory::Null => "null".to_string(),
+        };
+
+        let type_name_bytes = wire_name.as_bytes();
         if type_name_bytes.len() > 255 {
-            return Err(anyhow!("Type name too long: {}", type_name));
+            return Err(anyhow!("Wire type name too long: {}", wire_name));
         }
 
         if let Some(ctx) = context {
@@ -691,14 +761,23 @@ impl ArcValue {
                 let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
                 if inner.is_lazy {
                     self.handle_lazy_data(|payload, type_name| {
-                        // Try to find JSON converter by type name
+                        // Try wire-name keyed converters first (list/map/json/struct wire names)
+                        if let Some(json_fn) =
+                            crate::registry::get_json_converter_by_wire_name(type_name)
+                        {
+                            return json_fn(payload);
+                        }
+                        // Fallback to rust-name keyed registry (legacy internal path)
                         if let Some(json_fn) = crate::registry::get_json_converter(type_name) {
                             return json_fn(payload);
                         }
-
-                        // If registry lookup fails, return a more specific error
+                        // Final fallback: attempt generic CBOR -> JSON value
+                        if let Ok(value) = serde_cbor::from_slice::<serde_json::Value>(payload) {
+                            return Ok(value);
+                        }
+                        // If everything fails, return a specific error
                         Err(anyhow!(
-                            "No JSON converter available for struct type: {}",
+                            "No JSON converter available for type: {}",
                             type_name
                         ))
                     })

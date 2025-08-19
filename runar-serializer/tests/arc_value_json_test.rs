@@ -4,6 +4,7 @@ use serde_json::json;
 use std::{collections::HashMap, f32::consts::PI};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Plain)]
+#[runar(name = "arc_value_json_test.TestStructCD")]
 struct TestStruct {
     id: i32,
     name: String,

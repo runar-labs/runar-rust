@@ -26,10 +26,30 @@ fn label_to_camel_case(s: &str) -> String {
         .collect()
 }
 
-#[proc_macro_derive(Plain)]
+fn extract_wire_name(attrs: &[Attribute], default_ident: &Ident) -> proc_macro2::TokenStream {
+    let mut wire_name: Option<String> = None;
+    for attr in attrs.iter() {
+        if attr.path().is_ident("runar") {
+            let _ = attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("name") {
+                    let lit: syn::LitStr = meta.value()?.parse()?;
+                    wire_name = Some(lit.value());
+                }
+                Ok(())
+            });
+        }
+    }
+    wire_name.map(|s| quote! { #s }).unwrap_or_else(|| {
+        let simple = default_ident.to_string();
+        quote! { #simple }
+    })
+}
+
+#[proc_macro_derive(Plain, attributes(runar))]
 pub fn derive_plain(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = input.ident.clone();
+    let wire_name_literal = extract_wire_name(&input.attrs, &struct_name);
 
     let expanded = quote! {
         impl runar_serializer::traits::RunarEncryptable for #struct_name {}
@@ -57,11 +77,12 @@ pub fn derive_plain(input: TokenStream) -> TokenStream {
             }
         }
 
-        // Automatically register JSON converter for this struct at program start.
+        // Automatically register JSON converter and wire name for this struct at program start.
         const _: () = {
             #[ctor::ctor]
             fn register_json_converter() {
                 runar_serializer::registry::register_to_json::<#struct_name>();
+                runar_serializer::registry::register_type_name::<#struct_name>(#wire_name_literal);
             }
         };
     };
@@ -74,6 +95,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = input.ident.clone();
     let encrypted_name = format_ident!("Encrypted{}", struct_name);
+    let wire_name_literal = extract_wire_name(&input.attrs, &struct_name);
 
     let mut plaintext_fields: Vec<(Ident, Type)> = Vec::new();
     let mut label_groups: std::collections::BTreeMap<String, Vec<(Ident, Type)>> =
@@ -266,11 +288,12 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             }
         }
 
-        // Automatically register decryptor for this struct at program start.
+        // Automatically register decryptor and wire name for this struct at program start.
         const _: () = {
             #[ctor::ctor]
             fn register_decryptor() {
                 runar_serializer::registry::register_decrypt::<#struct_name, #encrypted_name>();
+                runar_serializer::registry::register_type_name::<#struct_name>(#wire_name_literal);
             }
         };
 
