@@ -81,33 +81,47 @@ impl LabelResolver for Box<dyn LabelResolver> {
 
 /// Configurable label resolver implementation
 pub struct ConfigurableLabelResolver {
-    /// The mapping configuration
-    config: KeyMappingConfig,
+    /// Concurrent mapping used heavily on read path
+    mapping: dashmap::DashMap<String, LabelKeyInfo>,
 }
 
 impl ConfigurableLabelResolver {
     pub fn new(config: KeyMappingConfig) -> Self {
-        Self { config }
+        let dm = dashmap::DashMap::new();
+        for (k, v) in config.label_mappings {
+            dm.insert(k, v);
+        }
+        Self { mapping: dm }
+    }
+
+    pub fn from_map(map: std::collections::HashMap<String, LabelKeyInfo>) -> Self {
+        let dm = dashmap::DashMap::new();
+        for (k, v) in map {
+            dm.insert(k, v);
+        }
+        Self { mapping: dm }
     }
 }
 
 impl LabelResolver for ConfigurableLabelResolver {
     fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
-        Ok(self.config.label_mappings.get(label).cloned())
+        Ok(self.mapping.get(label).map(|v| v.clone()))
     }
 
     fn available_labels(&self) -> Vec<String> {
-        self.config.label_mappings.keys().cloned().collect()
+        self.mapping.iter().map(|kv| kv.key().clone()).collect()
     }
 
     fn can_resolve(&self, label: &str) -> bool {
-        self.config.label_mappings.contains_key(label)
+        self.mapping.contains_key(label)
     }
 
     fn clone_box(&self) -> Box<dyn LabelResolver> {
-        Box::new(ConfigurableLabelResolver {
-            config: self.config.clone(),
-        })
+        let dm = dashmap::DashMap::new();
+        for e in self.mapping.iter() {
+            dm.insert(e.key().clone(), e.value().clone());
+        }
+        Box::new(ConfigurableLabelResolver { mapping: dm })
     }
 }
 

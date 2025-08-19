@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
 use runar_common::logging::{Component, Logger};
 use runar_keys::EnvelopeCrypto;
@@ -14,6 +15,7 @@ use runar_keys::{
     node::{NodeKeyManager, NodeKeyManagerState},
 };
 use runar_schemas::NodeInfo;
+use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
@@ -57,6 +59,10 @@ struct KeysInner {
     node_owned: Option<NodeKeyManager>,
     node_shared: Option<Arc<NodeKeyManager>>, // set after transport construction
     mobile: Option<MobileKeyManager>,
+    // Optional platform-provided label resolver
+    label_resolver: Option<Arc<dyn LabelResolver>>,
+    // Local NodeInfo holder (push-updated from FFI)
+    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
 }
 
 #[allow(dead_code)]
@@ -74,6 +80,7 @@ struct TransportInner {
         >,
     >,
     request_id_seq: Arc<AtomicU64>,
+    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
 }
 
 #[allow(dead_code)]
@@ -125,6 +132,54 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
         *out_len = len;
     }
     true
+}
+
+// ------------------------------
+// LabelResolver mapping hydration (CBOR-based)
+// ------------------------------
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_set_label_mapping(
+    keys: *mut c_void,
+    mapping_cbor: *const u8,
+    len: usize,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        return 1;
+    };
+    if mapping_cbor.is_null() || len == 0 {
+        return 1;
+    }
+    let slice = std::slice::from_raw_parts(mapping_cbor, len);
+    let mapping: std::collections::HashMap<String, LabelKeyInfo> =
+        match serde_cbor::from_slice(slice) {
+            Ok(m) => m,
+            Err(_) => return 2,
+        };
+    let resolver = runar_serializer::traits::ConfigurableLabelResolver::from_map(mapping);
+    inner.label_resolver = Some(Arc::new(resolver));
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_set_local_node_info(
+    keys: *mut c_void,
+    node_info_cbor: *const u8,
+    len: usize,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        return 1;
+    };
+    if node_info_cbor.is_null() || len == 0 {
+        return 1;
+    }
+    let slice = std::slice::from_raw_parts(node_info_cbor, len);
+    let info: NodeInfo = match serde_cbor::from_slice(slice) {
+        Ok(v) => v,
+        Err(_) => return 2,
+    };
+    inner.local_node_info.store(Arc::new(Some(info)));
+    0
 }
 
 #[no_mangle]
@@ -319,6 +374,355 @@ pub unsafe extern "C" fn rn_keys_decrypt_envelope(
         } else {
             set_error(err, 1, "no key manager available");
             return 1;
+        };
+        if !alloc_bytes(out_plain, out_len, &plain) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+// ------------------------------
+// Additional encryption/decryption APIs
+// ------------------------------
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_encrypt_local_data(
+    keys: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    out_cipher: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || data.is_null() || out_cipher.is_null() || out_len.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let data_slice = std::slice::from_raw_parts(data, data_len);
+        let node = if let Some(n) = inner.node_owned.as_ref() {
+            n
+        } else if let Some(s) = inner.node_shared.as_ref() {
+            s.as_ref()
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let cipher = match node.encrypt_local_data(data_slice) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("encrypt_local_data failed: {e}"));
+                return 2;
+            }
+        };
+        if !alloc_bytes(out_cipher, out_len, &cipher) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_decrypt_local_data(
+    keys: *mut c_void,
+    encrypted: *const u8,
+    enc_len: usize,
+    out_plain: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || encrypted.is_null() || out_plain.is_null() || out_len.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let enc_slice = std::slice::from_raw_parts(encrypted, enc_len);
+        let node = if let Some(n) = inner.node_owned.as_ref() {
+            n
+        } else if let Some(s) = inner.node_shared.as_ref() {
+            s.as_ref()
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let plain = match node.decrypt_local_data(enc_slice) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("decrypt_local_data failed: {e}"));
+                return 2;
+            }
+        };
+        if !alloc_bytes(out_plain, out_len, &plain) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_encrypt_message_for_mobile(
+    keys: *mut c_void,
+    message: *const u8,
+    message_len: usize,
+    mobile_public_key: *const u8,
+    pk_len: usize,
+    out_cipher: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null()
+            || message.is_null()
+            || mobile_public_key.is_null()
+            || out_cipher.is_null()
+            || out_len.is_null()
+        {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let msg = std::slice::from_raw_parts(message, message_len);
+        let pk = std::slice::from_raw_parts(mobile_public_key, pk_len);
+        let node = if let Some(n) = inner.node_owned.as_ref() {
+            n
+        } else if let Some(s) = inner.node_shared.as_ref() {
+            s.as_ref()
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let cipher = match node.encrypt_message_for_mobile(msg, pk) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("encrypt_message_for_mobile failed: {e}"));
+                return 2;
+            }
+        };
+        if !alloc_bytes(out_cipher, out_len, &cipher) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_decrypt_message_from_mobile(
+    keys: *mut c_void,
+    encrypted_message: *const u8,
+    enc_len: usize,
+    out_plain: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || encrypted_message.is_null() || out_plain.is_null() || out_len.is_null()
+        {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let enc = std::slice::from_raw_parts(encrypted_message, enc_len);
+        let node = if let Some(n) = inner.node_owned.as_ref() {
+            n
+        } else if let Some(s) = inner.node_shared.as_ref() {
+            s.as_ref()
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let plain = match node.decrypt_message_from_mobile(enc) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("decrypt_message_from_mobile failed: {e}"));
+                return 2;
+            }
+        };
+        if !alloc_bytes(out_plain, out_len, &plain) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_encrypt_for_public_key(
+    keys: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    recipient_public_key: *const u8,
+    pk_len: usize,
+    out_eed_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null()
+            || data.is_null()
+            || recipient_public_key.is_null()
+            || out_eed_cbor.is_null()
+            || out_len.is_null()
+        {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let data_slice = std::slice::from_raw_parts(data, data_len);
+        let pk = std::slice::from_raw_parts(recipient_public_key, pk_len);
+        let node = if let Some(n) = inner.node_owned.as_ref() {
+            n
+        } else if let Some(s) = inner.node_shared.as_ref() {
+            s.as_ref()
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let eed = match node.encrypt_for_public_key(data_slice, pk) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("encrypt_for_public_key failed: {e}"));
+                return 2;
+            }
+        };
+        let cbor = match serde_cbor::to_vec(&eed) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("encode EED failed: {e}"));
+                return 2;
+            }
+        };
+        if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_encrypt_for_network(
+    keys: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    network_id: *const c_char,
+    out_eed_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null()
+            || data.is_null()
+            || network_id.is_null()
+            || out_eed_cbor.is_null()
+            || out_len.is_null()
+        {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let data_slice = std::slice::from_raw_parts(data, data_len);
+        let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_error(err, 2, "invalid utf8 network id");
+                return 2;
+            }
+        };
+        let node = if let Some(n) = inner.node_owned.as_ref() {
+            n
+        } else if let Some(s) = inner.node_shared.as_ref() {
+            s.as_ref()
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let eed = match node.encrypt_for_network(data_slice, nid) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("encrypt_for_network failed: {e}"));
+                return 2;
+            }
+        };
+        let cbor = match serde_cbor::to_vec(&eed) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("encode EED failed: {e}"));
+                return 2;
+            }
+        };
+        if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_decrypt_network_data(
+    keys: *mut c_void,
+    eed_cbor: *const u8,
+    eed_len: usize,
+    out_plain: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || eed_cbor.is_null() || out_plain.is_null() || out_len.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let slice = std::slice::from_raw_parts(eed_cbor, eed_len);
+        let eed: runar_keys::mobile::EnvelopeEncryptedData = match serde_cbor::from_slice(slice) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("decode EED failed: {e}"));
+                return 2;
+            }
+        };
+        let node = if let Some(n) = inner.node_owned.as_ref() {
+            n
+        } else if let Some(s) = inner.node_shared.as_ref() {
+            s.as_ref()
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        let plain = match node.decrypt_network_data(&eed) {
+            Ok(v) => v,
+            Err(e) => {
+                set_error(err, 2, &format!("decrypt_network_data failed: {e}"));
+                return 2;
+            }
         };
         if !alloc_bytes(out_plain, out_len, &plain) {
             set_error(err, 3, "alloc failed");
@@ -709,6 +1113,8 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
         node_owned: Some(node),
         node_shared: None,
         mobile: None,
+        label_resolver: None,
+        local_node_info: Arc::new(ArcSwap::from_pointee(None)),
     };
     let boxed = Box::new(inner);
     let handle = FfiKeysHandle {
@@ -985,6 +1391,18 @@ pub unsafe extern "C" fn rn_keys_node_import_state(
         set_error(err, 4, "state_cbor is null");
         return 4;
     }
+    // Prevent importing a new node while a shared instance is in use by a transport
+    let handle_ptr = keys as *mut FfiKeysHandle;
+    let current_inner = unsafe { &*(*handle_ptr).inner };
+    if current_inner.node_shared.is_some() {
+        set_error(
+            err,
+            1,
+            "cannot import state while transport is active (shared node in use)",
+        );
+        return 1;
+    }
+
     let logger = Arc::new(Logger::new_root(Component::Keys));
     let slice = std::slice::from_raw_parts(state_cbor, state_len);
     let state: NodeKeyManagerState = match serde_cbor::from_slice(slice) {
@@ -1013,6 +1431,8 @@ pub unsafe extern "C" fn rn_keys_node_import_state(
         node_owned: Some(node),
         node_shared: None,
         mobile: None,
+        label_resolver: None,
+        local_node_info: Arc::new(ArcSwap::from_pointee(None)),
     }));
     0
 }
@@ -1376,6 +1796,19 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
+    // Attach platform-provided LabelResolver if present
+    if let Some(resolver) = keys_inner.label_resolver.clone() {
+        options = options.with_label_resolver(resolver);
+    }
+    // Require local NodeInfo to be set before initializing transport
+    if keys_inner.local_node_info.load().as_ref().is_none() {
+        set_error(
+            err,
+            1,
+            "local NodeInfo is required; call rn_keys_set_local_node_info() before creating the transport",
+        );
+        return 1;
+    }
     options = options
         .with_key_manager(node_arc.clone())
         .with_local_node_public_key(node_arc.get_node_public_key())
@@ -1384,6 +1817,21 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         .with_peer_disconnected_callback(pd_cb)
         .with_request_callback(rq_cb)
         .with_event_callback(ev_cb);
+
+    // Provide NodeInfo getter from the local holder (no FFI callbacks)
+    let holder = keys_inner.local_node_info.clone();
+    let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback =
+        Arc::new(move || {
+            let holder = holder.clone();
+            Box::pin(async move {
+                let cur = holder.load();
+                match cur.as_ref() {
+                    Some(info) => Ok(info.clone()),
+                    None => Err(anyhow::anyhow!("local NodeInfo not set")),
+                }
+            })
+        });
+    options = options.with_get_local_node_info(get_local_node_info_cb);
     // Construct transport
     let transport = match QuicTransport::new(options) {
         Ok(t) => Arc::new(t),
@@ -1399,6 +1847,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         events_rx: Mutex::new(rx),
         pending,
         request_id_seq: Arc::new(AtomicU64::new(1)),
+        local_node_info: keys_inner.local_node_info.clone(),
     };
     let handle = FfiTransportHandle {
         inner: Box::into_raw(Box::new(inner)),
@@ -1602,6 +2051,12 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
             return 2;
         }
     };
+    // First update the shared holder so subsequent reads see the latest
+    let inner_ref = unsafe { &*handle.inner };
+    inner_ref
+        .local_node_info
+        .store(Arc::new(Some(node_info.clone())));
+    // Then notify transport runtime (now emits latest info)
     let res = runtime().block_on((&*handle.inner).transport.update_peers(node_info));
     if let Err(e) = res {
         set_error(err, 2, &format!("update_peers failed: {e}"));
@@ -1836,3 +2291,5 @@ pub unsafe extern "C" fn rn_transport_local_addr(
     }
     0
 }
+
+// Tests moved to runar-ffi/tests/ffi_transport_test.rs

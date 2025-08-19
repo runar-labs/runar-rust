@@ -7,13 +7,14 @@ license = "MIT"
 
 [lib]
 name = "runar_ffi"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 runar-keys = { path = "../runar-keys" }
 runar_transporter = { path = "../runar-transporter" }
 runar_common = { path = "../runar-common" }
 runar-schemas = { path = "../runar-schemas" }
+runar-serializer = { path = "../runar-serializer" }
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 once_cell = "1.19"
@@ -21,10 +22,16 @@ tokio = { version = "1.37", features = ["rt-multi-thread"] }
 uuid = { version = "1.8", features = ["v4"] }
 log = "0.4"
 rustls-pki-types = "1.12"
+anyhow = "1.0"
+arc-swap = "1.7"
 
 [build-dependencies]
 cbindgen = "0.26"
 
 [features]
 default = []
+
+[dev-dependencies]
+serde_cbor = "0.11"
+libc = "0.2"
 

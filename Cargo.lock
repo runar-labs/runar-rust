@@ -3536,11 +3536,15 @@ dependencies = [
 name = "runar_ffi"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "arc-swap",
  "cbindgen",
+ "libc",
  "log",
  "once_cell",
  "runar-keys",
  "runar-schemas",
+ "runar-serializer",
  "runar_common 0.1.0",
  "runar_transporter",
  "rustls-pki-types",
