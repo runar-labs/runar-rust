@@ -887,6 +887,23 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
     })
 }
 
+/// Bun-friendly: returns discovery handle pointer; null on error. Delegates to the C-conventional API.
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_new_with_multicast_return(
+    keys: *mut c_void,
+    options_cbor: *const u8,
+    options_len: usize,
+    err: *mut RnError,
+) -> *mut c_void {
+    let mut tmp: *mut c_void = std::ptr::null_mut();
+    let rc = rn_discovery_new_with_multicast(keys, options_cbor, options_len, &mut tmp, err);
+    if rc == 0 {
+        tmp
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn rn_discovery_free(discovery: *mut c_void) {
     if discovery.is_null() {
@@ -1111,21 +1128,32 @@ pub unsafe extern "C" fn rn_discovery_update_local_peer_info(
         0
     })
 }
+// Old implementation removed; now use the keys_new_impl wrapper below
+
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnError) -> i32 {
-    if out_keys.is_null() {
-        set_error(err, 1, "out_keys is null");
-        return 1;
+pub extern "C" fn rn_keys_free(keys: *mut c_void) {
+    if keys.is_null() {
+        return;
     }
+    unsafe {
+        let handle = Box::from_raw(keys as *mut FfiKeysHandle);
+        if !handle.inner.is_null() {
+            let _inner = Box::from_raw(handle.inner);
+            // Dropped here
+        }
+    }
+}
+
+/// Internal helper that constructs a new keys handle and sets error on failure.
+fn keys_new_impl(err: *mut RnError) -> *mut c_void {
     let logger = Arc::new(Logger::new_root(Component::Keys));
     let node = match NodeKeyManager::new(logger.clone()) {
         Ok(n) => n,
         Err(e) => {
             set_error(err, 2, &format!("Failed to create NodeKeyManager: {e}"));
-            return 2;
+            return std::ptr::null_mut();
         }
     };
-    // Set node id for logger context
     let node_id = node.get_node_id();
     logger.set_node_id(node_id);
 
@@ -1141,22 +1169,26 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
     let handle = FfiKeysHandle {
         inner: Box::into_raw(boxed),
     };
-    *out_keys = Box::into_raw(Box::new(handle)) as *mut c_void;
+    Box::into_raw(Box::new(handle)) as *mut c_void
+}
+
+/// C-conventional: writes handle to out param; returns 0 on success, non-zero on error.
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnError) -> i32 {
+    let ptr = keys_new_impl(err);
+    if ptr.is_null() {
+        return 1;
+    }
+    unsafe {
+        *out_keys = ptr;
+    }
     0
 }
 
+/// Bun-friendly: returns the handle pointer directly; returns null on error; err is filled.
 #[no_mangle]
-pub extern "C" fn rn_keys_free(keys: *mut c_void) {
-    if keys.is_null() {
-        return;
-    }
-    unsafe {
-        let handle = Box::from_raw(keys as *mut FfiKeysHandle);
-        if !handle.inner.is_null() {
-            let _inner = Box::from_raw(handle.inner);
-            // Dropped here
-        }
-    }
+pub extern "C" fn rn_keys_new_return(err: *mut RnError) -> *mut c_void {
+    keys_new_impl(err)
 }
 
 fn with_keys_inner<'a>(keys: *mut c_void) -> Option<&'a mut KeysInner> {
@@ -1875,6 +1907,23 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     };
     *out_transport = Box::into_raw(Box::new(handle)) as *mut c_void;
     0
+}
+
+/// Bun-friendly: returns transport handle pointer; null on error. Delegates to the C-conventional API.
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_new_with_keys_return(
+    keys: *mut c_void,
+    options_cbor: *const u8,
+    options_len: usize,
+    err: *mut RnError,
+) -> *mut c_void {
+    let mut tmp: *mut c_void = std::ptr::null_mut();
+    let rc = rn_transport_new_with_keys(keys, options_cbor, options_len, &mut tmp, err);
+    if rc == 0 {
+        tmp
+    } else {
+        std::ptr::null_mut()
+    }
 }
 
 #[no_mangle]

@@ -135,6 +135,14 @@ int32_t rn_discovery_new_with_multicast(void *keys,
                                         void **out_discovery,
                                         struct RNAPIRnError *err);
 
+/**
+ * Bun-friendly: returns discovery handle pointer; null on error. Delegates to the C-conventional API.
+ */
+void *rn_discovery_new_with_multicast_return(void *keys,
+                                             const uint8_t *options_cbor,
+                                             size_t options_len,
+                                             struct RNAPIRnError *err);
+
 void rn_discovery_free(void *discovery);
 
 int32_t rn_discovery_init(void *discovery,
@@ -157,9 +165,17 @@ int32_t rn_discovery_update_local_peer_info(void *discovery,
                                             size_t len,
                                             struct RNAPIRnError *err);
 
+void rn_keys_free(void *keys);
+
+/**
+ * C-conventional: writes handle to out param; returns 0 on success, non-zero on error.
+ */
 int32_t rn_keys_new(void **out_keys, struct RNAPIRnError *err);
 
-void rn_keys_free(void *keys);
+/**
+ * Bun-friendly: returns the handle pointer directly; returns null on error; err is filled.
+ */
+void *rn_keys_new_return(struct RNAPIRnError *err);
 
 int32_t rn_keys_node_get_public_key(void *keys,
                                     uint8_t **out,
@@ -213,6 +229,14 @@ int32_t rn_transport_new_with_keys(void *keys,
                                    size_t options_len,
                                    void **out_transport,
                                    struct RNAPIRnError *err);
+
+/**
+ * Bun-friendly: returns transport handle pointer; null on error. Delegates to the C-conventional API.
+ */
+void *rn_transport_new_with_keys_return(void *keys,
+                                        const uint8_t *options_cbor,
+                                        size_t options_len,
+                                        struct RNAPIRnError *err);
 
 void rn_transport_free(void *transport);
 
