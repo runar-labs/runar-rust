@@ -44,7 +44,22 @@ fn two_transports_request_response() {
 
         let mut keys_a: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(rn_keys_new(&mut keys_a, &mut err as *mut _ as *mut _), 0);
-        assert_eq!(rn_keys_set_get_local_node_info(keys_a, node_info_cbor), 0);
+        // Push-based NodeInfo: build a minimal NodeInfo and set it
+        let info = runar_schemas::NodeInfo {
+            node_public_key: vec![],
+            network_ids: vec![],
+            addresses: vec![],
+            node_metadata: runar_schemas::NodeMetadata {
+                services: vec![],
+                subscriptions: vec![],
+            },
+            version: 0,
+        };
+        let info_buf = serde_cbor::to_vec(&info).unwrap();
+        assert_eq!(
+            rn_keys_set_local_node_info(keys_a, info_buf.as_ptr(), info_buf.len()),
+            0
+        );
 
         let mut p: *mut u8 = std::ptr::null_mut();
         let mut l: usize = 0;
@@ -96,7 +111,10 @@ fn two_transports_request_response() {
 
         let mut keys_b: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(rn_keys_new(&mut keys_b, &mut err as *mut _ as *mut _), 0);
-        assert_eq!(rn_keys_set_get_local_node_info(keys_b, node_info_cbor), 0);
+        assert_eq!(
+            rn_keys_set_local_node_info(keys_b, info_buf.as_ptr(), info_buf.len()),
+            0
+        );
 
         let mut p2: *mut u8 = std::ptr::null_mut();
         let mut l2: usize = 0;

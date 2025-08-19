@@ -23,6 +23,7 @@ uuid = { version = "1.8", features = ["v4"] }
 log = "0.4"
 rustls-pki-types = "1.12"
 anyhow = "1.0"
+arc-swap = "1.7"
 
 [build-dependencies]
 cbindgen = "0.26"

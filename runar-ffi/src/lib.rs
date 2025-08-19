@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
 use runar_common::logging::{Component, Logger};
 use runar_keys::EnvelopeCrypto;
@@ -60,8 +61,8 @@ struct KeysInner {
     mobile: Option<MobileKeyManager>,
     // Optional platform-provided label resolver
     label_resolver: Option<Arc<dyn LabelResolver>>,
-    // Optional platform-provided local NodeInfo callback
-    get_local_node_info_cb: Option<RnGetLocalNodeInfoFn>,
+    // Local NodeInfo holder (push-updated from FFI)
+    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
 }
 
 #[allow(dead_code)]
@@ -79,6 +80,7 @@ struct TransportInner {
         >,
     >,
     request_id_seq: Arc<AtomicU64>,
+    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
 }
 
 #[allow(dead_code)]
@@ -159,18 +161,24 @@ pub unsafe extern "C" fn rn_keys_set_label_mapping(
     0
 }
 
-type RnGetLocalNodeInfoFn =
-    unsafe extern "C" fn(out_cbor_ptr: *mut *mut u8, out_cbor_len: *mut usize) -> i32;
-
 #[no_mangle]
-pub extern "C" fn rn_keys_set_get_local_node_info(
+pub unsafe extern "C" fn rn_keys_set_local_node_info(
     keys: *mut c_void,
-    cb: RnGetLocalNodeInfoFn,
+    node_info_cbor: *const u8,
+    len: usize,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
         return 1;
     };
-    inner.get_local_node_info_cb = Some(cb);
+    if node_info_cbor.is_null() || len == 0 {
+        return 1;
+    }
+    let slice = std::slice::from_raw_parts(node_info_cbor, len);
+    let info: NodeInfo = match serde_cbor::from_slice(slice) {
+        Ok(v) => v,
+        Err(_) => return 2,
+    };
+    inner.local_node_info.store(Arc::new(Some(info)));
     0
 }
 
@@ -1106,7 +1114,7 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
         node_shared: None,
         mobile: None,
         label_resolver: None,
-        get_local_node_info_cb: None,
+        local_node_info: Arc::new(ArcSwap::from_pointee(None)),
     };
     let boxed = Box::new(inner);
     let handle = FfiKeysHandle {
@@ -1424,7 +1432,7 @@ pub unsafe extern "C" fn rn_keys_node_import_state(
         node_shared: None,
         mobile: None,
         label_resolver: None,
-        get_local_node_info_cb: None,
+        local_node_info: Arc::new(ArcSwap::from_pointee(None)),
     }));
     0
 }
@@ -1792,6 +1800,15 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     if let Some(resolver) = keys_inner.label_resolver.clone() {
         options = options.with_label_resolver(resolver);
     }
+    // Require local NodeInfo to be set before initializing transport
+    if keys_inner.local_node_info.load().as_ref().is_none() {
+        set_error(
+            err,
+            1,
+            "local NodeInfo is required; call rn_keys_set_local_node_info() before creating the transport",
+        );
+        return 1;
+    }
     options = options
         .with_key_manager(node_arc.clone())
         .with_local_node_public_key(node_arc.get_node_public_key())
@@ -1801,26 +1818,20 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         .with_request_callback(rq_cb)
         .with_event_callback(ev_cb);
 
-    // Wire platform-provided get_local_node_info if set
-    if let Some(cb) = keys_inner.get_local_node_info_cb {
-        let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback =
-            Arc::new(move || {
-                let cb = cb;
-                Box::pin(async move {
-                    let mut ptr: *mut u8 = std::ptr::null_mut();
-                    let mut len: usize = 0;
-                    let rc = unsafe { cb(&mut ptr as *mut *mut u8, &mut len as *mut usize) };
-                    if rc != 0 || ptr.is_null() || len == 0 {
-                        return Err(anyhow::anyhow!("get_local_node_info failed"));
-                    }
-                    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-                    let info: runar_schemas::NodeInfo = serde_cbor::from_slice(slice)
-                        .map_err(|e| anyhow::anyhow!("decode NodeInfo: {e}"))?;
-                    Ok(info)
-                })
-            });
-        options = options.with_get_local_node_info(get_local_node_info_cb);
-    }
+    // Provide NodeInfo getter from the local holder (no FFI callbacks)
+    let holder = keys_inner.local_node_info.clone();
+    let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback =
+        Arc::new(move || {
+            let holder = holder.clone();
+            Box::pin(async move {
+                let cur = holder.load();
+                match cur.as_ref() {
+                    Some(info) => Ok(info.clone()),
+                    None => Err(anyhow::anyhow!("local NodeInfo not set")),
+                }
+            })
+        });
+    options = options.with_get_local_node_info(get_local_node_info_cb);
     // Construct transport
     let transport = match QuicTransport::new(options) {
         Ok(t) => Arc::new(t),
@@ -1836,6 +1847,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         events_rx: Mutex::new(rx),
         pending,
         request_id_seq: Arc::new(AtomicU64::new(1)),
+        local_node_info: keys_inner.local_node_info.clone(),
     };
     let handle = FfiTransportHandle {
         inner: Box::into_raw(Box::new(inner)),
@@ -2039,6 +2051,12 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
             return 2;
         }
     };
+    // First update the shared holder so subsequent reads see the latest
+    let inner_ref = unsafe { &*handle.inner };
+    inner_ref
+        .local_node_info
+        .store(Arc::new(Some(node_info.clone())));
+    // Then notify transport runtime (now emits latest info)
     let res = runtime().block_on((&*handle.inner).transport.update_peers(node_info));
     if let Err(e) = res {
         set_error(err, 2, &format!("update_peers failed: {e}"));
