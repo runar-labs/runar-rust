@@ -63,6 +63,60 @@ int32_t rn_keys_decrypt_envelope(void *keys,
                                  size_t *out_len,
                                  struct RNAPIRnError *err);
 
+int32_t rn_keys_encrypt_local_data(void *keys,
+                                   const uint8_t *data,
+                                   size_t data_len,
+                                   uint8_t **out_cipher,
+                                   size_t *out_len,
+                                   struct RNAPIRnError *err);
+
+int32_t rn_keys_decrypt_local_data(void *keys,
+                                   const uint8_t *encrypted,
+                                   size_t enc_len,
+                                   uint8_t **out_plain,
+                                   size_t *out_len,
+                                   struct RNAPIRnError *err);
+
+int32_t rn_keys_encrypt_message_for_mobile(void *keys,
+                                           const uint8_t *message,
+                                           size_t message_len,
+                                           const uint8_t *mobile_public_key,
+                                           size_t pk_len,
+                                           uint8_t **out_cipher,
+                                           size_t *out_len,
+                                           struct RNAPIRnError *err);
+
+int32_t rn_keys_decrypt_message_from_mobile(void *keys,
+                                            const uint8_t *encrypted_message,
+                                            size_t enc_len,
+                                            uint8_t **out_plain,
+                                            size_t *out_len,
+                                            struct RNAPIRnError *err);
+
+int32_t rn_keys_encrypt_for_public_key(void *keys,
+                                       const uint8_t *data,
+                                       size_t data_len,
+                                       const uint8_t *recipient_public_key,
+                                       size_t pk_len,
+                                       uint8_t **out_eed_cbor,
+                                       size_t *out_len,
+                                       struct RNAPIRnError *err);
+
+int32_t rn_keys_encrypt_for_network(void *keys,
+                                    const uint8_t *data,
+                                    size_t data_len,
+                                    const char *network_id,
+                                    uint8_t **out_eed_cbor,
+                                    size_t *out_len,
+                                    struct RNAPIRnError *err);
+
+int32_t rn_keys_decrypt_network_data(void *keys,
+                                     const uint8_t *eed_cbor,
+                                     size_t eed_len,
+                                     uint8_t **out_plain,
+                                     size_t *out_len,
+                                     struct RNAPIRnError *err);
+
 int32_t rn_discovery_new_with_multicast(void *keys,
                                         const uint8_t *options_cbor,
                                         size_t options_len,
