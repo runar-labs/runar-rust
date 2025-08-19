@@ -8,31 +8,7 @@ struct RnError {
     message: *const std::os::raw::c_char,
 }
 
-// Removed unused test-only resolver callbacks
-
-unsafe extern "C" fn node_info_cbor(out_ptr: *mut *mut u8, out_len: *mut usize) -> i32 {
-    if out_ptr.is_null() || out_len.is_null() {
-        return 1;
-    }
-    let info = runar_schemas::NodeInfo {
-        node_public_key: vec![],
-        network_ids: vec![],
-        addresses: vec![],
-        node_metadata: runar_schemas::NodeMetadata {
-            services: vec![],
-            subscriptions: vec![],
-        },
-        version: 0,
-    };
-    let buf = serde_cbor::to_vec(&info).unwrap();
-    let mut v = buf.clone();
-    let raw = v.as_mut_ptr();
-    let len = v.len();
-    std::mem::forget(v);
-    *out_ptr = raw;
-    *out_len = len;
-    0
-}
+// no-op: legacy callback removed in favor of push-based API
 
 #[test]
 fn two_transports_request_response() {
