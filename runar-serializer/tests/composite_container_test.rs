@@ -49,9 +49,7 @@ fn test_simple_hashmap_roundtrip() -> Result<()> {
 
 #[test]
 fn test_simple_vec_roundtrip() -> Result<()> {
-    let mut vec: Vec<String> = Vec::new();
-    vec.push("Alice".into());
-    vec.push("Bob".into());
+    let vec: Vec<String> = vec!["Alice".into(), "Bob".into()];
 
     let av = ArcValue::new_list(vec);
 
@@ -69,7 +67,7 @@ fn test_simple_vec_roundtrip() -> Result<()> {
     assert_eq!(typed_profiles.len(), 2);
 
     // Verify user1
-    let user1 = typed_profiles.get(0).expect("user1 not found");
+    let user1 = typed_profiles.first().expect("user1 not found");
     assert_eq!(user1, "Alice");
 
     // Verify user2
