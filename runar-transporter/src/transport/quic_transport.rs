@@ -698,10 +698,17 @@ impl QuicTransport {
             .take()
             .ok_or_else(|| NetworkError::ConfigurationError("logger is required".into()))?)
         .with_component(runar_common::Component::Transporter);
-        let keystore = options
-            .keystore
-            .take()
-            .ok_or_else(|| NetworkError::ConfigurationError("keystore is required".into()))?;
+        // Prefer EnvelopeCrypto provided by the key manager. Fall back to explicit keystore only for
+        // legacy/tests that don't use a key manager.
+        let keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto> =
+            if let Some(km) = options.key_manager().cloned() {
+                // NodeKeyManager implements EnvelopeCrypto
+                km as Arc<dyn runar_serializer::traits::EnvelopeCrypto>
+            } else {
+                options.keystore.take().ok_or_else(|| {
+                    NetworkError::ConfigurationError("keystore or key_manager is required".into())
+                })?
+            };
         let label_resolver = options
             .label_resolver
             .take()

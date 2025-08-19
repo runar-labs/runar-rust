@@ -14,6 +14,7 @@ use runar_keys::{
     node::{NodeKeyManager, NodeKeyManagerState},
 };
 use runar_schemas::NodeInfo;
+use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
@@ -57,6 +58,8 @@ struct KeysInner {
     node_owned: Option<NodeKeyManager>,
     node_shared: Option<Arc<NodeKeyManager>>, // set after transport construction
     mobile: Option<MobileKeyManager>,
+    // Optional platform-provided label resolver
+    label_resolver: Option<Arc<dyn LabelResolver>>,
 }
 
 #[allow(dead_code)]
@@ -125,6 +128,101 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
         *out_len = len;
     }
     true
+}
+
+// ------------------------------
+// LabelResolver FFI bridge (CBOR-based)
+// ------------------------------
+
+type RnResolveLabelFn = unsafe extern "C" fn(
+    label: *const c_char,
+    out_found: *mut bool,
+    out_cbor_ptr: *mut *mut u8,
+    out_cbor_len: *mut usize,
+) -> i32;
+
+type RnAvailableLabelsFn =
+    unsafe extern "C" fn(out_cbor_ptr: *mut *mut u8, out_cbor_len: *mut usize) -> i32;
+
+type RnCanResolveFn = unsafe extern "C" fn(label: *const c_char, out_can: *mut bool) -> i32;
+
+struct FfiLabelResolverBridge {
+    resolve_fn: RnResolveLabelFn,
+    available_fn: RnAvailableLabelsFn,
+    can_resolve_fn: RnCanResolveFn,
+}
+
+impl LabelResolver for FfiLabelResolverBridge {
+    fn resolve_label_info(&self, label: &str) -> anyhow::Result<Option<LabelKeyInfo>> {
+        let c_label = CString::new(label).unwrap_or_else(|_| CString::new("").unwrap());
+        let mut found = false;
+        let mut buf_ptr: *mut u8 = std::ptr::null_mut();
+        let mut buf_len: usize = 0;
+        let rc = unsafe {
+            (self.resolve_fn)(
+                c_label.as_ptr(),
+                &mut found as *mut bool,
+                &mut buf_ptr as *mut *mut u8,
+                &mut buf_len as *mut usize,
+            )
+        };
+        if rc != 0 || !found {
+            return Ok(None);
+        }
+        let slice = if buf_ptr.is_null() || buf_len == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(buf_ptr as *const u8, buf_len) }
+        };
+        let info: LabelKeyInfo = serde_cbor::from_slice(slice)?;
+        Ok(Some(info))
+    }
+
+    fn available_labels(&self) -> Vec<String> {
+        let mut buf_ptr: *mut u8 = std::ptr::null_mut();
+        let mut buf_len: usize = 0;
+        let rc = unsafe {
+            (self.available_fn)(&mut buf_ptr as *mut *mut u8, &mut buf_len as *mut usize)
+        };
+        if rc != 0 || buf_ptr.is_null() || buf_len == 0 {
+            return Vec::new();
+        }
+        let slice = unsafe { std::slice::from_raw_parts(buf_ptr as *const u8, buf_len) };
+        serde_cbor::from_slice::<Vec<String>>(slice).unwrap_or_default()
+    }
+
+    fn can_resolve(&self, label: &str) -> bool {
+        let c_label = CString::new(label).unwrap_or_else(|_| CString::new("").unwrap());
+        let mut out = false;
+        let rc = unsafe { (self.can_resolve_fn)(c_label.as_ptr(), &mut out as *mut bool) };
+        rc == 0 && out
+    }
+
+    fn clone_box(&self) -> Box<dyn LabelResolver> {
+        Box::new(FfiLabelResolverBridge {
+            resolve_fn: self.resolve_fn,
+            available_fn: self.available_fn,
+            can_resolve_fn: self.can_resolve_fn,
+        })
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rn_keys_set_label_resolver(
+    keys: *mut c_void,
+    resolve_fn: RnResolveLabelFn,
+    available_fn: RnAvailableLabelsFn,
+    can_resolve_fn: RnCanResolveFn,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        return 1;
+    };
+    inner.label_resolver = Some(Arc::new(FfiLabelResolverBridge {
+        resolve_fn,
+        available_fn,
+        can_resolve_fn,
+    }));
+    0
 }
 
 #[no_mangle]
@@ -709,6 +807,7 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
         node_owned: Some(node),
         node_shared: None,
         mobile: None,
+        label_resolver: None,
     };
     let boxed = Box::new(inner);
     let handle = FfiKeysHandle {
@@ -1013,6 +1112,7 @@ pub unsafe extern "C" fn rn_keys_node_import_state(
         node_owned: Some(node),
         node_shared: None,
         mobile: None,
+        label_resolver: None,
     }));
     0
 }
@@ -1376,6 +1476,10 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
+    // Attach platform-provided LabelResolver if present
+    if let Some(resolver) = keys_inner.label_resolver.clone() {
+        options = options.with_label_resolver(resolver);
+    }
     options = options
         .with_key_manager(node_arc.clone())
         .with_local_node_public_key(node_arc.get_node_public_key())
