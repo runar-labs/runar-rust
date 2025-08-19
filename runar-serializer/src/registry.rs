@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 
-use crate::traits::{KeyStore, RunarDecrypt};
+use crate::traits::{KeyStore, LabelResolver, RunarDecrypt, RunarEncrypt};
 use crate::ArcValue;
 use serde::de::DeserializeOwned;
 
@@ -20,6 +20,13 @@ pub type ToJsonFn = fn(&[u8]) -> Result<JsonValue>;
 
 /// Global, thread-safe map: PlainTypeId -> decrypt function.
 static STRUCT_REGISTRY: Lazy<DashMap<TypeId, DecryptFn>> = Lazy::new(DashMap::new);
+
+/// Function pointer for element encryption stored in the registry.
+/// Receives a reference to a Plain value erased as &dyn Any, and returns CBOR bytes of Enc.
+pub type EncryptFn = fn(&dyn Any, &Arc<KeyStore>, &dyn LabelResolver) -> Result<Vec<u8>>;
+
+/// Global, thread-safe map: PlainTypeId -> encrypt function.
+static ENCRYPT_REGISTRY: Lazy<DashMap<TypeId, EncryptFn>> = Lazy::new(DashMap::new);
 
 /// Global, thread-safe map: Type name (&'static str) -> JSON conversion function.
 /// Using &'static str avoids per-registration heap allocations.
@@ -66,6 +73,41 @@ where
         TypeId::of::<Plain>(),
         decrypt_impl::<Plain, Enc> as DecryptFn,
     );
+}
+
+/// Register an encryptor for `Plain` producing encrypted representation `Enc`.
+/// This is intended to be invoked automatically by the `Encrypt` derive macro.
+pub fn register_encrypt<Plain, Enc>()
+where
+    Plain: 'static + RunarEncrypt<Encrypted = Enc>,
+    Enc: 'static + serde::Serialize,
+{
+    fn encrypt_impl<Plain, Enc>(
+        value_any: &dyn Any,
+        ks: &Arc<KeyStore>,
+        resolver: &dyn LabelResolver,
+    ) -> Result<Vec<u8>>
+    where
+        Plain: 'static + RunarEncrypt<Encrypted = Enc>,
+        Enc: 'static + serde::Serialize,
+    {
+        let plain = value_any
+            .downcast_ref::<Plain>()
+            .ok_or_else(|| anyhow::anyhow!("Encrypt downcast failed"))?;
+        let enc = plain.encrypt_with_keystore(ks, resolver)?;
+        let bytes = serde_cbor::to_vec(&enc)?;
+        Ok(bytes)
+    }
+
+    ENCRYPT_REGISTRY.insert(
+        TypeId::of::<Plain>(),
+        encrypt_impl::<Plain, Enc> as EncryptFn,
+    );
+}
+
+/// Lookup an encryptor function by the element TypeId.
+pub fn lookup_encryptor_by_typeid(type_id: TypeId) -> Option<EncryptFn> {
+    ENCRYPT_REGISTRY.get(&type_id).map(|e| *e.value())
 }
 
 /// Register a JSON conversion function for type `T`.
@@ -138,9 +180,18 @@ pub fn lookup_wire_name(rust_name: &str) -> Option<&'static str> {
 
 /// Get a JSON conversion function for a wire name
 pub fn get_json_converter_by_wire_name(wire_name: &str) -> Option<ToJsonFn> {
-    WIRE_NAME_JSON_REGISTRY
-        .get(wire_name)
-        .map(|entry| *entry.value())
+    if let Some(entry) = WIRE_NAME_JSON_REGISTRY.get(wire_name) {
+        return Some(*entry.value());
+    }
+    // Support parameterized container names like list<...> and map<string,...>
+    if let Some((base, _)) = wire_name.split_once('<') {
+        match base {
+            "list" => return Some(to_json_list_wire as ToJsonFn),
+            "map" => return Some(to_json_map_wire as ToJsonFn),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Look up TypeId by wire name (for dynamic flows)

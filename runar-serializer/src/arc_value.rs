@@ -166,8 +166,22 @@ impl ArcValue {
         T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         let arc = Arc::new(list);
-        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, keystore, resolver| {
             let list = erased.as_arc::<Vec<T>>()?;
+            if let (Some(ks), Some(res)) = (keystore, resolver) {
+                // Try element-level encryption via registry
+                if let Some(enc_fn) =
+                    crate::registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
+                {
+                    let mut out: Vec<Vec<u8>> = Vec::with_capacity(list.len());
+                    for item in list.iter() {
+                        let bytes = enc_fn(item as &dyn std::any::Any, ks, res)?;
+                        out.push(bytes);
+                    }
+                    return serde_cbor::to_vec(&out).map_err(anyhow::Error::from);
+                }
+            }
+            // No context or no encryptor: plain encode
             serde_cbor::to_vec(list.as_ref()).map_err(anyhow::Error::from)
         });
         let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
@@ -187,8 +201,20 @@ impl ArcValue {
         T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         let arc = Arc::new(map);
-        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, keystore, resolver| {
             let map = erased.as_arc::<HashMap<String, T>>()?;
+            if let (Some(ks), Some(res)) = (keystore, resolver) {
+                if let Some(enc_fn) =
+                    crate::registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
+                {
+                    let mut out: HashMap<String, Vec<u8>> = HashMap::with_capacity(map.len());
+                    for (k, v) in map.iter() {
+                        let bytes = enc_fn(v as &dyn std::any::Any, ks, res)?;
+                        out.insert(k.clone(), bytes);
+                    }
+                    return serde_cbor::to_vec(&out).map_err(anyhow::Error::from);
+                }
+            }
             serde_cbor::to_vec(map.as_ref()).map_err(anyhow::Error::from)
         });
         let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
@@ -422,10 +448,9 @@ impl ArcValue {
 
         let mut buf = vec![category_byte];
 
-        // Resolve wire name
+        // Resolve wire name (parameterized for containers)
         let wire_name: String = match self.category {
             ValueCategory::Primitive => {
-                // For primitives we rely on pre-registered mappings
                 let rust_name = type_name;
                 let Some(wire) = crate::registry::lookup_wire_name(rust_name) else {
                     return Err(anyhow!(
@@ -435,16 +460,33 @@ impl ArcValue {
                 };
                 wire.to_string()
             }
-            ValueCategory::List => "list".to_string(),
-            ValueCategory::Map => "map".to_string(),
+            ValueCategory::List => {
+                // Determine element wire name
+                // Attempt Vec<ArcValue> first for heterogeneous containers
+                if let Ok(_vec_av) = inner.as_arc::<Vec<ArcValue>>() {
+                    "list<any>".to_string()
+                } else {
+                    // For typed containers, resolve the element type wire name via Rust type name
+                    // Without runtime generic info for element T at this point,
+                    // we conservatively mark as heterogeneous list.
+                    "list<any>".to_string()
+                }
+            }
+            ValueCategory::Map => {
+                if let Ok(_map_av) = inner.as_arc::<HashMap<String, ArcValue>>() {
+                    "map<string,any>".to_string()
+                } else {
+                    // Conservatively mark as heterogeneous map when element type is unknown here.
+                    "map<string,any>".to_string()
+                }
+            }
             ValueCategory::Json => "json".to_string(),
             ValueCategory::Bytes => "bytes".to_string(),
             ValueCategory::Struct => {
-                // Prefer registry mapping; if absent, use simple ident of the Rust type as default
                 if let Some(wire) = crate::registry::lookup_wire_name(type_name) {
                     wire.to_string()
                 } else {
-                    // Default to the last segment after '::'
+                    // Deterministic default: use simple ident when not explicitly registered
                     type_name
                         .rsplit("::")
                         .next()
@@ -467,6 +509,7 @@ impl ArcValue {
             let resolver = &ctx.resolver;
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
+                // Container-aware encryption for list/map: delegate to ser_fn with context
                 ser_fn(inner, Some(ks), Some(resolver.as_ref()))
             } else {
                 return Err(anyhow!("No serialize function available"));
