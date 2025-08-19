@@ -767,10 +767,7 @@ impl ArcValue {
                         {
                             return json_fn(payload);
                         }
-                        // Fallback to rust-name keyed registry (legacy internal path)
-                        if let Some(json_fn) = crate::registry::get_json_converter(type_name) {
-                            return json_fn(payload);
-                        }
+                        // No rust-name fallback: only wire-name converters are supported
                         // Final fallback: attempt generic CBOR -> JSON value
                         if let Ok(value) = serde_cbor::from_slice::<serde_json::Value>(payload) {
                             return Ok(value);
@@ -820,8 +817,39 @@ impl ArcValue {
                 .value
                 .as_ref()
                 .ok_or(serde::ser::Error::custom("No value to serialize"))?;
-            let type_name = inner.type_name();
-            state.serialize_field("typename", type_name)?;
+            let rust_type_name = inner.type_name();
+
+            // Use the same wire-name resolution as the top-level header
+            let wire_name: String = match self.category {
+                ValueCategory::Primitive => {
+                    // For primitives we rely on pre-registered mappings
+                    let Some(wire) = crate::registry::lookup_wire_name(rust_type_name) else {
+                        return Err(serde::ser::Error::custom(format!(
+                            "Missing wire-name registration for primitive: {rust_type_name}",
+                        )));
+                    };
+                    wire.to_string()
+                }
+                ValueCategory::List => "list".to_string(),
+                ValueCategory::Map => "map".to_string(),
+                ValueCategory::Json => "json".to_string(),
+                ValueCategory::Bytes => "bytes".to_string(),
+                ValueCategory::Struct => {
+                    // Prefer registry mapping; if absent, use simple ident of the Rust type as default
+                    if let Some(wire) = crate::registry::lookup_wire_name(rust_type_name) {
+                        wire.to_string()
+                    } else {
+                        rust_type_name
+                            .rsplit("::")
+                            .next()
+                            .unwrap_or(rust_type_name)
+                            .to_string()
+                    }
+                }
+                ValueCategory::Null => "null".to_string(),
+            };
+
+            state.serialize_field("typename", &wire_name)?;
 
             // Serialize the actual value using the existing serialize_fn
             if let Some(inner) = &self.value {
@@ -919,20 +947,61 @@ impl ArcValue {
                     match category {
                         ValueCategory::Null => Ok(ArcValue::null()),
                         ValueCategory::Primitive => {
-                            // Eagerly deserialize primitives
+                            // Eagerly deserialize primitives using the wire name
                             let value: Vec<u8> =
                                 value.ok_or_else(|| de::Error::missing_field("value"))?;
-                            // Try to deserialize as different primitive types
-                            if let Ok(s) = serde_cbor::from_slice::<String>(&value) {
-                                Ok(ArcValue::new_primitive(s))
-                            } else if let Ok(i) = serde_cbor::from_slice::<i64>(&value) {
-                                Ok(ArcValue::new_primitive(i))
-                            } else if let Ok(f) = serde_cbor::from_slice::<f64>(&value) {
-                                Ok(ArcValue::new_primitive(f))
-                            } else if let Ok(b) = serde_cbor::from_slice::<bool>(&value) {
-                                Ok(ArcValue::new_primitive(b))
-                            } else {
-                                Err(de::Error::custom("Failed to deserialize primitive value"))
+
+                            match type_name.as_str() {
+                                "string" => serde_cbor::from_slice::<String>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "bool" => serde_cbor::from_slice::<bool>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "bytes" => serde_cbor::from_slice::<Vec<u8>>(&value)
+                                    .map(ArcValue::new_bytes)
+                                    .map_err(de::Error::custom),
+                                "char" => serde_cbor::from_slice::<char>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "i8" => serde_cbor::from_slice::<i8>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "i16" => serde_cbor::from_slice::<i16>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "i32" => serde_cbor::from_slice::<i32>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "i64" => serde_cbor::from_slice::<i64>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "i128" => serde_cbor::from_slice::<i128>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "u8" => serde_cbor::from_slice::<u8>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "u16" => serde_cbor::from_slice::<u16>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "u32" => serde_cbor::from_slice::<u32>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "u64" => serde_cbor::from_slice::<u64>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "u128" => serde_cbor::from_slice::<u128>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "f32" => serde_cbor::from_slice::<f32>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                "f64" => serde_cbor::from_slice::<f64>(&value)
+                                    .map(ArcValue::new_primitive)
+                                    .map_err(de::Error::custom),
+                                // No legacy fallback
+                                _ => Err(de::Error::custom("Unknown primitive wire type")),
                             }
                         }
                         ValueCategory::Bytes => {
