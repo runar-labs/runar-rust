@@ -7,7 +7,7 @@ license = "MIT"
 
 [lib]
 name = "runar_ffi"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 runar-keys = { path = "../runar-keys" }
@@ -29,4 +29,8 @@ cbindgen = "0.26"
 
 [features]
 default = []
+
+[dev-dependencies]
+serde_cbor = "0.11"
+libc = "0.2"
 

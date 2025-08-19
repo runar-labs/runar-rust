@@ -3538,6 +3538,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cbindgen",
+ "libc",
  "log",
  "once_cell",
  "runar-keys",

@@ -60,6 +60,8 @@ struct KeysInner {
     mobile: Option<MobileKeyManager>,
     // Optional platform-provided label resolver
     label_resolver: Option<Arc<dyn LabelResolver>>,
+    // Optional platform-provided local NodeInfo callback
+    get_local_node_info_cb: Option<RnGetLocalNodeInfoFn>,
 }
 
 #[allow(dead_code)]
@@ -222,6 +224,21 @@ pub extern "C" fn rn_keys_set_label_resolver(
         available_fn,
         can_resolve_fn,
     }));
+    0
+}
+
+type RnGetLocalNodeInfoFn =
+    unsafe extern "C" fn(out_cbor_ptr: *mut *mut u8, out_cbor_len: *mut usize) -> i32;
+
+#[no_mangle]
+pub extern "C" fn rn_keys_set_get_local_node_info(
+    keys: *mut c_void,
+    cb: RnGetLocalNodeInfoFn,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        return 1;
+    };
+    inner.get_local_node_info_cb = Some(cb);
     0
 }
 
@@ -808,6 +825,7 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
         node_shared: None,
         mobile: None,
         label_resolver: None,
+        get_local_node_info_cb: None,
     };
     let boxed = Box::new(inner);
     let handle = FfiKeysHandle {
@@ -1113,6 +1131,7 @@ pub unsafe extern "C" fn rn_keys_node_import_state(
         node_shared: None,
         mobile: None,
         label_resolver: None,
+        get_local_node_info_cb: None,
     }));
     0
 }
@@ -1488,6 +1507,27 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         .with_peer_disconnected_callback(pd_cb)
         .with_request_callback(rq_cb)
         .with_event_callback(ev_cb);
+
+    // Wire platform-provided get_local_node_info if set
+    if let Some(cb) = keys_inner.get_local_node_info_cb {
+        let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback =
+            Arc::new(move || {
+                let cb = cb;
+                Box::pin(async move {
+                    let mut ptr: *mut u8 = std::ptr::null_mut();
+                    let mut len: usize = 0;
+                    let rc = unsafe { cb(&mut ptr as *mut *mut u8, &mut len as *mut usize) };
+                    if rc != 0 || ptr.is_null() || len == 0 {
+                        return Err(anyhow::anyhow!("get_local_node_info failed"));
+                    }
+                    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                    let info: runar_schemas::NodeInfo = serde_cbor::from_slice(slice)
+                        .map_err(|e| anyhow::anyhow!("decode NodeInfo: {e}"))?;
+                    Ok(info)
+                })
+            });
+        options = options.with_get_local_node_info(get_local_node_info_cb);
+    }
     // Construct transport
     let transport = match QuicTransport::new(options) {
         Ok(t) => Arc::new(t),
@@ -1939,4 +1979,403 @@ pub unsafe extern "C" fn rn_transport_local_addr(
         return 3;
     }
     0
+}
+
+#[cfg(test)]
+mod ffi_tests {
+    use super::*;
+    use serde_cbor::Value;
+    use std::ffi::CString;
+
+    unsafe extern "C" fn test_resolve_label(
+        label: *const c_char,
+        out_found: *mut bool,
+        out_ptr: *mut *mut u8,
+        out_len: *mut usize,
+    ) -> i32 {
+        if label.is_null() || out_found.is_null() || out_ptr.is_null() || out_len.is_null() {
+            return 1;
+        }
+        let s = std::ffi::CStr::from_ptr(label)
+            .to_string_lossy()
+            .into_owned();
+        let (found, info): (bool, Value) = if s == "system" {
+            let mut map = std::collections::BTreeMap::<Value, Value>::new();
+            map.insert(
+                Value::Text("network_id".into()),
+                Value::Text("net-test".into()),
+            );
+            map.insert(
+                Value::Text("profile_public_keys".into()),
+                Value::Array(vec![]),
+            );
+            (true, Value::Map(map))
+        } else {
+            (false, Value::Null)
+        };
+        *out_found = found;
+        if !found {
+            return 0;
+        }
+        let buf = serde_cbor::to_vec(&info).unwrap();
+        let mut v = buf.clone();
+        let raw = v.as_mut_ptr();
+        let len = v.len();
+        std::mem::forget(v);
+        *out_ptr = raw;
+        *out_len = len;
+        0
+    }
+
+    unsafe extern "C" fn test_available_labels(out_ptr: *mut *mut u8, out_len: *mut usize) -> i32 {
+        if out_ptr.is_null() || out_len.is_null() {
+            return 1;
+        }
+        let labels = Value::Array(vec![Value::Text("system".into())]);
+        let buf = serde_cbor::to_vec(&labels).unwrap();
+        let mut v = buf.clone();
+        let raw = v.as_mut_ptr();
+        let len = v.len();
+        std::mem::forget(v);
+        *out_ptr = raw;
+        *out_len = len;
+        0
+    }
+
+    unsafe extern "C" fn test_can_resolve(label: *const c_char, out_can: *mut bool) -> i32 {
+        if label.is_null() || out_can.is_null() {
+            return 1;
+        }
+        let s = std::ffi::CStr::from_ptr(label)
+            .to_string_lossy()
+            .into_owned();
+        *out_can = s == "system";
+        0
+    }
+
+    #[test]
+    fn two_transports_request_response() {
+        unsafe {
+            // Keys A
+            let mut err = RnError {
+                code: 0,
+                message: std::ptr::null(),
+            };
+            let mut keys_a: *mut c_void = std::ptr::null_mut();
+            assert_eq!(rn_keys_new(&mut keys_a, &mut err), 0);
+            assert!(!keys_a.is_null());
+            // Provide NodeInfo via FFI for A
+            unsafe extern "C" fn node_info_a(out_ptr: *mut *mut u8, out_len: *mut usize) -> i32 {
+                if out_ptr.is_null() || out_len.is_null() {
+                    return 1;
+                }
+                let info = runar_schemas::NodeInfo {
+                    node_public_key: vec![],
+                    network_ids: vec![],
+                    addresses: vec![],
+                    node_metadata: runar_schemas::NodeMetadata {
+                        services: vec![],
+                        subscriptions: vec![],
+                    },
+                    version: 0,
+                };
+                let buf = serde_cbor::to_vec(&info).unwrap();
+                let mut v = buf.clone();
+                let raw = v.as_mut_ptr();
+                let len = v.len();
+                std::mem::forget(v);
+                unsafe {
+                    *out_ptr = raw;
+                    *out_len = len;
+                }
+                0
+            }
+            assert_eq!(rn_keys_set_get_local_node_info(keys_a, node_info_a), 0);
+            // Issue certificate for A
+            let (st_a_ptr, st_a_len) = {
+                let mut p: *mut u8 = std::ptr::null_mut();
+                let mut l: usize = 0;
+                assert_eq!(
+                    rn_keys_node_generate_csr(keys_a, &mut p, &mut l, &mut err),
+                    0
+                );
+                (p, l)
+            };
+            let (ncm_a_ptr, ncm_a_len) = {
+                let mut p: *mut u8 = std::ptr::null_mut();
+                let mut l: usize = 0;
+                assert_eq!(
+                    rn_keys_mobile_process_setup_token(
+                        keys_a, st_a_ptr, st_a_len, &mut p, &mut l, &mut err
+                    ),
+                    0
+                );
+                rn_free(st_a_ptr, st_a_len);
+                (p, l)
+            };
+            assert_eq!(
+                rn_keys_node_install_certificate(keys_a, ncm_a_ptr, ncm_a_len, &mut err),
+                0
+            );
+            rn_free(ncm_a_ptr, ncm_a_len);
+            assert_eq!(
+                rn_keys_set_label_resolver(
+                    keys_a,
+                    test_resolve_label,
+                    test_available_labels,
+                    test_can_resolve
+                ),
+                0
+            );
+
+            // Keys B
+            let mut keys_b: *mut c_void = std::ptr::null_mut();
+            assert_eq!(rn_keys_new(&mut keys_b, &mut err), 0);
+            assert!(!keys_b.is_null());
+            // Provide NodeInfo via FFI for B
+            unsafe extern "C" fn node_info_b(out_ptr: *mut *mut u8, out_len: *mut usize) -> i32 {
+                if out_ptr.is_null() || out_len.is_null() {
+                    return 1;
+                }
+                let info = runar_schemas::NodeInfo {
+                    node_public_key: vec![],
+                    network_ids: vec![],
+                    addresses: vec![],
+                    node_metadata: runar_schemas::NodeMetadata {
+                        services: vec![],
+                        subscriptions: vec![],
+                    },
+                    version: 0,
+                };
+                let buf = serde_cbor::to_vec(&info).unwrap();
+                let mut v = buf.clone();
+                let raw = v.as_mut_ptr();
+                let len = v.len();
+                std::mem::forget(v);
+                unsafe {
+                    *out_ptr = raw;
+                    *out_len = len;
+                }
+                0
+            }
+            assert_eq!(rn_keys_set_get_local_node_info(keys_b, node_info_b), 0);
+            // Issue certificate for B
+            let (st_b_ptr, st_b_len) = {
+                let mut p: *mut u8 = std::ptr::null_mut();
+                let mut l: usize = 0;
+                assert_eq!(
+                    rn_keys_node_generate_csr(keys_b, &mut p, &mut l, &mut err),
+                    0
+                );
+                (p, l)
+            };
+            let (ncm_b_ptr, ncm_b_len) = {
+                let mut p: *mut u8 = std::ptr::null_mut();
+                let mut l: usize = 0;
+                // Issue B's cert using the same Mobile CA from keys_a so both share trust
+                assert_eq!(
+                    rn_keys_mobile_process_setup_token(
+                        keys_a, st_b_ptr, st_b_len, &mut p, &mut l, &mut err
+                    ),
+                    0
+                );
+                rn_free(st_b_ptr, st_b_len);
+                (p, l)
+            };
+            assert_eq!(
+                rn_keys_node_install_certificate(keys_b, ncm_b_ptr, ncm_b_len, &mut err),
+                0
+            );
+            rn_free(ncm_b_ptr, ncm_b_len);
+            assert_eq!(
+                rn_keys_set_label_resolver(
+                    keys_b,
+                    test_resolve_label,
+                    test_available_labels,
+                    test_can_resolve
+                ),
+                0
+            );
+
+            // Options: bind_addr 127.0.0.1:0, max_message_size
+            let mut omap = std::collections::BTreeMap::<Value, Value>::new();
+            omap.insert(
+                Value::Text("bind_addr".into()),
+                Value::Text("127.0.0.1:0".into()),
+            );
+            omap.insert(
+                Value::Text("max_message_size".into()),
+                Value::Integer(65536),
+            );
+            let options = Value::Map(omap);
+            let options_buf = serde_cbor::to_vec(&options).unwrap();
+
+            // Transport A
+            let mut ta: *mut c_void = std::ptr::null_mut();
+            assert_eq!(
+                rn_transport_new_with_keys(
+                    keys_a,
+                    options_buf.as_ptr(),
+                    options_buf.len(),
+                    &mut ta,
+                    &mut err
+                ),
+                0
+            );
+            assert!(!ta.is_null());
+            assert_eq!(rn_transport_start(ta, &mut err), 0);
+            // Read local addr A
+            let mut a_addr: *mut c_char = std::ptr::null_mut();
+            let mut a_len: usize = 0;
+            assert_eq!(
+                rn_transport_local_addr(ta, &mut a_addr, &mut a_len, &mut err),
+                0
+            );
+            let a_addr_str = std::ffi::CStr::from_ptr(a_addr)
+                .to_string_lossy()
+                .into_owned();
+            rn_string_free(a_addr);
+
+            // Transport B
+            let mut tb: *mut c_void = std::ptr::null_mut();
+            assert_eq!(
+                rn_transport_new_with_keys(
+                    keys_b,
+                    options_buf.as_ptr(),
+                    options_buf.len(),
+                    &mut tb,
+                    &mut err
+                ),
+                0
+            );
+            assert!(!tb.is_null());
+            assert_eq!(rn_transport_start(tb, &mut err), 0);
+            // No need to query B address
+
+            // Connect B -> A via PeerInfo
+            let pk_a = {
+                let mut out: *mut u8 = std::ptr::null_mut();
+                let mut len: usize = 0;
+                assert_eq!(
+                    rn_keys_node_get_public_key(keys_a, &mut out, &mut len, &mut err),
+                    0
+                );
+                let v = std::slice::from_raw_parts(out, len).to_vec();
+                rn_free(out, len);
+                v
+            };
+            let peer_a = runar_transporter::discovery::multicast_discovery::PeerInfo::new(
+                pk_a,
+                vec![a_addr_str.clone()],
+            );
+            let peer_cbor = serde_cbor::to_vec(&peer_a).unwrap();
+            assert_eq!(
+                rn_transport_connect_peer(tb, peer_cbor.as_ptr(), peer_cbor.len(), &mut err),
+                0
+            );
+
+            // Send a request B->A and then handle RequestReceived on A by completing it
+            let path = CString::new("/echo").unwrap();
+            let cid = CString::new("c1").unwrap();
+            let peer_id = {
+                // peer id is compact id of pk_a
+                runar_common::compact_ids::compact_id(&peer_a.public_key)
+            };
+            let peer_id_c = CString::new(peer_id.clone()).unwrap();
+            let payload: Vec<u8> = b"hello".to_vec();
+            let profile_pk: Vec<u8> = vec![];
+            assert_eq!(
+                rn_transport_request(
+                    tb,
+                    path.as_ptr(),
+                    cid.as_ptr(),
+                    payload.as_ptr(),
+                    payload.len(),
+                    peer_id_c.as_ptr(),
+                    profile_pk.as_ptr(),
+                    profile_pk.len(),
+                    &mut err
+                ),
+                0
+            );
+
+            // First poll events on A to get the RequestReceived and complete it
+            let mut request_id_c: Option<CString> = None;
+            for _ in 0..50 {
+                let mut ev_ptr: *mut u8 = std::ptr::null_mut();
+                let mut ev_len: usize = 0;
+                let rc = rn_transport_poll_event(ta, &mut ev_ptr, &mut ev_len, &mut err);
+                assert_eq!(rc, 0);
+                if !ev_ptr.is_null() && ev_len > 0 {
+                    let slice = std::slice::from_raw_parts(ev_ptr, ev_len);
+                    let v: Value = serde_cbor::from_slice(slice).unwrap();
+                    rn_free(ev_ptr, ev_len);
+                    if let Value::Map(m) = v {
+                        let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
+                            Value::Text(s) => Some(s.as_str()),
+                            _ => None,
+                        });
+                        if typ == Some("RequestReceived") {
+                            if let Some(Value::Text(rid)) = m.get(&Value::Text("request_id".into()))
+                            {
+                                request_id_c = Some(CString::new(rid.as_str()).unwrap());
+                                break;
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            let rid = request_id_c.expect("no request received on server");
+            let resp_payload: Vec<u8> = b"world".to_vec();
+            let empty_pk: Vec<u8> = vec![];
+            assert_eq!(
+                rn_transport_complete_request(
+                    ta,
+                    rid.as_ptr(),
+                    resp_payload.as_ptr(),
+                    resp_payload.len(),
+                    empty_pk.as_ptr(),
+                    empty_pk.len(),
+                    &mut err
+                ),
+                0
+            );
+
+            // Now poll events on B until ResponseReceived
+            let mut got_resp = false;
+            for _ in 0..50 {
+                let mut ev_ptr: *mut u8 = std::ptr::null_mut();
+                let mut ev_len: usize = 0;
+                let rc = rn_transport_poll_event(tb, &mut ev_ptr, &mut ev_len, &mut err);
+                assert_eq!(rc, 0);
+                if !ev_ptr.is_null() && ev_len > 0 {
+                    let slice = std::slice::from_raw_parts(ev_ptr, ev_len);
+                    let v: Value = serde_cbor::from_slice(slice).unwrap();
+                    if let Value::Map(m) = v {
+                        let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
+                            Value::Text(s) => Some(s.as_str()),
+                            _ => None,
+                        });
+                        if typ == Some("ResponseReceived") {
+                            got_resp = true;
+                            rn_free(ev_ptr, ev_len);
+                            break;
+                        }
+                    }
+                    rn_free(ev_ptr, ev_len);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            assert!(got_resp, "did not get response event");
+
+            // Cleanup
+            let _ = rn_transport_stop(tb, &mut err);
+            rn_transport_free(tb);
+            let _ = rn_transport_stop(ta, &mut err);
+            rn_transport_free(ta);
+            rn_keys_free(keys_a);
+            rn_keys_free(keys_b);
+        }
+    }
 }

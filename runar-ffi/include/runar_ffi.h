@@ -27,6 +27,8 @@ typedef int32_t (*RNAPIRnAvailableLabelsFn)(uint8_t **out_cbor_ptr, size_t *out_
 
 typedef int32_t (*RNAPIRnCanResolveFn)(const char *label, bool *out_can);
 
+typedef int32_t (*RNAPIRnGetLocalNodeInfoFn)(uint8_t **out_cbor_ptr, size_t *out_cbor_len);
+
 typedef struct RNAPIRnError {
   int32_t code;
   const char *message;
@@ -48,6 +50,8 @@ int32_t rn_keys_set_label_resolver(void *keys,
                                    RNAPIRnResolveLabelFn resolve_fn,
                                    RNAPIRnAvailableLabelsFn available_fn,
                                    RNAPIRnCanResolveFn can_resolve_fn);
+
+int32_t rn_keys_set_get_local_node_info(void *keys, RNAPIRnGetLocalNodeInfoFn cb);
 
 int32_t rn_last_error(char *out, size_t out_len);
 
