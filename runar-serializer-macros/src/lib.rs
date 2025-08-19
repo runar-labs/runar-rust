@@ -39,10 +39,14 @@ fn extract_wire_name(attrs: &[Attribute], default_ident: &Ident) -> proc_macro2:
             });
         }
     }
-    wire_name.map(|s| quote! { #s }).unwrap_or_else(|| {
+    if let Some(s) = wire_name {
+        let lit = syn::LitStr::new(&s, proc_macro2::Span::call_site());
+        quote! { #lit }
+    } else {
         let simple = default_ident.to_string();
-        quote! { #simple }
-    })
+        let lit = syn::LitStr::new(&simple, proc_macro2::Span::call_site());
+        quote! { #lit }
+    }
 }
 
 #[proc_macro_derive(Plain, attributes(runar))]
@@ -294,6 +298,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             fn register_decryptor() {
                 runar_serializer::registry::register_decrypt::<#struct_name, #encrypted_name>();
                 runar_serializer::registry::register_type_name::<#struct_name>(#wire_name_literal);
+                runar_serializer::registry::register_encrypt::<#struct_name, #encrypted_name>();
             }
         };
 

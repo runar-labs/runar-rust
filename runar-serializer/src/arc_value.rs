@@ -112,6 +112,87 @@ impl fmt::Debug for LazyDataWithOffset {
 }
 
 impl ArcValue {
+    fn parse_generic_params(rust_type_name: &str) -> Option<Vec<String>> {
+        let start = rust_type_name.find('<')?;
+        let end = rust_type_name.rfind('>')?;
+        if end <= start + 1 {
+            return Some(Vec::new());
+        }
+        let inside = &rust_type_name[start + 1..end];
+        // Naive split on commas, sufficient for Vec<T> and HashMap<K, V>
+        let params = inside
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<_>>();
+        Some(params)
+    }
+
+    fn wire_name_for_container(inner: &ErasedArc, is_list: bool) -> Result<String> {
+        let rust_type_name = inner.type_name();
+        // If container holds ArcValue elements, it's heterogeneous
+        if is_list {
+            if rust_type_name.contains("ArcValue") {
+                return Ok("list<any>".to_string());
+            }
+            if let Some(params) = Self::parse_generic_params(rust_type_name) {
+                if let Some(elem_rust) = params.first() {
+                    if elem_rust.contains("ArcValue") {
+                        return Ok("list<any>".to_string());
+                    }
+                    if let Some(wire) = crate::registry::lookup_wire_name(elem_rust) {
+                        return Ok(format!("list<{wire}>"));
+                    }
+                    // If primitive, registry must already have it; error otherwise
+                    return Err(anyhow!(
+                        "Missing wire-name registration for list element type: {}",
+                        elem_rust
+                    ));
+                }
+            }
+            // Unknown format
+            Err(anyhow!(
+                "Unable to determine element type for list: {}",
+                rust_type_name
+            ))
+        } else {
+            // Map
+            if rust_type_name.contains("ArcValue") {
+                return Ok("map<string,any>".to_string());
+            }
+            if let Some(params) = Self::parse_generic_params(rust_type_name) {
+                if params.len() != 2 {
+                    return Err(anyhow!(
+                        "Expected two generic params for map, got {} in {}",
+                        params.len(),
+                        rust_type_name
+                    ));
+                }
+                let key_rust = &params[0];
+                let val_rust = &params[1];
+                if !is_string(key_rust)
+                    && key_rust != "alloc::string::String"
+                    && key_rust != "std::string::String"
+                {
+                    return Err(anyhow!("Map key must be String, got {}", key_rust));
+                }
+                if val_rust.contains("ArcValue") {
+                    return Ok("map<string,any>".to_string());
+                }
+                if let Some(wire) = crate::registry::lookup_wire_name(val_rust) {
+                    return Ok(format!("map<string,{wire}>"));
+                }
+                return Err(anyhow!(
+                    "Missing wire-name registration for map value type: {}",
+                    val_rust
+                ));
+            }
+            Err(anyhow!(
+                "Unable to determine key/value types for map: {}",
+                rust_type_name
+            ))
+        }
+    }
+
     /// Category of this value
     pub fn category(&self) -> ValueCategory {
         self.category
@@ -166,8 +247,22 @@ impl ArcValue {
         T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         let arc = Arc::new(list);
-        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, keystore, resolver| {
             let list = erased.as_arc::<Vec<T>>()?;
+            if let (Some(ks), Some(res)) = (keystore, resolver) {
+                // Try element-level encryption via registry
+                if let Some(enc_fn) =
+                    crate::registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
+                {
+                    let mut out: Vec<Vec<u8>> = Vec::with_capacity(list.len());
+                    for item in list.iter() {
+                        let bytes = enc_fn(item as &dyn std::any::Any, ks, res)?;
+                        out.push(bytes);
+                    }
+                    return serde_cbor::to_vec(&out).map_err(anyhow::Error::from);
+                }
+            }
+            // No context or no encryptor: plain encode
             serde_cbor::to_vec(list.as_ref()).map_err(anyhow::Error::from)
         });
         let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
@@ -187,8 +282,20 @@ impl ArcValue {
         T: 'static + Clone + Debug + Send + Sync + Serialize + DeserializeOwned,
     {
         let arc = Arc::new(map);
-        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
+        let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, keystore, resolver| {
             let map = erased.as_arc::<HashMap<String, T>>()?;
+            if let (Some(ks), Some(res)) = (keystore, resolver) {
+                if let Some(enc_fn) =
+                    crate::registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
+                {
+                    let mut out: HashMap<String, Vec<u8>> = HashMap::with_capacity(map.len());
+                    for (k, v) in map.iter() {
+                        let bytes = enc_fn(v as &dyn std::any::Any, ks, res)?;
+                        out.insert(k.clone(), bytes);
+                    }
+                    return serde_cbor::to_vec(&out).map_err(anyhow::Error::from);
+                }
+            }
             serde_cbor::to_vec(map.as_ref()).map_err(anyhow::Error::from)
         });
         let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
@@ -422,10 +529,9 @@ impl ArcValue {
 
         let mut buf = vec![category_byte];
 
-        // Resolve wire name
+        // Resolve wire name (parameterized for containers)
         let wire_name: String = match self.category {
             ValueCategory::Primitive => {
-                // For primitives we rely on pre-registered mappings
                 let rust_name = type_name;
                 let Some(wire) = crate::registry::lookup_wire_name(rust_name) else {
                     return Err(anyhow!(
@@ -435,21 +541,18 @@ impl ArcValue {
                 };
                 wire.to_string()
             }
-            ValueCategory::List => "list".to_string(),
-            ValueCategory::Map => "map".to_string(),
+            ValueCategory::List => Self::wire_name_for_container(inner, true)?,
+            ValueCategory::Map => Self::wire_name_for_container(inner, false)?,
             ValueCategory::Json => "json".to_string(),
             ValueCategory::Bytes => "bytes".to_string(),
             ValueCategory::Struct => {
-                // Prefer registry mapping; if absent, use simple ident of the Rust type as default
                 if let Some(wire) = crate::registry::lookup_wire_name(type_name) {
                     wire.to_string()
                 } else {
-                    // Default to the last segment after '::'
-                    type_name
-                        .rsplit("::")
-                        .next()
-                        .unwrap_or(type_name)
-                        .to_string()
+                    return Err(anyhow!(
+                        "Missing wire-name registration for struct: {}",
+                        type_name
+                    ));
                 }
             }
             ValueCategory::Null => "null".to_string(),
@@ -467,6 +570,7 @@ impl ArcValue {
             let resolver = &ctx.resolver;
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
+                // Container-aware encryption for list/map: delegate to ser_fn with context
                 ser_fn(inner, Some(ks), Some(resolver.as_ref()))
             } else {
                 return Err(anyhow!("No serialize function available"));
@@ -580,8 +684,51 @@ impl ArcValue {
         if self.category != ValueCategory::List {
             return Err(anyhow!("Not a list"));
         }
-        let list_arc = self.as_type_ref::<Vec<ArcValue>>()?;
 
+        let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
+        if inner.is_lazy {
+            // Handle lazy list with parameterized wire names
+            // Capture optional keystore for potential element-level decrypt
+            let ks_opt = inner.get_lazy_data()?.keystore.clone();
+
+            return self.handle_lazy_data(|payload, type_name| {
+                if type_name.starts_with("list<") {
+                    // Try encrypted-bytes element container
+                    if let Ok(vec_bytes) = serde_cbor::from_slice::<Vec<Vec<u8>>>(payload) {
+                        let ks = ks_opt
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
+                        let mut out: Vec<Arc<T>> = Vec::with_capacity(vec_bytes.len());
+                        for b in vec_bytes.iter() {
+                            let plain: T = crate::registry::try_decrypt_into::<T>(b, ks)?;
+                            out.push(Arc::new(plain));
+                        }
+                        return Ok(out);
+                    }
+                    // Try plain Vec<T>
+                    if let Ok(vec_plain) = serde_cbor::from_slice::<Vec<T>>(payload) {
+                        let out: Vec<Arc<T>> = vec_plain.into_iter().map(|v| Arc::new(v)).collect();
+                        return Ok(out);
+                    }
+                    // Try heterogeneous Vec<ArcValue> then map to T
+                    if let Ok(vec_av) = serde_cbor::from_slice::<Vec<ArcValue>>(payload) {
+                        let mut out: Vec<Arc<T>> = Vec::with_capacity(vec_av.len());
+                        for v in vec_av.iter() {
+                            out.push(v.as_type_ref::<T>()?);
+                        }
+                        return Ok(out);
+                    }
+                    return Err(anyhow!(
+                        "Unsupported list payload for declared wire name: {type_name}"
+                    ));
+                }
+                // Not a parameterized list wire name
+                Err(anyhow!("Invalid list wire name: {type_name}"))
+            });
+        }
+
+        // Non-lazy path: expect Vec<ArcValue>
+        let list_arc = inner.as_arc::<Vec<ArcValue>>()?;
         let list_of_type: Vec<Arc<T>> = list_arc
             .iter()
             .map(|entry| {
@@ -590,7 +737,6 @@ impl ArcValue {
                     .expect("can't convert list entry to type")
             })
             .collect();
-
         Ok(list_of_type)
     }
 
@@ -608,8 +754,55 @@ impl ArcValue {
         if self.category != ValueCategory::Map {
             return Err(anyhow!("Not a map"));
         }
-        let map_arc = self.as_type_ref::<HashMap<String, ArcValue>>()?;
 
+        let inner = self.value.as_ref().ok_or(anyhow!("No value"))?;
+        if inner.is_lazy {
+            let ks_opt = inner.get_lazy_data()?.keystore.clone();
+
+            return self.handle_lazy_data(|payload, type_name| {
+                if type_name.starts_with("map<") {
+                    // Try encrypted-bytes values
+                    if let Ok(map_bytes) =
+                        serde_cbor::from_slice::<HashMap<String, Vec<u8>>>(payload)
+                    {
+                        let ks = ks_opt
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
+                        let mut out: HashMap<String, Arc<T>> =
+                            HashMap::with_capacity(map_bytes.len());
+                        for (k, vbytes) in map_bytes.iter() {
+                            let plain: T = crate::registry::try_decrypt_into::<T>(vbytes, ks)?;
+                            out.insert(k.clone(), Arc::new(plain));
+                        }
+                        return Ok(out);
+                    }
+                    // Try plain map<String, T>
+                    if let Ok(map_plain) = serde_cbor::from_slice::<HashMap<String, T>>(payload) {
+                        let out: HashMap<String, Arc<T>> = map_plain
+                            .into_iter()
+                            .map(|(k, v)| (k, Arc::new(v)))
+                            .collect();
+                        return Ok(out);
+                    }
+                    // Try heterogeneous map<String, ArcValue>
+                    if let Ok(map_av) = serde_cbor::from_slice::<HashMap<String, ArcValue>>(payload)
+                    {
+                        let mut out: HashMap<String, Arc<T>> = HashMap::with_capacity(map_av.len());
+                        for (k, v) in map_av.iter() {
+                            out.insert(k.clone(), v.as_type_ref::<T>()?);
+                        }
+                        return Ok(out);
+                    }
+                    return Err(anyhow!(
+                        "Unsupported map payload for declared wire name: {type_name}"
+                    ));
+                }
+                Err(anyhow!("Invalid map wire name: {type_name}"))
+            });
+        }
+
+        // Non-lazy path: expect HashMap<String, ArcValue>
+        let map_arc = inner.as_arc::<HashMap<String, ArcValue>>()?;
         let map_of_type: HashMap<String, Arc<T>> = map_arc
             .iter()
             .map(|(key, value)| {
@@ -621,7 +814,6 @@ impl ArcValue {
                 )
             })
             .collect();
-
         Ok(map_of_type)
     }
 
