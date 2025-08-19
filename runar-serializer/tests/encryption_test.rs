@@ -15,6 +15,7 @@ use runar_serializer_macros::Encrypt;
 
 // Test struct with encryption
 #[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize, Encrypt)]
+#[runar(name = "encryption_test.TestProfile")]
 pub struct TestProfile {
     pub id: String,
     #[runar(system)]
