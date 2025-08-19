@@ -1383,6 +1383,18 @@ pub unsafe extern "C" fn rn_keys_node_import_state(
         set_error(err, 4, "state_cbor is null");
         return 4;
     }
+    // Prevent importing a new node while a shared instance is in use by a transport
+    let handle_ptr = keys as *mut FfiKeysHandle;
+    let current_inner = unsafe { &*(*handle_ptr).inner };
+    if current_inner.node_shared.is_some() {
+        set_error(
+            err,
+            1,
+            "cannot import state while transport is active (shared node in use)",
+        );
+        return 1;
+    }
+
     let logger = Arc::new(Logger::new_root(Component::Keys));
     let slice = std::slice::from_raw_parts(state_cbor, state_len);
     let state: NodeKeyManagerState = match serde_cbor::from_slice(slice) {
