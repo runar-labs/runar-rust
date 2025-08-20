@@ -1004,7 +1004,16 @@ pub unsafe extern "C" fn rn_keys_mobile_derive_user_profile_key(
     }
     if inner.mobile.is_none() {
         match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
+            Ok(mut m) => {
+                if let Some(ks) = inner.device_keystore.clone() {
+                    m.register_device_keystore(ks);
+                }
+                if let Some(dir) = inner.persistence_dir.clone() {
+                    m.set_persistence_dir(dir);
+                }
+                m.enable_auto_persist(inner.auto_persist);
+                inner.mobile = Some(m)
+            }
             Err(e) => {
                 set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                 return 2;
@@ -1099,7 +1108,16 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
         }
         if inner.mobile.is_none() {
             match MobileKeyManager::new(inner.logger.clone()) {
-                Ok(m) => inner.mobile = Some(m),
+                Ok(mut m) => {
+                    if let Some(ks) = inner.device_keystore.clone() {
+                        m.register_device_keystore(ks);
+                    }
+                    if let Some(dir) = inner.persistence_dir.clone() {
+                        m.set_persistence_dir(dir);
+                    }
+                    m.enable_auto_persist(inner.auto_persist);
+                    inner.mobile = Some(m)
+                }
                 Err(e) => {
                     set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                     return 2;
@@ -1143,7 +1161,16 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
         }
         if inner.mobile.is_none() {
             match MobileKeyManager::new(inner.logger.clone()) {
-                Ok(m) => inner.mobile = Some(m),
+                Ok(mut m) => {
+                    if let Some(ks) = inner.device_keystore.clone() {
+                        m.register_device_keystore(ks);
+                    }
+                    if let Some(dir) = inner.persistence_dir.clone() {
+                        m.set_persistence_dir(dir);
+                    }
+                    m.enable_auto_persist(inner.auto_persist);
+                    inner.mobile = Some(m)
+                }
                 Err(e) => {
                     set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                     return 2;
@@ -2149,7 +2176,16 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
     if inner.mobile.is_none() {
         // Lazily create a MobileKeyManager to act as CA
         match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
+            Ok(mut m) => {
+                if let Some(ks) = inner.device_keystore.clone() {
+                    m.register_device_keystore(ks);
+                }
+                if let Some(dir) = inner.persistence_dir.clone() {
+                    m.set_persistence_dir(dir);
+                }
+                m.enable_auto_persist(inner.auto_persist);
+                inner.mobile = Some(m)
+            }
             Err(e) => {
                 set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                 return 2;
