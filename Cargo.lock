@@ -3710,6 +3710,7 @@ dependencies = [
  "runar_common 0.1.0",
  "runar_transporter",
  "rustls-pki-types",
+ "serde",
  "serde_cbor",
  "tokio",
  "uuid",
