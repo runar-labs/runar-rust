@@ -66,6 +66,57 @@ Steps:
 - Feature `apple-keystore` enables the Apple backend and pulls optional deps.
 - No conflict with existing crypto deps: we already use `aes-gcm` and P-256 primitives; `keychain-services` only wraps Apple Security APIs.
 
+### Linux backend (to implement now for CI and TS/Bun)
+
+Approach: Use system keyring (Secret Service/KWallet) via the `keyring` crate to store an app-scoped AES-256 key. Perform AEAD in Rust with `aes-gcm` using the same format and AAD policy as Apple.
+
+Rationale:
+- Works across most Linux environments and in CI (headless). Falls back gracefully if no keyring provider is available.
+- Not hardware-backed, but isolates the AES key from app storage. Good for development and automated testing.
+
+Crates:
+- `keyring = "1"` (optional) — cross-platform secret storage (Secret Service/KWallet on Linux, also supports Windows Credential Manager).
+- `aes-gcm` (already in deps) for AEAD.
+- `zeroize = "1"` (optional) for wiping unwrapped keys.
+
+Feature flags:
+- `linux-keystore` enables the Linux backend and pulls `keyring` and `zeroize`.
+
+Key storage strategy:
+- Service: `"com.runar.keys"`
+- Account: `"state.aead.v1"` (or include role/node_id for multi-node testing)
+- Stored secret: 32-byte random AES key. Retrieved at runtime for AEAD.
+- If item missing: generate a new AES-256 key and store it.
+
+Ciphertext and AAD:
+- Same as Apple: `version | nonce | tag | ciphertext` with AAD `"runar:keys_state:v1|role=<mobile|node>|node_id=<id>"`.
+
+API surface in `runar-keys`:
+- Implement `LinuxDeviceKeystore` that satisfies `DeviceKeystore`.
+- `new(service: &str, account: &str)` constructs a backend bound to a namespaced entry.
+- Internally uses `keyring::Entry` read/set to retrieve or create the AES key.
+
+FFI integration (planned):
+- `rn_keys_register_linux_device_keystore(keys, const char* service, const char* account, err)`
+- Reuse existing persistence APIs (`rn_keys_set_persistence_dir`, `rn_keys_enable_auto_persist`, `rn_keys_*_get_keystore_state`).
+
+Testing in CI:
+- Default to `service = "com.runar.keys"`, `account = "state.aead.v1"`.
+- Ensure the CI image has a Secret Service provider (e.g., `gnome-keyring` or `kwallet`) or rely on `keyring` crate’s fallback if available. For headless CI, consider `org.freedesktop.secrets` mock or a temporary in-memory provider.
+
+Security notes:
+- This backend is not a TEE and does not offer hardware-backed guarantees. It is acceptable for development/CI and Linux desktop use. For production Linux servers, consider dedicated HSM/KMS integration later.
+
+### Windows backend (later)
+
+Approach: Use Windows Credential Manager via the `keyring` crate to store the AES-256 key; perform AEAD in Rust with `aes-gcm`.
+
+Crates and features:
+- `keyring` optional dep, feature `windows-keystore` to enable the backend.
+
+API and AAD:
+- Same as Linux; reuse `DeviceKeystore` with a `WindowsDeviceKeystore` implementation.
+
 ### Open items
 
 - Finalize error taxonomy for keystore failures (transient vs permanent).
