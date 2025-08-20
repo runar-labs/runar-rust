@@ -23,6 +23,11 @@ typedef struct RNAPIRnError {
   const char *message;
 } RNAPIRnError;
 
+typedef struct RNAPIRnDeviceKeystoreCaps {
+  uint32_t version;
+  uint32_t flags;
+} RNAPIRnDeviceKeystoreCaps;
+
 typedef struct RNAPIFfiKeysHandle {
   struct RNAPIKeysInner *inner;
 } RNAPIFfiKeysHandle;
@@ -57,6 +62,43 @@ int32_t rn_last_error(char *out, size_t out_len);
 
 void rn_set_log_level(int32_t level);
 
+int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RNAPIRnError *err);
+
+int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RNAPIRnError *err);
+
+int32_t rn_keys_wipe_persistence(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_node_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
+
+int32_t rn_keys_get_keystore_caps(void *keys,
+                                  struct RNAPIRnDeviceKeystoreCaps *out_caps,
+                                  struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_get_keystore_state_return(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_node_get_keystore_state_return(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_set_persistence_dir_return(void *keys, const char *dir, struct RNAPIRnError *err);
+
+int32_t rn_keys_enable_auto_persist_return(void *keys, bool enabled, struct RNAPIRnError *err);
+
+int32_t rn_keys_wipe_persistence_return(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_flush_state(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_flush_state_return(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_register_apple_device_keystore(void *keys,
+                                               const char *label,
+                                               struct RNAPIRnError *err);
+
+int32_t rn_keys_register_linux_device_keystore(void *keys,
+                                               const char *service,
+                                               const char *account,
+                                               struct RNAPIRnError *err);
+
 int32_t rn_keys_encrypt_with_envelope(void *keys,
                                       const uint8_t *data,
                                       size_t data_len,
@@ -81,6 +123,43 @@ int32_t rn_keys_encrypt_local_data(void *keys,
                                    uint8_t **out_cipher,
                                    size_t *out_len,
                                    struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_derive_user_profile_key(void *keys,
+                                               const char *label,
+                                               uint8_t **out_pk,
+                                               size_t *out_len,
+                                               struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_install_network_public_key(void *keys,
+                                                  const uint8_t *network_public_key,
+                                                  size_t len,
+                                                  struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_generate_network_data_key(void *keys,
+                                                 char **out_str,
+                                                 size_t *out_len,
+                                                 struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_get_network_public_key(void *keys,
+                                              const char *network_id,
+                                              uint8_t **out_pk,
+                                              size_t *out_len,
+                                              struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_create_network_key_message(void *keys,
+                                                  const char *network_id,
+                                                  const uint8_t *node_agreement_pk,
+                                                  size_t node_agreement_pk_len,
+                                                  uint8_t **out_msg_cbor,
+                                                  size_t *out_len,
+                                                  struct RNAPIRnError *err);
+
+int32_t rn_keys_node_install_network_key(void *keys,
+                                         const uint8_t *nkm_cbor,
+                                         size_t nkm_len,
+                                         struct RNAPIRnError *err);
 
 int32_t rn_keys_decrypt_local_data(void *keys,
                                    const uint8_t *encrypted,
@@ -135,6 +214,14 @@ int32_t rn_discovery_new_with_multicast(void *keys,
                                         void **out_discovery,
                                         struct RNAPIRnError *err);
 
+/**
+ * Bun-friendly: returns discovery handle pointer; null on error. Delegates to the C-conventional API.
+ */
+void *rn_discovery_new_with_multicast_return(void *keys,
+                                             const uint8_t *options_cbor,
+                                             size_t options_len,
+                                             struct RNAPIRnError *err);
+
 void rn_discovery_free(void *discovery);
 
 int32_t rn_discovery_init(void *discovery,
@@ -157,9 +244,17 @@ int32_t rn_discovery_update_local_peer_info(void *discovery,
                                             size_t len,
                                             struct RNAPIRnError *err);
 
+void rn_keys_free(void *keys);
+
+/**
+ * C-conventional: writes handle to out param; returns 0 on success, non-zero on error.
+ */
 int32_t rn_keys_new(void **out_keys, struct RNAPIRnError *err);
 
-void rn_keys_free(void *keys);
+/**
+ * Bun-friendly: returns the handle pointer directly; returns null on error; err is filled.
+ */
+void *rn_keys_new_return(struct RNAPIRnError *err);
 
 int32_t rn_keys_node_get_public_key(void *keys,
                                     uint8_t **out,
@@ -188,31 +283,19 @@ int32_t rn_keys_node_install_certificate(void *keys,
                                          size_t ncm_len,
                                          struct RNAPIRnError *err);
 
-int32_t rn_keys_node_export_state(void *keys,
-                                  uint8_t **out_state_cbor,
-                                  size_t *out_len,
-                                  struct RNAPIRnError *err);
-
-int32_t rn_keys_node_import_state(void *keys,
-                                  const uint8_t *state_cbor,
-                                  size_t state_len,
-                                  struct RNAPIRnError *err);
-
-int32_t rn_keys_mobile_export_state(void *keys,
-                                    uint8_t **out_state_cbor,
-                                    size_t *out_len,
-                                    struct RNAPIRnError *err);
-
-int32_t rn_keys_mobile_import_state(void *keys,
-                                    const uint8_t *state_cbor,
-                                    size_t state_len,
-                                    struct RNAPIRnError *err);
-
 int32_t rn_transport_new_with_keys(void *keys,
                                    const uint8_t *options_cbor,
                                    size_t options_len,
                                    void **out_transport,
                                    struct RNAPIRnError *err);
+
+/**
+ * Bun-friendly: returns transport handle pointer; null on error. Delegates to the C-conventional API.
+ */
+void *rn_transport_new_with_keys_return(void *keys,
+                                        const uint8_t *options_cbor,
+                                        size_t options_len,
+                                        struct RNAPIRnError *err);
 
 void rn_transport_free(void *transport);
 

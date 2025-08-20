@@ -8,6 +8,10 @@ use crate::certificate::{
 };
 use crate::derivation::derive_agreement_from_master;
 use crate::error::{KeyError, Result};
+use crate::keystore::{
+    persistence::{load_state, save_state, PersistenceConfig, Role},
+    DeviceKeystore,
+};
 use crate::{log_debug, log_error, log_info};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
@@ -107,6 +111,12 @@ pub struct MobileKeyManager {
     serial_counter: u64,
     /// Logger instance
     logger: Arc<Logger>,
+    /// Optional device keystore for on-device encrypted persistence
+    device_keystore: Option<Arc<dyn DeviceKeystore>>,
+    /// Optional persistence configuration
+    persistence: Option<PersistenceConfig>,
+    /// If true, persist state automatically after mutations
+    auto_persist: bool,
 }
 
 /// Serializable snapshot of the MobileKeyManager. This allows persisting
@@ -150,7 +160,100 @@ impl MobileKeyManager {
             issued_certificates: HashMap::new(),
             serial_counter: 1, // Start at 1 to avoid 0
             logger,
+            device_keystore: None,
+            persistence: None,
+            auto_persist: true,
         })
+    }
+
+    /// Configure the persistence base directory.
+    pub fn set_persistence_dir(&mut self, base_dir: std::path::PathBuf) {
+        self.persistence = Some(PersistenceConfig::new(base_dir));
+    }
+
+    /// Register a device keystore used to encrypt/decrypt persisted state.
+    pub fn register_device_keystore(&mut self, keystore: Arc<dyn DeviceKeystore>) {
+        self.device_keystore = Some(keystore);
+    }
+
+    /// Enable or disable auto persistence.
+    pub fn enable_auto_persist(&mut self, enabled: bool) {
+        self.auto_persist = enabled;
+        if enabled {
+            let _ = self.flush_state();
+        }
+    }
+
+    /// Attempt to load state from disk using the configured keystore.
+    /// Returns true if state was loaded, false if not found.
+    pub fn probe_and_load_state(&mut self) -> Result<bool> {
+        let (Some(keystore), Some(cfg)) = (self.device_keystore.clone(), self.persistence.clone())
+        else {
+            return Ok(false);
+        };
+        let role = Role::Mobile;
+        if let Ok(Some(bytes)) = load_state(&keystore, &cfg, &role) {
+            if let Ok(state) = serde_cbor::from_slice::<MobileKeyManagerState>(&bytes) {
+                // rebuild self from state, preserving logger and persistence settings
+                let logger = self.logger.clone();
+                let (device_keystore, persistence, auto_persist) = (
+                    self.device_keystore.clone(),
+                    self.persistence.clone(),
+                    self.auto_persist,
+                );
+                if let Ok(new_self) = MobileKeyManager::from_state(state, logger) {
+                    self.certificate_authority = new_self.certificate_authority;
+                    self.certificate_validator = new_self.certificate_validator;
+                    self.user_root_key = new_self.user_root_key;
+                    self.user_root_agreement = new_self.user_root_agreement;
+                    self.user_profile_keys = new_self.user_profile_keys;
+                    self.user_profile_agreements = new_self.user_profile_agreements;
+                    self.label_to_pid = new_self.label_to_pid;
+                    self.network_data_keys = new_self.network_data_keys;
+                    self.network_public_keys = new_self.network_public_keys;
+                    self.issued_certificates = new_self.issued_certificates;
+                    self.serial_counter = new_self.serial_counter;
+                    self.device_keystore = device_keystore;
+                    self.persistence = persistence;
+                    self.auto_persist = auto_persist;
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Persist current state if auto-persist is enabled and keystore/persistence are configured.
+    pub fn flush_state(&self) -> Result<()> {
+        if let (Some(keystore), Some(cfg)) =
+            (self.device_keystore.as_ref(), self.persistence.as_ref())
+        {
+            let state = self.export_state();
+            let bytes = serde_cbor::to_vec(&state).map_err(|e| {
+                KeyError::EncodingError(format!("Failed to encode mobile state: {e}"))
+            })?;
+            save_state(keystore, cfg, &Role::Mobile, &bytes)?;
+        }
+        Ok(())
+    }
+
+    fn persist_if_enabled(&self) {
+        if self.auto_persist {
+            let _ = self.flush_state();
+        }
+    }
+
+    /// Query keystore capabilities if a device keystore is configured.
+    pub fn get_keystore_caps(&self) -> Option<crate::keystore::DeviceKeystoreCaps> {
+        self.device_keystore.as_ref().map(|k| k.capabilities())
+    }
+
+    /// Wipe persisted state file (if configured)
+    pub fn wipe_persistence(&self) -> Result<()> {
+        if let Some(cfg) = &self.persistence {
+            crate::keystore::persistence::wipe(cfg, &Role::Mobile)?;
+        }
+        Ok(())
     }
 
     pub fn install_network_public_key(&mut self, network_public_key: &[u8]) -> Result<()> {
@@ -162,7 +265,9 @@ impl MobileKeyManager {
             self.logger,
             "Network public key installed with ID: {network_id}"
         );
-        Ok(())
+        let res = Ok(());
+        self.persist_if_enabled();
+        res
     }
 
     /// Initialize user root key - Master key that never leaves the mobile device
@@ -197,7 +302,9 @@ impl MobileKeyManager {
             .as_bytes()
             .to_vec();
 
-        Ok(agr_pub)
+        let out = Ok(agr_pub);
+        self.persist_if_enabled();
+        out
     }
 
     /// Get the user root public key
@@ -274,7 +381,9 @@ impl MobileKeyManager {
 
         log_info!(self.logger, "User profile key derived using HKDF for label '{label}' (attempts: {counter}, id: {pid})");
 
-        Ok(public_key)
+        let out = Ok(public_key);
+        self.persist_if_enabled();
+        out
     }
 
     pub fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
@@ -311,7 +420,9 @@ impl MobileKeyManager {
             "Network data key generated with ID: {network_id}"
         );
 
-        Ok(network_id)
+        let out = Ok(network_id);
+        self.persist_if_enabled();
+        out
     }
 
     /// Create an envelope key for per-object encryption
@@ -659,11 +770,14 @@ impl MobileKeyManager {
         };
 
         // Create the message
-        Ok(NodeCertificateMessage {
+        let msg = NodeCertificateMessage {
             node_certificate,
             ca_certificate: self.certificate_authority.ca_certificate().clone(),
             metadata,
-        })
+        };
+        let out = Ok(msg);
+        self.persist_if_enabled();
+        out
     }
 
     // Removed create_node_certificate method - using proper CSR flow only
@@ -861,6 +975,9 @@ impl MobileKeyManager {
             issued_certificates: state.issued_certificates,
             serial_counter: state.serial_counter,
             logger,
+            device_keystore: None,
+            persistence: None,
+            auto_persist: true,
         })
     }
 }
