@@ -38,7 +38,7 @@ Build process: Use `napi build --platform` to generate the `.node` file for Node
 - **Thread Safety**: Use `napi::threadsafe_function` if needed for callbacks/events, but prefer polling or async awaits.
 - **Events**: For polling-based FFI (e.g., `rn_transport_poll_event`), expose an async `pollEvent()` method returning Promise<Buffer | null>.
 - **CBOR**: Handle CBOR serialization/deserialization in Rust, exposing Buffers to JS.
-- **Platform Considerations**: Skip or adapt platform-specific FFI functions (e.g., Apple/Linux keystores) for Node.js; use Node's `keytar` if needed, but mirror FFI signatures where possible.
+- **Platform Considerations**: For Node.js, focus on Linux keystore as the primary backend, since server-side Runar nodes will mostly run on Linux (Windows support later). Adapt platform-specific functions to use Linux keystore by default. In tests, utilize the Linux keystore. 
 - **Best Practices**:
   - Follow napi-rs async patterns: Use `async fn` with `#[napi]`.
   - Generate TypeScript defs: Use `napi build --dts`.
@@ -106,12 +106,13 @@ class Keys {
 
 ### Transport Class
 
-`#[napi]`
-class Transport {
+`#[napi(object)]`
+class Transport extends EventEmitter {
   constructor(keys: Keys, optionsCbor: Buffer);  // Maps to `rn_transport_new_with_keys_return`
 
   async start(): Promise<void>;  // `rn_transport_start`
-  async pollEvent(): Promise<Buffer | null>;  // `rn_transport_poll_event`, returns CBOR event or null if none
+  // Remove pollEvent(); events are emitted instead, e.g., 'peerConnected', 'requestReceived', etc.
+  // Add event types in TS defs
   async connectPeer(peerInfoCbor: Buffer): Promise<void>;
   async disconnectPeer(peerNodeId: string): Promise<void>;
   async isConnected(peerNodeId: string): Promise<boolean>;
@@ -146,5 +147,9 @@ class Discovery {
 - **Security**: Ensure all crypto ops are thread-safe; use napi-rs env for JS interactions.
 - **Testing**: Mirror FFI tests, add JS integration tests.
 - **Packaging**: The crate builds to a `.node` file; publish to npm with prebuilds for platforms.
+- **Events with EventEmitter**: Extend napi-rs classes with EventEmitter capabilities using threadsafe functions for cross-thread emissions. Emit events like 'peerConnected(peerId, nodeInfo)', 'requestReceived(req)', etc. This deviates from FFI's polling but uses Node.js best practices for better usability.
+- **Threading Model**: Leverage napi-rs async work and Tokio for concurrency; use threadsafe functions for callbacks from Rust threads to JS event loop, ensuring non-blocking operations.
+- **Keystore Adaptation**: Implement registerLinuxDeviceKeystore using Rust's linux keystore directly, exposed to JS. For other platforms, provide stubs or conditional compilation, but focus on Linux for now.
+- **API Respect**: Maintain method names and signatures similar to FFI where possible, but internals can use optimized Node.js patterns (e.g., async iterators if beneficial).
 
 This design ensures factual mapping from FFI while optimizing for Node.js usage.

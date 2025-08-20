@@ -967,6 +967,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "convert_case"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1121,6 +1130,22 @@ dependencies = [
  "quote",
  "syn 2.0.104",
 ]
+
+[[package]]
+name = "ctor"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67773048316103656a637612c4a62477603b777d91d9c62ff2290f9cde178fdb"
+dependencies = [
+ "ctor-proc-macro",
+ "dtor",
+]
+
+[[package]]
+name = "ctor-proc-macro"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2931af7e13dc045d8e9d26afccc6fa115d64e115c9c84b1166288b46f6782c2"
 
 [[package]]
 name = "ctr"
@@ -1295,6 +1320,21 @@ dependencies = [
  "quote",
  "syn 2.0.104",
 ]
+
+[[package]]
+name = "dtor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e58a0764cddb55ab28955347b45be00ade43d4d6f3ba4bf3dc354e4ec9432934"
+dependencies = [
+ "dtor-proc-macro",
+]
+
+[[package]]
+name = "dtor-proc-macro"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f678cf4a922c215c63e0de95eb1ff08a958a81d47e485cf9da1e27bf6305cfa5"
 
 [[package]]
 name = "dunce"
@@ -2600,7 +2640,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "ctor",
+ "ctor 0.2.9",
  "futures",
  "prost",
  "runar-keys",
@@ -2651,6 +2691,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "napi"
+version = "3.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc1d56eed08a179e1c5bedb1613c58e882087cec97fcaa7788cc42366335a41d"
+dependencies = [
+ "bitflags 2.9.1",
+ "ctor 0.5.0",
+ "napi-build",
+ "napi-sys",
+ "nohash-hasher",
+ "rustc-hash 2.1.1",
+ "tokio",
+]
+
+[[package]]
+name = "napi-build"
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcae8ad5609d14afb3a3b91dee88c757016261b151e9dcecabf1b2a31a6cab14"
+
+[[package]]
+name = "napi-derive"
+version = "3.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a9ad4169931359f24cc9ad3fae4ab272f0390c59f7a764f7719b1b8a3dde1af"
+dependencies = [
+ "convert_case",
+ "ctor 0.5.0",
+ "napi-derive-backend",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "napi-derive-backend"
+version = "2.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55a014314cb458d5832b4fc7d0041764ac136396447303d95e3fa0a5ea7cf5d3"
+dependencies = [
+ "convert_case",
+ "proc-macro2",
+ "quote",
+ "semver",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "napi-sys"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e4e7135a8f97aa0f1509cce21a8a1f9dcec1b50d8dee006b48a5adb69a9d64d"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "nb-connect"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2684,6 +2781,12 @@ dependencies = [
  "libc",
  "memoffset 0.7.1",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "nom"
@@ -3548,13 +3651,29 @@ dependencies = [
 [[package]]
 name = "runar-nodejs-api"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "napi",
+ "napi-derive",
+ "once_cell",
+ "runar-keys",
+ "runar-schemas",
+ "runar-serializer",
+ "runar_common 0.1.0",
+ "runar_transporter",
+ "serde_cbor",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "runar-schemas"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor",
+ "ctor 0.2.9",
  "prost",
  "runar-serializer",
  "runar-serializer-macros",
@@ -3568,7 +3687,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
- "ctor",
+ "ctor 0.2.9",
  "dashmap",
  "log",
  "once_cell",
@@ -3586,7 +3705,7 @@ name = "runar-serializer-macros"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor",
+ "ctor 0.2.9",
  "proc-macro2",
  "quote",
  "serde_cbor",
@@ -3731,7 +3850,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "ctor",
+ "ctor 0.2.9",
  "futures",
  "prost",
  "prost-derive",
@@ -3759,7 +3878,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "ctor",
+ "ctor 0.2.9",
  "darling",
  "futures",
  "inventory",
@@ -3804,7 +3923,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "ctor",
+ "ctor 0.2.9",
  "dashmap",
  "env_logger 0.10.2",
  "futures",
@@ -3853,7 +3972,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "chrono",
- "ctor",
+ "ctor 0.2.9",
  "futures",
  "hex",
  "log",
@@ -3902,7 +4021,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "ctor",
+ "ctor 0.2.9",
  "dashmap",
  "env_logger 0.10.2",
  "futures",
@@ -4296,6 +4415,12 @@ dependencies = [
  "core-foundation-sys",
  "libc",
 ]
+
+[[package]]
+name = "semver"
+version = "1.0.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
 
 [[package]]
 name = "serde"
@@ -5091,6 +5216,12 @@ name = "unicode-ident"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 
 [[package]]
 name = "universal-hash"
