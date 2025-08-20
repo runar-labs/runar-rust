@@ -20,7 +20,7 @@ pub trait DeviceKeystore: Send + Sync {
     fn capabilities(&self) -> DeviceKeystoreCaps;
 }
 
-#[cfg(feature = "apple-keystore")]
+#[cfg(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios")))]
 pub mod apple;
 
 pub mod persistence;
