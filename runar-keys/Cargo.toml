@@ -57,6 +57,10 @@ prost = { version = "0.12", default-features = false, features = ["std", "derive
 # Apple Keychain/Secure Enclave (optional; used only with feature `apple-keystore` on macOS/iOS)
 zeroize = { version = "1", optional = true }
 keyring = { version = "1", optional = true }
+security-framework = { version = "2", optional = true }
+security-framework-sys = { version = "2", optional = true }
+core-foundation = { version = "0.9", optional = true }
+core-foundation-sys = { version = "0.8", optional = true }
 
 # Async runtime for tests
 tokio = { version = "1.0", features = ["full"] }
@@ -72,8 +76,15 @@ default = []
 macros = []
 
 # Enable native Apple device keystore backend (macOS/iOS) in `runar-keys`.
-# This pulls in `keychain-services` and `zeroize` and compiles Apple-specific code behind cfg.
-apple-keystore = ["dep:zeroize"]
+# For macOS initial implementation we reuse `keyring`; Secure Enclave will be added later.
+apple-keystore = [
+    "dep:zeroize",
+    "dep:keyring",
+    "dep:security-framework",
+    "dep:security-framework-sys",
+    "dep:core-foundation",
+    "dep:core-foundation-sys",
+]
 linux-keystore = ["dep:keyring", "dep:zeroize"]
 
 
