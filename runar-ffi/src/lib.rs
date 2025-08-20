@@ -64,6 +64,11 @@ struct KeysInner {
     label_resolver: Option<Arc<dyn LabelResolver>>,
     // Local NodeInfo holder (push-updated from FFI)
     local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
+    // Shared device keystore registered at FFI level
+    device_keystore: Option<Arc<dyn keystore::DeviceKeystore>>,
+    // Persistence directory and auto-persist flag
+    persistence_dir: Option<std::path::PathBuf>,
+    auto_persist: bool,
 }
 
 #[allow(dead_code)]
@@ -303,6 +308,7 @@ pub unsafe extern "C" fn rn_keys_set_persistence_dir(
         }
     };
     let pb = std::path::PathBuf::from(path_str);
+    inner.persistence_dir = Some(pb.clone());
     if let Some(n) = inner.node_owned.as_mut() {
         n.set_persistence_dir(pb.clone());
     }
@@ -328,6 +334,7 @@ pub unsafe extern "C" fn rn_keys_enable_auto_persist(
     if let Some(m) = inner.mobile.as_mut() {
         m.enable_auto_persist(enabled);
     }
+    inner.auto_persist = enabled;
     0
 }
 
@@ -337,11 +344,27 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
         set_error(err, 1, "keys handle is null");
         return 1;
     };
+    // If managers exist, ask them to wipe
     if let Some(n) = inner.node_owned.as_ref() {
         let _ = n.wipe_persistence();
     }
     if let Some(m) = inner.mobile.as_ref() {
         let _ = m.wipe_persistence();
+    }
+    // Also wipe directly from configured persistence dir if present
+    if let Some(dir) = inner.persistence_dir.clone() {
+        let cfg = runar_keys::keystore::persistence::PersistenceConfig::new(dir.clone());
+        let _ = runar_keys::keystore::persistence::wipe(
+            &cfg,
+            &runar_keys::keystore::persistence::Role::Mobile,
+        );
+        if let Some(n) = inner.node_owned.as_ref() {
+            let node_id = n.get_node_id();
+            let _ = runar_keys::keystore::persistence::wipe(
+                &cfg,
+                &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
+            );
+        }
     }
     0
 }
@@ -388,7 +411,16 @@ pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state(
     }
     if inner.mobile.is_none() {
         match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
+            Ok(mut m) => {
+                if let Some(ks) = inner.device_keystore.clone() {
+                    m.register_device_keystore(ks);
+                }
+                if let Some(dir) = inner.persistence_dir.clone() {
+                    m.set_persistence_dir(dir);
+                }
+                m.enable_auto_persist(inner.auto_persist);
+                inner.mobile = Some(m)
+            }
             Err(e) => {
                 set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                 return 2;
@@ -563,12 +595,20 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
         match runar_keys::keystore::apple::AppleDeviceKeystore::new(label_str) {
             Ok(ks) => {
                 let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
-                if let Some(n) = with_keys_inner(keys).and_then(|i| i.node_owned.as_mut()) {
+                let holder = with_keys_inner(keys).unwrap();
+                if let Some(n) = holder.node_owned.as_mut() {
                     n.register_device_keystore(ks.clone());
                 }
-                if let Some(m) = with_keys_inner(keys).and_then(|i| i.mobile.as_mut()) {
+                if let Some(m) = holder.mobile.as_mut() {
                     m.register_device_keystore(ks);
                 }
+                holder.device_keystore = Some(Arc::clone(
+                    &holder
+                        .node_owned
+                        .as_ref()
+                        .map(|_| ks.clone())
+                        .unwrap_or_else(|| ks.clone()),
+                ));
                 0
             }
             Err(e) => {
@@ -638,8 +678,9 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
                     n.register_device_keystore(ks.clone());
                 }
                 if let Some(m) = inner.mobile.as_mut() {
-                    m.register_device_keystore(ks);
+                    m.register_device_keystore(ks.clone());
                 }
+                inner.device_keystore = Some(ks);
                 0
             }
             Err(e) => {
@@ -712,8 +753,21 @@ pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(
                 profiles.push(pk.to_vec());
             }
         }
-        // Prefer node-owned crypto trait
-        let eed = if let Some(node) = inner.node_owned.as_ref() {
+        // Prefer mobile when profile keys provided, else prefer node
+        let use_mobile = profiles_count > 0 && inner.mobile.is_some();
+        let eed = if use_mobile {
+            match inner.mobile.as_ref().unwrap().encrypt_with_envelope(
+                data_slice,
+                network_id_opt.as_deref(),
+                profiles,
+            ) {
+                Ok(e) => e,
+                Err(e) => {
+                    set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
+                    return 2;
+                }
+            }
+        } else if let Some(node) = inner.node_owned.as_ref() {
             match node.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
                 Ok(e) => e,
                 Err(e) => {
@@ -782,7 +836,38 @@ pub unsafe extern "C" fn rn_keys_decrypt_envelope(
                 return 2;
             }
         };
-        let plain = if let Some(node) = inner.node_owned.as_ref() {
+        // Prefer mobile decryption when no network_id present or network key is missing.
+        let prefer_mobile = eed.network_id.is_none() || eed.network_encrypted_key.is_empty();
+        let plain = if prefer_mobile {
+            if let Some(m) = inner.mobile.as_ref() {
+                match m.decrypt_envelope_data(&eed) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        set_error(err, 2, &format!("decrypt failed: {e}"));
+                        return 2;
+                    }
+                }
+            } else if let Some(node) = inner.node_owned.as_ref() {
+                match node.decrypt_envelope_data(&eed) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        set_error(err, 2, &format!("decrypt failed: {e}"));
+                        return 2;
+                    }
+                }
+            } else if let Some(shared) = inner.node_shared.as_ref() {
+                match shared.decrypt_envelope_data(&eed) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        set_error(err, 2, &format!("decrypt failed: {e}"));
+                        return 2;
+                    }
+                }
+            } else {
+                set_error(err, 1, "no key manager available");
+                return 1;
+            }
+        } else if let Some(node) = inner.node_owned.as_ref() {
             match node.decrypt_envelope_data(&eed) {
                 Ok(p) => p,
                 Err(e) => {
@@ -879,7 +964,16 @@ pub unsafe extern "C" fn rn_keys_mobile_initialize_user_root_key(
     };
     if inner.mobile.is_none() {
         match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
+            Ok(mut m) => {
+                if let Some(ks) = inner.device_keystore.clone() {
+                    m.register_device_keystore(ks);
+                }
+                if let Some(dir) = inner.persistence_dir.clone() {
+                    m.set_persistence_dir(dir);
+                }
+                m.enable_auto_persist(inner.auto_persist);
+                inner.mobile = Some(m)
+            }
             Err(e) => {
                 set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                 return 2;
@@ -914,7 +1008,16 @@ pub unsafe extern "C" fn rn_keys_mobile_derive_user_profile_key(
     }
     if inner.mobile.is_none() {
         match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
+            Ok(mut m) => {
+                if let Some(ks) = inner.device_keystore.clone() {
+                    m.register_device_keystore(ks);
+                }
+                if let Some(dir) = inner.persistence_dir.clone() {
+                    m.set_persistence_dir(dir);
+                }
+                m.enable_auto_persist(inner.auto_persist);
+                inner.mobile = Some(m)
+            }
             Err(e) => {
                 set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                 return 2;
@@ -952,32 +1055,43 @@ pub unsafe extern "C" fn rn_keys_mobile_install_network_public_key(
     len: usize,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if network_public_key.is_null() || len == 0 {
-        set_error(err, 1, "null argument");
-        return 1;
-    }
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
+    ffi_guard(err, || {
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "keys handle is null");
+            return 1;
+        };
+        if network_public_key.is_null() || len == 0 {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        if inner.mobile.is_none() {
+            match MobileKeyManager::new(inner.logger.clone()) {
+                Ok(mut m) => {
+                    if let Some(ks) = inner.device_keystore.clone() {
+                        m.register_device_keystore(ks);
+                    }
+                    if let Some(dir) = inner.persistence_dir.clone() {
+                        m.set_persistence_dir(dir);
+                    }
+                    m.enable_auto_persist(inner.auto_persist);
+                    inner.mobile = Some(m)
+                }
+                Err(e) => {
+                    set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                    return 2;
+                }
             }
         }
-    }
-    let m = inner.mobile.as_mut().unwrap();
-    let buf = std::slice::from_raw_parts(network_public_key, len);
-    match m.install_network_public_key(buf) {
-        Ok(_) => 0,
-        Err(e) => {
-            set_error(err, 2, &format!("install_network_public_key failed: {e}"));
-            2
+        let m = inner.mobile.as_mut().unwrap();
+        let buf = std::slice::from_raw_parts(network_public_key, len);
+        match m.install_network_public_key(buf) {
+            Ok(_) => 0,
+            Err(e) => {
+                set_error(err, 2, &format!("install_network_public_key failed: {e}"));
+                2
+            }
         }
-    }
+    })
 }
 
 #[no_mangle]
@@ -987,38 +1101,49 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if out_str.is_null() || out_len.is_null() {
-        set_error(err, 1, "null out");
-        return 1;
-    }
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
+    ffi_guard(err, || {
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "keys handle is null");
+            return 1;
+        };
+        if out_str.is_null() || out_len.is_null() {
+            set_error(err, 1, "null out");
+            return 1;
+        }
+        if inner.mobile.is_none() {
+            match MobileKeyManager::new(inner.logger.clone()) {
+                Ok(mut m) => {
+                    if let Some(ks) = inner.device_keystore.clone() {
+                        m.register_device_keystore(ks);
+                    }
+                    if let Some(dir) = inner.persistence_dir.clone() {
+                        m.set_persistence_dir(dir);
+                    }
+                    m.enable_auto_persist(inner.auto_persist);
+                    inner.mobile = Some(m)
+                }
+                Err(e) => {
+                    set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                    return 2;
+                }
+            }
+        }
+        let m = inner.mobile.as_mut().unwrap();
+        match m.generate_network_data_key() {
+            Ok(network_id) => {
+                if !alloc_string(out_str, out_len, &network_id) {
+                    set_error(err, 3, "alloc failed");
+                    3
+                } else {
+                    0
+                }
+            }
             Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
+                set_error(err, 2, &format!("generate_network_data_key failed: {e}"));
+                2
             }
         }
-    }
-    let m = inner.mobile.as_mut().unwrap();
-    match m.generate_network_data_key() {
-        Ok(network_id) => {
-            if !alloc_string(out_str, out_len, &network_id) {
-                set_error(err, 3, "alloc failed");
-                3
-            } else {
-                0
-            }
-        }
-        Err(e) => {
-            set_error(err, 2, &format!("generate_network_data_key failed: {e}"));
-            2
-        }
-    }
+    })
 }
 
 #[no_mangle]
@@ -1029,45 +1154,56 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if network_id.is_null() || out_pk.is_null() || out_len.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
-    }
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+    ffi_guard(err, || {
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "keys handle is null");
+            return 1;
+        };
+        if network_id.is_null() || out_pk.is_null() || out_len.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        if inner.mobile.is_none() {
+            match MobileKeyManager::new(inner.logger.clone()) {
+                Ok(mut m) => {
+                    if let Some(ks) = inner.device_keystore.clone() {
+                        m.register_device_keystore(ks);
+                    }
+                    if let Some(dir) = inner.persistence_dir.clone() {
+                        m.set_persistence_dir(dir);
+                    }
+                    m.enable_auto_persist(inner.auto_persist);
+                    inner.mobile = Some(m)
+                }
+                Err(e) => {
+                    set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                    return 2;
+                }
+            }
+        }
+        let m = inner.mobile.as_ref().unwrap();
+        let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_error(err, 2, "invalid utf8 network_id");
                 return 2;
             }
-        }
-    }
-    let m = inner.mobile.as_ref().unwrap();
-    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            set_error(err, 2, "invalid utf8 network_id");
-            return 2;
-        }
-    };
-    match m.get_network_public_key(nid) {
-        Ok(pk) => {
-            if !alloc_bytes(out_pk, out_len, &pk) {
-                set_error(err, 3, "alloc failed");
-                3
-            } else {
-                0
+        };
+        match m.get_network_public_key(nid) {
+            Ok(pk) => {
+                if !alloc_bytes(out_pk, out_len, &pk) {
+                    set_error(err, 3, "alloc failed");
+                    3
+                } else {
+                    0
+                }
+            }
+            Err(e) => {
+                set_error(err, 2, &format!("get_network_public_key failed: {e}"));
+                2
             }
         }
-        Err(e) => {
-            set_error(err, 2, &format!("get_network_public_key failed: {e}"));
-            2
-        }
-    }
+    })
 }
 
 #[no_mangle]
@@ -1882,6 +2018,9 @@ fn keys_new_impl(err: *mut RnError) -> *mut c_void {
         mobile: None,
         label_resolver: None,
         local_node_info: Arc::new(ArcSwap::from_pointee(None)),
+        device_keystore: None,
+        persistence_dir: None,
+        auto_persist: true,
     };
     let boxed = Box::new(inner);
     let handle = FfiKeysHandle {
@@ -2041,7 +2180,16 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
     if inner.mobile.is_none() {
         // Lazily create a MobileKeyManager to act as CA
         match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
+            Ok(mut m) => {
+                if let Some(ks) = inner.device_keystore.clone() {
+                    m.register_device_keystore(ks);
+                }
+                if let Some(dir) = inner.persistence_dir.clone() {
+                    m.set_persistence_dir(dir);
+                }
+                m.enable_auto_persist(inner.auto_persist);
+                inner.mobile = Some(m)
+            }
             Err(e) => {
                 set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
                 return 2;
