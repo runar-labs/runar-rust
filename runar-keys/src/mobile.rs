@@ -243,6 +243,19 @@ impl MobileKeyManager {
         }
     }
 
+    /// Query keystore capabilities if a device keystore is configured.
+    pub fn get_keystore_caps(&self) -> Option<crate::keystore::DeviceKeystoreCaps> {
+        self.device_keystore.as_ref().map(|k| k.capabilities())
+    }
+
+    /// Wipe persisted state file (if configured)
+    pub fn wipe_persistence(&self) -> Result<()> {
+        if let Some(cfg) = &self.persistence {
+            crate::keystore::persistence::wipe(cfg, &Role::Mobile)?;
+        }
+        Ok(())
+    }
+
     pub fn install_network_public_key(&mut self, network_public_key: &[u8]) -> Result<()> {
         let network_id = compact_id(network_public_key);
         self.network_public_keys

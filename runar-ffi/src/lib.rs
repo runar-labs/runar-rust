@@ -11,9 +11,10 @@ use once_cell::sync::OnceCell;
 use runar_common::logging::{Component, Logger};
 use runar_keys::EnvelopeCrypto;
 use runar_keys::{
-    mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
+    mobile::{MobileKeyManager, NetworkKeyMessage, NodeCertificateMessage, SetupToken},
     node::{NodeKeyManager, NodeKeyManagerState},
 };
+use runar_keys::keystore;
 use runar_schemas::NodeInfo;
 use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
@@ -250,6 +251,235 @@ fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool
     }
 }
 
+// ------------------------------
+// Persistence and keystore management
+// ------------------------------
+
+#[repr(C)]
+pub struct RnDeviceKeystoreCaps {
+    pub version: u32,
+    pub flags: u32, // bitfield: 1=hardware_backed, 2=biometric_gate, 4=screenlock_required, 8=strongbox
+}
+
+fn map_caps(caps: keystore::DeviceKeystoreCaps) -> RnDeviceKeystoreCaps {
+    let mut flags: u32 = 0;
+    if caps.hardware_backed {
+        flags |= 1;
+    }
+    if caps.biometric_gate {
+        flags |= 2;
+    }
+    if caps.screenlock_required {
+        flags |= 4;
+    }
+    if caps.strongbox {
+        flags |= 8;
+    }
+    RnDeviceKeystoreCaps {
+        version: caps.version,
+        flags,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_set_persistence_dir(
+    keys: *mut c_void,
+    dir: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if dir.is_null() {
+        set_error(err, 1, "dir is null");
+        return 1;
+    }
+    let path_str = match std::ffi::CStr::from_ptr(dir).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, 2, "invalid utf8 in dir");
+            return 2;
+        }
+    };
+    let pb = std::path::PathBuf::from(path_str);
+    if let Some(n) = inner.node_owned.as_mut() {
+        n.set_persistence_dir(pb.clone());
+    }
+    if let Some(m) = inner.mobile.as_mut() {
+        m.set_persistence_dir(pb.clone());
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_enable_auto_persist(
+    keys: *mut c_void,
+    enabled: bool,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if let Some(n) = inner.node_owned.as_mut() {
+        n.enable_auto_persist(enabled);
+    }
+    if let Some(m) = inner.mobile.as_mut() {
+        m.enable_auto_persist(enabled);
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut RnError) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if let Some(n) = inner.node_owned.as_ref() {
+        let _ = n.wipe_persistence();
+    }
+    if let Some(m) = inner.mobile.as_ref() {
+        let _ = m.wipe_persistence();
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_keystore_state(
+    keys: *mut c_void,
+    out_state: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if out_state.is_null() {
+        set_error(err, 1, "out_state is null");
+        return 1;
+    }
+    let mut ready = 0i32;
+    if let Some(n) = inner.node_owned.as_mut() {
+        match n.probe_and_load_state() {
+            Ok(true) => ready = 1,
+            Ok(false) => ready = 0,
+            Err(_) => ready = 0,
+        }
+    }
+    *out_state = ready;
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state(
+    keys: *mut c_void,
+    out_state: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if out_state.is_null() {
+        set_error(err, 1, "out_state is null");
+        return 1;
+    }
+    if inner.mobile.is_none() {
+        match MobileKeyManager::new(inner.logger.clone()) {
+            Ok(m) => inner.mobile = Some(m),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                return 2;
+            }
+        }
+    }
+    let mut ready = 0i32;
+    if let Some(m) = inner.mobile.as_mut() {
+        match m.probe_and_load_state() {
+            Ok(true) => ready = 1,
+            Ok(false) => ready = 0,
+            Err(_) => ready = 0,
+        }
+    }
+    *out_state = ready;
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_get_keystore_caps(
+    keys: *mut c_void,
+    out_caps: *mut RnDeviceKeystoreCaps,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if out_caps.is_null() {
+        set_error(err, 1, "out_caps is null");
+        return 1;
+    }
+    let caps = if let Some(n) = inner.node_owned.as_ref() {
+        n.get_keystore_caps().unwrap_or_default()
+    } else if let Some(m) = inner.mobile.as_ref() {
+        m.get_keystore_caps().unwrap_or_default()
+    } else {
+        keystore::DeviceKeystoreCaps::default()
+    };
+    unsafe { *out_caps = map_caps(caps) };
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
+    keys: *mut c_void,
+    label: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if label.is_null() {
+        set_error(err, 1, "label is null");
+        return 1;
+    }
+    let label_str = match std::ffi::CStr::from_ptr(label).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, 2, "invalid utf8 in label");
+            return 2;
+        }
+    };
+    #[cfg(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios")))]
+    {
+        match runar_keys::keystore::apple::AppleDeviceKeystore::new(label_str) {
+            Ok(ks) => {
+                let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
+                if let Some(n) = inner.node_owned.as_mut() {
+                    n.register_device_keystore(ks.clone());
+                }
+                if let Some(m) = inner.mobile.as_mut() {
+                    m.register_device_keystore(ks);
+                }
+                return 0;
+            }
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create AppleDeviceKeystore: {e}"));
+                return 2;
+            }
+        }
+    }
+    #[cfg(not(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))))]
+    {
+        let _ = label_str;
+        set_error(err, 2, "apple-keystore feature not enabled or unsupported target OS");
+        return 2;
+    }
+}
+
 // Envelope helpers (CBOR EED)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(
@@ -448,6 +678,306 @@ pub unsafe extern "C" fn rn_keys_encrypt_local_data(
         }
         0
     })
+}
+
+// ------------------------------
+// New Mobile/Node APIs for key management
+// ------------------------------
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_initialize_user_root_key(
+    keys: *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if inner.mobile.is_none() {
+        match MobileKeyManager::new(inner.logger.clone()) {
+            Ok(m) => inner.mobile = Some(m),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                return 2;
+            }
+        }
+    }
+    let m = inner.mobile.as_mut().unwrap();
+    match m.initialize_user_root_key() {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(err, 2, &format!("initialize_user_root_key failed: {e}"));
+            2
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_derive_user_profile_key(
+    keys: *mut c_void,
+    label: *const c_char,
+    out_pk: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if label.is_null() || out_pk.is_null() || out_len.is_null() {
+        set_error(err, 1, "null argument");
+        return 1;
+    }
+    if inner.mobile.is_none() {
+        match MobileKeyManager::new(inner.logger.clone()) {
+            Ok(m) => inner.mobile = Some(m),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                return 2;
+            }
+        }
+    }
+    let m = inner.mobile.as_mut().unwrap();
+    let label = match std::ffi::CStr::from_ptr(label).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, 2, "invalid utf8 label");
+            return 2;
+        }
+    };
+    match m.derive_user_profile_key(label) {
+        Ok(pk) => {
+            if !alloc_bytes(out_pk, out_len, &pk) {
+                set_error(err, 3, "alloc failed");
+                3
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            set_error(err, 2, &format!("derive_user_profile_key failed: {e}"));
+            2
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_install_network_public_key(
+    keys: *mut c_void,
+    network_public_key: *const u8,
+    len: usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if network_public_key.is_null() || len == 0 {
+        set_error(err, 1, "null argument");
+        return 1;
+    }
+    if inner.mobile.is_none() {
+        match MobileKeyManager::new(inner.logger.clone()) {
+            Ok(m) => inner.mobile = Some(m),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                return 2;
+            }
+        }
+    }
+    let m = inner.mobile.as_mut().unwrap();
+    let buf = std::slice::from_raw_parts(network_public_key, len);
+    match m.install_network_public_key(buf) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(err, 2, &format!("install_network_public_key failed: {e}"));
+            2
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
+    keys: *mut c_void,
+    out_str: *mut *mut c_char,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if out_str.is_null() || out_len.is_null() {
+        set_error(err, 1, "null out");
+        return 1;
+    }
+    if inner.mobile.is_none() {
+        match MobileKeyManager::new(inner.logger.clone()) {
+            Ok(m) => inner.mobile = Some(m),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                return 2;
+            }
+        }
+    }
+    let m = inner.mobile.as_mut().unwrap();
+    match m.generate_network_data_key() {
+        Ok(network_id) => {
+            if !alloc_string(out_str, out_len, &network_id) {
+                set_error(err, 3, "alloc failed");
+                3
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            set_error(err, 2, &format!("generate_network_data_key failed: {e}"));
+            2
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
+    keys: *mut c_void,
+    network_id: *const c_char,
+    out_pk: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if network_id.is_null() || out_pk.is_null() || out_len.is_null() {
+        set_error(err, 1, "null argument");
+        return 1;
+    }
+    if inner.mobile.is_none() {
+        match MobileKeyManager::new(inner.logger.clone()) {
+            Ok(m) => inner.mobile = Some(m),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                return 2;
+            }
+        }
+    }
+    let m = inner.mobile.as_ref().unwrap();
+    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, 2, "invalid utf8 network_id");
+            return 2;
+        }
+    };
+    match m.get_network_public_key(nid) {
+        Ok(pk) => {
+            if !alloc_bytes(out_pk, out_len, &pk) {
+                set_error(err, 3, "alloc failed");
+                3
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            set_error(err, 2, &format!("get_network_public_key failed: {e}"));
+            2
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
+    keys: *mut c_void,
+    network_id: *const c_char,
+    node_agreement_pk: *const u8,
+    node_agreement_pk_len: usize,
+    out_msg_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if network_id.is_null() || node_agreement_pk.is_null() || out_msg_cbor.is_null() || out_len.is_null() {
+        set_error(err, 1, "null argument");
+        return 1;
+    }
+    if inner.mobile.is_none() {
+        match MobileKeyManager::new(inner.logger.clone()) {
+            Ok(m) => inner.mobile = Some(m),
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
+                return 2;
+            }
+        }
+    }
+    let m = inner.mobile.as_ref().unwrap();
+    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, 2, "invalid utf8 network_id");
+            return 2;
+        }
+    };
+    let pk = std::slice::from_raw_parts(node_agreement_pk, node_agreement_pk_len);
+    let msg = match m.create_network_key_message(nid, pk) {
+        Ok(m) => m,
+        Err(e) => {
+            set_error(err, 2, &format!("create_network_key_message failed: {e}"));
+            return 2;
+        }
+    };
+    let cbor = match serde_cbor::to_vec(&msg) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(err, 2, &format!("encode NetworkKeyMessage failed: {e}"));
+            return 2;
+        }
+    };
+    if !alloc_bytes(out_msg_cbor, out_len, &cbor) {
+        set_error(err, 3, "alloc failed");
+        return 3;
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_install_network_key(
+    keys: *mut c_void,
+    nkm_cbor: *const u8,
+    nkm_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if nkm_cbor.is_null() || nkm_len == 0 {
+        set_error(err, 1, "null argument");
+        return 1;
+    }
+    let slice = std::slice::from_raw_parts(nkm_cbor, nkm_len);
+    let msg: NetworkKeyMessage = match serde_cbor::from_slice(slice) {
+        Ok(m) => m,
+        Err(e) => {
+            set_error(err, 2, &format!("decode NetworkKeyMessage failed: {e}"));
+            return 2;
+        }
+    };
+    if let Some(n) = inner.node_owned.as_mut() {
+        match n.install_network_key(msg) {
+            Ok(_) => 0,
+            Err(e) => {
+                set_error(err, 2, &format!("install_network_key failed: {e}"));
+                2
+            }
+        }
+    } else {
+        set_error(err, 1, "node is shared; install_network_key not available");
+        1
+    }
 }
 
 #[no_mangle]
@@ -1396,169 +1926,7 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
     0
 }
 
-#[no_mangle]
-pub extern "C" fn rn_keys_node_export_state(
-    keys: *mut c_void,
-    out_state_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    let state = if let Some(node) = inner.node_owned.as_ref() {
-        node.export_state()
-    } else if let Some(shared) = inner.node_shared.as_ref() {
-        shared.export_state()
-    } else {
-        set_error(err, 1, "node not initialized");
-        return 1;
-    };
-    let cbor = match serde_cbor::to_vec(&state) {
-        Ok(v) => v,
-        Err(e) => {
-            set_error(err, 2, &format!("Failed to encode state: {e}"));
-            return 2;
-        }
-    };
-    if !alloc_bytes(out_state_cbor, out_len, &cbor) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
-    }
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_import_state(
-    keys: *mut c_void,
-    state_cbor: *const u8,
-    state_len: usize,
-    err: *mut RnError,
-) -> i32 {
-    if keys.is_null() {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    }
-    if state_cbor.is_null() {
-        set_error(err, 4, "state_cbor is null");
-        return 4;
-    }
-    // Prevent importing a new node while a shared instance is in use by a transport
-    let handle_ptr = keys as *mut FfiKeysHandle;
-    let current_inner = unsafe { &*(*handle_ptr).inner };
-    if current_inner.node_shared.is_some() {
-        set_error(
-            err,
-            1,
-            "cannot import state while transport is active (shared node in use)",
-        );
-        return 1;
-    }
-
-    let logger = Arc::new(Logger::new_root(Component::Keys));
-    let slice = std::slice::from_raw_parts(state_cbor, state_len);
-    let state: NodeKeyManagerState = match serde_cbor::from_slice(slice) {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(err, 2, &format!("Failed to decode state: {e}"));
-            return 2;
-        }
-    };
-    let node = match NodeKeyManager::from_state(state, logger.clone()) {
-        Ok(n) => n,
-        Err(e) => {
-            set_error(err, 2, &format!("Failed to import state: {e}"));
-            return 2;
-        }
-    };
-    let node_id = node.get_node_id();
-    logger.set_node_id(node_id);
-    // Replace inner
-    let handle = &mut *(keys as *mut FfiKeysHandle);
-    if !handle.inner.is_null() {
-        let _old = Box::from_raw(handle.inner);
-    }
-    handle.inner = Box::into_raw(Box::new(KeysInner {
-        logger,
-        node_owned: Some(node),
-        node_shared: None,
-        mobile: None,
-        label_resolver: None,
-        local_node_info: Arc::new(ArcSwap::from_pointee(None)),
-    }));
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn rn_keys_mobile_export_state(
-    keys: *mut c_void,
-    out_state_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
-            }
-        }
-    }
-    let mobile = inner.mobile.as_ref().expect("mobile ensured");
-    let state = mobile.export_state();
-    let cbor = match serde_cbor::to_vec(&state) {
-        Ok(v) => v,
-        Err(e) => {
-            set_error(err, 2, &format!("Failed to encode mobile state: {e}"));
-            return 2;
-        }
-    };
-    if !alloc_bytes(out_state_cbor, out_len, &cbor) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
-    }
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_mobile_import_state(
-    keys: *mut c_void,
-    state_cbor: *const u8,
-    state_len: usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if state_cbor.is_null() {
-        set_error(err, 4, "state_cbor is null");
-        return 4;
-    }
-    let slice = std::slice::from_raw_parts(state_cbor, state_len);
-    let state: runar_keys::mobile::MobileKeyManagerState = match serde_cbor::from_slice(slice) {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(err, 2, &format!("Failed to decode mobile state: {e}"));
-            return 2;
-        }
-    };
-    let mobile = match MobileKeyManager::from_state(state, inner.logger.clone()) {
-        Ok(m) => m,
-        Err(e) => {
-            set_error(err, 2, &format!("Failed to import mobile state: {e}"));
-            return 2;
-        }
-    };
-    inner.mobile = Some(mobile);
-    0
-}
+// Removed legacy state import/export APIs (no backwards compatibility)
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_new_with_keys(

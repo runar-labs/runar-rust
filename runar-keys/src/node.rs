@@ -202,6 +202,20 @@ impl NodeKeyManager {
         }
     }
 
+    /// Query keystore capabilities if a device keystore is configured.
+    pub fn get_keystore_caps(&self) -> Option<crate::keystore::DeviceKeystoreCaps> {
+        self.device_keystore.as_ref().map(|k| k.capabilities())
+    }
+
+    /// Wipe persisted state file (if configured)
+    pub fn wipe_persistence(&self) -> crate::Result<()> {
+        if let Some(cfg) = &self.persistence {
+            let id = self.get_node_id();
+            crate::keystore::persistence::wipe(cfg, &Role::Node { node_id: &id })?;
+        }
+        Ok(())
+    }
+
     /// Get the node public key (node ID) - keys are always available
     pub fn get_node_public_key(&self) -> Vec<u8> {
         self.node_key_pair.public_key_bytes()
