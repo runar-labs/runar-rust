@@ -6,6 +6,7 @@ members = [
     "runar-common",
     "runar-services",
     "rust-examples/micro_services_demo",
+    "rust-examples",
     "runar-keys",
     "runar-ffi",
     "runar-gateway",

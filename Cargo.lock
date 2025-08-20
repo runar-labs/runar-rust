@@ -3475,6 +3475,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar-examples"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "ctor",
+ "runar-keys",
+ "runar-schemas",
+ "runar-serializer",
+ "runar_common 0.1.0",
+ "runar_macros",
+ "runar_macros_common",
+ "runar_node",
+ "runar_services",
+ "runar_test_utils",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "runar-keys"
 version = "0.1.0"
 dependencies = [
