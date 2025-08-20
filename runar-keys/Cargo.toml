@@ -55,7 +55,6 @@ bincode = "1.3"
 prost = { version = "0.12", default-features = false, features = ["std", "derive"] }
 
 # Apple Keychain/Secure Enclave (optional; used only with feature `apple-keystore` on macOS/iOS)
-keychain-services = { version = "0.1.1", optional = true }
 zeroize = { version = "1", optional = true }
 keyring = { version = "1", optional = true }
 
@@ -74,7 +73,7 @@ macros = []
 
 # Enable native Apple device keystore backend (macOS/iOS) in `runar-keys`.
 # This pulls in `keychain-services` and `zeroize` and compiles Apple-specific code behind cfg.
-apple-keystore = ["dep:keychain-services", "dep:zeroize"]
+apple-keystore = ["dep:zeroize"]
 linux-keystore = ["dep:keyring", "dep:zeroize"]
 
 

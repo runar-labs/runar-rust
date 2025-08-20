@@ -161,31 +161,24 @@ impl NodeKeyManager {
         };
         let node_id = self.get_node_id();
         let role = Role::Node { node_id: &node_id };
-        match load_state(&keystore, &cfg, &role) {
-            Ok(Some(bytes)) => {
-                match serde_cbor::from_slice::<crate::node::NodeKeyManagerState>(&bytes) {
-                    Ok(state) => {
-                        let logger = self.logger.clone();
-                        let (device_keystore, persistence, auto_persist) = (
-                            self.device_keystore.clone(),
-                            self.persistence.clone(),
-                            self.auto_persist,
-                        );
-                        if let Ok(new_self) = NodeKeyManager::from_state(state, logger) {
-                            *self = new_self;
-                            self.device_keystore = device_keystore;
-                            self.persistence = persistence;
-                            self.auto_persist = auto_persist;
-                            return Ok(true);
-                        }
-                    }
-                    Err(_) => {}
+        if let Ok(Some(bytes)) = load_state(&keystore, &cfg, &role) {
+            if let Ok(state) = serde_cbor::from_slice::<crate::node::NodeKeyManagerState>(&bytes) {
+                let logger = self.logger.clone();
+                let (device_keystore, persistence, auto_persist) = (
+                    self.device_keystore.clone(),
+                    self.persistence.clone(),
+                    self.auto_persist,
+                );
+                if let Ok(new_self) = NodeKeyManager::from_state(state, logger) {
+                    *self = new_self;
+                    self.device_keystore = device_keystore;
+                    self.persistence = persistence;
+                    self.auto_persist = auto_persist;
+                    return Ok(true);
                 }
-                Ok(false)
             }
-            Ok(None) => Ok(false),
-            Err(_) => Ok(false),
         }
+        Ok(false)
     }
 
     /// Persist current state if auto-persist is enabled and keystore/persistence are configured.
@@ -1025,6 +1018,9 @@ impl NodeKeyManager {
             node_agreement_secret,
             certificate_status,
             logger,
+            device_keystore: None,
+            persistence: None,
+            auto_persist: true,
         })
     }
 }

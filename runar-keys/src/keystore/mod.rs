@@ -29,12 +29,24 @@ pub mod persistence;
 pub mod linux;
 
 // Shared AES-GCM helpers used by all backends after obtaining the symmetric key
+#[cfg(any(
+    all(feature = "linux-keystore", target_os = "linux"),
+    all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))
+))]
 const VERSION_BYTE: u8 = 1;
 
-pub(crate) fn aes_gcm_encrypt(key: &[u8], plaintext: &[u8], aad: &[u8]) -> crate::error::Result<Vec<u8>> {
-    use aes_gcm::{aead::Aead, aead::KeyInit, Aes256Gcm, Nonce};
+#[cfg(any(
+    all(feature = "linux-keystore", target_os = "linux"),
+    all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))
+))]
+pub(crate) fn aes_gcm_encrypt(
+    key: &[u8],
+    plaintext: &[u8],
+    aad: &[u8],
+) -> crate::error::Result<Vec<u8>> {
+    use aes_gcm::{aead::KeyInit, Aes256Gcm, Nonce, AeadInPlace};
     use rand::RngCore;
-    use crate::error::{KeyError, Result};
+    use crate::error::KeyError;
 
     if key.len() != 32 {
         return Err(KeyError::SymmetricCipherError("AES-256-GCM requires 32-byte key".to_string()));
@@ -55,9 +67,17 @@ pub(crate) fn aes_gcm_encrypt(key: &[u8], plaintext: &[u8], aad: &[u8]) -> crate
     Ok(out)
 }
 
-pub(crate) fn aes_gcm_decrypt(key: &[u8], ciphertext: &[u8], aad: &[u8]) -> crate::error::Result<Vec<u8>> {
-    use aes_gcm::{aead::Aead, aead::KeyInit, Aes256Gcm, Nonce, Tag};
-    use crate::error::{KeyError, Result};
+#[cfg(any(
+    all(feature = "linux-keystore", target_os = "linux"),
+    all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))
+))]
+pub(crate) fn aes_gcm_decrypt(
+    key: &[u8],
+    ciphertext: &[u8],
+    aad: &[u8],
+) -> crate::error::Result<Vec<u8>> {
+    use aes_gcm::{aead::KeyInit, Aes256Gcm, Nonce, Tag, AeadInPlace};
+    use crate::error::KeyError;
     if ciphertext.len() < 1 + 12 + 16 {
         return Err(KeyError::DecryptionError("ciphertext too short".to_string()));
     }

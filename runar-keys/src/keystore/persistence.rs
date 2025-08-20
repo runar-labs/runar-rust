@@ -1,8 +1,8 @@
-use crate::error::{KeyError, Result};
+use crate::error::Result;
 use crate::keystore::DeviceKeystore;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -36,7 +36,7 @@ pub fn build_aad(role: &Role) -> Vec<u8> {
     match role {
         Role::Mobile => b"runar:keys_state:v1|role=mobile".to_vec(),
         Role::Node { node_id } => {
-            format!("runar:keys_state:v1|role=node|node_id={}", node_id).into_bytes()
+            format!("runar:keys_state:v1|role=node|node_id={node_id}").into_bytes()
         }
     }
 }
@@ -50,7 +50,7 @@ pub fn save_state(
     let aad = build_aad(role);
     let ciphertext = keystore.encrypt(state_bytes, &aad)?;
     let file_name = file_name_for(role);
-    let tmp_name = format!("{}.tmp", file_name);
+    let tmp_name = format!("{file_name}.tmp");
     let path = cfg.base_dir.join(file_name);
     let tmp_path = cfg.base_dir.join(tmp_name);
     if let Some(parent) = path.parent() {
@@ -60,11 +60,7 @@ pub fn save_state(
         let mut f = fs::File::create(&tmp_path)?;
         f.write_all(&ciphertext)?;
         f.flush()?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            f.sync_all()?;
-        }
+        f.sync_all()?;
     }
     fs::rename(tmp_path, path)?;
     Ok(())

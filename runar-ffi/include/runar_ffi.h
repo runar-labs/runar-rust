@@ -23,6 +23,11 @@ typedef struct RNAPIRnError {
   const char *message;
 } RNAPIRnError;
 
+typedef struct RNAPIRnDeviceKeystoreCaps {
+  uint32_t version;
+  uint32_t flags;
+} RNAPIRnDeviceKeystoreCaps;
+
 typedef struct RNAPIFfiKeysHandle {
   struct RNAPIKeysInner *inner;
 } RNAPIFfiKeysHandle;
@@ -57,6 +62,29 @@ int32_t rn_last_error(char *out, size_t out_len);
 
 void rn_set_log_level(int32_t level);
 
+int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RNAPIRnError *err);
+
+int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RNAPIRnError *err);
+
+int32_t rn_keys_wipe_persistence(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_node_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
+
+int32_t rn_keys_get_keystore_caps(void *keys,
+                                  struct RNAPIRnDeviceKeystoreCaps *out_caps,
+                                  struct RNAPIRnError *err);
+
+int32_t rn_keys_register_apple_device_keystore(void *keys,
+                                               const char *label,
+                                               struct RNAPIRnError *err);
+
+int32_t rn_keys_register_linux_device_keystore(void *keys,
+                                               const char *service,
+                                               const char *account,
+                                               struct RNAPIRnError *err);
+
 int32_t rn_keys_encrypt_with_envelope(void *keys,
                                       const uint8_t *data,
                                       size_t data_len,
@@ -81,6 +109,43 @@ int32_t rn_keys_encrypt_local_data(void *keys,
                                    uint8_t **out_cipher,
                                    size_t *out_len,
                                    struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_derive_user_profile_key(void *keys,
+                                               const char *label,
+                                               uint8_t **out_pk,
+                                               size_t *out_len,
+                                               struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_install_network_public_key(void *keys,
+                                                  const uint8_t *network_public_key,
+                                                  size_t len,
+                                                  struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_generate_network_data_key(void *keys,
+                                                 char **out_str,
+                                                 size_t *out_len,
+                                                 struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_get_network_public_key(void *keys,
+                                              const char *network_id,
+                                              uint8_t **out_pk,
+                                              size_t *out_len,
+                                              struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_create_network_key_message(void *keys,
+                                                  const char *network_id,
+                                                  const uint8_t *node_agreement_pk,
+                                                  size_t node_agreement_pk_len,
+                                                  uint8_t **out_msg_cbor,
+                                                  size_t *out_len,
+                                                  struct RNAPIRnError *err);
+
+int32_t rn_keys_node_install_network_key(void *keys,
+                                         const uint8_t *nkm_cbor,
+                                         size_t nkm_len,
+                                         struct RNAPIRnError *err);
 
 int32_t rn_keys_decrypt_local_data(void *keys,
                                    const uint8_t *encrypted,
@@ -203,57 +268,6 @@ int32_t rn_keys_node_install_certificate(void *keys,
                                          const uint8_t *ncm_cbor,
                                          size_t ncm_len,
                                          struct RNAPIRnError *err);
-
-// Persistence and native keystore management
-typedef struct RNAPIRnDeviceKeystoreCaps {
-  uint32_t version;
-  uint32_t flags; // bitfield: 1=hardware_backed, 2=biometric_gate, 4=screenlock_required, 8=strongbox
-} RNAPIRnDeviceKeystoreCaps;
-
-int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RNAPIRnError *err);
-int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RNAPIRnError *err);
-int32_t rn_keys_wipe_persistence(void *keys, struct RNAPIRnError *err);
-int32_t rn_keys_node_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
-int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
-int32_t rn_keys_get_keystore_caps(void *keys, struct RNAPIRnDeviceKeystoreCaps *out_caps, struct RNAPIRnError *err);
-int32_t rn_keys_register_apple_device_keystore(void *keys, const char *label, struct RNAPIRnError *err);
-int32_t rn_keys_register_linux_device_keystore(void *keys, const char *service, const char *account, struct RNAPIRnError *err);
-
-// Mobile (user) operations
-int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RNAPIRnError *err);
-int32_t rn_keys_mobile_derive_user_profile_key(void *keys,
-                                               const char *label,
-                                               uint8_t **out_pk,
-                                               size_t *out_len,
-                                               struct RNAPIRnError *err);
-int32_t rn_keys_mobile_install_network_public_key(void *keys,
-                                                  const uint8_t *network_public_key,
-                                                  size_t len,
-                                                  struct RNAPIRnError *err);
-int32_t rn_keys_mobile_generate_network_data_key(void *keys,
-                                                 char **out_str,
-                                                 size_t *out_len,
-                                                 struct RNAPIRnError *err);
-int32_t rn_keys_mobile_get_network_public_key(void *keys,
-                                              const char *network_id,
-                                              uint8_t **out_pk,
-                                              size_t *out_len,
-                                              struct RNAPIRnError *err);
-int32_t rn_keys_mobile_create_network_key_message(void *keys,
-                                                  const char *network_id,
-                                                  const uint8_t *node_agreement_pk,
-                                                  size_t node_agreement_pk_len,
-                                                  uint8_t **out_msg_cbor,
-                                                  size_t *out_len,
-                                                  struct RNAPIRnError *err);
-
-// Node operations
-int32_t rn_keys_node_install_network_key(void *keys,
-                                         const uint8_t *nkm_cbor,
-                                         size_t nkm_len,
-                                         struct RNAPIRnError *err);
-
-// Legacy state import/export removed (no backwards compatibility)
 
 int32_t rn_transport_new_with_keys(void *keys,
                                    const uint8_t *options_cbor,

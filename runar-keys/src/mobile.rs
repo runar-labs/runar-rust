@@ -192,42 +192,35 @@ impl MobileKeyManager {
             return Ok(false);
         };
         let role = Role::Mobile;
-        match load_state(&keystore, &cfg, &role) {
-            Ok(Some(bytes)) => {
-                match serde_cbor::from_slice::<MobileKeyManagerState>(&bytes) {
-                    Ok(state) => {
-                        // rebuild self from state, preserving logger and persistence settings
-                        let logger = self.logger.clone();
-                        let (device_keystore, persistence, auto_persist) = (
-                            self.device_keystore.clone(),
-                            self.persistence.clone(),
-                            self.auto_persist,
-                        );
-                        if let Ok(new_self) = MobileKeyManager::from_state(state, logger) {
-                            self.certificate_authority = new_self.certificate_authority;
-                            self.certificate_validator = new_self.certificate_validator;
-                            self.user_root_key = new_self.user_root_key;
-                            self.user_root_agreement = new_self.user_root_agreement;
-                            self.user_profile_keys = new_self.user_profile_keys;
-                            self.user_profile_agreements = new_self.user_profile_agreements;
-                            self.label_to_pid = new_self.label_to_pid;
-                            self.network_data_keys = new_self.network_data_keys;
-                            self.network_public_keys = new_self.network_public_keys;
-                            self.issued_certificates = new_self.issued_certificates;
-                            self.serial_counter = new_self.serial_counter;
-                            self.device_keystore = device_keystore;
-                            self.persistence = persistence;
-                            self.auto_persist = auto_persist;
-                            return Ok(true);
-                        }
-                    }
-                    Err(_) => {}
+        if let Ok(Some(bytes)) = load_state(&keystore, &cfg, &role) {
+            if let Ok(state) = serde_cbor::from_slice::<MobileKeyManagerState>(&bytes) {
+                // rebuild self from state, preserving logger and persistence settings
+                let logger = self.logger.clone();
+                let (device_keystore, persistence, auto_persist) = (
+                    self.device_keystore.clone(),
+                    self.persistence.clone(),
+                    self.auto_persist,
+                );
+                if let Ok(new_self) = MobileKeyManager::from_state(state, logger) {
+                    self.certificate_authority = new_self.certificate_authority;
+                    self.certificate_validator = new_self.certificate_validator;
+                    self.user_root_key = new_self.user_root_key;
+                    self.user_root_agreement = new_self.user_root_agreement;
+                    self.user_profile_keys = new_self.user_profile_keys;
+                    self.user_profile_agreements = new_self.user_profile_agreements;
+                    self.label_to_pid = new_self.label_to_pid;
+                    self.network_data_keys = new_self.network_data_keys;
+                    self.network_public_keys = new_self.network_public_keys;
+                    self.issued_certificates = new_self.issued_certificates;
+                    self.serial_counter = new_self.serial_counter;
+                    self.device_keystore = device_keystore;
+                    self.persistence = persistence;
+                    self.auto_persist = auto_persist;
+                    return Ok(true);
                 }
-                Ok(false)
             }
-            Ok(None) => Ok(false),
-            Err(_) => Ok(false),
         }
+        Ok(false)
     }
 
     /// Persist current state if auto-persist is enabled and keystore/persistence are configured.
@@ -982,6 +975,9 @@ impl MobileKeyManager {
             issued_certificates: state.issued_certificates,
             serial_counter: state.serial_counter,
             logger,
+            device_keystore: None,
+            persistence: None,
+            auto_persist: true,
         })
     }
 }

@@ -13,7 +13,7 @@ use runar_keys::keystore;
 use runar_keys::EnvelopeCrypto;
 use runar_keys::{
     mobile::{MobileKeyManager, NetworkKeyMessage, NodeCertificateMessage, SetupToken},
-    node::{NodeKeyManager, NodeKeyManagerState},
+    node::NodeKeyManager,
 };
 use runar_schemas::NodeInfo;
 use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
@@ -438,7 +438,7 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
     label: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
+    let Some(_inner) = with_keys_inner(keys) else {
         set_error(err, 1, "keys handle is null");
         return 1;
     };
@@ -461,13 +461,13 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
         match runar_keys::keystore::apple::AppleDeviceKeystore::new(label_str) {
             Ok(ks) => {
                 let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
-                if let Some(n) = inner.node_owned.as_mut() {
+                if let Some(n) = with_keys_inner(keys).and_then(|i| i.node_owned.as_mut()) {
                     n.register_device_keystore(ks.clone());
                 }
-                if let Some(m) = inner.mobile.as_mut() {
+                if let Some(m) = with_keys_inner(keys).and_then(|i| i.mobile.as_mut()) {
                     m.register_device_keystore(ks);
                 }
-                return 0;
+                0
             }
             Err(e) => {
                 set_error(
@@ -475,7 +475,7 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
                     2,
                     &format!("Failed to create AppleDeviceKeystore: {e}"),
                 );
-                return 2;
+                2
             }
         }
     }
@@ -490,7 +490,7 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
             2,
             "apple-keystore feature not enabled or unsupported target OS",
         );
-        return 2;
+        2
     }
 }
 
@@ -534,11 +534,11 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
                 if let Some(m) = inner.mobile.as_mut() {
                     m.register_device_keystore(ks);
                 }
-                return 0;
+                0
             }
             Err(e) => {
                 set_error(err, 2, &format!("Failed to create LinuxDeviceKeystore: {e}"));
-                return 2;
+                2
             }
         }
     }
@@ -546,7 +546,7 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
     {
         let _ = (svc, acc);
         set_error(err, 2, "linux-keystore feature not enabled or unsupported target OS");
-        return 2;
+        2
     }
 }
 
