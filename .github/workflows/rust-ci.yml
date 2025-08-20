@@ -44,4 +44,4 @@ jobs:
         run: cargo build --verbose
 
       - name: Build runar_ffi (generate header)
-        run: cargo build -p runar_ffi --all-targets --all-features --verbose
+        run: cargo build -p runar_ffi --all-targets --features linux-keystore --verbose

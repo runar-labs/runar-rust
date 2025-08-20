@@ -29,8 +29,8 @@ cbindgen = "0.26"
 
 [features]
 default = []
-apple-keystore = []
-linux-keystore = []
+apple-keystore = ["runar-keys/apple-keystore"]
+linux-keystore = ["runar-keys/linux-keystore"]
 
 [dev-dependencies]
 serde_cbor = "0.11"
