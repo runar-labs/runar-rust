@@ -8,11 +8,11 @@ use crate::error::{KeyError, Result};
 use keyring::Entry;
 
 #[cfg(feature = "linux-keystore")]
-use zeroize::Zeroize;
+use base64::Engine;
 #[cfg(feature = "linux-keystore")]
 use rand::RngCore;
 #[cfg(feature = "linux-keystore")]
-use base64::Engine;
+use zeroize::Zeroize;
 
 pub struct LinuxDeviceKeystore {
     service: String,
@@ -104,5 +104,3 @@ impl DeviceKeystore for LinuxDeviceKeystore {
         }
     }
 }
-
-

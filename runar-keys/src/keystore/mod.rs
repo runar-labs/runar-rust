@@ -20,7 +20,10 @@ pub trait DeviceKeystore: Send + Sync {
     fn capabilities(&self) -> DeviceKeystoreCaps;
 }
 
-#[cfg(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    feature = "apple-keystore",
+    any(target_os = "macos", target_os = "ios")
+))]
 pub mod apple;
 
 pub mod persistence;
@@ -31,25 +34,33 @@ pub mod linux;
 // Shared AES-GCM helpers used by all backends after obtaining the symmetric key
 #[cfg(any(
     all(feature = "linux-keystore", target_os = "linux"),
-    all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    )
 ))]
 const VERSION_BYTE: u8 = 1;
 
 #[cfg(any(
     all(feature = "linux-keystore", target_os = "linux"),
-    all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    )
 ))]
 pub(crate) fn aes_gcm_encrypt(
     key: &[u8],
     plaintext: &[u8],
     aad: &[u8],
 ) -> crate::error::Result<Vec<u8>> {
-    use aes_gcm::{aead::KeyInit, Aes256Gcm, Nonce, AeadInPlace};
-    use rand::RngCore;
     use crate::error::KeyError;
+    use aes_gcm::{aead::KeyInit, AeadInPlace, Aes256Gcm, Nonce};
+    use rand::RngCore;
 
     if key.len() != 32 {
-        return Err(KeyError::SymmetricCipherError("AES-256-GCM requires 32-byte key".to_string()));
+        return Err(KeyError::SymmetricCipherError(
+            "AES-256-GCM requires 32-byte key".to_string(),
+        ));
     }
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| KeyError::SymmetricCipherError(format!("cipher init: {e}")))?;
@@ -69,17 +80,22 @@ pub(crate) fn aes_gcm_encrypt(
 
 #[cfg(any(
     all(feature = "linux-keystore", target_os = "linux"),
-    all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    )
 ))]
 pub(crate) fn aes_gcm_decrypt(
     key: &[u8],
     ciphertext: &[u8],
     aad: &[u8],
 ) -> crate::error::Result<Vec<u8>> {
-    use aes_gcm::{aead::KeyInit, Aes256Gcm, Nonce, Tag, AeadInPlace};
     use crate::error::KeyError;
+    use aes_gcm::{aead::KeyInit, AeadInPlace, Aes256Gcm, Nonce, Tag};
     if ciphertext.len() < 1 + 12 + 16 {
-        return Err(KeyError::DecryptionError("ciphertext too short".to_string()));
+        return Err(KeyError::DecryptionError(
+            "ciphertext too short".to_string(),
+        ));
     }
     if ciphertext[0] != VERSION_BYTE {
         return Err(KeyError::DecryptionError("unsupported version".to_string()));

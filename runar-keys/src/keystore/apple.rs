@@ -40,7 +40,10 @@ impl AppleDeviceKeystore {
 
 impl DeviceKeystore for AppleDeviceKeystore {
     fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
-        #[cfg(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios")))]
+        #[cfg(all(
+            feature = "apple-keystore",
+            any(target_os = "macos", target_os = "ios")
+        ))]
         {
             let key_bytes = get_or_create_unwrapped_aes_key(&self.label)?;
             let out = aes_gcm_encrypt(&key_bytes, plaintext, aad)?;
@@ -53,17 +56,24 @@ impl DeviceKeystore for AppleDeviceKeystore {
             }
             return Ok(out);
         }
-        #[cfg(not(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))))]
+        #[cfg(not(all(
+            feature = "apple-keystore",
+            any(target_os = "macos", target_os = "ios")
+        )))]
         {
             let _ = (plaintext, aad);
             return Err(KeyError::InvalidOperation(
-                "AppleDeviceKeystore requires target macOS/iOS with feature `apple-keystore`".into(),
+                "AppleDeviceKeystore requires target macOS/iOS with feature `apple-keystore`"
+                    .into(),
             ));
         }
     }
 
     fn decrypt(&self, ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
-        #[cfg(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios")))]
+        #[cfg(all(
+            feature = "apple-keystore",
+            any(target_os = "macos", target_os = "ios")
+        ))]
         {
             let key_bytes = get_or_create_unwrapped_aes_key(&self.label)?;
             let out = aes_gcm_decrypt(&key_bytes, ciphertext, aad)?;
@@ -75,11 +85,15 @@ impl DeviceKeystore for AppleDeviceKeystore {
             }
             return Ok(out);
         }
-        #[cfg(not(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))))]
+        #[cfg(not(all(
+            feature = "apple-keystore",
+            any(target_os = "macos", target_os = "ios")
+        )))]
         {
             let _ = (ciphertext, aad);
             return Err(KeyError::InvalidOperation(
-                "AppleDeviceKeystore requires target macOS/iOS with feature `apple-keystore`".into(),
+                "AppleDeviceKeystore requires target macOS/iOS with feature `apple-keystore`"
+                    .into(),
             ));
         }
     }
@@ -123,7 +137,9 @@ fn aes_gcm_encrypt(key: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> 
 fn aes_gcm_decrypt(key: &[u8], ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
     use aes_gcm::{aead::Aead, aead::KeyInit, Aes256Gcm, Nonce, Tag};
     if ciphertext.len() < 1 + 12 + 16 {
-        return Err(KeyError::DecryptionError("ciphertext too short".to_string()));
+        return Err(KeyError::DecryptionError(
+            "ciphertext too short".to_string(),
+        ));
     }
     if ciphertext[0] != VERSION_BYTE {
         return Err(KeyError::DecryptionError("unsupported version".to_string()));
@@ -148,7 +164,10 @@ fn aes_gcm_decrypt(key: &[u8], ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>>
 // Apple-specific keychain helpers (compile only on macOS/iOS with feature)
 // ------------------------------
 
-#[cfg(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios")))]
+#[cfg(all(
+    feature = "apple-keystore",
+    any(target_os = "macos", target_os = "ios")
+))]
 fn get_or_create_unwrapped_aes_key(label: &str) -> Result<Vec<u8>> {
     // High-level flow:
     // 1) Find wrapped AES blob in Keychain by service/label; if found, unwrap with Secure Enclave private key

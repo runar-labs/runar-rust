@@ -537,7 +537,11 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
                 0
             }
             Err(e) => {
-                set_error(err, 2, &format!("Failed to create LinuxDeviceKeystore: {e}"));
+                set_error(
+                    err,
+                    2,
+                    &format!("Failed to create LinuxDeviceKeystore: {e}"),
+                );
                 2
             }
         }
@@ -545,7 +549,11 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
     #[cfg(not(all(feature = "linux-keystore", target_os = "linux")))]
     {
         let _ = (svc, acc);
-        set_error(err, 2, "linux-keystore feature not enabled or unsupported target OS");
+        set_error(
+            err,
+            2,
+            "linux-keystore feature not enabled or unsupported target OS",
+        );
         2
     }
 }
