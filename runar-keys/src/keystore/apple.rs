@@ -17,7 +17,10 @@ use zeroize::Zeroize;
 pub struct AppleDeviceKeystore {
     // Placeholder for cached metadata/handles. We intentionally do not store the symmetric key.
     pub label: String,
-    #[cfg(all(feature = "apple-keystore", target_os = "macos"))]
+    #[cfg(all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ))]
     private_key: std::sync::Mutex<Option<security_framework::key::SecKey>>,
 }
 
@@ -26,7 +29,10 @@ impl AppleDeviceKeystore {
         // Actual key generation or lookup will happen lazily in encrypt/decrypt paths.
         Ok(Self {
             label: label.to_string(),
-            #[cfg(all(feature = "apple-keystore", target_os = "macos"))]
+            #[cfg(all(
+                feature = "apple-keystore",
+                any(target_os = "macos", target_os = "ios")
+            ))]
             private_key: std::sync::Mutex::new(None),
         })
     }
@@ -142,13 +148,15 @@ fn get_or_create_unwrapped_aes_key(ks: &AppleDeviceKeystore) -> Result<Vec<u8>> 
 
     // 1) Ensure Secure Enclave EC private key exists (identified by label), cache it in the struct
     let private_key: SecKey = {
-        if let Some(pk) = ks
-            .private_key
-            .lock()
-            .map_err(|_| KeyError::InvalidOperation("mutex poisoned".into()))?
-            .as_ref()
-            .cloned()
-        {
+        // Take a snapshot of the cached key without holding the lock across the whole block
+        let cached: Option<SecKey> = {
+            let guard = ks
+                .private_key
+                .lock()
+                .map_err(|_| KeyError::InvalidOperation("mutex poisoned".into()))?;
+            guard.clone()
+        };
+        if let Some(pk) = cached {
             pk
         } else {
             let access = SecAccessControl::create_with_protection(
@@ -246,12 +254,119 @@ fn get_or_create_unwrapped_aes_key(ks: &AppleDeviceKeystore) -> Result<Vec<u8>> 
     Ok(key.to_vec())
 }
 
-// iOS: placeholder until Secure Enclave wrapping via `keychain-services` is implemented
+// iOS: full implementation mirroring macOS with software-only dev/CI mode and production Secure Enclave
 #[cfg(all(feature = "apple-keystore", target_os = "ios"))]
-fn get_or_create_unwrapped_aes_key(_label: &str) -> Result<Vec<u8>> {
-    // iOS CI/dev: temporary software-only mode for tests without entitlements.
-    Err(KeyError::InvalidOperation(
-        "Apple iOS Secure Enclave backend not yet implemented; use app with entitlements to test"
-            .into(),
-    ))
+fn get_or_create_unwrapped_aes_key(ks: &AppleDeviceKeystore) -> Result<Vec<u8>> {
+    use core_foundation::base::TCFType;
+    use core_foundation::data::CFData;
+    use core_foundation::error::CFErrorRef;
+    use rand::RngCore;
+    use security_framework::access_control::{ProtectionMode, SecAccessControl};
+    use security_framework::key::{GenerateKeyOptions, KeyType, SecKey, Token};
+    use security_framework::passwords::{get_generic_password, set_generic_password};
+    use security_framework_sys::key::{
+        kSecKeyAlgorithmECIESEncryptionStandardX963SHA256AESGCM, SecKeyCreateDecryptedData,
+        SecKeyCreateEncryptedData,
+    };
+
+    if std::env::var("RUNAR_APPLE_KEYSTORE_SOFTWARE_ONLY")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        let service = &ks.label;
+        let account = "state.aead.v1.software";
+        if let Ok(bytes) = get_generic_password(service, account) {
+            if bytes.len() == 32 {
+                return Ok(bytes);
+            }
+        }
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        set_generic_password(service, account, &key)
+            .map_err(|e| KeyError::InvalidOperation(format!("set software key: {e}")))?;
+        return Ok(key.to_vec());
+    }
+
+    let private_key: SecKey = {
+        if let Some(pk) = ks
+            .private_key
+            .lock()
+            .map_err(|_| KeyError::InvalidOperation("mutex poisoned".into()))?
+            .as_ref()
+            .cloned()
+        {
+            pk
+        } else {
+            let access = SecAccessControl::create_with_protection(
+                Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
+                0,
+            )
+            .map_err(|e| KeyError::InvalidOperation(format!("access control: {e}")))?;
+            let mut opts = GenerateKeyOptions::default();
+            opts.set_key_type(KeyType::ec())
+                .set_size_in_bits(256)
+                .set_label(&ks.label)
+                .set_token(Token::SecureEnclave)
+                .set_access_control(access.clone());
+            let pk = SecKey::generate(opts.to_dictionary())
+                .map_err(|e| KeyError::InvalidOperation(format!("SecKey generate: {e}")))?;
+            if let Ok(mut guard) = ks.private_key.lock() {
+                *guard = Some(pk.clone());
+            }
+            pk
+        }
+    };
+
+    let service = &ks.label;
+    let account = "state.aead.v1.wrapped";
+    if let Ok(blob) = get_generic_password(service, account) {
+        unsafe {
+            let mut err: CFErrorRef = std::ptr::null_mut();
+            let wrapped = CFData::from_buffer(&blob);
+            let out = SecKeyCreateDecryptedData(
+                private_key.as_concrete_TypeRef(),
+                kSecKeyAlgorithmECIESEncryptionStandardX963SHA256AESGCM,
+                wrapped.as_concrete_TypeRef(),
+                &mut err,
+            );
+            if !err.is_null() || out.is_null() {
+                return Err(KeyError::DecryptionError(
+                    "SecKeyCreateDecryptedData failed".to_string(),
+                ));
+            }
+            let data = CFData::wrap_under_create_rule(out);
+            let key = data.to_vec();
+            if key.len() != 32 {
+                return Err(KeyError::InvalidOperation(
+                    "unwrapped key wrong length".into(),
+                ));
+            }
+            return Ok(key);
+        }
+    }
+    let mut key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut key);
+    let public_key = private_key
+        .public_key()
+        .ok_or_else(|| KeyError::InvalidOperation("SecKeyCopyPublicKey returned null".into()))?;
+    let wrapped = unsafe {
+        let mut err: CFErrorRef = std::ptr::null_mut();
+        let plain = CFData::from_buffer(&key);
+        let out = SecKeyCreateEncryptedData(
+            public_key.as_concrete_TypeRef(),
+            kSecKeyAlgorithmECIESEncryptionStandardX963SHA256AESGCM,
+            plain.as_concrete_TypeRef(),
+            &mut err,
+        );
+        if !err.is_null() || out.is_null() {
+            return Err(KeyError::EncryptionError(
+                "SecKeyCreateEncryptedData failed".to_string(),
+            ));
+        }
+        CFData::wrap_under_create_rule(out).to_vec()
+    };
+    set_generic_password(service, account, &wrapped)
+        .map_err(|e| KeyError::InvalidOperation(format!("set wrapped blob: {e}")))?;
+    Ok(key.to_vec())
 }

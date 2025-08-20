@@ -15,7 +15,7 @@ fn with_timeout<F: FnOnce() + Send + 'static>(dur: Duration, f: F) {
     });
     match rx.recv_timeout(dur) {
         Ok(()) => (),
-        Err(_) => panic!("test timed out after {:?}", dur),
+        Err(_) => panic!("test timed out after {dur:?}"),
     }
 }
 

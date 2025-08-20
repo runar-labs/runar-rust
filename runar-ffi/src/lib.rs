@@ -603,10 +603,14 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
     account: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
+    let Some(inner_ptr) = with_keys_inner(keys) else {
         set_error(err, 1, "keys handle is null");
         return 1;
     };
+    #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
+    let mut inner = inner_ptr;
+    #[cfg(not(all(feature = "linux-keystore", target_os = "linux")))]
+    let _ = inner_ptr;
     if service.is_null() || account.is_null() {
         set_error(err, 1, "null argument");
         return 1;
