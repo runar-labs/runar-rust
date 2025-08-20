@@ -8,6 +8,10 @@ use crate::error::{KeyError, Result};
 use crate::mobile::{EnvelopeEncryptedData, NetworkKeyMessage, NodeCertificateMessage, SetupToken};
 use crate::{log_debug, log_info, log_warn};
 // use p256::ecdsa::SigningKey; // no longer needed here
+use crate::keystore::{
+    persistence::{load_state, save_state, PersistenceConfig, Role},
+    DeviceKeystore,
+};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
@@ -18,7 +22,6 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::keystore::{DeviceKeystore, persistence::{PersistenceConfig, Role, save_state, load_state}};
 
 /// QUIC certificate configuration for transport layer
 #[derive(Debug)]
@@ -152,7 +155,8 @@ impl NodeKeyManager {
     /// Attempt to load state from disk using the configured keystore.
     /// Returns true if state was loaded, false if not found.
     pub fn probe_and_load_state(&mut self) -> crate::Result<bool> {
-        let (Some(keystore), Some(cfg)) = (self.device_keystore.clone(), self.persistence.clone()) else {
+        let (Some(keystore), Some(cfg)) = (self.device_keystore.clone(), self.persistence.clone())
+        else {
             return Ok(false);
         };
         let node_id = self.get_node_id();
@@ -186,10 +190,13 @@ impl NodeKeyManager {
 
     /// Persist current state if auto-persist is enabled and keystore/persistence are configured.
     pub fn flush_state(&self) -> crate::Result<()> {
-        if let (Some(keystore), Some(cfg)) = (self.device_keystore.as_ref(), self.persistence.as_ref()) {
+        if let (Some(keystore), Some(cfg)) =
+            (self.device_keystore.as_ref(), self.persistence.as_ref())
+        {
             let state = self.export_state();
-            let bytes = serde_cbor::to_vec(&state)
-                .map_err(|e| KeyError::EncodingError(format!("Failed to encode node state: {e}")))?;
+            let bytes = serde_cbor::to_vec(&state).map_err(|e| {
+                KeyError::EncodingError(format!("Failed to encode node state: {e}"))
+            })?;
             let node_id = self.get_node_id();
             save_state(keystore, cfg, &Role::Node { node_id: &node_id }, &bytes)?;
         }

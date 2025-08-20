@@ -9,12 +9,12 @@ use std::{
 use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
 use runar_common::logging::{Component, Logger};
+use runar_keys::keystore;
 use runar_keys::EnvelopeCrypto;
 use runar_keys::{
     mobile::{MobileKeyManager, NetworkKeyMessage, NodeCertificateMessage, SetupToken},
     node::{NodeKeyManager, NodeKeyManagerState},
 };
-use runar_keys::keystore;
 use runar_schemas::NodeInfo;
 use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
@@ -453,7 +453,10 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
             return 2;
         }
     };
-    #[cfg(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios")))]
+    #[cfg(all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ))]
     {
         match runar_keys::keystore::apple::AppleDeviceKeystore::new(label_str) {
             Ok(ks) => {
@@ -467,15 +470,26 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
                 return 0;
             }
             Err(e) => {
-                set_error(err, 2, &format!("Failed to create AppleDeviceKeystore: {e}"));
+                set_error(
+                    err,
+                    2,
+                    &format!("Failed to create AppleDeviceKeystore: {e}"),
+                );
                 return 2;
             }
         }
     }
-    #[cfg(not(all(feature = "apple-keystore", any(target_os = "macos", target_os = "ios"))))]
+    #[cfg(not(all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    )))]
     {
         let _ = label_str;
-        set_error(err, 2, "apple-keystore feature not enabled or unsupported target OS");
+        set_error(
+            err,
+            2,
+            "apple-keystore feature not enabled or unsupported target OS",
+        );
         return 2;
     }
 }
@@ -900,7 +914,11 @@ pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    if network_id.is_null() || node_agreement_pk.is_null() || out_msg_cbor.is_null() || out_len.is_null() {
+    if network_id.is_null()
+        || node_agreement_pk.is_null()
+        || out_msg_cbor.is_null()
+        || out_len.is_null()
+    {
         set_error(err, 1, "null argument");
         return 1;
     }

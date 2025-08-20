@@ -8,6 +8,10 @@ use crate::certificate::{
 };
 use crate::derivation::derive_agreement_from_master;
 use crate::error::{KeyError, Result};
+use crate::keystore::{
+    persistence::{load_state, save_state, PersistenceConfig, Role},
+    DeviceKeystore,
+};
 use crate::{log_debug, log_error, log_info};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
@@ -17,7 +21,6 @@ use runar_common::logging::Logger;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::keystore::{DeviceKeystore, persistence::{PersistenceConfig, Role, save_state, load_state}};
 
 /// Setup token from a node requesting a certificate
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,7 +187,8 @@ impl MobileKeyManager {
     /// Attempt to load state from disk using the configured keystore.
     /// Returns true if state was loaded, false if not found.
     pub fn probe_and_load_state(&mut self) -> Result<bool> {
-        let (Some(keystore), Some(cfg)) = (self.device_keystore.clone(), self.persistence.clone()) else {
+        let (Some(keystore), Some(cfg)) = (self.device_keystore.clone(), self.persistence.clone())
+        else {
             return Ok(false);
         };
         let role = Role::Mobile;
@@ -228,10 +232,13 @@ impl MobileKeyManager {
 
     /// Persist current state if auto-persist is enabled and keystore/persistence are configured.
     pub fn flush_state(&self) -> Result<()> {
-        if let (Some(keystore), Some(cfg)) = (self.device_keystore.as_ref(), self.persistence.as_ref()) {
+        if let (Some(keystore), Some(cfg)) =
+            (self.device_keystore.as_ref(), self.persistence.as_ref())
+        {
             let state = self.export_state();
-            let bytes = serde_cbor::to_vec(&state)
-                .map_err(|e| KeyError::EncodingError(format!("Failed to encode mobile state: {e}")))?;
+            let bytes = serde_cbor::to_vec(&state).map_err(|e| {
+                KeyError::EncodingError(format!("Failed to encode mobile state: {e}"))
+            })?;
             save_state(keystore, cfg, &Role::Mobile, &bytes)?;
         }
         Ok(())

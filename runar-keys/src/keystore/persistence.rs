@@ -35,7 +35,9 @@ fn file_name_for(role: &Role) -> &'static str {
 pub fn build_aad(role: &Role) -> Vec<u8> {
     match role {
         Role::Mobile => b"runar:keys_state:v1|role=mobile".to_vec(),
-        Role::Node { node_id } => format!("runar:keys_state:v1|role=node|node_id={}", node_id).into_bytes(),
+        Role::Node { node_id } => {
+            format!("runar:keys_state:v1|role=node|node_id={}", node_id).into_bytes()
+        }
     }
 }
 
@@ -90,4 +92,3 @@ pub fn wipe(cfg: &PersistenceConfig, role: &Role) -> Result<()> {
     }
     Ok(())
 }
-
