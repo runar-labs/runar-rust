@@ -600,15 +600,9 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
                     n.register_device_keystore(ks.clone());
                 }
                 if let Some(m) = holder.mobile.as_mut() {
-                    m.register_device_keystore(ks);
+                    m.register_device_keystore(ks.clone());
                 }
-                holder.device_keystore = Some(Arc::clone(
-                    &holder
-                        .node_owned
-                        .as_ref()
-                        .map(|_| ks.clone())
-                        .unwrap_or_else(|| ks.clone()),
-                ));
+                holder.device_keystore = Some(ks.clone());
                 0
             }
             Err(e) => {
