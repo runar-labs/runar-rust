@@ -494,6 +494,62 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
+    keys: *mut c_void,
+    service: *const c_char,
+    account: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    if service.is_null() || account.is_null() {
+        set_error(err, 1, "null argument");
+        return 1;
+    }
+    let svc = match std::ffi::CStr::from_ptr(service).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, 2, "invalid utf8 service");
+            return 2;
+        }
+    };
+    let acc = match std::ffi::CStr::from_ptr(account).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, 2, "invalid utf8 account");
+            return 2;
+        }
+    };
+    #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
+    {
+        match runar_keys::keystore::linux::LinuxDeviceKeystore::new(svc, acc) {
+            Ok(ks) => {
+                let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
+                if let Some(n) = inner.node_owned.as_mut() {
+                    n.register_device_keystore(ks.clone());
+                }
+                if let Some(m) = inner.mobile.as_mut() {
+                    m.register_device_keystore(ks);
+                }
+                return 0;
+            }
+            Err(e) => {
+                set_error(err, 2, &format!("Failed to create LinuxDeviceKeystore: {e}"));
+                return 2;
+            }
+        }
+    }
+    #[cfg(not(all(feature = "linux-keystore", target_os = "linux")))]
+    {
+        let _ = (svc, acc);
+        set_error(err, 2, "linux-keystore feature not enabled or unsupported target OS");
+        return 2;
+    }
+}
+
 // Envelope helpers (CBOR EED)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(

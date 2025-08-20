@@ -217,6 +217,7 @@ int32_t rn_keys_node_get_keystore_state(void *keys, int32_t *out_state, struct R
 int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
 int32_t rn_keys_get_keystore_caps(void *keys, struct RNAPIRnDeviceKeystoreCaps *out_caps, struct RNAPIRnError *err);
 int32_t rn_keys_register_apple_device_keystore(void *keys, const char *label, struct RNAPIRnError *err);
+int32_t rn_keys_register_linux_device_keystore(void *keys, const char *service, const char *account, struct RNAPIRnError *err);
 
 // Mobile (user) operations
 int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RNAPIRnError *err);
