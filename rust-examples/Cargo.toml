@@ -15,7 +15,8 @@ runar_test_utils = { path = "../runar-test-utils" }
 runar_macros = { path = "../runar-macros" }
 runar_macros_common = { path = "../runar-macros-common" }
 runar-schemas = { path = "../runar-schemas" }
-runar-services = { path = "../runar-services" }
+# keep dependency name consistent with workspace: runar_services
+runar_services = { path = "../runar-services" }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -31,3 +32,7 @@ path = "simple/src/main.rs"
 [[example]]
 name = "micro_services_demo"
 path = "micro_services_demo/src/main.rs"
+
+[[example]]
+name = "serializer_vectors"
+path = "serializer_vectors.rs"
