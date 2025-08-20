@@ -18,6 +18,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::keystore::{DeviceKeystore, persistence::{PersistenceConfig, Role, save_state, load_state}};
 
 /// QUIC certificate configuration for transport layer
 #[derive(Debug)]
@@ -71,6 +72,12 @@ pub struct NodeKeyManager {
     certificate_status: CertificateStatus,
     /// Logger instance
     logger: Arc<Logger>,
+    /// Optional device keystore for on-device encrypted persistence
+    device_keystore: Option<Arc<dyn DeviceKeystore>>,
+    /// Optional persistence configuration
+    persistence: Option<PersistenceConfig>,
+    /// If true, persist state automatically after mutations
+    auto_persist: bool,
 }
 
 impl NodeKeyManager {
@@ -118,7 +125,81 @@ impl NodeKeyManager {
             certificate_status: CertificateStatus::None,
             logger,
             profile_public_keys: HashMap::new(),
+            device_keystore: None,
+            persistence: None,
+            auto_persist: true,
         })
+    }
+
+    /// Configure the persistence base directory.
+    pub fn set_persistence_dir(&mut self, base_dir: std::path::PathBuf) {
+        self.persistence = Some(PersistenceConfig::new(base_dir));
+    }
+
+    /// Register a device keystore used to encrypt/decrypt persisted state.
+    pub fn register_device_keystore(&mut self, keystore: Arc<dyn DeviceKeystore>) {
+        self.device_keystore = Some(keystore);
+    }
+
+    /// Enable or disable auto persistence.
+    pub fn enable_auto_persist(&mut self, enabled: bool) {
+        self.auto_persist = enabled;
+        if enabled {
+            let _ = self.flush_state();
+        }
+    }
+
+    /// Attempt to load state from disk using the configured keystore.
+    /// Returns true if state was loaded, false if not found.
+    pub fn probe_and_load_state(&mut self) -> crate::Result<bool> {
+        let (Some(keystore), Some(cfg)) = (self.device_keystore.clone(), self.persistence.clone()) else {
+            return Ok(false);
+        };
+        let node_id = self.get_node_id();
+        let role = Role::Node { node_id: &node_id };
+        match load_state(&keystore, &cfg, &role) {
+            Ok(Some(bytes)) => {
+                match serde_cbor::from_slice::<crate::node::NodeKeyManagerState>(&bytes) {
+                    Ok(state) => {
+                        let logger = self.logger.clone();
+                        let (device_keystore, persistence, auto_persist) = (
+                            self.device_keystore.clone(),
+                            self.persistence.clone(),
+                            self.auto_persist,
+                        );
+                        if let Ok(new_self) = NodeKeyManager::from_state(state, logger) {
+                            *self = new_self;
+                            self.device_keystore = device_keystore;
+                            self.persistence = persistence;
+                            self.auto_persist = auto_persist;
+                            return Ok(true);
+                        }
+                    }
+                    Err(_) => {}
+                }
+                Ok(false)
+            }
+            Ok(None) => Ok(false),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Persist current state if auto-persist is enabled and keystore/persistence are configured.
+    pub fn flush_state(&self) -> crate::Result<()> {
+        if let (Some(keystore), Some(cfg)) = (self.device_keystore.as_ref(), self.persistence.as_ref()) {
+            let state = self.export_state();
+            let bytes = serde_cbor::to_vec(&state)
+                .map_err(|e| KeyError::EncodingError(format!("Failed to encode node state: {e}")))?;
+            let node_id = self.get_node_id();
+            save_state(keystore, cfg, &Role::Node { node_id: &node_id }, &bytes)?;
+        }
+        Ok(())
+    }
+
+    fn persist_if_enabled(&self) {
+        if self.auto_persist {
+            let _ = self.flush_state();
+        }
     }
 
     /// Get the node public key (node ID) - keys are always available
@@ -474,7 +555,9 @@ impl NodeKeyManager {
 
         self.certificate_status = CertificateStatus::Valid;
 
-        Ok(())
+        let res = Ok(());
+        self.persist_if_enabled();
+        res
     }
 
     /// Get QUIC-compatible certificate configuration
@@ -551,7 +634,9 @@ impl NodeKeyManager {
             "Network agreement scalar installed for network: {network_public_key}"
         );
 
-        Ok(())
+        let res = Ok(());
+        self.persist_if_enabled();
+        res
     }
 
     /// Get network agreement key for decryption

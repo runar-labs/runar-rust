@@ -34,6 +34,10 @@ pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificat
 pub use error::{KeyError, Result};
 pub use mobile::MobileKeyManager;
 pub use node::NodeKeyManager;
+
+// Device keystore abstraction lives in runar-keys and is used by Mobile/Node managers for
+// on-device encrypted persistence. Apple backend is behind `apple-keystore` feature.
+pub mod keystore;
 // expose profile public key registration convenience re-export
 
 // ---------------------------------------------------------------------------
