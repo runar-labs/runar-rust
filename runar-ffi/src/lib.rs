@@ -440,7 +440,11 @@ pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state_return(
 ) -> i32 {
     let mut state: i32 = 0;
     let rc = rn_keys_mobile_get_keystore_state(keys, &mut state, err);
-    if rc == 0 { state } else { -1 }
+    if rc == 0 {
+        state
+    } else {
+        -1
+    }
 }
 
 #[no_mangle]
@@ -450,7 +454,11 @@ pub unsafe extern "C" fn rn_keys_node_get_keystore_state_return(
 ) -> i32 {
     let mut state: i32 = 0;
     let rc = rn_keys_node_get_keystore_state(keys, &mut state, err);
-    if rc == 0 { state } else { -1 }
+    if rc == 0 {
+        state
+    } else {
+        -1
+    }
 }
 
 #[no_mangle]
@@ -460,7 +468,11 @@ pub unsafe extern "C" fn rn_keys_set_persistence_dir_return(
     err: *mut RnError,
 ) -> i32 {
     let rc = rn_keys_set_persistence_dir(keys, dir, err);
-    if rc == 0 { 0 } else { -1 }
+    if rc == 0 {
+        0
+    } else {
+        -1
+    }
 }
 
 #[no_mangle]
@@ -470,7 +482,11 @@ pub unsafe extern "C" fn rn_keys_enable_auto_persist_return(
     err: *mut RnError,
 ) -> i32 {
     let rc = rn_keys_enable_auto_persist(keys, enabled, err);
-    if rc == 0 { 0 } else { -1 }
+    if rc == 0 {
+        0
+    } else {
+        -1
+    }
 }
 
 #[no_mangle]
@@ -479,7 +495,11 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence_return(
     err: *mut RnError,
 ) -> i32 {
     let rc = rn_keys_wipe_persistence(keys, err);
-    if rc == 0 { 0 } else { -1 }
+    if rc == 0 {
+        0
+    } else {
+        -1
+    }
 }
 
 // Explicit flush of state persistence
@@ -490,10 +510,16 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
         return 1;
     };
     if let Some(n) = inner.node_owned.as_ref() {
-        if let Err(e) = n.flush_state() { set_error(err, 2, &format!("node flush_state: {e}")); return 2; }
+        if let Err(e) = n.flush_state() {
+            set_error(err, 2, &format!("node flush_state: {e}"));
+            return 2;
+        }
     }
     if let Some(m) = inner.mobile.as_ref() {
-        if let Err(e) = m.flush_state() { set_error(err, 2, &format!("mobile flush_state: {e}")); return 2; }
+        if let Err(e) = m.flush_state() {
+            set_error(err, 2, &format!("mobile flush_state: {e}"));
+            return 2;
+        }
     }
     0
 }
@@ -501,7 +527,11 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_flush_state_return(keys: *mut c_void, err: *mut RnError) -> i32 {
     let rc = rn_keys_flush_state(keys, err);
-    if rc == 0 { 0 } else { -1 }
+    if rc == 0 {
+        0
+    } else {
+        -1
+    }
 }
 
 #[no_mangle]
