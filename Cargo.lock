@@ -3584,7 +3584,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
- "ctor",
+ "ctor 0.2.9",
  "runar-keys",
  "runar-schemas",
  "runar-serializer",

@@ -2947,3 +2947,51 @@ pub unsafe extern "C" fn rn_transport_local_addr(
 }
 
 // Tests moved to runar-ffi/tests/ffi_transport_test.rs
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ensure_symmetric_key(
+    keys: *mut c_void,
+    key_name: *const c_char,
+    out_key: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || key_name.is_null() || out_key.is_null() || out_len.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let key_name_str = match std::ffi::CStr::from_ptr(key_name).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_error(err, 2, "invalid utf8 key_name");
+                return 2;
+            }
+        };
+        let key = if let Some(n) = inner.node_owned.as_mut() {
+            match n.ensure_symmetric_key(key_name_str) {
+                Ok(k) => k,
+                Err(e) => {
+                    set_error(err, 2, &format!("ensure_symmetric_key failed: {e}"));
+                    return 2;
+                }
+            }
+        } else if let Some(_n) = inner.node_shared.as_ref() {
+            // For shared NodeKeyManager, we can't modify it, so we can't ensure symmetric keys
+            set_error(err, 1, "node is shared; ensure_symmetric_key not available");
+            return 1;
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        if !alloc_bytes(out_key, out_len, &key) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}

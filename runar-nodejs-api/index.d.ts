@@ -43,6 +43,7 @@ export declare class Keys {
   mobileDeriveUserProfileKey(label: string): Buffer
   mobileGetNetworkPublicKey(networkId: string): Buffer
   mobileCreateNetworkKeyMessage(networkId: string, nodeAgreementPk: Buffer): Buffer
+  ensureSymmetricKey(keyName: string): Buffer
 }
 
 export declare class Transport {
