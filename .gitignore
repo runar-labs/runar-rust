@@ -42,3 +42,6 @@ runar-nodejs-ffi/runar-nodejs-ffi.node
 runar-nodejs-ffi/*.node
 cargo-wrapper.sh 
 runar-services/node_1_db
+runar-nodejs-api/node_modules/
+
+runar-nodejs-api/**.node

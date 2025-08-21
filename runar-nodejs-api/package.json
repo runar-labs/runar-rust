@@ -1,0 +1,27 @@
+{
+  "name": "runar-nodejs-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.js",
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "scripts": {
+    "build": "npx napi build --platform",
+    "test": "npm run build && npx tsx tests/keys_basic.test.ts && npx tsx tests/keys_e2e.test.ts && npx tsx tests/transport_basic.test.ts && npx tsx tests/discovery_basic.test.ts"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "@types/node": "^22.9.0",
+    "cbor-x": "^1.6.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
