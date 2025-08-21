@@ -76,19 +76,7 @@ int32_t rn_keys_get_keystore_caps(void *keys,
                                   struct RNAPIRnDeviceKeystoreCaps *out_caps,
                                   struct RNAPIRnError *err);
 
-int32_t rn_keys_mobile_get_keystore_state_return(void *keys, struct RNAPIRnError *err);
-
-int32_t rn_keys_node_get_keystore_state_return(void *keys, struct RNAPIRnError *err);
-
-int32_t rn_keys_set_persistence_dir_return(void *keys, const char *dir, struct RNAPIRnError *err);
-
-int32_t rn_keys_enable_auto_persist_return(void *keys, bool enabled, struct RNAPIRnError *err);
-
-int32_t rn_keys_wipe_persistence_return(void *keys, struct RNAPIRnError *err);
-
 int32_t rn_keys_flush_state(void *keys, struct RNAPIRnError *err);
-
-int32_t rn_keys_flush_state_return(void *keys, struct RNAPIRnError *err);
 
 int32_t rn_keys_register_apple_device_keystore(void *keys,
                                                const char *label,
@@ -214,14 +202,6 @@ int32_t rn_discovery_new_with_multicast(void *keys,
                                         void **out_discovery,
                                         struct RNAPIRnError *err);
 
-/**
- * Bun-friendly: returns discovery handle pointer; null on error. Delegates to the C-conventional API.
- */
-void *rn_discovery_new_with_multicast_return(void *keys,
-                                             const uint8_t *options_cbor,
-                                             size_t options_len,
-                                             struct RNAPIRnError *err);
-
 void rn_discovery_free(void *discovery);
 
 int32_t rn_discovery_init(void *discovery,
@@ -250,11 +230,6 @@ void rn_keys_free(void *keys);
  * C-conventional: writes handle to out param; returns 0 on success, non-zero on error.
  */
 int32_t rn_keys_new(void **out_keys, struct RNAPIRnError *err);
-
-/**
- * Bun-friendly: returns the handle pointer directly; returns null on error; err is filled.
- */
-void *rn_keys_new_return(struct RNAPIRnError *err);
 
 int32_t rn_keys_node_get_public_key(void *keys,
                                     uint8_t **out,
@@ -288,14 +263,6 @@ int32_t rn_transport_new_with_keys(void *keys,
                                    size_t options_len,
                                    void **out_transport,
                                    struct RNAPIRnError *err);
-
-/**
- * Bun-friendly: returns transport handle pointer; null on error. Delegates to the C-conventional API.
- */
-void *rn_transport_new_with_keys_return(void *keys,
-                                        const uint8_t *options_cbor,
-                                        size_t options_len,
-                                        struct RNAPIRnError *err);
 
 void rn_transport_free(void *transport);
 

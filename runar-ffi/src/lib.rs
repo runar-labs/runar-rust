@@ -464,76 +464,6 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
     0
 }
 
-// Convenience Bun-return variants
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state_return(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    let mut state: i32 = 0;
-    let rc = rn_keys_mobile_get_keystore_state(keys, &mut state, err);
-    if rc == 0 {
-        state
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_get_keystore_state_return(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    let mut state: i32 = 0;
-    let rc = rn_keys_node_get_keystore_state(keys, &mut state, err);
-    if rc == 0 {
-        state
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_set_persistence_dir_return(
-    keys: *mut c_void,
-    dir: *const c_char,
-    err: *mut RnError,
-) -> i32 {
-    let rc = rn_keys_set_persistence_dir(keys, dir, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_enable_auto_persist_return(
-    keys: *mut c_void,
-    enabled: bool,
-    err: *mut RnError,
-) -> i32 {
-    let rc = rn_keys_enable_auto_persist(keys, enabled, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_wipe_persistence_return(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    let rc = rn_keys_wipe_persistence(keys, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
-}
-
 // Explicit flush of state persistence
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnError) -> i32 {
@@ -554,16 +484,6 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
         }
     }
     0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_flush_state_return(keys: *mut c_void, err: *mut RnError) -> i32 {
-    let rc = rn_keys_flush_state(keys, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
 }
 
 #[no_mangle]
@@ -1741,23 +1661,6 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
     })
 }
 
-/// Bun-friendly: returns discovery handle pointer; null on error. Delegates to the C-conventional API.
-#[no_mangle]
-pub unsafe extern "C" fn rn_discovery_new_with_multicast_return(
-    keys: *mut c_void,
-    options_cbor: *const u8,
-    options_len: usize,
-    err: *mut RnError,
-) -> *mut c_void {
-    let mut tmp: *mut c_void = std::ptr::null_mut();
-    let rc = rn_discovery_new_with_multicast(keys, options_cbor, options_len, &mut tmp, err);
-    if rc == 0 {
-        tmp
-    } else {
-        std::ptr::null_mut()
-    }
-}
-
 #[no_mangle]
 pub extern "C" fn rn_discovery_free(discovery: *mut c_void) {
     if discovery.is_null() {
@@ -2040,12 +1943,6 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
         *out_keys = ptr;
     }
     0
-}
-
-/// Bun-friendly: returns the handle pointer directly; returns null on error; err is filled.
-#[no_mangle]
-pub extern "C" fn rn_keys_new_return(err: *mut RnError) -> *mut c_void {
-    keys_new_impl(err)
 }
 
 fn with_keys_inner<'a>(keys: *mut c_void) -> Option<&'a mut KeysInner> {
@@ -2611,23 +2508,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     };
     *out_transport = Box::into_raw(Box::new(handle)) as *mut c_void;
     0
-}
-
-/// Bun-friendly: returns transport handle pointer; null on error. Delegates to the C-conventional API.
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_new_with_keys_return(
-    keys: *mut c_void,
-    options_cbor: *const u8,
-    options_len: usize,
-    err: *mut RnError,
-) -> *mut c_void {
-    let mut tmp: *mut c_void = std::ptr::null_mut();
-    let rc = rn_transport_new_with_keys(keys, options_cbor, options_len, &mut tmp, err);
-    if rc == 0 {
-        tmp
-    } else {
-        std::ptr::null_mut()
-    }
 }
 
 #[no_mangle]
