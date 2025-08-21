@@ -15,13 +15,14 @@
   },
   "scripts": {
     "build": "bun run napi build --platform",
-    "test": "bun run build && bun test tests/keys_basic.test.ts && bun test tests/keys_e2e.test.ts && bun test tests/transport_basic.test.ts && bun test tests/discovery_basic.test.ts"
+    "test": "bun test"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
     "@types/node": "^22.9.0",
     "cbor-x": "^1.6.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "@types/bun": "^1.0.0"
   }
 }
