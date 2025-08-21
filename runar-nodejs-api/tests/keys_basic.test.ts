@@ -37,6 +37,20 @@ async function main(): Promise<void> {
   const dec: Buffer = keys.decryptLocalData(enc);
   if (!dec.equals(data)) throw new Error('decryptLocalData failed');
 
+  // Test ensure_symmetric_key
+  const key1 = keys.ensureSymmetricKey('test_service_1');
+  const key2 = keys.ensureSymmetricKey('test_service_2');
+  const key1_retrieved = keys.ensureSymmetricKey('test_service_1');
+  
+  if (!Buffer.isBuffer(key1) || key1.length !== 32) throw new Error('ensure_symmetric_key failed: invalid key1');
+  if (!Buffer.isBuffer(key2) || key2.length !== 32) throw new Error('ensure_symmetric_key failed: invalid key2');
+  if (!Buffer.isBuffer(key1_retrieved) || key1_retrieved.length !== 32) throw new Error('ensure_symmetric_key failed: invalid key1_retrieved');
+  
+  // Keys should be different for different services
+  if (key1.equals(key2)) throw new Error('ensure_symmetric_key failed: different services should have different keys');
+  // Same service should return the same key
+  if (!key1.equals(key1_retrieved)) throw new Error('ensure_symmetric_key failed: same service should return the same key');
+
   await withTimeout(keys.flushState(), 2000, 'flushState');
   await withTimeout(keys.wipePersistence(), 2000, 'wipePersistence');
 

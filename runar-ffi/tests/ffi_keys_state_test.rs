@@ -265,6 +265,109 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
     }
 }
 
+#[test]
+fn test_ensure_symmetric_key() {
+    unsafe {
+        let mut err = runar_ffi::RnError {
+            code: 0,
+            message: std::ptr::null(),
+        };
+
+        // Create keys handle
+        let mut keys: *mut core::ffi::c_void = std::ptr::null_mut();
+        assert_eq!(
+            rn_keys_new(&mut keys, &mut err as *mut _),
+            0,
+            "rn_keys_new failed: {}",
+            last_err()
+        );
+
+        // Test ensure_symmetric_key for different services
+        let key_name1 = CString::new("test_service_1").unwrap();
+        let key_name2 = CString::new("test_service_2").unwrap();
+
+        let mut key1_ptr: *mut u8 = std::ptr::null_mut();
+        let mut key1_len: usize = 0;
+        let mut key2_ptr: *mut u8 = std::ptr::null_mut();
+        let mut key2_len: usize = 0;
+        let mut key1_retrieved_ptr: *mut u8 = std::ptr::null_mut();
+        let mut key1_retrieved_len: usize = 0;
+
+        // Get first key
+        assert_eq!(
+            rn_keys_ensure_symmetric_key(
+                keys,
+                key_name1.as_ptr(),
+                &mut key1_ptr as *mut _,
+                &mut key1_len as *mut _,
+                &mut err as *mut _
+            ),
+            0,
+            "ensure_symmetric_key failed for service 1: {}",
+            last_err()
+        );
+
+        // Get second key
+        assert_eq!(
+            rn_keys_ensure_symmetric_key(
+                keys,
+                key_name2.as_ptr(),
+                &mut key2_ptr as *mut _,
+                &mut key2_len as *mut _,
+                &mut err as *mut _
+            ),
+            0,
+            "ensure_symmetric_key failed for service 2: {}",
+            last_err()
+        );
+
+        // Retrieve first key again
+        assert_eq!(
+            rn_keys_ensure_symmetric_key(
+                keys,
+                key_name1.as_ptr(),
+                &mut key1_retrieved_ptr as *mut _,
+                &mut key1_retrieved_len as *mut _,
+                &mut err as *mut _
+            ),
+            0,
+            "ensure_symmetric_key failed for service 1 retrieval: {}",
+            last_err()
+        );
+
+        // Verify keys are valid
+        assert!(!key1_ptr.is_null(), "key1_ptr should not be null");
+        assert!(!key2_ptr.is_null(), "key2_ptr should not be null");
+        assert!(
+            !key1_retrieved_ptr.is_null(),
+            "key1_retrieved_ptr should not be null"
+        );
+        assert_eq!(key1_len, 32, "key1 should be 32 bytes");
+        assert_eq!(key2_len, 32, "key2 should be 32 bytes");
+        assert_eq!(key1_retrieved_len, 32, "key1_retrieved should be 32 bytes");
+
+        // Extract key data
+        let key1 = std::slice::from_raw_parts(key1_ptr, key1_len).to_vec();
+        let key2 = std::slice::from_raw_parts(key2_ptr, key2_len).to_vec();
+        let key1_retrieved =
+            std::slice::from_raw_parts(key1_retrieved_ptr, key1_retrieved_len).to_vec();
+
+        // Keys should be different for different services
+        assert_ne!(key1, key2, "different services should have different keys");
+        // Same service should return the same key
+        assert_eq!(
+            key1, key1_retrieved,
+            "same service should return the same key"
+        );
+
+        // Clean up
+        rn_free(key1_ptr, key1_len);
+        rn_free(key2_ptr, key2_len);
+        rn_free(key1_retrieved_ptr, key1_retrieved_len);
+        rn_keys_free(keys);
+    }
+}
+
 fn cstr_to_string(ptr: *const c_char, len: usize) -> String {
     if ptr.is_null() || len == 0 {
         return String::new();

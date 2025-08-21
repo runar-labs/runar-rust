@@ -325,6 +325,12 @@ int32_t rn_transport_local_addr(void *transport,
                                 size_t *out_len,
                                 struct RNAPIRnError *err);
 
+int32_t rn_keys_ensure_symmetric_key(void *keys,
+                                     const char *key_name,
+                                     uint8_t **out_key,
+                                     size_t *out_len,
+                                     struct RNAPIRnError *err);
+
 #endif /* RUNAR_FFI_H */
 
 // End of runar_ffi

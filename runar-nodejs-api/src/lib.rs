@@ -575,6 +575,23 @@ impl Keys {
             .map(Buffer::from)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
+
+    #[napi]
+    pub fn ensure_symmetric_key(&self, key_name: String) -> Result<Buffer> {
+        let mut inner = self.inner.lock().unwrap();
+        let key = if let Some(n) = inner.node_owned.as_mut() {
+            n.ensure_symmetric_key(&key_name)
+        } else if let Some(_n) = inner.node_shared.as_ref() {
+            // For shared NodeKeyManager, we can't modify it, so we can't ensure symmetric keys
+            return Err(Error::from_reason(
+                "node is shared; ensure_symmetric_key not available",
+            ));
+        } else {
+            return Err(Error::from_reason("Node not init"));
+        }
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(Buffer::from(key))
+    }
 }
 
 impl Default for Keys {

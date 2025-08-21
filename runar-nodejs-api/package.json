@@ -14,8 +14,8 @@
     }
   },
   "scripts": {
-    "build": "npx napi build --platform",
-    "test": "npm run build && npx tsx tests/keys_basic.test.ts && npx tsx tests/keys_e2e.test.ts && npx tsx tests/transport_basic.test.ts && npx tsx tests/discovery_basic.test.ts"
+    "build": "bun run napi build --platform",
+    "test": "bun run build && bun test tests/keys_basic.test.ts && bun test tests/keys_e2e.test.ts && bun test tests/transport_basic.test.ts && bun test tests/discovery_basic.test.ts"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0",
