@@ -29,7 +29,7 @@ jobs:
           cat .git/config || echo "No .git/config"
 
       - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@1.81.0
 
       - name: Check code format
         run: cargo fmt --all -- --check
