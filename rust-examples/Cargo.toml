@@ -40,3 +40,7 @@ path = "serializer_vectors.rs"
 [[example]]
 name = "validate_swift_vectors"
 path = "validate_swift_vectors.rs"
+
+[[example]]
+name = "validate_typescript_vectors"
+path = "validate_typescript_vectors.rs"
