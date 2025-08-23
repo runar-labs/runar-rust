@@ -248,22 +248,6 @@ impl Keys {
     }
 
     #[napi]
-    pub fn register_linux_device_keystore(&self, service: String, account: String) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        let ks: Arc<dyn runar_keys::keystore::DeviceKeystore> = Arc::new(
-            runar_keys::keystore::linux::LinuxDeviceKeystore::new(&service, &account)
-                .map_err(|e| Error::from_reason(e.to_string()))?,
-        );
-        if let Some(n) = inner.node_owned.as_mut() {
-            n.register_device_keystore(ks.clone());
-        }
-        if let Some(m) = inner.mobile.as_mut() {
-            m.register_device_keystore(ks.clone());
-        }
-        Ok(())
-    }
-
-    #[napi]
     pub fn encrypt_local_data(&self, data: Buffer) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
@@ -591,6 +575,26 @@ impl Keys {
         }
         .map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(Buffer::from(key))
+    }
+}
+
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
+#[napi]
+impl Keys {
+    #[napi]
+    pub fn register_linux_device_keystore(&self, service: String, account: String) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+        let ks: Arc<dyn runar_keys::keystore::DeviceKeystore> = Arc::new(
+            runar_keys::keystore::linux::LinuxDeviceKeystore::new(&service, &account)
+                .map_err(|e| Error::from_reason(e.to_string()))?,
+        );
+        if let Some(n) = inner.node_owned.as_mut() {
+            n.register_device_keystore(ks.clone());
+        }
+        if let Some(m) = inner.mobile.as_mut() {
+            m.register_device_keystore(ks.clone());
+        }
+        Ok(())
     }
 }
 

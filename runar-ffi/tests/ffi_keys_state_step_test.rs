@@ -1,7 +1,10 @@
 #![cfg(test)]
 
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use libc::{c_char, c_void};
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use runar_ffi::*;
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use std::ffi::CString;
 
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
@@ -62,6 +65,7 @@ fn linux_keystore_minimal_network_key_crash_repro() {
     }
 }
 
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 fn last_err() -> String {
     unsafe {
         let mut buf = vec![0u8; 256];
