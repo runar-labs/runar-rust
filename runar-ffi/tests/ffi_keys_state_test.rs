@@ -269,6 +269,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
     }
 }
 
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 #[test]
 fn test_ensure_symmetric_key() {
     unsafe {

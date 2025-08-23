@@ -5,7 +5,6 @@ edition.workspace = true
 authors.workspace = true
 description.workspace = true
 license.workspace = true
-license-file.workspace = true
 
 [dependencies]
 anyhow.workspace = true
@@ -22,6 +21,10 @@ arc-swap = { package = "arc-swap", version = "1" }
 runar-serializer = { path = "../runar-serializer" }
 uuid = { version = "1", features = ["v4"] }
 serde_json = "1"
+
+[features]
+default = []
+linux-keystore = ["runar-keys/linux-keystore"]
 
 [lib]
 crate-type = ["cdylib"]
