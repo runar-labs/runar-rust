@@ -1,8 +1,12 @@
 #![cfg(test)]
 
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use libc::c_char;
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use runar_ffi::*;
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use serde::Deserialize;
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use std::ffi::CString;
 
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
@@ -265,6 +269,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
     }
 }
 
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 fn cstr_to_string(ptr: *const c_char, len: usize) -> String {
     if ptr.is_null() || len == 0 {
         return String::new();
@@ -275,6 +280,7 @@ fn cstr_to_string(ptr: *const c_char, len: usize) -> String {
     }
 }
 
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 fn last_err() -> String {
     unsafe {
         let mut buf = vec![0u8; 256];

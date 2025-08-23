@@ -209,8 +209,8 @@ fn validate_struct_plain() -> Result<()> {
         Ok(swift_user) => match _rust_value.as_struct_ref::<PlainUser>() {
             Ok(rust_user) => {
                 if swift_user == rust_user {
-                    println!("✅ Plain struct validation passed: {:?}", swift_user);
-                    return Ok(());
+                    println!("✅ Plain struct validation passed: {swift_user:?}");
+                    Ok(())
                 } else {
                     anyhow::bail!(
                         "Struct validation failed: values don't match\nSwift: {:?}\nRust: {:?}",
@@ -281,7 +281,7 @@ fn main() -> Result<()> {
         match test() {
             Ok(()) => passed += 1,
             Err(e) => {
-                println!("❌ Test failed: {}", e);
+                println!("❌ Test failed: {e}");
                 failed += 1;
             }
         }
@@ -289,8 +289,8 @@ fn main() -> Result<()> {
 
     println!("\n📊 Validation Results");
     println!("===================");
-    println!("✅ Passed: {}", passed);
-    println!("❌ Failed: {}", failed);
+    println!("✅ Passed: {passed}");
+    println!("❌ Failed: {failed}");
     println!(
         "📈 Success Rate: {:.1}%",
         (passed as f64 / (passed + failed) as f64) * 100.0
