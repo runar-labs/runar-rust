@@ -16,9 +16,15 @@ fn linux_keystore_minimal_network_key_crash_repro() {
             message: std::ptr::null(),
         };
 
-        // 1) rn_keys_new_return
-        let keys = rn_keys_new_return(&mut err as *mut _);
-        assert!(!keys.is_null(), "rn_keys_new_return failed: {}", last_err());
+        // 1) rn_keys_new
+        let mut keys: *mut c_void = std::ptr::null_mut();
+        assert_eq!(
+            rn_keys_new(&mut keys, &mut err as *mut _),
+            0,
+            "rn_keys_new failed: {}",
+            last_err()
+        );
+        assert!(!keys.is_null(), "rn_keys_new returned null handle");
 
         // 2) rn_keys_register_linux_device_keystore with unique account
         let svc = CString::new("com.runar.keys.test").unwrap();

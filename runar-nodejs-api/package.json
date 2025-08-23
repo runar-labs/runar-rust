@@ -1,0 +1,28 @@
+{
+  "name": "runar-nodejs-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.js",
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun run napi build --platform",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "@types/node": "^22.9.0",
+    "cbor-x": "^1.6.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "@types/bun": "^1.0.0"
+  }
+}

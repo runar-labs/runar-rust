@@ -464,76 +464,6 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
     0
 }
 
-// Convenience Bun-return variants
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state_return(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    let mut state: i32 = 0;
-    let rc = rn_keys_mobile_get_keystore_state(keys, &mut state, err);
-    if rc == 0 {
-        state
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_get_keystore_state_return(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    let mut state: i32 = 0;
-    let rc = rn_keys_node_get_keystore_state(keys, &mut state, err);
-    if rc == 0 {
-        state
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_set_persistence_dir_return(
-    keys: *mut c_void,
-    dir: *const c_char,
-    err: *mut RnError,
-) -> i32 {
-    let rc = rn_keys_set_persistence_dir(keys, dir, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_enable_auto_persist_return(
-    keys: *mut c_void,
-    enabled: bool,
-    err: *mut RnError,
-) -> i32 {
-    let rc = rn_keys_enable_auto_persist(keys, enabled, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_wipe_persistence_return(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    let rc = rn_keys_wipe_persistence(keys, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
-}
-
 // Explicit flush of state persistence
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnError) -> i32 {
@@ -554,16 +484,6 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
         }
     }
     0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_flush_state_return(keys: *mut c_void, err: *mut RnError) -> i32 {
-    let rc = rn_keys_flush_state(keys, err);
-    if rc == 0 {
-        0
-    } else {
-        -1
-    }
 }
 
 #[no_mangle]
@@ -1735,23 +1655,6 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
     })
 }
 
-/// Bun-friendly: returns discovery handle pointer; null on error. Delegates to the C-conventional API.
-#[no_mangle]
-pub unsafe extern "C" fn rn_discovery_new_with_multicast_return(
-    keys: *mut c_void,
-    options_cbor: *const u8,
-    options_len: usize,
-    err: *mut RnError,
-) -> *mut c_void {
-    let mut tmp: *mut c_void = std::ptr::null_mut();
-    let rc = rn_discovery_new_with_multicast(keys, options_cbor, options_len, &mut tmp, err);
-    if rc == 0 {
-        tmp
-    } else {
-        std::ptr::null_mut()
-    }
-}
-
 #[no_mangle]
 pub extern "C" fn rn_discovery_free(discovery: *mut c_void) {
     if discovery.is_null() {
@@ -2034,12 +1937,6 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
         *out_keys = ptr;
     }
     0
-}
-
-/// Bun-friendly: returns the handle pointer directly; returns null on error; err is filled.
-#[no_mangle]
-pub extern "C" fn rn_keys_new_return(err: *mut RnError) -> *mut c_void {
-    keys_new_impl(err)
 }
 
 fn with_keys_inner<'a>(keys: *mut c_void) -> Option<&'a mut KeysInner> {
@@ -2607,23 +2504,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     0
 }
 
-/// Bun-friendly: returns transport handle pointer; null on error. Delegates to the C-conventional API.
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_new_with_keys_return(
-    keys: *mut c_void,
-    options_cbor: *const u8,
-    options_len: usize,
-    err: *mut RnError,
-) -> *mut c_void {
-    let mut tmp: *mut c_void = std::ptr::null_mut();
-    let rc = rn_transport_new_with_keys(keys, options_cbor, options_len, &mut tmp, err);
-    if rc == 0 {
-        tmp
-    } else {
-        std::ptr::null_mut()
-    }
-}
-
 #[no_mangle]
 pub extern "C" fn rn_transport_free(transport: *mut c_void) {
     if transport.is_null() {
@@ -3061,3 +2941,51 @@ pub unsafe extern "C" fn rn_transport_local_addr(
 }
 
 // Tests moved to runar-ffi/tests/ffi_transport_test.rs
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ensure_symmetric_key(
+    keys: *mut c_void,
+    key_name: *const c_char,
+    out_key: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || key_name.is_null() || out_key.is_null() || out_len.is_null() {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "invalid keys handle");
+            return 1;
+        };
+        let key_name_str = match std::ffi::CStr::from_ptr(key_name).to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                set_error(err, 2, "invalid utf8 key_name");
+                return 2;
+            }
+        };
+        let key = if let Some(n) = inner.node_owned.as_mut() {
+            match n.ensure_symmetric_key(key_name_str) {
+                Ok(k) => k,
+                Err(e) => {
+                    set_error(err, 2, &format!("ensure_symmetric_key failed: {e}"));
+                    return 2;
+                }
+            }
+        } else if let Some(_n) = inner.node_shared.as_ref() {
+            // For shared NodeKeyManager, we can't modify it, so we can't ensure symmetric keys
+            set_error(err, 1, "node is shared; ensure_symmetric_key not available");
+            return 1;
+        } else {
+            set_error(err, 1, "no key manager available");
+            return 1;
+        };
+        if !alloc_bytes(out_key, out_len, &key) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
