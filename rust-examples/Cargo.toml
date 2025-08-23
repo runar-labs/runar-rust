@@ -36,3 +36,7 @@ path = "micro_services_demo/src/main.rs"
 [[example]]
 name = "serializer_vectors"
 path = "serializer_vectors.rs"
+
+[[example]]
+name = "validate_swift_vectors"
+path = "validate_swift_vectors.rs"
