@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-use libc::c_char;
+use libc::{c_char, c_void};
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 use runar_ffi::*;
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
