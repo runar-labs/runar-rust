@@ -3850,7 +3850,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "bincode",
  "cbindgen",
+ "hex",
  "libc",
  "log",
  "once_cell",

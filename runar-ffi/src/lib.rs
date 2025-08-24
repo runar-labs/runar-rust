@@ -34,17 +34,17 @@ pub struct RnError {
 }
 
 // Error code constants - unique for each error type
-const RN_ERROR_NULL_ARGUMENT: i32 = 1;
-const RN_ERROR_INVALID_HANDLE: i32 = 2;
-const RN_ERROR_NOT_INITIALIZED: i32 = 3;
-const RN_ERROR_WRONG_MANAGER_TYPE: i32 = 4;
-const RN_ERROR_OPERATION_FAILED: i32 = 5;
-const RN_ERROR_SERIALIZATION_FAILED: i32 = 6;
-const RN_ERROR_KEYSTORE_FAILED: i32 = 7;
-const RN_ERROR_MEMORY_ALLOCATION: i32 = 8;
-const RN_ERROR_LOCK_ERROR: i32 = 9;
-const RN_ERROR_INVALID_UTF8: i32 = 10;
-const RN_ERROR_INVALID_ARGUMENT: i32 = 11;
+pub const RN_ERROR_NULL_ARGUMENT: i32 = 1;
+pub const RN_ERROR_INVALID_HANDLE: i32 = 2;
+pub const RN_ERROR_NOT_INITIALIZED: i32 = 3;
+pub const RN_ERROR_WRONG_MANAGER_TYPE: i32 = 4;
+pub const RN_ERROR_OPERATION_FAILED: i32 = 5;
+pub const RN_ERROR_SERIALIZATION_FAILED: i32 = 6;
+pub const RN_ERROR_KEYSTORE_FAILED: i32 = 7;
+pub const RN_ERROR_MEMORY_ALLOCATION: i32 = 12;
+pub const RN_ERROR_LOCK_ERROR: i32 = 9;
+pub const RN_ERROR_INVALID_UTF8: i32 = 10;
+pub const RN_ERROR_INVALID_ARGUMENT: i32 = 11;
 
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
@@ -1356,6 +1356,54 @@ pub unsafe extern "C" fn rn_keys_mobile_initialize_user_root_key(
     }
 }
 
+/// Get the user public key after mobile initialization
+/// This is essential for encrypting setup tokens to the mobile
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_get_user_public_key(
+    keys: *mut c_void,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
+        return 1;
+    };
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match mobile_manager.get_user_public_key() {
+        Ok(pk) => {
+            if !alloc_bytes(out, out_len, &pk) {
+                set_error(err, 3, "alloc failed");
+                return 3;
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("get_user_public_key failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_mobile_derive_user_profile_key(
     keys: *mut c_void,
@@ -1864,6 +1912,129 @@ pub unsafe extern "C" fn rn_keys_decrypt_message_from_mobile(
                 return RN_ERROR_OPERATION_FAILED;
             }
         };
+        if !alloc_bytes(out_plain, out_len, &plain) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+/// Encrypt a message from mobile to node using node's agreement public key
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_encrypt_message_for_node(
+    keys: *mut c_void,
+    message: *const u8,
+    message_len: usize,
+    node_agreement_public_key: *const u8,
+    pk_len: usize,
+    out_cipher: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null()
+            || message.is_null()
+            || node_agreement_public_key.is_null()
+            || out_cipher.is_null()
+            || out_len.is_null()
+        {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "keys handle is null");
+            return 1;
+        };
+        let manager = match validate_mobile_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
+        };
+
+        let mobile_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let msg = std::slice::from_raw_parts(message, message_len);
+        let pk = std::slice::from_raw_parts(node_agreement_public_key, pk_len);
+
+        let cipher = match mobile_manager.encrypt_message_for_node(msg, pk) {
+            Ok(c) => c,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("encrypt_message_for_node failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
+        };
+
+        if !alloc_bytes(out_cipher, out_len, &cipher) {
+            set_error(err, 3, "alloc failed");
+            return 3;
+        }
+        0
+    })
+}
+
+/// Decrypt a message from node on mobile using mobile's agreement private key
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_decrypt_message_from_node(
+    keys: *mut c_void,
+    encrypted_message: *const u8,
+    enc_len: usize,
+    out_plain: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    ffi_guard(err, || {
+        if keys.is_null() || encrypted_message.is_null() || out_plain.is_null() || out_len.is_null()
+        {
+            set_error(err, 1, "null argument");
+            return 1;
+        }
+        let Some(inner) = with_keys_inner(keys) else {
+            set_error(err, 1, "keys handle is null");
+            return 1;
+        };
+        let manager = match validate_mobile_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
+        };
+
+        let mobile_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let enc = std::slice::from_raw_parts(encrypted_message, enc_len);
+
+        let plain = match mobile_manager.decrypt_message_from_node(enc) {
+            Ok(p) => p,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("decrypt_message_from_node failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
+        };
+
         if !alloc_bytes(out_plain, out_len, &plain) {
             set_error(err, 3, "alloc failed");
             return 3;
@@ -2463,24 +2634,11 @@ pub extern "C" fn rn_keys_free(keys: *mut c_void) {
 /// Internal helper that constructs a new keys handle and sets error on failure.
 fn keys_new_impl(err: *mut RnError) -> *mut c_void {
     let logger = Arc::new(Logger::new_root(Component::Keys));
-    let node = match NodeKeyManager::new(logger.clone()) {
-        Ok(n) => n,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_KEYSTORE_FAILED,
-                &format!("Failed to create NodeKeyManager: {e}"),
-            );
-            return std::ptr::null_mut();
-        }
-    };
-    let node_id = node.get_node_id();
-    logger.set_node_id(node_id);
 
     let inner = KeysInner {
         logger,
         mobile_key_manager: None,
-        node_key_manager: Some(Arc::new(RwLock::new(node))),
+        node_key_manager: None,
         label_resolver: None,
         local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
@@ -2650,8 +2808,8 @@ pub extern "C" fn rn_keys_node_get_public_key(
 
     let pk = node_manager.get_node_public_key();
     if !alloc_bytes(out, out_len, &pk) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }

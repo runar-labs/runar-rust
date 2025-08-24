@@ -14,6 +14,28 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#define RNAPIRN_ERROR_NULL_ARGUMENT 1
+
+#define RNAPIRN_ERROR_INVALID_HANDLE 2
+
+#define RNAPIRN_ERROR_NOT_INITIALIZED 3
+
+#define RNAPIRN_ERROR_WRONG_MANAGER_TYPE 4
+
+#define RNAPIRN_ERROR_OPERATION_FAILED 5
+
+#define RNAPIRN_ERROR_SERIALIZATION_FAILED 6
+
+#define RNAPIRN_ERROR_KEYSTORE_FAILED 7
+
+#define RNAPIRN_ERROR_MEMORY_ALLOCATION 12
+
+#define RNAPIRN_ERROR_LOCK_ERROR 9
+
+#define RNAPIRN_ERROR_INVALID_UTF8 10
+
+#define RNAPIRN_ERROR_INVALID_ARGUMENT 11
+
 typedef struct RNAPIKeysInner RNAPIKeysInner;
 
 typedef struct RNAPITransportInner RNAPITransportInner;
@@ -136,6 +158,15 @@ int32_t rn_keys_encrypt_local_data(void *keys,
 
 int32_t rn_keys_mobile_initialize_user_root_key(void *keys, struct RNAPIRnError *err);
 
+/**
+ * Get the user public key after mobile initialization
+ * This is essential for encrypting setup tokens to the mobile
+ */
+int32_t rn_keys_mobile_get_user_public_key(void *keys,
+                                           uint8_t **out,
+                                           size_t *out_len,
+                                           struct RNAPIRnError *err);
+
 int32_t rn_keys_mobile_derive_user_profile_key(void *keys,
                                                const char *label,
                                                uint8_t **out_pk,
@@ -193,6 +224,28 @@ int32_t rn_keys_decrypt_message_from_mobile(void *keys,
                                             uint8_t **out_plain,
                                             size_t *out_len,
                                             struct RNAPIRnError *err);
+
+/**
+ * Encrypt a message from mobile to node using node's agreement public key
+ */
+int32_t rn_keys_encrypt_message_for_node(void *keys,
+                                         const uint8_t *message,
+                                         size_t message_len,
+                                         const uint8_t *node_agreement_public_key,
+                                         size_t pk_len,
+                                         uint8_t **out_cipher,
+                                         size_t *out_len,
+                                         struct RNAPIRnError *err);
+
+/**
+ * Decrypt a message from node on mobile using mobile's agreement private key
+ */
+int32_t rn_keys_mobile_decrypt_message_from_node(void *keys,
+                                                 const uint8_t *encrypted_message,
+                                                 size_t enc_len,
+                                                 uint8_t **out_plain,
+                                                 size_t *out_len,
+                                                 struct RNAPIRnError *err);
 
 int32_t rn_keys_encrypt_for_public_key(void *keys,
                                        const uint8_t *data,

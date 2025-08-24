@@ -696,6 +696,19 @@ impl MobileKeyManager {
             .to_vec()
     }
 
+    /// Get the user agreement public key (for encrypting setup tokens)
+    pub fn get_user_public_key(&self) -> Result<Vec<u8>> {
+        match &self.user_root_agreement {
+            Some(agreement_key) => {
+                let public_key = agreement_key.public_key();
+                Ok(public_key.to_encoded_point(false).as_bytes().to_vec())
+            }
+            None => Err(KeyError::KeyNotFound(
+                "User root key not initialized".to_string(),
+            )),
+        }
+    }
+
     /// Process a setup token from a node and issue a certificate
     pub fn process_setup_token(
         &mut self,

@@ -296,6 +296,12 @@ fn test_node_functions_work_after_node_init() {
     let result =
         unsafe { rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error) };
 
+    // Debug: Print the actual result and error code
+    println!(
+        "Node function result: {}, error code: {}",
+        result, error.code
+    );
+
     // Accept both success (0) and operation failure - just not wrong manager type
     assert_ne!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
