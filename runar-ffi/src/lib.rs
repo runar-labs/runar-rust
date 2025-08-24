@@ -198,6 +198,86 @@ where
     f(&mut mgr)
 }
 
+// Common keystore registration helpers
+/// Common parameter validation for keystore registration
+unsafe fn validate_keystore_params(
+    keys: *mut c_void,
+    err: *mut RnError,
+) -> Result<*mut KeysInner, i32> {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return Err(RN_ERROR_INVALID_HANDLE);
+    };
+    Ok(inner)
+}
+
+/// Common UTF-8 validation for keystore registration
+unsafe fn validate_utf8_string(
+    ptr: *const c_char,
+    err: *mut RnError,
+    param_name: &str,
+) -> Result<String, i32> {
+    if ptr.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            &format!("{param_name} is null"),
+        );
+        return Err(RN_ERROR_NULL_ARGUMENT);
+    }
+    match std::ffi::CStr::from_ptr(ptr).to_str() {
+        Ok(s) => Ok(s.to_string()),
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("invalid utf8 in {param_name}"),
+            );
+            Err(RN_ERROR_INVALID_UTF8)
+        }
+    }
+}
+
+/// Common manager registration logic
+fn register_keystore_with_managers(
+    inner: &mut KeysInner,
+    keystore: Arc<dyn keystore::DeviceKeystore>,
+) {
+    if let Some(manager) = &inner.node_key_manager {
+        let mut mgr = manager.write().unwrap();
+        mgr.register_device_keystore(keystore.clone());
+    }
+    if let Some(manager) = &inner.mobile_key_manager {
+        let mut mgr = manager.write().unwrap();
+        mgr.register_device_keystore(keystore.clone());
+    }
+    inner.device_keystore = Some(keystore);
+}
+
+/// Common keystore creation error handling
+fn handle_keystore_creation_error(
+    err: *mut RnError,
+    keystore_type: &str,
+    error: impl std::fmt::Display,
+) -> i32 {
+    set_error(
+        err,
+        RN_ERROR_KEYSTORE_FAILED,
+        &format!("Failed to create {keystore_type}: {error}"),
+    );
+    RN_ERROR_KEYSTORE_FAILED
+}
+
+/// Common feature disabled error handling
+fn handle_feature_disabled_error(err: *mut RnError, feature_name: &str) -> i32 {
+    set_error(
+        err,
+        RN_ERROR_KEYSTORE_FAILED,
+        &format!("{feature_name} feature not enabled or unsupported target OS"),
+    );
+    RN_ERROR_KEYSTORE_FAILED
+}
+
 #[allow(dead_code)]
 struct TransportInner {
     #[allow(dead_code)]
@@ -717,49 +797,28 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
     label: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    let Some(_inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-        return RN_ERROR_INVALID_HANDLE;
+    // Common validation
+    let _inner = match validate_keystore_params(keys, err) {
+        Ok(inner) => inner,
+        Err(code) => return code,
     };
-    if label.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "label is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    let label_str = match std::ffi::CStr::from_ptr(label).to_str() {
+    let _label_str = match validate_utf8_string(label, err, "label") {
         Ok(s) => s,
-        Err(_) => {
-            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in label");
-            return RN_ERROR_INVALID_UTF8;
-        }
+        Err(code) => return code,
     };
+
     #[cfg(all(
         feature = "apple-keystore",
         any(target_os = "macos", target_os = "ios")
     ))]
     {
-        match runar_keys::keystore::apple::AppleDeviceKeystore::new(label_str) {
+        match runar_keys::keystore::apple::AppleDeviceKeystore::new(&label_str) {
             Ok(ks) => {
-                let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
-                let holder = with_keys_inner(keys).unwrap();
-                if let Some(manager) = &holder.node_key_manager {
-                    let mut mgr = manager.write().unwrap();
-                    mgr.register_device_keystore(ks.clone());
-                }
-                if let Some(manager) = &holder.mobile_key_manager {
-                    let mut mgr = manager.write().unwrap();
-                    mgr.register_device_keystore(ks.clone());
-                }
-                holder.device_keystore = Some(ks.clone());
+                let keystore = Arc::new(ks);
+                register_keystore_with_managers(inner, keystore);
                 0
             }
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_KEYSTORE_FAILED,
-                    &format!("Failed to create AppleDeviceKeystore: {e}"),
-                );
-                RN_ERROR_KEYSTORE_FAILED
-            }
+            Err(e) => handle_keystore_creation_error(err, "AppleDeviceKeystore", e),
         }
     }
     #[cfg(not(all(
@@ -767,13 +826,7 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
         any(target_os = "macos", target_os = "ios")
     )))]
     {
-        let _ = label_str;
-        set_error(
-            err,
-            RN_ERROR_KEYSTORE_FAILED,
-            "apple-keystore feature not enabled or unsupported target OS",
-        );
-        RN_ERROR_KEYSTORE_FAILED
+        handle_feature_disabled_error(err, "apple-keystore")
     }
 }
 
@@ -784,67 +837,39 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
     account: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner_ptr) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-    let inner = inner_ptr;
-    #[cfg(not(all(feature = "linux-keystore", target_os = "linux")))]
-    let _ = inner_ptr;
-    if service.is_null() || account.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    let svc = match std::ffi::CStr::from_ptr(service).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 service");
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-    let acc = match std::ffi::CStr::from_ptr(account).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 account");
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
     #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
     {
-        match runar_keys::keystore::linux::LinuxDeviceKeystore::new(svc, acc) {
+        // Common validation - only when feature is enabled
+        let inner = match validate_keystore_params(keys, err) {
+            Ok(inner) => inner,
+            Err(code) => return code,
+        };
+        let svc = match validate_utf8_string(service, err, "service") {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let acc = match validate_utf8_string(account, err, "account") {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+
+        match runar_keys::keystore::linux::LinuxDeviceKeystore::new(&svc, &acc) {
             Ok(ks) => {
-                let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
-                if let Some(manager) = &inner.node_key_manager {
-                    let mut mgr = manager.write().unwrap();
-                    mgr.register_device_keystore(ks.clone());
-                }
-                if let Some(manager) = &inner.mobile_key_manager {
-                    let mut mgr = manager.write().unwrap();
-                    mgr.register_device_keystore(ks.clone());
-                }
-                inner.device_keystore = Some(ks);
+                let keystore = Arc::new(ks);
+                register_keystore_with_managers(unsafe { &mut *inner }, keystore);
                 0
             }
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_KEYSTORE_FAILED,
-                    &format!("Failed to create LinuxDeviceKeystore: {e}"),
-                );
-                RN_ERROR_KEYSTORE_FAILED
-            }
+            Err(e) => handle_keystore_creation_error(err, "LinuxDeviceKeystore", e),
         }
     }
     #[cfg(not(all(feature = "linux-keystore", target_os = "linux")))]
     {
-        let _ = (svc, acc);
-        set_error(
-            err,
-            RN_ERROR_KEYSTORE_FAILED,
-            "linux-keystore feature not enabled or unsupported target OS",
-        );
-        RN_ERROR_KEYSTORE_FAILED
+        // Minimal validation when feature is disabled
+        if keys.is_null() {
+            set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+            return RN_ERROR_INVALID_HANDLE;
+        }
+        handle_feature_disabled_error(err, "linux-keystore")
     }
 }
 
