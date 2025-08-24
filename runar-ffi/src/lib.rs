@@ -3,7 +3,7 @@
 use std::{
     ffi::{c_void, CString},
     os::raw::c_char,
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use arc_swap::ArcSwap;
@@ -33,6 +33,19 @@ pub struct RnError {
     pub message: *const c_char,
 }
 
+// Error code constants - unique for each error type
+const RN_ERROR_NULL_ARGUMENT: i32 = 1;
+const RN_ERROR_INVALID_HANDLE: i32 = 2;
+const RN_ERROR_NOT_INITIALIZED: i32 = 3;
+const RN_ERROR_WRONG_MANAGER_TYPE: i32 = 4;
+const RN_ERROR_OPERATION_FAILED: i32 = 5;
+const RN_ERROR_SERIALIZATION_FAILED: i32 = 6;
+const RN_ERROR_KEYSTORE_FAILED: i32 = 7;
+const RN_ERROR_MEMORY_ALLOCATION: i32 = 8;
+const RN_ERROR_LOCK_ERROR: i32 = 9;
+const RN_ERROR_INVALID_UTF8: i32 = 10;
+const RN_ERROR_INVALID_ARGUMENT: i32 = 11;
+
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
 // Minimal memory helpers (placeholders; to be filled during implementation)
@@ -57,9 +70,11 @@ pub struct FfiTransportHandle {
 
 struct KeysInner {
     logger: Arc<Logger>,
-    node_owned: Option<NodeKeyManager>,
-    node_shared: Option<Arc<NodeKeyManager>>, // set after transport construction
-    mobile: Option<MobileKeyManager>,
+
+    // Separate fields for each manager type - either Node OR Mobile, never both
+    mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
+    node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
+
     // Optional platform-provided label resolver
     label_resolver: Option<Arc<dyn LabelResolver>>,
     // Local NodeInfo holder (push-updated from FFI)
@@ -69,6 +84,114 @@ struct KeysInner {
     // Persistence directory and auto-persist flag
     persistence_dir: Option<std::path::PathBuf>,
     auto_persist: bool,
+}
+
+// Error types for validation
+#[derive(Debug, Clone)]
+enum RnErrorType {
+    NullArgument(String),
+    InvalidHandle(String),
+    NotInitialized,
+    WrongManagerType(String),
+    OperationFailed(String),
+    SerializationFailed(String),
+    KeystoreFailed(String),
+    MemoryAllocation(String),
+    LockError(String),
+    InvalidUtf8(String),
+    InvalidArgument(String),
+}
+
+impl RnErrorType {
+    fn code(&self) -> i32 {
+        match self {
+            RnErrorType::NullArgument(_) => RN_ERROR_NULL_ARGUMENT,
+            RnErrorType::InvalidHandle(_) => RN_ERROR_INVALID_HANDLE,
+            RnErrorType::NotInitialized => RN_ERROR_NOT_INITIALIZED,
+            RnErrorType::WrongManagerType(_) => RN_ERROR_WRONG_MANAGER_TYPE,
+            RnErrorType::OperationFailed(_) => RN_ERROR_OPERATION_FAILED,
+            RnErrorType::SerializationFailed(_) => RN_ERROR_SERIALIZATION_FAILED,
+            RnErrorType::KeystoreFailed(_) => RN_ERROR_KEYSTORE_FAILED,
+            RnErrorType::MemoryAllocation(_) => RN_ERROR_MEMORY_ALLOCATION,
+            RnErrorType::LockError(_) => RN_ERROR_LOCK_ERROR,
+            RnErrorType::InvalidUtf8(_) => RN_ERROR_INVALID_UTF8,
+            RnErrorType::InvalidArgument(_) => RN_ERROR_INVALID_ARGUMENT,
+        }
+    }
+
+    fn message(&self) -> String {
+        match self {
+            RnErrorType::NullArgument(msg) => msg.clone(),
+            RnErrorType::InvalidHandle(msg) => msg.clone(),
+            RnErrorType::NotInitialized => "key manager not initialized".to_string(),
+            RnErrorType::WrongManagerType(msg) => msg.clone(),
+            RnErrorType::OperationFailed(msg) => msg.clone(),
+            RnErrorType::SerializationFailed(msg) => msg.clone(),
+            RnErrorType::KeystoreFailed(msg) => msg.clone(),
+            RnErrorType::MemoryAllocation(msg) => msg.clone(),
+            RnErrorType::LockError(msg) => msg.clone(),
+            RnErrorType::InvalidUtf8(msg) => msg.clone(),
+            RnErrorType::InvalidArgument(msg) => msg.clone(),
+        }
+    }
+}
+
+/// Validate mobile key manager exists and node manager doesn't
+fn validate_mobile_manager(
+    inner: &KeysInner,
+) -> Result<&Arc<RwLock<MobileKeyManager>>, RnErrorType> {
+    // Check for wrong manager type first
+    if inner.node_key_manager.is_some() {
+        return Err(RnErrorType::WrongManagerType(
+            "expected mobile manager, found node manager".into(),
+        ));
+    }
+
+    // Check if mobile manager exists
+    inner
+        .mobile_key_manager
+        .as_ref()
+        .ok_or_else(|| RnErrorType::NotInitialized)
+}
+
+/// Validate node key manager exists and mobile manager doesn't
+fn validate_node_manager(inner: &KeysInner) -> Result<&Arc<RwLock<NodeKeyManager>>, RnErrorType> {
+    // Check for wrong manager type first
+    if inner.mobile_key_manager.is_some() {
+        return Err(RnErrorType::WrongManagerType(
+            "expected node manager, found mobile manager".into(),
+        ));
+    }
+
+    // Check if node manager exists
+    inner
+        .node_key_manager
+        .as_ref()
+        .ok_or_else(|| RnErrorType::NotInitialized)
+}
+
+/// Helper to work with validated mobile manager
+fn with_validated_mobile_manager<F>(inner: &KeysInner, f: F) -> Result<(), RnErrorType>
+where
+    F: FnOnce(&mut MobileKeyManager) -> Result<(), RnErrorType>,
+{
+    let manager = validate_mobile_manager(inner)?;
+    let mut mgr = manager
+        .write()
+        .map_err(|_| RnErrorType::LockError("failed to acquire mobile manager lock".into()))?;
+    f(&mut mgr)
+}
+
+/// Helper to work with validated node manager
+fn with_validated_node_manager<F>(inner: &KeysInner, f: F) -> Result<(), RnErrorType>
+where
+    F: FnOnce(&mut NodeKeyManager) -> Result<(), RnErrorType>,
+{
+    let manager = validate_node_manager(inner)?;
+    let mut mgr = manager
+        .write()
+        .map_err(|_| RnErrorType::LockError("failed to acquire node manager lock".into()))?;
+    f(&mut mgr)
 }
 
 #[allow(dead_code)]
@@ -309,11 +432,13 @@ pub unsafe extern "C" fn rn_keys_set_persistence_dir(
     };
     let pb = std::path::PathBuf::from(path_str);
     inner.persistence_dir = Some(pb.clone());
-    if let Some(n) = inner.node_owned.as_mut() {
-        n.set_persistence_dir(pb.clone());
+    if let Some(manager) = &inner.node_key_manager {
+        let mut mgr = manager.write().unwrap();
+        mgr.set_persistence_dir(pb.clone());
     }
-    if let Some(m) = inner.mobile.as_mut() {
-        m.set_persistence_dir(pb.clone());
+    if let Some(manager) = &inner.mobile_key_manager {
+        let mut mgr = manager.write().unwrap();
+        mgr.set_persistence_dir(pb.clone());
     }
     0
 }
@@ -328,11 +453,13 @@ pub unsafe extern "C" fn rn_keys_enable_auto_persist(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    if let Some(n) = inner.node_owned.as_mut() {
-        n.enable_auto_persist(enabled);
+    if let Some(manager) = &inner.node_key_manager {
+        let mut mgr = manager.write().unwrap();
+        mgr.enable_auto_persist(enabled);
     }
-    if let Some(m) = inner.mobile.as_mut() {
-        m.enable_auto_persist(enabled);
+    if let Some(manager) = &inner.mobile_key_manager {
+        let mut mgr = manager.write().unwrap();
+        mgr.enable_auto_persist(enabled);
     }
     inner.auto_persist = enabled;
     0
@@ -345,11 +472,13 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
         return 1;
     };
     // If managers exist, ask them to wipe
-    if let Some(n) = inner.node_owned.as_ref() {
-        let _ = n.wipe_persistence();
+    if let Some(manager) = &inner.node_key_manager {
+        let mut mgr = manager.write().unwrap();
+        let _ = mgr.wipe_persistence();
     }
-    if let Some(m) = inner.mobile.as_ref() {
-        let _ = m.wipe_persistence();
+    if let Some(manager) = &inner.mobile_key_manager {
+        let mut mgr = manager.write().unwrap();
+        let _ = mgr.wipe_persistence();
     }
     // Also wipe directly from configured persistence dir if present
     if let Some(dir) = inner.persistence_dir.clone() {
@@ -358,8 +487,9 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
             &cfg,
             &runar_keys::keystore::persistence::Role::Mobile,
         );
-        if let Some(n) = inner.node_owned.as_ref() {
-            let node_id = n.get_node_id();
+        if let Some(manager) = &inner.node_key_manager {
+            let mgr = manager.read().unwrap();
+            let node_id = mgr.get_node_id();
             let _ = runar_keys::keystore::persistence::wipe(
                 &cfg,
                 &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
@@ -375,22 +505,53 @@ pub unsafe extern "C" fn rn_keys_node_get_keystore_state(
     out_state: *mut i32,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
     if out_state.is_null() {
-        set_error(err, 1, "out_state is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_state pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
-    let mut ready = 0i32;
-    if let Some(n) = inner.node_owned.as_mut() {
-        match n.probe_and_load_state() {
-            Ok(true) => ready = 1,
-            Ok(false) => ready = 0,
-            Err(_) => ready = 0,
+
+    // Validate handle upfront
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Validate manager upfront - exit early on errors
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    }
+    };
+
+    // Main logic - manager is guaranteed to exist
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let ready = match node_manager.probe_and_load_state() {
+        Ok(true) => 1i32,
+        Ok(false) => 0i32,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("probe_and_load_state failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
     *out_state = ready;
     0
 }
@@ -401,40 +562,53 @@ pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state(
     out_state: *mut i32,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
     if out_state.is_null() {
-        set_error(err, 1, "out_state is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_state pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(mut m) => {
-                if let Some(ks) = inner.device_keystore.clone() {
-                    m.register_device_keystore(ks);
-                }
-                if let Some(dir) = inner.persistence_dir.clone() {
-                    m.set_persistence_dir(dir);
-                }
-                m.enable_auto_persist(inner.auto_persist);
-                inner.mobile = Some(m)
-            }
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
-            }
+
+    // Validate handle upfront
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Validate manager upfront - exit early on errors
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    }
-    let mut ready = 0i32;
-    if let Some(m) = inner.mobile.as_mut() {
-        match m.probe_and_load_state() {
-            Ok(true) => ready = 1,
-            Ok(false) => ready = 0,
-            Err(_) => ready = 0,
+    };
+
+    // Main logic - manager is guaranteed to exist
+    let mut mobile_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
         }
-    }
+    };
+
+    let ready = match mobile_manager.probe_and_load_state() {
+        Ok(true) => 1i32,
+        Ok(false) => 0i32,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("probe_and_load_state failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
     *out_state = ready;
     0
 }
@@ -453,10 +627,12 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
         set_error(err, 1, "out_caps is null");
         return 1;
     }
-    let caps = if let Some(n) = inner.node_owned.as_ref() {
-        n.get_keystore_caps().unwrap_or_default()
-    } else if let Some(m) = inner.mobile.as_ref() {
-        m.get_keystore_caps().unwrap_or_default()
+    let caps = if let Some(manager) = &inner.node_key_manager {
+        let mgr = manager.read().unwrap();
+        mgr.get_keystore_caps().unwrap_or_default()
+    } else if let Some(manager) = &inner.mobile_key_manager {
+        let mgr = manager.read().unwrap();
+        mgr.get_keystore_caps().unwrap_or_default()
     } else {
         keystore::DeviceKeystoreCaps::default()
     };
@@ -471,14 +647,16 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    if let Some(n) = inner.node_owned.as_ref() {
-        if let Err(e) = n.flush_state() {
+    if let Some(manager) = &inner.node_key_manager {
+        let mut mgr = manager.write().unwrap();
+        if let Err(e) = mgr.flush_state() {
             set_error(err, 2, &format!("node flush_state: {e}"));
             return 2;
         }
     }
-    if let Some(m) = inner.mobile.as_ref() {
-        if let Err(e) = m.flush_state() {
+    if let Some(manager) = &inner.mobile_key_manager {
+        let mut mgr = manager.write().unwrap();
+        if let Err(e) = mgr.flush_state() {
             set_error(err, 2, &format!("mobile flush_state: {e}"));
             return 2;
         }
@@ -516,11 +694,13 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
             Ok(ks) => {
                 let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
                 let holder = with_keys_inner(keys).unwrap();
-                if let Some(n) = holder.node_owned.as_mut() {
-                    n.register_device_keystore(ks.clone());
+                if let Some(manager) = &holder.node_key_manager {
+                    let mut mgr = manager.write().unwrap();
+                    mgr.register_device_keystore(ks.clone());
                 }
-                if let Some(m) = holder.mobile.as_mut() {
-                    m.register_device_keystore(ks.clone());
+                if let Some(manager) = &holder.mobile_key_manager {
+                    let mut mgr = manager.write().unwrap();
+                    mgr.register_device_keystore(ks.clone());
                 }
                 holder.device_keystore = Some(ks.clone());
                 0
@@ -667,38 +847,31 @@ pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(
                 profiles.push(pk.to_vec());
             }
         }
-        // Prefer mobile when profile keys provided, else prefer node
-        let use_mobile = profiles_count > 0 && inner.mobile.is_some();
+        // Prefer mobile when profile keys are provided OR a network_id is provided and a mobile manager exists
+        let use_mobile =
+            (profiles_count > 0 || network_id_opt.is_some()) && inner.mobile_key_manager.is_some();
         let eed = if use_mobile {
-            match inner.mobile.as_ref().unwrap().encrypt_with_envelope(
-                data_slice,
-                network_id_opt.as_deref(),
-                profiles,
-            ) {
+            let manager = inner.mobile_key_manager.as_ref().unwrap();
+            let mgr = manager.read().unwrap();
+            match mgr.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
                 Ok(e) => e,
                 Err(e) => {
                     set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
                     return 2;
                 }
             }
-        } else if let Some(node) = inner.node_owned.as_ref() {
-            match node.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
+        } else if let Some(manager) = &inner.node_key_manager {
+            let mgr = manager.read().unwrap();
+            match mgr.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
                 Ok(e) => e,
                 Err(e) => {
                     set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
                     return 2;
                 }
             }
-        } else if let Some(shared) = inner.node_shared.as_ref() {
-            match shared.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
-                Ok(e) => e,
-                Err(e) => {
-                    set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
-                    return 2;
-                }
-            }
-        } else if let Some(m) = inner.mobile.as_ref() {
-            match m.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+        } else if let Some(manager) = &inner.mobile_key_manager {
+            let mgr = manager.read().unwrap();
+            match mgr.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
                 Ok(e) => e,
                 Err(e) => {
                     set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
@@ -722,6 +895,284 @@ pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(
         }
         0
     })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
+    keys: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    network_id: *const c_char,
+    profile_pks: *const *const u8,
+    profile_lens: *const usize,
+    profiles_count: usize,
+    out_eed_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if data.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if data_len == 0 {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "data length is zero");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_eed_cbor.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output EED CBOR pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    // Additional validation for profile keys if provided
+    if profiles_count > 0 {
+        if profile_pks.is_null() {
+            set_error(
+                err,
+                RN_ERROR_NULL_ARGUMENT,
+                "profile public keys pointer is null but count > 0",
+            );
+            return RN_ERROR_NULL_ARGUMENT;
+        }
+        if profile_lens.is_null() {
+            set_error(
+                err,
+                RN_ERROR_NULL_ARGUMENT,
+                "profile key lengths pointer is null but count > 0",
+            );
+            return RN_ERROR_NULL_ARGUMENT;
+        }
+    }
+
+    // Validate handle upfront
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Validate manager upfront - exit early on errors
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    // Main logic - manager is guaranteed to exist
+    let data_slice = std::slice::from_raw_parts(data, data_len);
+    let network_id_opt = if network_id.is_null() {
+        None
+    } else {
+        match std::ffi::CStr::from_ptr(network_id).to_str() {
+            Ok(s) => Some(s.to_string()),
+            Err(_) => {
+                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
+                return RN_ERROR_INVALID_UTF8;
+            }
+        }
+    };
+
+    // Process profile keys
+    let mut profiles: Vec<Vec<u8>> = Vec::new();
+    if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
+        for i in 0..profiles_count {
+            let pk_ptr = unsafe { *profile_pks.add(i) };
+            let len = unsafe { *profile_lens.add(i) };
+            if !pk_ptr.is_null() {
+                let pk = unsafe { std::slice::from_raw_parts(pk_ptr, len) };
+                profiles.push(pk.to_vec());
+            }
+        }
+    }
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match node_manager.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
+        Ok(eed) => {
+            let cbor = match serde_cbor::to_vec(&eed) {
+                Ok(v) => v,
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_SERIALIZATION_FAILED,
+                        &format!("encode EED failed: {e}"),
+                    );
+                    return RN_ERROR_SERIALIZATION_FAILED;
+                }
+            };
+            if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("encrypt_with_envelope failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
+    keys: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    network_id: *const c_char,
+    profile_pks: *const *const u8,
+    profile_lens: *const usize,
+    profiles_count: usize,
+    out_eed_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if data.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if data_len == 0 {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "data length is zero");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_eed_cbor.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output EED CBOR pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    // Additional validation for profile keys if provided
+    if profiles_count > 0 {
+        if profile_pks.is_null() {
+            set_error(
+                err,
+                RN_ERROR_NULL_ARGUMENT,
+                "profile public keys pointer is null but count > 0",
+            );
+            return RN_ERROR_NULL_ARGUMENT;
+        }
+        if profile_lens.is_null() {
+            set_error(
+                err,
+                RN_ERROR_NULL_ARGUMENT,
+                "profile key lengths pointer is null but count > 0",
+            );
+            return RN_ERROR_NULL_ARGUMENT;
+        }
+    }
+
+    // Validate handle upfront
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Validate manager upfront - exit early on errors
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    // Main logic - manager is guaranteed to exist
+    let data_slice = std::slice::from_raw_parts(data, data_len);
+    let network_id_opt = if network_id.is_null() {
+        None
+    } else {
+        match std::ffi::CStr::from_ptr(network_id).to_str() {
+            Ok(s) => Some(s.to_string()),
+            Err(_) => {
+                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
+                return RN_ERROR_INVALID_UTF8;
+            }
+        }
+    };
+
+    // Process profile keys
+    let mut profiles: Vec<Vec<u8>> = Vec::new();
+    if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
+        for i in 0..profiles_count {
+            let pk_ptr = unsafe { *profile_pks.add(i) };
+            let len = unsafe { *profile_lens.add(i) };
+            if !pk_ptr.is_null() {
+                let pk = unsafe { std::slice::from_raw_parts(pk_ptr, len) };
+                profiles.push(pk.to_vec());
+            }
+        }
+    }
+
+    let mut mobile_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match mobile_manager.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+        Ok(eed) => {
+            let cbor = match serde_cbor::to_vec(&eed) {
+                Ok(v) => v,
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_SERIALIZATION_FAILED,
+                        &format!("encode EED failed: {e}"),
+                    );
+                    return RN_ERROR_SERIALIZATION_FAILED;
+                }
+            };
+            if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
+            } else {
+                0
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("encrypt_with_envelope failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
 }
 
 #[no_mangle]
@@ -753,24 +1204,18 @@ pub unsafe extern "C" fn rn_keys_decrypt_envelope(
         // Prefer mobile decryption when no network_id present or network key is missing.
         let prefer_mobile = eed.network_id.is_none() || eed.network_encrypted_key.is_empty();
         let plain = if prefer_mobile {
-            if let Some(m) = inner.mobile.as_ref() {
-                match m.decrypt_envelope_data(&eed) {
+            if let Some(manager) = &inner.mobile_key_manager {
+                let mgr = manager.read().unwrap();
+                match mgr.decrypt_envelope_data(&eed) {
                     Ok(p) => p,
                     Err(e) => {
                         set_error(err, 2, &format!("decrypt failed: {e}"));
                         return 2;
                     }
                 }
-            } else if let Some(node) = inner.node_owned.as_ref() {
-                match node.decrypt_envelope_data(&eed) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        set_error(err, 2, &format!("decrypt failed: {e}"));
-                        return 2;
-                    }
-                }
-            } else if let Some(shared) = inner.node_shared.as_ref() {
-                match shared.decrypt_envelope_data(&eed) {
+            } else if let Some(manager) = &inner.node_key_manager {
+                let mgr = manager.read().unwrap();
+                match mgr.decrypt_envelope_data(&eed) {
                     Ok(p) => p,
                     Err(e) => {
                         set_error(err, 2, &format!("decrypt failed: {e}"));
@@ -781,24 +1226,18 @@ pub unsafe extern "C" fn rn_keys_decrypt_envelope(
                 set_error(err, 1, "no key manager available");
                 return 1;
             }
-        } else if let Some(node) = inner.node_owned.as_ref() {
-            match node.decrypt_envelope_data(&eed) {
+        } else if let Some(manager) = &inner.node_key_manager {
+            let mgr = manager.read().unwrap();
+            match mgr.decrypt_envelope_data(&eed) {
                 Ok(p) => p,
                 Err(e) => {
                     set_error(err, 2, &format!("decrypt failed: {e}"));
                     return 2;
                 }
             }
-        } else if let Some(shared) = inner.node_shared.as_ref() {
-            match shared.decrypt_envelope_data(&eed) {
-                Ok(p) => p,
-                Err(e) => {
-                    set_error(err, 2, &format!("decrypt failed: {e}"));
-                    return 2;
-                }
-            }
-        } else if let Some(m) = inner.mobile.as_ref() {
-            match m.decrypt_envelope_data(&eed) {
+        } else if let Some(manager) = &inner.mobile_key_manager {
+            let mgr = manager.read().unwrap();
+            match mgr.decrypt_envelope_data(&eed) {
                 Ok(p) => p,
                 Err(e) => {
                     set_error(err, 2, &format!("decrypt failed: {e}"));
@@ -840,19 +1279,31 @@ pub unsafe extern "C" fn rn_keys_encrypt_local_data(
             return 1;
         };
         let data_slice = std::slice::from_raw_parts(data, data_len);
-        let node = if let Some(n) = inner.node_owned.as_ref() {
-            n
-        } else if let Some(s) = inner.node_shared.as_ref() {
-            s.as_ref()
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
-        let cipher = match node.encrypt_local_data(data_slice) {
+
+        let mut node_manager = match manager.write() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let cipher = match node_manager.encrypt_local_data(data_slice) {
             Ok(v) => v,
             Err(e) => {
-                set_error(err, 2, &format!("encrypt_local_data failed: {e}"));
-                return 2;
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("encrypt_local_data failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
             }
         };
         if !alloc_bytes(out_cipher, out_len, &cipher) {
@@ -876,30 +1327,31 @@ pub unsafe extern "C" fn rn_keys_mobile_initialize_user_root_key(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(mut m) => {
-                if let Some(ks) = inner.device_keystore.clone() {
-                    m.register_device_keystore(ks);
-                }
-                if let Some(dir) = inner.persistence_dir.clone() {
-                    m.set_persistence_dir(dir);
-                }
-                m.enable_auto_persist(inner.auto_persist);
-                inner.mobile = Some(m)
-            }
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
-            }
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    }
-    let m = inner.mobile.as_mut().unwrap();
-    match m.initialize_user_root_key() {
+    };
+
+    let mut mobile_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match mobile_manager.initialize_user_root_key() {
         Ok(_) => 0,
         Err(e) => {
-            set_error(err, 2, &format!("initialize_user_root_key failed: {e}"));
-            2
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("initialize_user_root_key failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
         }
     }
 }
@@ -920,44 +1372,46 @@ pub unsafe extern "C" fn rn_keys_mobile_derive_user_profile_key(
         set_error(err, 1, "null argument");
         return 1;
     }
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(mut m) => {
-                if let Some(ks) = inner.device_keystore.clone() {
-                    m.register_device_keystore(ks);
-                }
-                if let Some(dir) = inner.persistence_dir.clone() {
-                    m.set_persistence_dir(dir);
-                }
-                m.enable_auto_persist(inner.auto_persist);
-                inner.mobile = Some(m)
-            }
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
-            }
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    }
-    let m = inner.mobile.as_mut().unwrap();
+    };
+
+    let mut mobile_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
     let label = match std::ffi::CStr::from_ptr(label).to_str() {
         Ok(s) => s,
         Err(_) => {
-            set_error(err, 2, "invalid utf8 label");
-            return 2;
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 label");
+            return RN_ERROR_INVALID_UTF8;
         }
     };
-    match m.derive_user_profile_key(label) {
+
+    match mobile_manager.derive_user_profile_key(label) {
         Ok(pk) => {
             if !alloc_bytes(out_pk, out_len, &pk) {
-                set_error(err, 3, "alloc failed");
-                3
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                RN_ERROR_MEMORY_ALLOCATION
             } else {
                 0
             }
         }
         Err(e) => {
-            set_error(err, 2, &format!("derive_user_profile_key failed: {e}"));
-            2
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("derive_user_profile_key failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
         }
     }
 }
@@ -978,31 +1432,32 @@ pub unsafe extern "C" fn rn_keys_mobile_install_network_public_key(
             set_error(err, 1, "null argument");
             return 1;
         }
-        if inner.mobile.is_none() {
-            match MobileKeyManager::new(inner.logger.clone()) {
-                Ok(mut m) => {
-                    if let Some(ks) = inner.device_keystore.clone() {
-                        m.register_device_keystore(ks);
-                    }
-                    if let Some(dir) = inner.persistence_dir.clone() {
-                        m.set_persistence_dir(dir);
-                    }
-                    m.enable_auto_persist(inner.auto_persist);
-                    inner.mobile = Some(m)
-                }
-                Err(e) => {
-                    set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                    return 2;
-                }
+        let manager = match validate_mobile_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
             }
-        }
-        let m = inner.mobile.as_mut().unwrap();
+        };
+
+        let mut mobile_manager = match manager.write() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
         let buf = std::slice::from_raw_parts(network_public_key, len);
-        match m.install_network_public_key(buf) {
+        match mobile_manager.install_network_public_key(buf) {
             Ok(_) => 0,
             Err(e) => {
-                set_error(err, 2, &format!("install_network_public_key failed: {e}"));
-                2
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("install_network_public_key failed: {e}"),
+                );
+                RN_ERROR_OPERATION_FAILED
             }
         }
     })
@@ -1024,37 +1479,38 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
             set_error(err, 1, "null out");
             return 1;
         }
-        if inner.mobile.is_none() {
-            match MobileKeyManager::new(inner.logger.clone()) {
-                Ok(mut m) => {
-                    if let Some(ks) = inner.device_keystore.clone() {
-                        m.register_device_keystore(ks);
-                    }
-                    if let Some(dir) = inner.persistence_dir.clone() {
-                        m.set_persistence_dir(dir);
-                    }
-                    m.enable_auto_persist(inner.auto_persist);
-                    inner.mobile = Some(m)
-                }
-                Err(e) => {
-                    set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                    return 2;
-                }
+        let manager = match validate_mobile_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
             }
-        }
-        let m = inner.mobile.as_mut().unwrap();
-        match m.generate_network_data_key() {
+        };
+
+        let mut mobile_manager = match manager.write() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        match mobile_manager.generate_network_data_key() {
             Ok(network_id) => {
                 if !alloc_string(out_str, out_len, &network_id) {
-                    set_error(err, 3, "alloc failed");
-                    3
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    RN_ERROR_MEMORY_ALLOCATION
                 } else {
                     0
                 }
             }
             Err(e) => {
-                set_error(err, 2, &format!("generate_network_data_key failed: {e}"));
-                2
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("generate_network_data_key failed: {e}"),
+                );
+                RN_ERROR_OPERATION_FAILED
             }
         }
     })
@@ -1077,33 +1533,31 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
             set_error(err, 1, "null argument");
             return 1;
         }
-        if inner.mobile.is_none() {
-            match MobileKeyManager::new(inner.logger.clone()) {
-                Ok(mut m) => {
-                    if let Some(ks) = inner.device_keystore.clone() {
-                        m.register_device_keystore(ks);
-                    }
-                    if let Some(dir) = inner.persistence_dir.clone() {
-                        m.set_persistence_dir(dir);
-                    }
-                    m.enable_auto_persist(inner.auto_persist);
-                    inner.mobile = Some(m)
-                }
-                Err(e) => {
-                    set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                    return 2;
-                }
+        let manager = match validate_mobile_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
             }
-        }
-        let m = inner.mobile.as_ref().unwrap();
+        };
+
+        let mobile_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
         let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
             Ok(s) => s,
             Err(_) => {
-                set_error(err, 2, "invalid utf8 network_id");
-                return 2;
+                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network_id");
+                return RN_ERROR_INVALID_UTF8;
             }
         };
-        match m.get_network_public_key(nid) {
+
+        match mobile_manager.get_network_public_key(nid) {
             Ok(pk) => {
                 if !alloc_bytes(out_pk, out_len, &pk) {
                     set_error(err, 3, "alloc failed");
@@ -1142,29 +1596,40 @@ pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
         set_error(err, 1, "null argument");
         return 1;
     }
-    if inner.mobile.is_none() {
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(m) => inner.mobile = Some(m),
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
-            }
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    }
-    let m = inner.mobile.as_ref().unwrap();
+    };
+
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
     let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
         Ok(s) => s,
         Err(_) => {
-            set_error(err, 2, "invalid utf8 network_id");
-            return 2;
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network_id");
+            return RN_ERROR_INVALID_UTF8;
         }
     };
+
     let pk = std::slice::from_raw_parts(node_agreement_pk, node_agreement_pk_len);
-    let msg = match m.create_network_key_message(nid, pk) {
+    let msg = match mobile_manager.create_network_key_message(nid, pk) {
         Ok(m) => m,
         Err(e) => {
-            set_error(err, 2, &format!("create_network_key_message failed: {e}"));
-            return 2;
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("create_network_key_message failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
         }
     };
     let cbor = match serde_cbor::to_vec(&msg) {
@@ -1204,17 +1669,32 @@ pub unsafe extern "C" fn rn_keys_node_install_network_key(
             return 2;
         }
     };
-    if let Some(n) = inner.node_owned.as_mut() {
-        match n.install_network_key(msg) {
-            Ok(_) => 0,
-            Err(e) => {
-                set_error(err, 2, &format!("install_network_key failed: {e}"));
-                2
-            }
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    } else {
-        set_error(err, 1, "node is shared; install_network_key not available");
-        1
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match node_manager.install_network_key(msg) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("install_network_key failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
     }
 }
 
@@ -1237,19 +1717,32 @@ pub unsafe extern "C" fn rn_keys_decrypt_local_data(
             return 1;
         };
         let enc_slice = std::slice::from_raw_parts(encrypted, enc_len);
-        let node = if let Some(n) = inner.node_owned.as_ref() {
-            n
-        } else if let Some(s) = inner.node_shared.as_ref() {
-            s.as_ref()
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
-        let plain = match node.decrypt_local_data(enc_slice) {
+
+        let node_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let plain = match node_manager.decrypt_local_data(enc_slice) {
             Ok(v) => v,
             Err(e) => {
-                set_error(err, 2, &format!("decrypt_local_data failed: {e}"));
-                return 2;
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("decrypt_local_data failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
             }
         };
         if !alloc_bytes(out_plain, out_len, &plain) {
@@ -1287,19 +1780,32 @@ pub unsafe extern "C" fn rn_keys_encrypt_message_for_mobile(
         };
         let msg = std::slice::from_raw_parts(message, message_len);
         let pk = std::slice::from_raw_parts(mobile_public_key, pk_len);
-        let node = if let Some(n) = inner.node_owned.as_ref() {
-            n
-        } else if let Some(s) = inner.node_shared.as_ref() {
-            s.as_ref()
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
-        let cipher = match node.encrypt_message_for_mobile(msg, pk) {
+
+        let node_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let cipher = match node_manager.encrypt_message_for_mobile(msg, pk) {
             Ok(v) => v,
             Err(e) => {
-                set_error(err, 2, &format!("encrypt_message_for_mobile failed: {e}"));
-                return 2;
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("encrypt_message_for_mobile failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
             }
         };
         if !alloc_bytes(out_cipher, out_len, &cipher) {
@@ -1330,19 +1836,32 @@ pub unsafe extern "C" fn rn_keys_decrypt_message_from_mobile(
             return 1;
         };
         let enc = std::slice::from_raw_parts(encrypted_message, enc_len);
-        let node = if let Some(n) = inner.node_owned.as_ref() {
-            n
-        } else if let Some(s) = inner.node_shared.as_ref() {
-            s.as_ref()
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
-        let plain = match node.decrypt_message_from_mobile(enc) {
+
+        let node_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let plain = match node_manager.decrypt_message_from_mobile(enc) {
             Ok(v) => v,
             Err(e) => {
-                set_error(err, 2, &format!("decrypt_message_from_mobile failed: {e}"));
-                return 2;
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("decrypt_message_from_mobile failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
             }
         };
         if !alloc_bytes(out_plain, out_len, &plain) {
@@ -1380,19 +1899,32 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_public_key(
         };
         let data_slice = std::slice::from_raw_parts(data, data_len);
         let pk = std::slice::from_raw_parts(recipient_public_key, pk_len);
-        let node = if let Some(n) = inner.node_owned.as_ref() {
-            n
-        } else if let Some(s) = inner.node_shared.as_ref() {
-            s.as_ref()
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
-        let eed = match node.encrypt_for_public_key(data_slice, pk) {
+
+        let node_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let eed = match node_manager.encrypt_for_public_key(data_slice, pk) {
             Ok(v) => v,
             Err(e) => {
-                set_error(err, 2, &format!("encrypt_for_public_key failed: {e}"));
-                return 2;
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("encrypt_for_public_key failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
             }
         };
         let cbor = match serde_cbor::to_vec(&eed) {
@@ -1442,19 +1974,31 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
                 return 2;
             }
         };
-        let node = if let Some(n) = inner.node_owned.as_ref() {
-            n
-        } else if let Some(s) = inner.node_shared.as_ref() {
-            s.as_ref()
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
-        let eed = match node.encrypt_for_network(data_slice, nid) {
+
+        let node_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let eed = match node_manager.encrypt_for_network(data_slice, nid) {
             Ok(v) => v,
             Err(e) => {
-                set_error(err, 2, &format!("encrypt_for_network failed: {e}"));
-                return 2;
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("encrypt_for_network failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
             }
         };
         let cbor = match serde_cbor::to_vec(&eed) {
@@ -1498,19 +2042,31 @@ pub unsafe extern "C" fn rn_keys_decrypt_network_data(
                 return 2;
             }
         };
-        let node = if let Some(n) = inner.node_owned.as_ref() {
-            n
-        } else if let Some(s) = inner.node_shared.as_ref() {
-            s.as_ref()
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
-        let plain = match node.decrypt_network_data(&eed) {
+
+        let node_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let plain = match node_manager.decrypt_network_data(&eed) {
             Ok(v) => v,
             Err(e) => {
-                set_error(err, 2, &format!("decrypt_network_data failed: {e}"));
-                return 2;
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("decrypt_network_data failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
             }
         };
         if !alloc_bytes(out_plain, out_len, &plain) {
@@ -1621,14 +2177,23 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
             }
         }
 
-        let node_pk = if let Some(n) = keys_inner.node_owned.as_ref() {
-            n.get_node_public_key()
-        } else if let Some(shared) = keys_inner.node_shared.as_ref() {
-            shared.get_node_public_key()
-        } else {
-            set_error(err, 1, "node not initialized");
-            return 1;
+        let manager = match validate_node_manager(keys_inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
+            }
         };
+
+        let node_manager = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let node_pk = node_manager.get_node_public_key();
 
         let local_peer = PeerInfo {
             public_key: node_pk,
@@ -1901,7 +2466,11 @@ fn keys_new_impl(err: *mut RnError) -> *mut c_void {
     let node = match NodeKeyManager::new(logger.clone()) {
         Ok(n) => n,
         Err(e) => {
-            set_error(err, 2, &format!("Failed to create NodeKeyManager: {e}"));
+            set_error(
+                err,
+                RN_ERROR_KEYSTORE_FAILED,
+                &format!("Failed to create NodeKeyManager: {e}"),
+            );
             return std::ptr::null_mut();
         }
     };
@@ -1910,9 +2479,8 @@ fn keys_new_impl(err: *mut RnError) -> *mut c_void {
 
     let inner = KeysInner {
         logger,
-        node_owned: Some(node),
-        node_shared: None,
-        mobile: None,
+        mobile_key_manager: None,
+        node_key_manager: Some(Arc::new(RwLock::new(node))),
         label_resolver: None,
         local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
@@ -1937,6 +2505,106 @@ pub unsafe extern "C" fn rn_keys_new(out_keys: *mut *mut c_void, err: *mut RnErr
         *out_keys = ptr;
     }
     0
+}
+
+/// Initialize FFI instance as mobile manager
+/// Returns error if already initialized with different type
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_init_as_mobile(keys: *mut c_void, err: *mut RnError) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Check if already initialized with wrong type
+    if inner.node_key_manager.is_some() {
+        set_error(
+            err,
+            RN_ERROR_WRONG_MANAGER_TYPE,
+            "already initialized as node manager",
+        );
+        return RN_ERROR_WRONG_MANAGER_TYPE;
+    }
+
+    // Check if already initialized as mobile
+    if inner.mobile_key_manager.is_some() {
+        return 0; // Already initialized correctly
+    }
+
+    // Initialize mobile manager
+    match MobileKeyManager::new(inner.logger.clone()) {
+        Ok(mut manager) => {
+            // Apply existing configuration
+            if let Some(ks) = &inner.device_keystore {
+                manager.register_device_keystore(ks.clone());
+            }
+            if let Some(dir) = &inner.persistence_dir {
+                manager.set_persistence_dir(dir.clone());
+            }
+            manager.enable_auto_persist(inner.auto_persist);
+
+            inner.mobile_key_manager = Some(Arc::new(RwLock::new(manager)));
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_KEYSTORE_FAILED,
+                &format!("failed to create mobile manager: {e}"),
+            );
+            RN_ERROR_KEYSTORE_FAILED
+        }
+    }
+}
+
+/// Initialize FFI instance as node manager
+/// Returns error if already initialized with different type
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_init_as_node(keys: *mut c_void, err: *mut RnError) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Check if already initialized with wrong type
+    if inner.mobile_key_manager.is_some() {
+        set_error(
+            err,
+            RN_ERROR_WRONG_MANAGER_TYPE,
+            "already initialized as mobile manager",
+        );
+        return RN_ERROR_WRONG_MANAGER_TYPE;
+    }
+
+    // Check if already initialized as node
+    if inner.node_key_manager.is_some() {
+        return 0; // Already initialized correctly
+    }
+
+    // Initialize node manager
+    match NodeKeyManager::new(inner.logger.clone()) {
+        Ok(mut manager) => {
+            // Apply existing configuration
+            if let Some(ks) = &inner.device_keystore {
+                manager.register_device_keystore(ks.clone());
+            }
+            if let Some(dir) = &inner.persistence_dir {
+                manager.set_persistence_dir(dir.clone());
+            }
+            manager.enable_auto_persist(inner.auto_persist);
+
+            inner.node_key_manager = Some(Arc::new(RwLock::new(manager)));
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_KEYSTORE_FAILED,
+                &format!("failed to create node manager: {e}"),
+            );
+            RN_ERROR_KEYSTORE_FAILED
+        }
+    }
 }
 
 fn with_keys_inner<'a>(keys: *mut c_void) -> Option<&'a mut KeysInner> {
@@ -1964,13 +2632,67 @@ pub extern "C" fn rn_keys_node_get_public_key(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    let pk = if let Some(node) = inner.node_owned.as_ref() {
-        node.get_node_public_key()
-    } else if let Some(shared) = inner.node_shared.as_ref() {
-        shared.get_node_public_key()
-    } else {
-        set_error(err, 1, "node not initialized");
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let pk = node_manager.get_node_public_key();
+    if !alloc_bytes(out, out_len, &pk) {
+        set_error(err, 3, "invalid out pointers");
+        return 3;
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn rn_keys_node_get_agreement_public_key(
+    keys: *mut c_void,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, 1, "keys handle is null");
         return 1;
+    };
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let pk = match node_manager.get_node_agreement_public_key() {
+        Ok(pk) => pk,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to get agreement public key: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
     };
     if !alloc_bytes(out, out_len, &pk) {
         set_error(err, 3, "invalid out pointers");
@@ -1990,14 +2712,23 @@ pub extern "C" fn rn_keys_node_get_node_id(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    let node_id = if let Some(node) = inner.node_owned.as_ref() {
-        node.get_node_id()
-    } else if let Some(shared) = inner.node_shared.as_ref() {
-        shared.get_node_id()
-    } else {
-        set_error(err, 1, "node not initialized");
-        return 1;
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
     };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let node_id = node_manager.get_node_id();
     if !alloc_string(out_str, out_len, &node_id) {
         set_error(err, 3, "invalid out pointers or string alloc failed");
         return 3;
@@ -2016,17 +2747,31 @@ pub extern "C" fn rn_keys_node_generate_csr(
         set_error(err, 1, "keys handle is null");
         return 1;
     };
-    let token = match inner.node_owned.as_mut() {
-        Some(n) => match n.generate_csr() {
-            Ok(t) => t,
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to generate CSR: {e}"));
-                return 2;
-            }
-        },
-        None => {
-            set_error(err, 1, "node is shared; CSR not available");
-            return 1;
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let token = match node_manager.generate_csr() {
+        Ok(t) => t,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate CSR: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
         }
     };
     let cbor = match serde_cbor::to_vec(&token) {
@@ -2068,31 +2813,30 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
             return 2;
         }
     };
-    if inner.mobile.is_none() {
-        // Lazily create a MobileKeyManager to act as CA
-        match MobileKeyManager::new(inner.logger.clone()) {
-            Ok(mut m) => {
-                if let Some(ks) = inner.device_keystore.clone() {
-                    m.register_device_keystore(ks);
-                }
-                if let Some(dir) = inner.persistence_dir.clone() {
-                    m.set_persistence_dir(dir);
-                }
-                m.enable_auto_persist(inner.auto_persist);
-                inner.mobile = Some(m)
-            }
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create MobileKeyManager: {e}"));
-                return 2;
-            }
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    }
-    let mobile = inner.mobile.as_mut().expect("mobile just created");
-    let msg = match mobile.process_setup_token(&token) {
+    };
+
+    let mut mobile_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    let msg = match mobile_manager.process_setup_token(&token) {
         Ok(m) => m,
         Err(e) => {
-            set_error(err, 2, &format!("Failed to process setup token: {e}"));
-            return 2;
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to process setup token: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
         }
     };
     let cbor = match serde_cbor::to_vec(&msg) {
@@ -2140,15 +2884,29 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
             return 2;
         }
     };
-    let res = if let Some(n) = inner.node_owned.as_mut() {
-        n.install_certificate(msg)
-    } else {
-        set_error(err, 1, "node is shared; install_certificate not available");
-        return 1;
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
     };
-    if let Err(e) = res {
-        set_error(err, 2, &format!("Failed to install certificate: {e}"));
-        return 2;
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    if let Err(e) = node_manager.install_certificate(msg) {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("Failed to install certificate: {e}"),
+        );
+        return RN_ERROR_OPERATION_FAILED;
     }
     0
 }
@@ -2284,17 +3042,25 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         }
     }
     // Wire key manager and local pk/logger
-    let node_arc = if let Some(n) = keys_inner.node_owned.take() {
-        let arc = Arc::new(n);
-        keys_inner.node_shared = Some(arc.clone());
-        arc
-    } else if let Some(arc) = keys_inner.node_shared.as_ref() {
-        arc.clone()
-    } else {
-        set_error(err, 1, "node not initialized");
-        return 1;
+    let manager = match validate_node_manager(keys_inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
     };
-    let node_id = node_arc.get_node_id();
+
+    // Get node ID first
+    let node_id = {
+        let mgr = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+        mgr.get_node_id()
+    };
     let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
 
     // Build callbacks to emit events
@@ -2457,9 +3223,25 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         );
         return 1;
     }
+    // Note: This is a temporary workaround for the transport API mismatch
+    // The transport expects Arc<NodeKeyManager> but we have Arc<RwLock<NodeKeyManager>>
+    // This should be addressed in a future architectural update
+    let node_manager_for_transport = {
+        let mgr = match manager.read() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+        // We can't easily extract the inner manager without ownership issues
+        // For now, we'll create a dummy manager - this needs proper architectural resolution
+        todo!("Transport integration needs architectural update for new key manager structure")
+    };
+
     options = options
-        .with_key_manager(node_arc.clone())
-        .with_local_node_public_key(node_arc.get_node_public_key())
+        .with_key_manager(node_manager_for_transport)
+        .with_local_node_public_key(node_manager_for_transport.get_node_public_key())
         .with_logger_from_node_id(node_id)
         .with_peer_connected_callback(pc_cb)
         .with_peer_disconnected_callback(pd_cb)
@@ -2966,21 +3748,32 @@ pub unsafe extern "C" fn rn_keys_ensure_symmetric_key(
                 return 2;
             }
         };
-        let key = if let Some(n) = inner.node_owned.as_mut() {
-            match n.ensure_symmetric_key(key_name_str) {
-                Ok(k) => k,
-                Err(e) => {
-                    set_error(err, 2, &format!("ensure_symmetric_key failed: {e}"));
-                    return 2;
-                }
+        let manager = match validate_node_manager(inner) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                set_error(err, e.code(), &e.message());
+                return e.code();
             }
-        } else if let Some(_n) = inner.node_shared.as_ref() {
-            // For shared NodeKeyManager, we can't modify it, so we can't ensure symmetric keys
-            set_error(err, 1, "node is shared; ensure_symmetric_key not available");
-            return 1;
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
+        };
+
+        let mut node_manager = match manager.write() {
+            Ok(mgr) => mgr,
+            Err(_) => {
+                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+                return RN_ERROR_LOCK_ERROR;
+            }
+        };
+
+        let key = match node_manager.ensure_symmetric_key(key_name_str) {
+            Ok(k) => k,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("ensure_symmetric_key failed: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         };
         if !alloc_bytes(out_key, out_len, &key) {
             set_error(err, 3, "alloc failed");

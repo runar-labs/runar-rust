@@ -98,6 +98,28 @@ int32_t rn_keys_encrypt_with_envelope(void *keys,
                                       size_t *out_len,
                                       struct RNAPIRnError *err);
 
+int32_t rn_keys_node_encrypt_with_envelope(void *keys,
+                                           const uint8_t *data,
+                                           size_t data_len,
+                                           const char *network_id,
+                                           const uint8_t *const *profile_pks,
+                                           const size_t *profile_lens,
+                                           size_t profiles_count,
+                                           uint8_t **out_eed_cbor,
+                                           size_t *out_len,
+                                           struct RNAPIRnError *err);
+
+int32_t rn_keys_mobile_encrypt_with_envelope(void *keys,
+                                             const uint8_t *data,
+                                             size_t data_len,
+                                             const char *network_id,
+                                             const uint8_t *const *profile_pks,
+                                             const size_t *profile_lens,
+                                             size_t profiles_count,
+                                             uint8_t **out_eed_cbor,
+                                             size_t *out_len,
+                                             struct RNAPIRnError *err);
+
 int32_t rn_keys_decrypt_envelope(void *keys,
                                  const uint8_t *eed_cbor,
                                  size_t eed_len,
@@ -231,10 +253,27 @@ void rn_keys_free(void *keys);
  */
 int32_t rn_keys_new(void **out_keys, struct RNAPIRnError *err);
 
+/**
+ * Initialize FFI instance as mobile manager
+ * Returns error if already initialized with different type
+ */
+int32_t rn_keys_init_as_mobile(void *keys, struct RNAPIRnError *err);
+
+/**
+ * Initialize FFI instance as node manager
+ * Returns error if already initialized with different type
+ */
+int32_t rn_keys_init_as_node(void *keys, struct RNAPIRnError *err);
+
 int32_t rn_keys_node_get_public_key(void *keys,
                                     uint8_t **out,
                                     size_t *out_len,
                                     struct RNAPIRnError *err);
+
+int32_t rn_keys_node_get_agreement_public_key(void *keys,
+                                              uint8_t **out,
+                                              size_t *out_len,
+                                              struct RNAPIRnError *err);
 
 int32_t rn_keys_node_get_node_id(void *keys,
                                  char **out_str,

@@ -604,6 +604,19 @@ impl NodeKeyManager {
         })
     }
 
+    /// Get the node ECIES agreement public key (P-256) derived from the node master key
+    pub fn get_node_agreement_public_key(&self) -> Result<Vec<u8>> {
+        let agreement = crate::derivation::derive_agreement_from_master(
+            &self.node_key_pair.signing_key().to_bytes(),
+            b"runar-v1:node-identity:agreement",
+        )?;
+        Ok(agreement
+            .public_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec())
+    }
+
     /// Validate peer certificate during QUIC handshake
     pub fn validate_peer_certificate(&self, peer_cert: &X509Certificate) -> Result<()> {
         let validator = self.certificate_validator.as_ref().ok_or_else(|| {
