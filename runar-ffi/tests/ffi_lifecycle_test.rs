@@ -4,7 +4,6 @@
 //! using the FFI API. Every single step from the reference test is implemented here.
 
 use runar_ffi::*;
-use serde_cbor;
 use std::ffi::c_void;
 use std::ptr;
 
@@ -25,7 +24,7 @@ fn create_keys_handle() -> *mut c_void {
 
 fn destroy_keys_handle(keys: *mut c_void) {
     if !keys.is_null() {
-        unsafe { rn_keys_free(keys) };
+        rn_keys_free(keys);
     }
 }
 
@@ -83,7 +82,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully get user public key");
 
     let user_public_key = unsafe { std::slice::from_raw_parts(user_pk_ptr, user_pk_len) }.to_vec();
-    unsafe { rn_free(user_pk_ptr, user_pk_len) };
+    rn_free(user_pk_ptr, user_pk_len);
     assert_eq!(
         user_public_key.len(),
         65,
@@ -109,12 +108,11 @@ fn test_complete_ffi_key_management_lifecycle() {
     // Get the node public key (node ID) - keys are created in constructor
     let mut node_pk_ptr: *mut u8 = ptr::null_mut();
     let mut node_pk_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_get_public_key(node_keys, &mut node_pk_ptr, &mut node_pk_len, &mut error)
-    };
+    let result =
+        rn_keys_node_get_public_key(node_keys, &mut node_pk_ptr, &mut node_pk_len, &mut error);
     assert_eq!(result, 0, "Should successfully get node public key");
     let node_public_key = unsafe { std::slice::from_raw_parts(node_pk_ptr, node_pk_len) }.to_vec();
-    unsafe { rn_free(node_pk_ptr, node_pk_len) };
+    rn_free(node_pk_ptr, node_pk_len);
     println!(
         "   ✅ Node identity created: {} bytes",
         node_public_key.len()
@@ -123,21 +121,19 @@ fn test_complete_ffi_key_management_lifecycle() {
     // Generate setup token (CSR)
     let mut setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut setup_token_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr(
-            node_keys,
-            &mut setup_token_ptr,
-            &mut setup_token_len,
-            &mut error,
-        )
-    };
+    let result = rn_keys_node_generate_csr(
+        node_keys,
+        &mut setup_token_ptr,
+        &mut setup_token_len,
+        &mut error,
+    );
     assert_eq!(result, 0, "Should successfully generate setup token");
 
     let setup_token_bytes =
         unsafe { std::slice::from_raw_parts(setup_token_ptr, setup_token_len) }.to_vec();
-    let setup_token: runar_keys::mobile::SetupToken =
+    let _setup_token: runar_keys::mobile::SetupToken =
         serde_cbor::from_slice(&setup_token_bytes).expect("Failed to deserialize setup token");
-    unsafe { rn_free(setup_token_ptr, setup_token_len) };
+    rn_free(setup_token_ptr, setup_token_len);
 
     // In a real scenario, the node gets the mobile public key (e.g., by scanning a QR code)
     // and uses it to encrypt the setup token.
@@ -162,7 +158,7 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     let encrypted_setup_token =
         unsafe { std::slice::from_raw_parts(encrypted_ptr, encrypted_len) }.to_vec();
-    unsafe { rn_free(encrypted_ptr, encrypted_len) };
+    rn_free(encrypted_ptr, encrypted_len);
 
     // The encrypted token is then encoded (e.g., into a QR code).
     let setup_token_str = hex::encode(encrypted_setup_token);
@@ -195,7 +191,7 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     let decrypted_setup_token_bytes =
         unsafe { std::slice::from_raw_parts(decrypted_ptr, decrypted_len) }.to_vec();
-    unsafe { rn_free(decrypted_ptr, decrypted_len) };
+    rn_free(decrypted_ptr, decrypted_len);
 
     let setup_token_mobile: runar_keys::mobile::SetupToken =
         serde_cbor::from_slice(&decrypted_setup_token_bytes)
@@ -218,7 +214,7 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     let cert_message_bytes =
         unsafe { std::slice::from_raw_parts(cert_message_ptr, cert_message_len) }.to_vec();
-    unsafe { rn_free(cert_message_ptr, cert_message_len) };
+    rn_free(cert_message_ptr, cert_message_len);
 
     let cert_message: runar_keys::mobile::NodeCertificateMessage =
         serde_cbor::from_slice(&cert_message_bytes)
@@ -263,7 +259,7 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     let encrypted_cert_msg =
         unsafe { std::slice::from_raw_parts(encrypted_cert_ptr, encrypted_cert_len) }.to_vec();
-    unsafe { rn_free(encrypted_cert_ptr, encrypted_cert_len) };
+    rn_free(encrypted_cert_ptr, encrypted_cert_len);
 
     // Node side - receives the encrypted certificate message, decrypts, and installs it.
     let mut decrypted_cert_ptr: *mut u8 = ptr::null_mut();
@@ -285,9 +281,9 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     let decrypted_cert_msg_bytes =
         unsafe { std::slice::from_raw_parts(decrypted_cert_ptr, decrypted_cert_len) }.to_vec();
-    unsafe { rn_free(decrypted_cert_ptr, decrypted_cert_len) };
+    rn_free(decrypted_cert_ptr, decrypted_cert_len);
 
-    let deserialized_cert_msg: runar_keys::mobile::NodeCertificateMessage =
+    let _deserialized_cert_msg: runar_keys::mobile::NodeCertificateMessage =
         serde_cbor::from_slice(&decrypted_cert_msg_bytes)
             .expect("Failed to deserialize certificate message");
 
@@ -317,14 +313,14 @@ fn test_complete_ffi_key_management_lifecycle() {
     };
     assert_eq!(result, 0, "Should successfully generate network data key");
 
-    let network_id = unsafe { std::slice::from_raw_parts(nid_c as *const u8, nid_len) }.to_vec();
+    let _network_id = unsafe { std::slice::from_raw_parts(nid_c as *const u8, nid_len) }.to_vec();
     let network_id_str = unsafe { std::ffi::CStr::from_ptr(nid_c) }
         .to_str()
         .unwrap()
         .to_string();
-    unsafe { rn_string_free(nid_c) };
+    rn_string_free(nid_c);
 
-    println!("   ✅ Network data key generated: {}", network_id_str);
+    println!("   ✅ Network data key generated: {network_id_str}");
 
     // 3.2 Mobile creates network key message
     let mut nkm_ptr: *mut u8 = ptr::null_mut();
@@ -346,7 +342,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully create network key message");
 
     let network_key_message = unsafe { std::slice::from_raw_parts(nkm_ptr, nkm_len) }.to_vec();
-    unsafe { rn_free(nkm_ptr, nkm_len) };
+    rn_free(nkm_ptr, nkm_len);
 
     println!(
         "   ✅ Network key message created: {} bytes",
@@ -386,7 +382,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully derive personal profile key");
 
     let personal_profile_key = unsafe { std::slice::from_raw_parts(ppk_ptr, ppk_len) }.to_vec();
-    unsafe { rn_free(ppk_ptr, ppk_len) };
+    rn_free(ppk_ptr, ppk_len);
 
     // Generate work profile key too
     let work_label = std::ffi::CString::new("work").unwrap();
@@ -405,7 +401,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully derive work profile key");
 
     let work_profile_key = unsafe { std::slice::from_raw_parts(wpk_ptr, wpk_len) }.to_vec();
-    unsafe { rn_free(wpk_ptr, wpk_len) };
+    rn_free(wpk_ptr, wpk_len);
 
     println!("   ✅ Profile keys generated: personal, work");
 
@@ -443,13 +439,13 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully encrypt with envelope");
 
     let encrypted_data = unsafe { std::slice::from_raw_parts(eed_ptr, eed_len) }.to_vec();
-    unsafe { rn_free(eed_ptr, eed_len) };
+    rn_free(eed_ptr, eed_len);
 
     println!(
         "   ✅ Data encrypted with envelope: {} bytes",
         encrypted_data.len()
     );
-    println!("      Network: {:?}", network_id_str);
+    println!("      Network: {network_id_str:?}");
     println!("      Profile recipients: {}", 2);
 
     // 5.2 Node decrypts envelope
@@ -469,7 +465,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully decrypt envelope");
 
     let decrypted_data = unsafe { std::slice::from_raw_parts(pt_ptr, pt_len) }.to_vec();
-    unsafe { rn_free(pt_ptr, pt_len) };
+    rn_free(pt_ptr, pt_len);
 
     assert_eq!(
         decrypted_data, test_data,
@@ -498,7 +494,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully encrypt local data");
 
     let encrypted_file_1 = unsafe { std::slice::from_raw_parts(cipher_ptr, cipher_len) }.to_vec();
-    unsafe { rn_free(cipher_ptr, cipher_len) };
+    rn_free(cipher_ptr, cipher_len);
 
     println!(
         "   ✅ Encrypted local data (hex): {}",
@@ -522,7 +518,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully decrypt local data");
 
     let decrypted_file_1 = unsafe { std::slice::from_raw_parts(plain_ptr, plain_len) }.to_vec();
-    unsafe { rn_free(plain_ptr, plain_len) };
+    rn_free(plain_ptr, plain_len);
 
     assert_eq!(
         decrypted_file_1, file_data_1,
@@ -531,7 +527,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     println!("   ✅ Local data encryption/decryption successful");
 
     // State serialization and restoration check for profile keys
-    let mobile_state = mobile_keys; // In FFI, we don't have direct state access, but we can test persistence
+    let _mobile_state = mobile_keys; // In FFI, we don't have direct state access, but we can test persistence
     println!("   ✅ Mobile profile keys persisted across operations");
 
     // ==========================================
@@ -545,7 +541,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     let result = unsafe { rn_keys_node_get_keystore_state(node_keys, &mut node_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get node keystore state");
 
-    println!("   ✅ Node keystore state: {}", node_state);
+    println!("   ✅ Node keystore state: {node_state}");
 
     // Additional local storage test
     let file_data_2 = b"This is secret file content to test after hydration.";
@@ -566,7 +562,7 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     let encrypted_file_2 =
         unsafe { std::slice::from_raw_parts(cipher_ptr_2, cipher_len_2) }.to_vec();
-    unsafe { rn_free(cipher_ptr_2, cipher_len_2) };
+    rn_free(cipher_ptr_2, cipher_len_2);
 
     let mut plain_ptr_2: *mut u8 = ptr::null_mut();
     let mut plain_len_2: usize = 0;
@@ -584,7 +580,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     assert_eq!(result, 0, "Should successfully decrypt data");
 
     let decrypted_file_2 = unsafe { std::slice::from_raw_parts(plain_ptr_2, plain_len_2) }.to_vec();
-    unsafe { rn_free(plain_ptr_2, plain_len_2) };
+    rn_free(plain_ptr_2, plain_len_2);
 
     assert_eq!(
         decrypted_file_2, file_data_2,
@@ -617,7 +613,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     println!("📊 Key Statistics:");
     println!("   • User root key: {} bytes", user_public_key.len());
     println!("   • Profile keys: 2 (personal, work)");
-    println!("   • Network keys: 1 ({})", network_id_str);
+    println!("   • Network keys: 1 ({network_id_str})");
     println!("   • Node certificates: 1");
     println!("   • Storage encryption: ✅");
     println!("   • State persistence: ✅");

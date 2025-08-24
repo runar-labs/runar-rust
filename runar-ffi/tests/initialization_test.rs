@@ -2,7 +2,6 @@
 
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::Arc;
 
 use runar_ffi::*;
 
@@ -24,7 +23,7 @@ fn create_keys_handle() -> *mut c_void {
 // Helper to destroy keys handle
 fn destroy_keys_handle(keys: *mut c_void) {
     if !keys.is_null() {
-        unsafe { rn_keys_free(keys) };
+        rn_keys_free(keys);
     }
 }
 
@@ -217,8 +216,7 @@ fn test_node_functions_require_node_init() {
     };
 
     // Try to call node function without initialization
-    let result =
-        unsafe { rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error) };
+    let result = rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error);
     assert_eq!(
         result, RN_ERROR_NOT_INITIALIZED,
         "Should fail when not initialized"
@@ -240,8 +238,7 @@ fn test_node_functions_fail_with_mobile_init() {
     assert_eq!(init_result, 0, "Mobile init should succeed");
 
     // Try to call node function with mobile initialization
-    let result =
-        unsafe { rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error) };
+    let result = rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error);
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
         "Should fail with wrong manager type"
@@ -293,8 +290,7 @@ fn test_node_functions_work_after_node_init() {
 
     // This test may fail if the node manager isn't fully implemented yet
     // For now, just test that we don't get WRONG_MANAGER_TYPE error
-    let result =
-        unsafe { rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error) };
+    let result = rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error);
 
     // Debug: Print the actual result and error code
     println!(
@@ -318,7 +314,7 @@ fn test_node_functions_work_after_node_init() {
 #[test]
 fn test_error_codes_are_unique() {
     // Test that all error codes are unique
-    let codes = vec![
+    let codes = [
         RN_ERROR_NULL_ARGUMENT,
         RN_ERROR_INVALID_HANDLE,
         RN_ERROR_NOT_INITIALIZED,
@@ -337,8 +333,7 @@ fn test_error_codes_are_unique() {
             if i != j {
                 assert_ne!(
                     code1, code2,
-                    "Error codes must be unique: {} and {}",
-                    code1, code2
+                    "Error codes must be unique: {code1} and {code2}"
                 );
             }
         }

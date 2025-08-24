@@ -25,7 +25,7 @@ fn create_keys_handle() -> *mut c_void {
 // Helper to destroy keys handle
 fn destroy_keys_handle(keys: *mut c_void) {
     if !keys.is_null() {
-        unsafe { rn_keys_free(keys) };
+        rn_keys_free(keys);
     }
 }
 
@@ -88,7 +88,7 @@ fn test_node_encrypt_with_envelope_happy_path() {
 
     // Clean up
     if !eed_ptr.is_null() {
-        unsafe { rn_free(eed_ptr, eed_len) };
+        rn_free(eed_ptr, eed_len);
     }
     destroy_keys_handle(keys);
 }
@@ -97,6 +97,15 @@ fn test_node_encrypt_with_envelope_happy_path() {
 fn test_mobile_encrypt_with_envelope_happy_path() {
     let keys = create_keys_handle();
     init_as_mobile(keys);
+
+    // Initialize user root key for mobile operations
+    let mut error = RnError {
+        code: 0,
+        message: ptr::null(),
+    };
+    let result = unsafe { rn_keys_mobile_initialize_user_root_key(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully initialize user root key");
+
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -104,7 +113,6 @@ fn test_mobile_encrypt_with_envelope_happy_path() {
 
     // Test data
     let data = b"Hello, World!";
-    let network_id = std::ffi::CString::new("test-network").unwrap();
 
     // Call the function
     let mut eed_ptr: *mut u8 = ptr::null_mut();
@@ -115,7 +123,7 @@ fn test_mobile_encrypt_with_envelope_happy_path() {
             keys,
             data.as_ptr(),
             data.len(),
-            network_id.as_ptr(),
+            ptr::null(), // no network_id
             ptr::null(), // no profile keys
             ptr::null(),
             0,
@@ -131,7 +139,7 @@ fn test_mobile_encrypt_with_envelope_happy_path() {
 
     // Clean up
     if !eed_ptr.is_null() {
-        unsafe { rn_free(eed_ptr, eed_len) };
+        rn_free(eed_ptr, eed_len);
     }
     destroy_keys_handle(keys);
 }
@@ -253,8 +261,10 @@ fn test_node_encrypt_with_envelope_invalid_utf8() {
     let data = b"Hello, World!";
 
     // Create invalid UTF-8 string
-    let invalid_utf8 = vec![0xFF, 0xFE]; // Invalid UTF-8 sequence
+    let invalid_utf8 = [0xFF, 0xFE]; // Invalid UTF-8 sequence
 
+    let mut eed_ptr: *mut u8 = ptr::null_mut();
+    let mut eed_len: usize = 0;
     let result = unsafe {
         rn_keys_node_encrypt_with_envelope(
             keys,
@@ -264,8 +274,8 @@ fn test_node_encrypt_with_envelope_invalid_utf8() {
             ptr::null(),
             ptr::null(),
             0,
-            ptr::null_mut(),
-            ptr::null_mut(),
+            &mut eed_ptr,
+            &mut eed_len,
             &mut error,
         )
     };
@@ -289,6 +299,8 @@ fn test_node_encrypt_with_envelope_wrong_manager_type() {
     let data = b"Hello, World!";
 
     // Try to call node function with mobile initialization
+    let mut eed_ptr: *mut u8 = ptr::null_mut();
+    let mut eed_len: usize = 0;
     let result = unsafe {
         rn_keys_node_encrypt_with_envelope(
             keys,
@@ -298,8 +310,8 @@ fn test_node_encrypt_with_envelope_wrong_manager_type() {
             ptr::null(),
             ptr::null(),
             0,
-            ptr::null_mut(),
-            ptr::null_mut(),
+            &mut eed_ptr,
+            &mut eed_len,
             &mut error,
         )
     };
@@ -323,6 +335,8 @@ fn test_node_encrypt_with_envelope_not_initialized() {
     let data = b"Hello, World!";
 
     // Try to call function without initialization
+    let mut eed_ptr: *mut u8 = ptr::null_mut();
+    let mut eed_len: usize = 0;
     let result = unsafe {
         rn_keys_node_encrypt_with_envelope(
             keys,
@@ -332,8 +346,8 @@ fn test_node_encrypt_with_envelope_not_initialized() {
             ptr::null(),
             ptr::null(),
             0,
-            ptr::null_mut(),
-            ptr::null_mut(),
+            &mut eed_ptr,
+            &mut eed_len,
             &mut error,
         )
     };
@@ -357,6 +371,8 @@ fn test_mobile_encrypt_with_envelope_wrong_manager_type() {
     let data = b"Hello, World!";
 
     // Try to call mobile function with node initialization
+    let mut eed_ptr: *mut u8 = ptr::null_mut();
+    let mut eed_len: usize = 0;
     let result = unsafe {
         rn_keys_mobile_encrypt_with_envelope(
             keys,
@@ -366,8 +382,8 @@ fn test_mobile_encrypt_with_envelope_wrong_manager_type() {
             ptr::null(),
             ptr::null(),
             0,
-            ptr::null_mut(),
-            ptr::null_mut(),
+            &mut eed_ptr,
+            &mut eed_len,
             &mut error,
         )
     };
@@ -391,6 +407,8 @@ fn test_mobile_encrypt_with_envelope_not_initialized() {
     let data = b"Hello, World!";
 
     // Try to call function without initialization
+    let mut eed_ptr: *mut u8 = ptr::null_mut();
+    let mut eed_len: usize = 0;
     let result = unsafe {
         rn_keys_mobile_encrypt_with_envelope(
             keys,
@@ -400,8 +418,8 @@ fn test_mobile_encrypt_with_envelope_not_initialized() {
             ptr::null(),
             ptr::null(),
             0,
-            ptr::null_mut(),
-            ptr::null_mut(),
+            &mut eed_ptr,
+            &mut eed_len,
             &mut error,
         )
     };
@@ -444,7 +462,7 @@ fn test_node_encrypt_local_data_happy_path() {
 
     // Clean up
     if !cipher_ptr.is_null() {
-        unsafe { rn_free(cipher_ptr, cipher_len) };
+        rn_free(cipher_ptr, cipher_len);
     }
     destroy_keys_handle(keys);
 }
@@ -461,13 +479,15 @@ fn test_node_encrypt_local_data_wrong_manager_type() {
     let data = b"Secret data to encrypt";
 
     // Try to call node function with mobile initialization
+    let mut cipher_ptr: *mut u8 = ptr::null_mut();
+    let mut cipher_len: usize = 0;
     let result = unsafe {
         rn_keys_encrypt_local_data(
             keys,
             data.as_ptr(),
             data.len(),
-            ptr::null_mut(),
-            ptr::null_mut(),
+            &mut cipher_ptr,
+            &mut cipher_len,
             &mut error,
         )
     };
@@ -533,8 +553,7 @@ fn test_mobile_initialize_user_root_key_happy_path() {
     // Should succeed (may return 0 or some operation-specific error)
     assert!(
         result == 0 || result == RN_ERROR_OPERATION_FAILED,
-        "Should succeed or fail with operation error, got: {}",
-        result
+        "Should succeed or fail with operation error, got: {result}"
     );
 
     destroy_keys_handle(keys);
@@ -571,7 +590,7 @@ fn test_node_get_public_key_happy_path() {
     let mut pk_ptr: *mut u8 = ptr::null_mut();
     let mut pk_len: usize = 0;
 
-    let result = unsafe { rn_keys_node_get_public_key(keys, &mut pk_ptr, &mut pk_len, &mut error) };
+    let result = rn_keys_node_get_public_key(keys, &mut pk_ptr, &mut pk_len, &mut error);
 
     assert_eq!(result, 0, "Should successfully get public key");
     assert!(!pk_ptr.is_null(), "Output should not be null");
@@ -579,7 +598,7 @@ fn test_node_get_public_key_happy_path() {
 
     // Clean up
     if !pk_ptr.is_null() {
-        unsafe { rn_free(pk_ptr, pk_len) };
+        rn_free(pk_ptr, pk_len);
     }
     destroy_keys_handle(keys);
 }
@@ -593,8 +612,7 @@ fn test_node_get_public_key_wrong_manager_type() {
         message: ptr::null(),
     };
 
-    let result =
-        unsafe { rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error) };
+    let result = rn_keys_node_get_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error);
 
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
@@ -616,9 +634,7 @@ fn test_node_get_agreement_public_key_happy_path() {
     let mut pk_ptr: *mut u8 = ptr::null_mut();
     let mut pk_len: usize = 0;
 
-    let result = unsafe {
-        rn_keys_node_get_agreement_public_key(keys, &mut pk_ptr, &mut pk_len, &mut error)
-    };
+    let result = rn_keys_node_get_agreement_public_key(keys, &mut pk_ptr, &mut pk_len, &mut error);
 
     assert_eq!(result, 0, "Should successfully get agreement public key");
     assert!(!pk_ptr.is_null(), "Output should not be null");
@@ -626,7 +642,7 @@ fn test_node_get_agreement_public_key_happy_path() {
 
     // Clean up
     if !pk_ptr.is_null() {
-        unsafe { rn_free(pk_ptr, pk_len) };
+        rn_free(pk_ptr, pk_len);
     }
     destroy_keys_handle(keys);
 }
@@ -640,9 +656,8 @@ fn test_node_get_agreement_public_key_wrong_manager_type() {
         message: ptr::null(),
     };
 
-    let result = unsafe {
-        rn_keys_node_get_agreement_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error)
-    };
+    let result =
+        rn_keys_node_get_agreement_public_key(keys, ptr::null_mut(), ptr::null_mut(), &mut error);
 
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
@@ -664,7 +679,7 @@ fn test_node_get_id_happy_path() {
     let mut id_c: *mut i8 = ptr::null_mut();
     let mut id_len: usize = 0;
 
-    let result = unsafe { rn_keys_node_get_node_id(keys, &mut id_c, &mut id_len, &mut error) };
+    let result = rn_keys_node_get_node_id(keys, &mut id_c, &mut id_len, &mut error);
 
     assert_eq!(result, 0, "Should successfully get node ID");
     assert!(!id_c.is_null(), "Output should not be null");
@@ -672,7 +687,7 @@ fn test_node_get_id_happy_path() {
 
     // Clean up
     if !id_c.is_null() {
-        unsafe { rn_string_free(id_c) };
+        rn_string_free(id_c);
     }
     destroy_keys_handle(keys);
 }
@@ -686,8 +701,7 @@ fn test_node_get_id_wrong_manager_type() {
         message: ptr::null(),
     };
 
-    let result =
-        unsafe { rn_keys_node_get_node_id(keys, ptr::null_mut(), ptr::null_mut(), &mut error) };
+    let result = rn_keys_node_get_node_id(keys, ptr::null_mut(), ptr::null_mut(), &mut error);
 
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
