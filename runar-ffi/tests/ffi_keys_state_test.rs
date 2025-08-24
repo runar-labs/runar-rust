@@ -193,7 +193,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let profile_pk_array: [*const u8; 1] = [ppk_ptr as *const u8];
         let profile_len_array: [usize; 1] = [ppk_len];
         assert_eq!(
-            rn_keys_encrypt_with_envelope(
+            rn_keys_mobile_encrypt_with_envelope(
                 keys,
                 data.as_ptr(),
                 data.len(),
@@ -215,7 +215,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let mut pt_ptr: *mut u8 = std::ptr::null_mut();
         let mut pt_len: usize = 0;
         assert_eq!(
-            rn_keys_decrypt_envelope(
+            rn_keys_mobile_decrypt_envelope(
                 keys,
                 eed_ptr,
                 eed_len,

@@ -10,10 +10,11 @@ use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
 use runar_common::logging::{Component, Logger};
 use runar_keys::keystore;
-use runar_keys::EnvelopeCrypto;
+
 use runar_keys::{
     mobile::{MobileKeyManager, NetworkKeyMessage, NodeCertificateMessage, SetupToken},
     node::NodeKeyManager,
+    EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
 use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
@@ -422,29 +423,33 @@ pub unsafe extern "C" fn rn_keys_set_persistence_dir(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     if dir.is_null() {
-        set_error(err, 1, "dir is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "dir is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
     let path_str = match std::ffi::CStr::from_ptr(dir).to_str() {
         Ok(s) => s,
         Err(_) => {
-            set_error(err, 2, "invalid utf8 in dir");
-            return 2;
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in dir");
+            return RN_ERROR_INVALID_UTF8;
         }
     };
     let pb = std::path::PathBuf::from(path_str);
     inner.persistence_dir = Some(pb.clone());
+
+    // Set persistence directory on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
         let mut mgr = manager.write().unwrap();
         mgr.set_persistence_dir(pb.clone());
-    }
-    if let Some(manager) = &inner.mobile_key_manager {
+    } else if let Some(manager) = &inner.mobile_key_manager {
         let mut mgr = manager.write().unwrap();
         mgr.set_persistence_dir(pb.clone());
+    } else {
+        set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
+        return RN_ERROR_NOT_INITIALIZED;
     }
     0
 }
@@ -456,16 +461,20 @@ pub unsafe extern "C" fn rn_keys_enable_auto_persist(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
+
+    // Enable auto-persist on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
         let mut mgr = manager.write().unwrap();
         mgr.enable_auto_persist(enabled);
-    }
-    if let Some(manager) = &inner.mobile_key_manager {
+    } else if let Some(manager) = &inner.mobile_key_manager {
         let mut mgr = manager.write().unwrap();
         mgr.enable_auto_persist(enabled);
+    } else {
+        set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
+        return RN_ERROR_NOT_INITIALIZED;
     }
     inner.auto_persist = enabled;
     0
@@ -474,17 +483,34 @@ pub unsafe extern "C" fn rn_keys_enable_auto_persist(
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut RnError) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
-    // If managers exist, ask them to wipe
+
+    // Wipe persistence from whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
         let mgr = manager.write().unwrap();
-        let _ = mgr.wipe_persistence();
-    }
-    if let Some(manager) = &inner.mobile_key_manager {
+        if let Err(e) = mgr.wipe_persistence() {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("node wipe_persistence: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    } else if let Some(manager) = &inner.mobile_key_manager {
         let mgr = manager.write().unwrap();
-        let _ = mgr.wipe_persistence();
+        if let Err(e) = mgr.wipe_persistence() {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("mobile wipe_persistence: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    } else {
+        set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
+        return RN_ERROR_NOT_INITIALIZED;
     }
     // Also wipe directly from configured persistence dir if present
     if let Some(dir) = inner.persistence_dir.clone() {
@@ -626,13 +652,15 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     if out_caps.is_null() {
-        set_error(err, 1, "out_caps is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_caps is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
+
+    // Get capabilities from whichever manager exists
     let caps = if let Some(manager) = &inner.node_key_manager {
         let mgr = manager.read().unwrap();
         mgr.get_keystore_caps().unwrap_or_default()
@@ -640,7 +668,8 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
         let mgr = manager.read().unwrap();
         mgr.get_keystore_caps().unwrap_or_default()
     } else {
-        keystore::DeviceKeystoreCaps::default()
+        set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
+        return RN_ERROR_NOT_INITIALIZED;
     };
     unsafe { *out_caps = map_caps(caps) };
     0
@@ -650,22 +679,34 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnError) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
+
+    // Flush state on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
         let mgr = manager.write().unwrap();
         if let Err(e) = mgr.flush_state() {
-            set_error(err, 2, &format!("node flush_state: {e}"));
-            return 2;
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("node flush_state: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
         }
-    }
-    if let Some(manager) = &inner.mobile_key_manager {
+    } else if let Some(manager) = &inner.mobile_key_manager {
         let mgr = manager.write().unwrap();
         if let Err(e) = mgr.flush_state() {
-            set_error(err, 2, &format!("mobile flush_state: {e}"));
-            return 2;
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("mobile flush_state: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
         }
+    } else {
+        set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
+        return RN_ERROR_NOT_INITIALIZED;
     }
     0
 }
@@ -677,18 +718,18 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
     err: *mut RnError,
 ) -> i32 {
     let Some(_inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     if label.is_null() {
-        set_error(err, 1, "label is null");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "label is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
     let label_str = match std::ffi::CStr::from_ptr(label).to_str() {
         Ok(s) => s,
         Err(_) => {
-            set_error(err, 2, "invalid utf8 in label");
-            return 2;
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in label");
+            return RN_ERROR_INVALID_UTF8;
         }
     };
     #[cfg(all(
@@ -714,10 +755,10 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
             Err(e) => {
                 set_error(
                     err,
-                    2,
+                    RN_ERROR_KEYSTORE_FAILED,
                     &format!("Failed to create AppleDeviceKeystore: {e}"),
                 );
-                2
+                RN_ERROR_KEYSTORE_FAILED
             }
         }
     }
@@ -729,10 +770,10 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
         let _ = label_str;
         set_error(
             err,
-            2,
+            RN_ERROR_KEYSTORE_FAILED,
             "apple-keystore feature not enabled or unsupported target OS",
         );
-        2
+        RN_ERROR_KEYSTORE_FAILED
     }
 }
 
@@ -744,29 +785,29 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner_ptr) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
     #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
     let inner = inner_ptr;
     #[cfg(not(all(feature = "linux-keystore", target_os = "linux")))]
     let _ = inner_ptr;
     if service.is_null() || account.is_null() {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
     }
     let svc = match std::ffi::CStr::from_ptr(service).to_str() {
         Ok(s) => s,
         Err(_) => {
-            set_error(err, 2, "invalid utf8 service");
-            return 2;
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 service");
+            return RN_ERROR_INVALID_UTF8;
         }
     };
     let acc = match std::ffi::CStr::from_ptr(account).to_str() {
         Ok(s) => s,
         Err(_) => {
-            set_error(err, 2, "invalid utf8 account");
-            return 2;
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 account");
+            return RN_ERROR_INVALID_UTF8;
         }
     };
     #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
@@ -774,11 +815,13 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
         match runar_keys::keystore::linux::LinuxDeviceKeystore::new(svc, acc) {
             Ok(ks) => {
                 let ks: Arc<dyn keystore::DeviceKeystore> = Arc::new(ks);
-                if let Some(n) = inner.node_owned.as_mut() {
-                    n.register_device_keystore(ks.clone());
+                if let Some(manager) = &inner.node_key_manager {
+                    let mut mgr = manager.write().unwrap();
+                    mgr.register_device_keystore(ks.clone());
                 }
-                if let Some(m) = inner.mobile.as_mut() {
-                    m.register_device_keystore(ks.clone());
+                if let Some(manager) = &inner.mobile_key_manager {
+                    let mut mgr = manager.write().unwrap();
+                    mgr.register_device_keystore(ks.clone());
                 }
                 inner.device_keystore = Some(ks);
                 0
@@ -786,10 +829,10 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
             Err(e) => {
                 set_error(
                     err,
-                    2,
+                    RN_ERROR_KEYSTORE_FAILED,
                     &format!("Failed to create LinuxDeviceKeystore: {e}"),
                 );
-                2
+                RN_ERROR_KEYSTORE_FAILED
             }
         }
     }
@@ -798,110 +841,15 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
         let _ = (svc, acc);
         set_error(
             err,
-            2,
+            RN_ERROR_KEYSTORE_FAILED,
             "linux-keystore feature not enabled or unsupported target OS",
         );
-        2
+        RN_ERROR_KEYSTORE_FAILED
     }
 }
 
 // Envelope helpers (CBOR EED)
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_encrypt_with_envelope(
-    keys: *mut c_void,
-    data: *const u8,
-    data_len: usize,
-    network_id_or_null: *const c_char,
-    profile_pks: *const *const u8,
-    profile_lens: *const usize,
-    profiles_count: usize,
-    out_eed_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || data.is_null() || out_eed_cbor.is_null() || out_len.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let data_slice = std::slice::from_raw_parts(data, data_len);
-        let network_id_opt = if network_id_or_null.is_null() {
-            None
-        } else {
-            match std::ffi::CStr::from_ptr(network_id_or_null).to_str() {
-                Ok(s) => Some(s.to_string()),
-                Err(_) => {
-                    set_error(err, 2, "invalid utf8 network id");
-                    return 2;
-                }
-            }
-        };
-        // Collect profile keys
-        let mut profiles: Vec<Vec<u8>> = Vec::new();
-        if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
-            for i in 0..profiles_count {
-                let pk_ptr = unsafe { *profile_pks.add(i) };
-                let len = unsafe { *profile_lens.add(i) };
-                if pk_ptr.is_null() {
-                    continue;
-                }
-                let pk = unsafe { std::slice::from_raw_parts(pk_ptr, len) };
-                profiles.push(pk.to_vec());
-            }
-        }
-        // Prefer mobile when profile keys are provided OR a network_id is provided and a mobile manager exists
-        let use_mobile =
-            (profiles_count > 0 || network_id_opt.is_some()) && inner.mobile_key_manager.is_some();
-        let eed = if use_mobile {
-            let manager = inner.mobile_key_manager.as_ref().unwrap();
-            let mgr = manager.read().unwrap();
-            match mgr.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
-                Ok(e) => e,
-                Err(e) => {
-                    set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
-                    return 2;
-                }
-            }
-        } else if let Some(manager) = &inner.node_key_manager {
-            let mgr = manager.read().unwrap();
-            match mgr.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
-                Ok(e) => e,
-                Err(e) => {
-                    set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
-                    return 2;
-                }
-            }
-        } else if let Some(manager) = &inner.mobile_key_manager {
-            let mgr = manager.read().unwrap();
-            match mgr.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
-                Ok(e) => e,
-                Err(e) => {
-                    set_error(err, 2, &format!("encrypt_with_envelope failed: {e}"));
-                    return 2;
-                }
-            }
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
-        };
-        let cbor = match serde_cbor::to_vec(&eed) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(err, 2, &format!("encode EED failed: {e}"));
-                return 2;
-            }
-        };
-        if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
-            set_error(err, 3, "alloc failed");
-            return 3;
-        }
-        0
-    })
-}
+// Legacy function removed - replaced by rn_keys_node_encrypt_with_envelope and rn_keys_mobile_encrypt_with_envelope
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
@@ -1181,8 +1129,14 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
     }
 }
 
+// Legacy function removed - replaced by rn_keys_node_decrypt_envelope and rn_keys_mobile_decrypt_envelope
+
+// ------------------------------
+// Node-specific envelope decryption
+// ------------------------------
+
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_decrypt_envelope(
+pub unsafe extern "C" fn rn_keys_node_decrypt_envelope(
     keys: *mut c_void,
     eed_cbor: *const u8,
     eed_len: usize,
@@ -1190,76 +1144,165 @@ pub unsafe extern "C" fn rn_keys_decrypt_envelope(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || eed_cbor.is_null() || out_plain.is_null() || out_len.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if eed_cbor.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "EED CBOR pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_plain.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output plain pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Validate handle upfront
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Validate manager upfront - exit early on errors
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let slice = std::slice::from_raw_parts(eed_cbor, eed_len);
-        let eed: runar_keys::mobile::EnvelopeEncryptedData = match serde_cbor::from_slice(slice) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(err, 2, &format!("decode EED failed: {e}"));
-                return 2;
-            }
-        };
-        // Prefer mobile decryption when no network_id present or network key is missing.
-        let prefer_mobile = eed.network_id.is_none() || eed.network_encrypted_key.is_empty();
-        let plain = if prefer_mobile {
-            if let Some(manager) = &inner.mobile_key_manager {
-                let mgr = manager.read().unwrap();
-                match mgr.decrypt_envelope_data(&eed) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        set_error(err, 2, &format!("decrypt failed: {e}"));
-                        return 2;
-                    }
-                }
-            } else if let Some(manager) = &inner.node_key_manager {
-                let mgr = manager.read().unwrap();
-                match mgr.decrypt_envelope_data(&eed) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        set_error(err, 2, &format!("decrypt failed: {e}"));
-                        return 2;
-                    }
-                }
-            } else {
-                set_error(err, 1, "no key manager available");
-                return 1;
-            }
-        } else if let Some(manager) = &inner.node_key_manager {
-            let mgr = manager.read().unwrap();
-            match mgr.decrypt_envelope_data(&eed) {
-                Ok(p) => p,
-                Err(e) => {
-                    set_error(err, 2, &format!("decrypt failed: {e}"));
-                    return 2;
-                }
-            }
-        } else if let Some(manager) = &inner.mobile_key_manager {
-            let mgr = manager.read().unwrap();
-            match mgr.decrypt_envelope_data(&eed) {
-                Ok(p) => p,
-                Err(e) => {
-                    set_error(err, 2, &format!("decrypt failed: {e}"));
-                    return 2;
-                }
-            }
-        } else {
-            set_error(err, 1, "no key manager available");
-            return 1;
-        };
-        if !alloc_bytes(out_plain, out_len, &plain) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    };
+
+    // Main logic - manager is guaranteed to exist
+    let slice = std::slice::from_raw_parts(eed_cbor, eed_len);
+    let eed: runar_keys::mobile::EnvelopeEncryptedData = match serde_cbor::from_slice(slice) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode EED failed: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
-        0
-    })
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let plain = match node_manager.decrypt_envelope_data(&eed) {
+        Ok(p) => p,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("decrypt failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_plain, out_len, &plain) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
+}
+
+// ------------------------------
+// Mobile-specific envelope decryption
+// ------------------------------
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_decrypt_envelope(
+    keys: *mut c_void,
+    eed_cbor: *const u8,
+    eed_len: usize,
+    out_plain: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if eed_cbor.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "EED CBOR pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_plain.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output plain pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Validate handle upfront
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Validate manager upfront - exit early on errors
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    // Main logic - manager is guaranteed to exist
+    let slice = std::slice::from_raw_parts(eed_cbor, eed_len);
+    let eed: runar_keys::mobile::EnvelopeEncryptedData = match serde_cbor::from_slice(slice) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode EED failed: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let plain = match mobile_manager.decrypt_envelope_data(&eed) {
+        Ok(p) => p,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("decrypt failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_plain, out_len, &plain) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 // ------------------------------
@@ -1383,7 +1426,7 @@ pub unsafe extern "C" fn rn_keys_mobile_get_user_public_key(
         }
     };
 
-    let mobile_manager = match manager.read() {
+    let mobile_manager = match manager.write() {
         Ok(mgr) => mgr,
         Err(_) => {
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
@@ -1394,8 +1437,8 @@ pub unsafe extern "C" fn rn_keys_mobile_get_user_public_key(
     match mobile_manager.get_user_public_key() {
         Ok(pk) => {
             if !alloc_bytes(out, out_len, &pk) {
-                set_error(err, 3, "alloc failed");
-                return 3;
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
             }
             0
         }

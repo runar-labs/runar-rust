@@ -453,7 +453,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     let mut pt_len: usize = 0;
 
     let result = unsafe {
-        rn_keys_decrypt_envelope(
+        rn_keys_node_decrypt_envelope(
             node_keys,
             encrypted_data.as_ptr(),
             encrypted_data.len(),
