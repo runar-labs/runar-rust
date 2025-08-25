@@ -89,7 +89,7 @@ export function createMockCertificateMessage(): Buffer {
 /**
  * Create a fresh Keys instance with mobile initialization
  */
-export async function createMobileKeys(tmpDir?: string): Promise<any> {
+export function createMobileKeys(tmpDir?: string): Promise<any> {
   console.log('🔄 Creating mobile keys instance...');
   const startTime = Date.now();
   
@@ -111,9 +111,18 @@ export async function createMobileKeys(tmpDir?: string): Promise<any> {
       keys.initAsMobile();
       console.log('  ✅ Mobile manager initialized');
       
-      const duration = Date.now() - startTime;
-      console.log(`  ⏱️  Mobile keys creation completed in ${duration}ms`);
-      resolve(keys);
+      console.log('  🔑 Initializing user root key...');
+      keys.mobileInitializeUserRootKey().then(() => {
+        console.log('  ✅ User root key initialized');
+        const duration = Date.now() - startTime;
+        console.log(`  ⏱️  Mobile keys creation completed in ${duration}ms`);
+        resolve(keys);
+      }).catch((error: any) => {
+        const duration = Date.now() - startTime;
+        console.log(`  ❌ User root key initialization failed after ${duration}ms:`, error);
+        reject(error);
+      });
+      
     } catch (error) {
       const duration = Date.now() - startTime;
       console.log(`  ❌ Mobile keys creation failed after ${duration}ms:`, error);

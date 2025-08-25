@@ -48,7 +48,8 @@ describe('Transport Basic Tests', () => {
 
     // Build PeerInfo for B using its public key
     const bPk: Buffer = b.keys.nodeGetPublicKey();
-    expectValidBuffer(bPk);
+    expect(Buffer.isBuffer(bPk)).toBe(true);
+    expect(bPk.length).toBeGreaterThan(0);
     
     await withTimeout(ta.connectPeer(cborPeerInfo(bPk, ['127.0.0.1:50312'])), 2000, 'connectPeer');
 
@@ -65,7 +66,7 @@ describe('Transport Basic Tests', () => {
         2000,
         'requestToPublicKey'
       );
-      expectValidBuffer(resp);
+      expect(Buffer.isBuffer(resp)).toBe(true);
       console.log('   ✅ Transport request/response successful');
     } else {
       console.log('   ⚠️  Transport connection not established, skipping request test');

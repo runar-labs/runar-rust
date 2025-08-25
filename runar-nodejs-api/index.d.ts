@@ -24,13 +24,20 @@ export declare class Keys {
   initAsNode(): void
   setPersistenceDir(dir: string): void
   mobileInitializeUserRootKey(): Promise<void>
-  mobileEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePks: Array<Buffer>): Buffer
-  nodeEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePks: Array<Buffer>): Buffer
   /**
-   * Backward compatibility function - use mobile_encrypt_with_envelope or node_encrypt_with_envelope instead
-   * This function will be removed in a future version
+   * Encrypt data using envelope encryption with mobile manager
+   *
+   * This function encrypts data for a specific network and profile public keys
+   * using the mobile key manager's envelope encryption.
    */
-  encryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePks: Array<Buffer>): Buffer
+  mobileEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
+  /**
+   * Encrypt data using envelope encryption with node manager
+   *
+   * This function encrypts data for a specific network and profile public keys
+   * using the node key manager's envelope encryption.
+   */
+  nodeEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
   nodeGetNodeId(): string
   nodeGetPublicKey(): Buffer
   enableAutoPersist(enabled: boolean): void
@@ -43,11 +50,6 @@ export declare class Keys {
   decryptLocalData(data: Buffer): Buffer
   mobileDecryptEnvelope(eedCbor: Buffer): Buffer
   nodeDecryptEnvelope(eedCbor: Buffer): Buffer
-  /**
-   * Backward compatibility function - use mobile_decrypt_envelope or node_decrypt_envelope instead
-   * This function will be removed in a future version
-   */
-  decryptEnvelope(eedCbor: Buffer): Buffer
   nodeGenerateCsr(): Buffer
   mobileProcessSetupToken(stCbor: Buffer): Buffer
   nodeInstallCertificate(ncmCbor: Buffer): void

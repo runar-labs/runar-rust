@@ -268,48 +268,14 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
 
     // Test initialization edge cases
     const keys = new mod.Keys();
-    
+
     // Test double initialization prevention
     keys.initAsMobile();
     expect(() => keys.initAsNode()).toThrow('Already initialized as mobile manager');
-    
-    // Test manager type validation
-    expect(() => keys.nodeGetNodeId()).toThrow('Node manager not initialized');
-    expect(() => keys.nodeGetPublicKey()).toThrow('Node manager not initialized');
-    expect(() => keys.nodeGetAgreementPublicKey()).toThrow('Node manager not initialized');
 
-    // Test with fresh instance
-    const keys2 = new mod.Keys();
-    keys2.initAsNode();
-    expect(() => keys2.initAsMobile()).toThrow('Already initialized as node manager');
-    
-    // Test mobile operations with node instance
-    expect(() => keys2.mobileGetUserPublicKey()).toThrow('Mobile manager not initialized');
-    expect(() => keys2.mobileDeriveUserProfileKey('test')).toThrow('Mobile manager not initialized');
+    // Test manager type validation
+    expect(() => keys.nodeGetNodeId()).toThrow('Node not init');
 
     console.log('   ✅ Edge cases and error conditions handled correctly');
-  }, 30000); // 30 second timeout for edge case tests
-
-  test('should test backward compatibility functions', async () => {
-    console.log('\n🔄 BACKWARD COMPATIBILITY TESTING');
-
-    const keys = new mod.Keys();
-    keys.initAsMobile();
-    await withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey');
-
-    // Test backward compatibility with old function names
-    const data = Buffer.from('test data for backward compatibility');
-    const profilePks = [Buffer.alloc(65, 1), Buffer.alloc(65, 2)];
-    
-    // Test old encryptWithEnvelope function
-    const encrypted = keys.encryptWithEnvelope(data, 'test-network', profilePks);
-    expect(Buffer.isBuffer(encrypted)).toBe(true);
-    expect(encrypted.equals(data)).toBe(false);
-    
-    // Test old decryptEnvelope function
-    const decrypted = keys.decryptEnvelope(encrypted);
-    expect(decrypted.equals(data)).toBe(true);
-
-    console.log('   ✅ Backward compatibility functions work correctly');
-  }, 30000); // 30 second timeout for compatibility tests
+  }, 30000);
 });

@@ -7,8 +7,6 @@ import {
   createNodeKeys
 } from './test_utils';
 
-const mod = loadAddon();
-
 describe('Discovery Basic Tests', () => {
   let tmpDir: string;
 
@@ -20,88 +18,13 @@ describe('Discovery Basic Tests', () => {
     cleanupTempDir(tmpDir);
   });
 
-  test('should discover and connect nodes via multicast discovery', async () => {
-    console.log('🔍 Testing Multicast Discovery');
-
-    // Mobile side setup
-    const mobileKeys = await createMobileKeys(tmpDir);
-    const userPublicKey = mobileKeys.mobileGetUserPublicKey();
-    expectValidBuffer(userPublicKey);
-
-    // Node side setup
-    const nodeKeys = createNodeKeys(tmpDir);
-    const nodeId = nodeKeys.nodeGetNodeId();
-    expectValidString(nodeId);
-
-    // Verify both sides have valid identifiers
-    expect(userPublicKey.length).toBeGreaterThan(0);
-    expect(nodeId.length).toBeGreaterThan(0);
-
-    console.log('   ✅ Discovery setup completed');
-  }, 30000);
-
-  test('should handle node information exchange', async () => {
-    console.log('📡 Testing Node Information Exchange');
-
-    const mobileKeys = await createMobileKeys(tmpDir);
-    const nodeKeys = createNodeKeys(tmpDir);
-
-    // Test node info operations
-    const mobilePk = mobileKeys.mobileGetUserPublicKey();
-    const nodePk = nodeKeys.nodeGetPublicKey();
-    const nodeAgreementPk = nodeKeys.nodeGetAgreementPublicKey();
-
-    expectValidBuffer(mobilePk);
-    expectValidBuffer(nodePk);
-    expectValidBuffer(nodeAgreementPk);
-
-    console.log('   ✅ Node information exchange successful');
-  }, 30000);
-
-  test('should handle network discovery operations', async () => {
-    console.log('🌐 Testing Network Discovery Operations');
-
-    const mobileKeys = await createMobileKeys(tmpDir);
-    
-    // Generate network for discovery
-    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
-    expectValidString(networkId);
-
-    // Test network-related operations
-    const testPk = Buffer.alloc(65, 1);
-    expect(() => mobileKeys.mobileInstallNetworkPublicKey(testPk)).not.toThrow();
-
-    const networkPk = mobileKeys.mobileGetNetworkPublicKey(networkId);
-    expectValidBuffer(networkPk);
-
-    console.log('   ✅ Network discovery operations successful');
-  }, 30000);
-
-  test('should handle peer discovery and validation', async () => {
-    console.log('👥 Testing Peer Discovery and Validation');
-
-    const mobileKeys = await createMobileKeys(tmpDir);
-    const nodeKeys = createNodeKeys(tmpDir);
-
-    // Test peer validation
-    const mobilePk = mobileKeys.mobileGetUserPublicKey();
-    const nodePk = nodeKeys.nodeGetPublicKey();
-
-    // Verify peer keys are valid and different
-    expectValidBuffer(mobilePk);
-    expectValidBuffer(nodePk);
-    expect(mobilePk.equals(nodePk)).toBe(false);
-
-    console.log('   ✅ Peer discovery and validation successful');
-  }, 30000);
-
   test('should handle discovery state management', async () => {
     console.log('💾 Testing Discovery State Management');
 
     const mobileKeys = await createMobileKeys(tmpDir);
     const nodeKeys = createNodeKeys(tmpDir);
 
-    // Test state persistence
+    // Test state persistence - this matches the Rust test pattern
     const mobileState = mobileKeys.mobileGetKeystoreState();
     const nodeState = nodeKeys.nodeGetKeystoreState();
 
@@ -111,6 +34,53 @@ describe('Discovery Basic Tests', () => {
     expect(nodeState).toBeGreaterThanOrEqual(0);
 
     console.log('   ✅ Discovery state management successful');
+  }, 30000);
+
+  test('should handle basic key validation for discovery', async () => {
+    console.log('🔑 Testing Basic Key Validation for Discovery');
+
+    const mobileKeys = await createMobileKeys(tmpDir);
+    const nodeKeys = createNodeKeys(tmpDir);
+
+    // Test that we have valid keys for discovery operations
+    // This matches the Rust test pattern of validating key setup
+    const mobilePk = mobileKeys.mobileGetUserPublicKey();
+    const nodePk = nodeKeys.nodeGetPublicKey();
+    const nodeAgreementPk = nodeKeys.nodeGetAgreementPublicKey();
+
+    expect(Buffer.isBuffer(mobilePk)).toBe(true);
+    expect(Buffer.isBuffer(nodePk)).toBe(true);
+    expect(Buffer.isBuffer(nodeAgreementPk)).toBe(true);
+    expect(mobilePk.length).toBeGreaterThan(0);
+    expect(nodePk.length).toBeGreaterThan(0);
+    expect(nodeAgreementPk.length).toBeGreaterThan(0);
+
+    // Verify keys are different (as they should be)
+    expect(mobilePk.equals(nodePk)).toBe(false);
+
+    console.log('   ✅ Basic key validation successful');
+  }, 30000);
+
+  test('should handle network setup for discovery', async () => {
+    console.log('🌐 Testing Network Setup for Discovery');
+
+    const mobileKeys = await createMobileKeys(tmpDir);
+    
+    // Generate network for discovery - this matches the Rust pattern
+    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
+    expect(typeof networkId).toBe('string');
+    expect(networkId.length).toBeGreaterThan(0);
+
+    // Test network public key installation and retrieval
+    // This simulates the network setup needed for discovery
+    const testPk = Buffer.alloc(65, 0x42); // Use valid key format
+    expect(() => mobileKeys.mobileInstallNetworkPublicKey(testPk)).not.toThrow();
+
+    const networkPk = mobileKeys.mobileGetNetworkPublicKey(networkId);
+    expect(Buffer.isBuffer(networkPk)).toBe(true);
+    expect(networkPk.length).toBeGreaterThan(0);
+
+    console.log('   ✅ Network setup for discovery successful');
   }, 30000);
 });
 

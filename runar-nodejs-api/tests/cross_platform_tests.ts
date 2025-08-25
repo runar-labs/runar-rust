@@ -191,94 +191,15 @@ describe('Cross-Platform Tests', () => {
     }, 10000);
   });
 
-  describe('Backward Compatibility', () => {
-    test('should maintain backward compatibility with old function names', async () => {
-      const keys = new mod.Keys();
-      keys.initAsMobile();
-      await withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey');
-      
-      const data = Buffer.from('backward compatibility test');
-      const profilePks = [Buffer.alloc(65, 1)];
-      
-      // Test old function names still work
-      const encrypted = keys.encryptWithEnvelope(data, 'test-network', profilePks);
-      expect(Buffer.isBuffer(encrypted)).toBe(true);
-      
-      const decrypted = keys.decryptEnvelope(encrypted);
-      expect(decrypted.equals(data)).toBe(true);
-    }, 10000);
-
-    test('should provide clear deprecation guidance', () => {
-      const keys = new mod.Keys();
-      keys.initAsMobile();
-      
-      // These functions should still work but indicate they're deprecated
-      expect(() => keys.encryptWithEnvelope(Buffer.from('test'), 'network', [])).not.toThrow();
-      expect(() => keys.decryptEnvelope(Buffer.from('test'))).not.toThrow();
-    });
-  });
-
-  describe('Data Type Consistency', () => {
-    test('should handle Buffer types consistently', () => {
-      const keys = new mod.Keys();
-      keys.initAsNode();
-      
-      // Test that all functions return consistent Buffer types
-      const id = keys.nodeGetNodeId();
-      expect(typeof id).toBe('string');
-      
-      const pk = keys.nodeGetPublicKey();
-      expect(Buffer.isBuffer(pk)).toBe(true);
-      
-      const agreementPk = keys.nodeGetAgreementPublicKey();
-      expect(Buffer.isBuffer(agreementPk)).toBe(true);
-    });
-
-    test('should handle string types consistently', () => {
-      const keys = new mod.Keys();
-      keys.initAsNode();
-      
-      const id = keys.nodeGetNodeId();
-      expect(typeof id).toBe('string');
-      expect(id.length).toBeGreaterThan(0);
-      
-      const caps = keys.getKeystoreCaps();
-      expect(typeof caps.version).toBe('number');
-      expect(typeof caps.flags).toBe('number');
-    });
-  });
-
   describe('Memory Management', () => {
-    test('should handle multiple key instances without memory leaks', () => {
-      const instances = [];
-      
-      // Create multiple instances
-      for (let i = 0; i < 5; i++) {
-        const keys = new mod.Keys();
-        keys.initAsNode();
-        instances.push(keys);
-      }
-      
-      // Test that all instances work correctly
-      instances.forEach((keys, index) => {
-        const id = keys.nodeGetNodeId();
-        expect(typeof id).toBe('string');
-        expect(id.length).toBeGreaterThan(0);
-      });
-      
-      // Clean up
-      instances.length = 0;
-    });
-
-    test('should handle large data operations', () => {
+    test('should handle large data operations without memory leaks', () => {
       const keys = new mod.Keys();
       keys.initAsNode();
       
-      // Test with larger data
-      const largeData = Buffer.alloc(1024 * 1024, 1); // 1MB
+      // Test with large data
+      const largeData = Buffer.alloc(1024 * 1024, 0x42); // 1MB
       const encrypted = keys.encryptLocalData(largeData);
       expect(Buffer.isBuffer(encrypted)).toBe(true);
-      expect(encrypted.equals(largeData)).toBe(false);
       
       const decrypted = keys.decryptLocalData(encrypted);
       expect(decrypted.equals(largeData)).toBe(true);

@@ -138,88 +138,64 @@ impl Keys {
             .map(|_| ())
     }
 
+    /// Encrypt data using envelope encryption with mobile manager
+    /// 
+    /// This function encrypts data for a specific network and profile public keys
+    /// using the mobile key manager's envelope encryption.
     #[napi]
     pub fn mobile_encrypt_with_envelope(
         &self,
         data: Buffer,
         network_id: Option<String>,
-        profile_pks: Vec<Buffer>,
+        profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
-        let data_vec = data.to_vec();
-        let profiles: Vec<Vec<u8>> = profile_pks.into_iter().map(|b| b.to_vec()).collect();
         let inner = self.inner.lock().unwrap();
         
-        // Validate mobile manager exists
-        if inner.mobile.is_none() {
-            return Err(Error::from_reason("Mobile manager not initialized"));
-        }
+        let mobile_manager = inner.mobile.as_ref()
+            .ok_or_else(|| Error::from_reason("Mobile manager not initialized"))?;
         
-        let eed = inner
-            .mobile
-            .as_ref()
-            .unwrap()
-            .encrypt_with_envelope(&data_vec, network_id.as_deref(), profiles)
+        let network_id_ref = network_id.as_deref();
+        let profile_keys_ref: Vec<Vec<u8>> = profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
+        
+        let encrypted = mobile_manager
+            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         
-        cbor::to_vec(&eed)
-            .map(Buffer::from)
-            .map_err(|e| Error::from_reason(e.to_string()))
+        // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
+        let cbor_bytes = cbor::to_vec(&encrypted)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+        
+        Ok(Buffer::from(cbor_bytes))
     }
 
+    /// Encrypt data using envelope encryption with node manager
+    /// 
+    /// This function encrypts data for a specific network and profile public keys
+    /// using the node key manager's envelope encryption.
     #[napi]
     pub fn node_encrypt_with_envelope(
         &self,
         data: Buffer,
         network_id: Option<String>,
-        profile_pks: Vec<Buffer>,
+        profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
-        let data_vec = data.to_vec();
-        let profiles: Vec<Vec<u8>> = profile_pks.into_iter().map(|b| b.to_vec()).collect();
         let inner = self.inner.lock().unwrap();
         
-        // Validate node manager exists
-        if inner.node_owned.is_none() && inner.node_shared.is_none() {
-            return Err(Error::from_reason("Node manager not initialized"));
-        }
+        let node_manager = inner.node_owned.as_ref()
+            .ok_or_else(|| Error::from_reason("Node manager not initialized"))?;
         
-        let eed = if let Some(n) = inner.node_owned.as_ref() {
-            n.encrypt_with_envelope(&data_vec, network_id.as_ref(), profiles)
-        } else if let Some(n) = inner.node_shared.as_ref() {
-            n.encrypt_with_envelope(&data_vec, network_id.as_ref(), profiles)
-        } else {
-            return Err(Error::from_reason("Node manager not available"));
-        }
-        .map_err(|e| Error::from_reason(e.to_string()))?;
+        let network_id_ref = network_id.as_ref();
+        let profile_keys_ref: Vec<Vec<u8>> = profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
         
-        cbor::to_vec(&eed)
-            .map(Buffer::from)
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    /// Backward compatibility function - use mobile_encrypt_with_envelope or node_encrypt_with_envelope instead
-    /// This function will be removed in a future version
-    #[napi]
-    pub fn encrypt_with_envelope(
-        &self,
-        data: Buffer,
-        network_id: Option<String>,
-        profile_pks: Vec<Buffer>,
-    ) -> Result<Buffer> {
-        // For backward compatibility, try to determine which manager to use
-        // but prefer explicit calls to mobile_encrypt_with_envelope or node_encrypt_with_envelope
-        let inner = self.inner.lock().unwrap();
+        let encrypted = node_manager
+            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         
-        // If mobile manager exists, use it
-        if inner.mobile.is_some() {
-            return self.mobile_encrypt_with_envelope(data, network_id, profile_pks);
-        }
+        // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
+        let cbor_bytes = cbor::to_vec(&encrypted)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         
-        // If node manager exists, use it
-        if inner.node_owned.is_some() || inner.node_shared.is_some() {
-            return self.node_encrypt_with_envelope(data, network_id, profile_pks);
-        }
-        
-        Err(Error::from_reason("No key manager initialized"))
+        Ok(Buffer::from(cbor_bytes))
     }
 
     #[napi]
@@ -422,27 +398,6 @@ impl Keys {
         .map_err(|e| Error::from_reason(e.to_string()))?;
         
         Ok(Buffer::from(plain))
-    }
-
-    /// Backward compatibility function - use mobile_decrypt_envelope or node_decrypt_envelope instead
-    /// This function will be removed in a future version
-    #[napi]
-    pub fn decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
-        // For backward compatibility, try to determine which manager to use
-        // but prefer explicit calls to mobile_decrypt_envelope or node_decrypt_envelope
-        let inner = self.inner.lock().unwrap();
-        
-        // If mobile manager exists, use it
-        if inner.mobile.is_some() {
-            return self.mobile_decrypt_envelope(eed_cbor);
-        }
-        
-        // If node manager exists, use it
-        if inner.node_owned.is_some() || inner.node_shared.is_some() {
-            return self.node_decrypt_envelope(eed_cbor);
-        }
-        
-        Err(Error::from_reason("No key manager initialized"))
     }
 
     #[napi]
