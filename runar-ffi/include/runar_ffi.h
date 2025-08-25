@@ -105,8 +105,8 @@ int32_t rn_keys_register_apple_device_keystore(void *keys,
                                                struct RNAPIRnError *err);
 
 int32_t rn_keys_register_linux_device_keystore(void *keys,
-                                               const char *_service,
-                                               const char *_account,
+                                               const char *service,
+                                               const char *account,
                                                struct RNAPIRnError *err);
 
 int32_t rn_keys_node_encrypt_with_envelope(void *keys,

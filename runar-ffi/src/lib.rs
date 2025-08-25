@@ -268,16 +268,6 @@ fn handle_keystore_creation_error(
     RN_ERROR_KEYSTORE_FAILED
 }
 
-/// Common feature disabled error handling
-fn handle_feature_disabled_error(err: *mut RnError, feature_name: &str) -> i32 {
-    set_error(
-        err,
-        RN_ERROR_KEYSTORE_FAILED,
-        &format!("{feature_name} feature not enabled or unsupported target OS"),
-    );
-    RN_ERROR_KEYSTORE_FAILED
-}
-
 #[allow(dead_code)]
 struct TransportInner {
     #[allow(dead_code)]
@@ -791,85 +781,65 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
     0
 }
 
+#[cfg(all(
+    feature = "apple-keystore",
+    any(target_os = "macos", target_os = "ios")
+))]
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
     keys: *mut c_void,
     label: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    // Common validation
-    let _inner = match validate_keystore_params(keys, err) {
+    // Common validation - only when feature is enabled
+    let inner = match validate_keystore_params(keys, err) {
         Ok(inner) => inner,
         Err(code) => return code,
     };
-    let _label_str = match validate_utf8_string(label, err, "label") {
+    let label_str = match validate_utf8_string(label, err, "label") {
         Ok(s) => s,
         Err(code) => return code,
     };
 
-    #[cfg(all(
-        feature = "apple-keystore",
-        any(target_os = "macos", target_os = "ios")
-    ))]
-    {
-        match runar_keys::keystore::apple::AppleDeviceKeystore::new(&label_str) {
-            Ok(ks) => {
-                let keystore = Arc::new(ks);
-                register_keystore_with_managers(inner, keystore);
-                0
-            }
-            Err(e) => handle_keystore_creation_error(err, "AppleDeviceKeystore", e),
+    match runar_keys::keystore::apple::AppleDeviceKeystore::new(&label_str) {
+        Ok(ks) => {
+            let keystore = Arc::new(ks);
+            register_keystore_with_managers(unsafe { &mut *inner }, keystore);
+            0
         }
-    }
-    #[cfg(not(all(
-        feature = "apple-keystore",
-        any(target_os = "macos", target_os = "ios")
-    )))]
-    {
-        handle_feature_disabled_error(err, "apple-keystore")
+        Err(e) => handle_keystore_creation_error(err, "AppleDeviceKeystore", e),
     }
 }
 
+#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
     keys: *mut c_void,
-    _service: *const c_char,
-    _account: *const c_char,
+    service: *const c_char,
+    account: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-    {
-        // Common validation - only when feature is enabled
-        let inner = match validate_keystore_params(keys, err) {
-            Ok(inner) => inner,
-            Err(code) => return code,
-        };
-        let svc = match validate_utf8_string(_service, err, "service") {
-            Ok(s) => s,
-            Err(code) => return code,
-        };
-        let acc = match validate_utf8_string(_account, err, "account") {
-            Ok(s) => s,
-            Err(code) => return code,
-        };
+    // Common validation - only when feature is enabled
+    let inner = match validate_keystore_params(keys, err) {
+        Ok(inner) => inner,
+        Err(code) => return code,
+    };
+    let svc = match validate_utf8_string(service, err, "service") {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    let acc = match validate_utf8_string(account, err, "account") {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
 
-        match runar_keys::keystore::linux::LinuxDeviceKeystore::new(&svc, &acc) {
-            Ok(ks) => {
-                let keystore = Arc::new(ks);
-                register_keystore_with_managers(unsafe { &mut *inner }, keystore);
-                0
-            }
-            Err(e) => handle_keystore_creation_error(err, "LinuxDeviceKeystore", e),
+    match runar_keys::keystore::linux::LinuxDeviceKeystore::new(&svc, &acc) {
+        Ok(ks) => {
+            let keystore = Arc::new(ks);
+            register_keystore_with_managers(unsafe { &mut *inner }, keystore);
+            0
         }
-    }
-    #[cfg(not(all(feature = "linux-keystore", target_os = "linux")))]
-    {
-        // Minimal validation when feature is disabled
-        if keys.is_null() {
-            set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-            return RN_ERROR_INVALID_HANDLE;
-        }
-        handle_feature_disabled_error(err, "linux-keystore")
+        Err(e) => handle_keystore_creation_error(err, "LinuxDeviceKeystore", e),
     }
 }
 
