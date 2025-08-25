@@ -61,4 +61,4 @@ jobs:
 
       - name: Run Node.js API tests
         working-directory: runar-nodejs-api
-        run: bun tests
+        run: bun test
