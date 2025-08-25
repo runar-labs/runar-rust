@@ -57,8 +57,8 @@ jobs:
 
       - name: Build Node.js native module
         working-directory: runar-nodejs-api
-        run: bun run napi build --platform linux
+        run: bun run build
 
       - name: Run Node.js API tests
         working-directory: runar-nodejs-api
-        run: bun test --timeout 30000
+        run: bun tests
