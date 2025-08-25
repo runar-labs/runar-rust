@@ -12,9 +12,32 @@ export declare class Discovery {
 
 export declare class Keys {
   constructor()
+  /**
+   * Initialize this instance as a mobile manager
+   * Returns error if already initialized with different type
+   */
+  initAsMobile(): void
+  /**
+   * Initialize this instance as a node manager
+   * Returns error if already initialized with different type
+   */
+  initAsNode(): void
   setPersistenceDir(dir: string): void
   mobileInitializeUserRootKey(): Promise<void>
-  encryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePks: Array<Buffer>): Buffer
+  /**
+   * Encrypt data using envelope encryption with mobile manager
+   *
+   * This function encrypts data for a specific network and profile public keys
+   * using the mobile key manager's envelope encryption.
+   */
+  mobileEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
+  /**
+   * Encrypt data using envelope encryption with node manager
+   *
+   * This function encrypts data for a specific network and profile public keys
+   * using the node key manager's envelope encryption.
+   */
+  nodeEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
   nodeGetNodeId(): string
   nodeGetPublicKey(): Buffer
   enableAutoPersist(enabled: boolean): void
@@ -23,10 +46,10 @@ export declare class Keys {
   nodeGetKeystoreState(): number
   mobileGetKeystoreState(): number
   getKeystoreCaps(): DeviceKeystoreCaps
-  registerLinuxDeviceKeystore(service: string, account: string): void
   encryptLocalData(data: Buffer): Buffer
   decryptLocalData(data: Buffer): Buffer
-  decryptEnvelope(eedCbor: Buffer): Buffer
+  mobileDecryptEnvelope(eedCbor: Buffer): Buffer
+  nodeDecryptEnvelope(eedCbor: Buffer): Buffer
   nodeGenerateCsr(): Buffer
   mobileProcessSetupToken(stCbor: Buffer): Buffer
   nodeInstallCertificate(ncmCbor: Buffer): void
@@ -44,6 +67,16 @@ export declare class Keys {
   mobileGetNetworkPublicKey(networkId: string): Buffer
   mobileCreateNetworkKeyMessage(networkId: string, nodeAgreementPk: Buffer): Buffer
   ensureSymmetricKey(keyName: string): Buffer
+  /**
+   * Get the user public key after mobile initialization
+   * This is essential for encrypting setup tokens to the mobile
+   */
+  mobileGetUserPublicKey(): Buffer
+  /**
+   * Get the node agreement public key
+   * This is used for verifying agreement keys in CSR flow
+   */
+  nodeGetAgreementPublicKey(): Buffer
 }
 
 export declare class Transport {

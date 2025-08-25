@@ -48,12 +48,9 @@ impl Keys {
     #[napi(constructor)]
     pub fn new() -> Self {
         let logger = Arc::new(Logger::new_root(Component::Keys));
-        let node = NodeKeyManager::new(logger.clone()).expect("node key manager");
-        let node_id = node.get_node_id();
-        logger.set_node_id(node_id);
         Keys {
             inner: Arc::new(Mutex::new(KeysInner {
-                node_owned: Some(node),
+                node_owned: None,
                 node_shared: None,
                 mobile: None,
                 persistence_dir: None,
@@ -63,6 +60,51 @@ impl Keys {
                 local_node_info: Arc::new(Mutex::new(None)),
             })),
         }
+    }
+
+    /// Initialize this instance as a mobile manager
+    /// Returns error if already initialized with different type
+    #[napi]
+    pub fn init_as_mobile(&self) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+
+        // Check if already initialized as node
+        if inner.node_owned.is_some() || inner.node_shared.is_some() {
+            return Err(Error::from_reason("Already initialized as node manager"));
+        }
+
+        // Initialize mobile manager if not already present
+        if inner.mobile.is_none() {
+            inner.mobile = Some(
+                MobileKeyManager::new(inner.logger.clone())
+                    .map_err(|e| Error::from_reason(e.to_string()))?,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Initialize this instance as a node manager
+    /// Returns error if already initialized with different type
+    #[napi]
+    pub fn init_as_node(&self) -> Result<()> {
+        let mut inner = self.inner.lock().unwrap();
+
+        // Check if already initialized as mobile
+        if inner.mobile.is_some() {
+            return Err(Error::from_reason("Already initialized as mobile manager"));
+        }
+
+        // Initialize node manager if not already present
+        if inner.node_owned.is_none() && inner.node_shared.is_none() {
+            let node = NodeKeyManager::new(inner.logger.clone())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            let node_id = node.get_node_id();
+            inner.logger.set_node_id(node_id);
+            inner.node_owned = Some(node);
+        }
+
+        Ok(())
     }
 
     #[napi]
@@ -96,27 +138,68 @@ impl Keys {
             .map(|_| ())
     }
 
+    /// Encrypt data using envelope encryption with mobile manager
+    ///
+    /// This function encrypts data for a specific network and profile public keys
+    /// using the mobile key manager's envelope encryption.
     #[napi]
-    pub fn encrypt_with_envelope(
+    pub fn mobile_encrypt_with_envelope(
         &self,
         data: Buffer,
         network_id: Option<String>,
-        profile_pks: Vec<Buffer>,
+        profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
-        let data_vec = data.to_vec();
-        let profiles: Vec<Vec<u8>> = profile_pks.into_iter().map(|b| b.to_vec()).collect();
         let inner = self.inner.lock().unwrap();
-        let eed = if let Some(n) = inner.node_owned.as_ref() {
-            n.encrypt_with_envelope(&data_vec, network_id.as_ref(), profiles)
-        } else if let Some(n) = inner.node_shared.as_ref() {
-            n.encrypt_with_envelope(&data_vec, network_id.as_ref(), profiles)
-        } else {
-            return Err(Error::from_reason("Node not init"));
-        }
-        .map_err(|e| Error::from_reason(e.to_string()))?;
-        cbor::to_vec(&eed)
-            .map(Buffer::from)
-            .map_err(|e| Error::from_reason(e.to_string()))
+
+        let mobile_manager = inner
+            .mobile
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("Mobile manager not initialized"))?;
+
+        let network_id_ref = network_id.as_deref();
+        let profile_keys_ref: Vec<Vec<u8>> =
+            profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
+
+        let encrypted = mobile_manager
+            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
+        let cbor_bytes = cbor::to_vec(&encrypted).map_err(|e| Error::from_reason(e.to_string()))?;
+
+        Ok(Buffer::from(cbor_bytes))
+    }
+
+    /// Encrypt data using envelope encryption with node manager
+    ///
+    /// This function encrypts data for a specific network and profile public keys
+    /// using the node key manager's envelope encryption.
+    #[napi]
+    pub fn node_encrypt_with_envelope(
+        &self,
+        data: Buffer,
+        network_id: Option<String>,
+        profile_public_keys: Vec<Buffer>,
+    ) -> Result<Buffer> {
+        let inner = self.inner.lock().unwrap();
+
+        let node_manager = inner
+            .node_owned
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("Node manager not initialized"))?;
+
+        let network_id_ref = network_id.as_ref();
+        let profile_keys_ref: Vec<Vec<u8>> =
+            profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
+
+        let encrypted = node_manager
+            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
+        let cbor_bytes = cbor::to_vec(&encrypted).map_err(|e| Error::from_reason(e.to_string()))?;
+
+        Ok(Buffer::from(cbor_bytes))
     }
 
     #[napi]
@@ -276,36 +359,48 @@ impl Keys {
     }
 
     #[napi]
-    pub fn decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
+    pub fn mobile_decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
+
+        // Validate mobile manager exists
+        if inner.mobile.is_none() {
+            return Err(Error::from_reason("Mobile manager not initialized"));
+        }
+
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
             cbor::from_slice(&eed_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
-        let prefer_node = eed.network_id.is_some() && !eed.network_encrypted_key.is_empty();
-        let plain = if prefer_node {
-            if let Some(n) = inner.node_owned.as_ref() {
-                n.decrypt_envelope_data(&eed)
-                    .map_err(|e| Error::from_reason(e.to_string()))?
-            } else if let Some(n) = inner.node_shared.as_ref() {
-                n.decrypt_envelope_data(&eed)
-                    .map_err(|e| Error::from_reason(e.to_string()))?
-            } else if let Some(m) = inner.mobile.as_ref() {
-                m.decrypt_with_network(&eed)
-                    .map_err(|e| Error::from_reason(e.to_string()))?
-            } else {
-                return Err(Error::from_reason("no key manager"));
-            }
-        } else if let Some(m) = inner.mobile.as_ref() {
-            m.decrypt_with_network(&eed)
-                .map_err(|e| Error::from_reason(e.to_string()))?
-        } else if let Some(n) = inner.node_owned.as_ref() {
+
+        let plain = inner
+            .mobile
+            .as_ref()
+            .unwrap()
+            .decrypt_with_network(&eed)
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        Ok(Buffer::from(plain))
+    }
+
+    #[napi]
+    pub fn node_decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
+        let inner = self.inner.lock().unwrap();
+
+        // Validate node manager exists
+        if inner.node_owned.is_none() && inner.node_shared.is_none() {
+            return Err(Error::from_reason("Node manager not initialized"));
+        }
+
+        let eed: runar_keys::mobile::EnvelopeEncryptedData =
+            cbor::from_slice(&eed_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+
+        let plain = if let Some(n) = inner.node_owned.as_ref() {
             n.decrypt_envelope_data(&eed)
-                .map_err(|e| Error::from_reason(e.to_string()))?
         } else if let Some(n) = inner.node_shared.as_ref() {
             n.decrypt_envelope_data(&eed)
-                .map_err(|e| Error::from_reason(e.to_string()))?
         } else {
-            return Err(Error::from_reason("no key manager"));
-        };
+            return Err(Error::from_reason("Node manager not available"));
+        }
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+
         Ok(Buffer::from(plain))
     }
 
@@ -575,6 +670,50 @@ impl Keys {
         }
         .map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(Buffer::from(key))
+    }
+
+    /// Get the user public key after mobile initialization
+    /// This is essential for encrypting setup tokens to the mobile
+    #[napi]
+    pub fn mobile_get_user_public_key(&self) -> Result<Buffer> {
+        let inner = self.inner.lock().unwrap();
+
+        // Validate mobile manager exists
+        if inner.mobile.is_none() {
+            return Err(Error::from_reason("Mobile manager not initialized"));
+        }
+
+        let pk = inner
+            .mobile
+            .as_ref()
+            .unwrap()
+            .get_user_public_key()
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        Ok(Buffer::from(pk))
+    }
+
+    /// Get the node agreement public key
+    /// This is used for verifying agreement keys in CSR flow
+    #[napi]
+    pub fn node_get_agreement_public_key(&self) -> Result<Buffer> {
+        let inner = self.inner.lock().unwrap();
+
+        // Validate node manager exists
+        if inner.node_owned.is_none() && inner.node_shared.is_none() {
+            return Err(Error::from_reason("Node manager not initialized"));
+        }
+
+        let pk = if let Some(n) = inner.node_owned.as_ref() {
+            n.get_node_agreement_public_key()
+        } else if let Some(n) = inner.node_shared.as_ref() {
+            n.get_node_agreement_public_key()
+        } else {
+            return Err(Error::from_reason("Node manager not available"));
+        }
+        .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        Ok(Buffer::from(pk))
     }
 }
 

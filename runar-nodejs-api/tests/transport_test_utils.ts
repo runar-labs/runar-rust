@@ -15,6 +15,7 @@ export function createCa(): { addon: any; keys: any; tmpDir: string } {
   const keys = new addon.Keys();
   keys.setPersistenceDir(tmp);
   keys.enableAutoPersist(true);
+  keys.initAsMobile(); // Initialize as mobile manager like Rust tests
   return { addon, keys, tmpDir: tmp };
 }
 
@@ -27,6 +28,7 @@ export function createNode(addon: any): { keys: any; tmpDir: string } {
   const keys = new addon.Keys();
   keys.setPersistenceDir(tmp);
   keys.enableAutoPersist(true);
+  keys.initAsNode(); // Initialize as node manager like Rust tests
   return { keys, tmpDir: tmp };
 }
 
