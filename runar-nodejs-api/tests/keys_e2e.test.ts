@@ -23,13 +23,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
   test('should handle mobile-to-node certificate workflow', async () => {
     console.log('🔄 Testing Mobile-to-Node Certificate Workflow');
 
-    // Mobile side setup
+    // Mobile side setup - createMobileKeys already initializes user root key
     const mobileKeys = await createMobileKeys(tmpDir);
     
-    // Initialize user root key first
-    console.log('  🔑 Initializing user root key...');
-    await mobileKeys.mobileInitializeUserRootKey();
-    console.log('  ✅ User root key initialized');
+    // User root key is already initialized by createMobileKeys
+    console.log('  ✅ User root key already initialized');
     
     const userPublicKey = mobileKeys.mobileGetUserPublicKey();
     expect(Buffer.isBuffer(userPublicKey)).toBe(true);
@@ -88,13 +86,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
   test('should handle profile-based envelope encryption workflow', async () => {
     console.log('🔐 Testing Profile-Based Envelope Encryption Workflow');
 
-    // Mobile side setup
+    // Mobile side setup - createMobileKeys already initializes user root key
     const mobileKeys = await createMobileKeys(tmpDir);
     
-    // Initialize user root key first
-    console.log('  🔑 Initializing user root key...');
-    await mobileKeys.mobileInitializeUserRootKey();
-    console.log('  ✅ User root key initialized');
+    // User root key is already initialized by createMobileKeys
+    console.log('  ✅ User root key already initialized');
     
     // Generate network data key
     const networkId = mobileKeys.mobileGenerateNetworkDataKey();

@@ -67,12 +67,12 @@ impl Keys {
     #[napi]
     pub fn init_as_mobile(&self) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        
+
         // Check if already initialized as node
         if inner.node_owned.is_some() || inner.node_shared.is_some() {
             return Err(Error::from_reason("Already initialized as node manager"));
         }
-        
+
         // Initialize mobile manager if not already present
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -80,7 +80,7 @@ impl Keys {
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
-        
+
         Ok(())
     }
 
@@ -89,12 +89,12 @@ impl Keys {
     #[napi]
     pub fn init_as_node(&self) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        
+
         // Check if already initialized as mobile
         if inner.mobile.is_some() {
             return Err(Error::from_reason("Already initialized as mobile manager"));
         }
-        
+
         // Initialize node manager if not already present
         if inner.node_owned.is_none() && inner.node_shared.is_none() {
             let node = NodeKeyManager::new(inner.logger.clone())
@@ -103,7 +103,7 @@ impl Keys {
             inner.logger.set_node_id(node_id);
             inner.node_owned = Some(node);
         }
-        
+
         Ok(())
     }
 
@@ -139,7 +139,7 @@ impl Keys {
     }
 
     /// Encrypt data using envelope encryption with mobile manager
-    /// 
+    ///
     /// This function encrypts data for a specific network and profile public keys
     /// using the mobile key manager's envelope encryption.
     #[napi]
@@ -150,26 +150,28 @@ impl Keys {
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
-        
-        let mobile_manager = inner.mobile.as_ref()
+
+        let mobile_manager = inner
+            .mobile
+            .as_ref()
             .ok_or_else(|| Error::from_reason("Mobile manager not initialized"))?;
-        
+
         let network_id_ref = network_id.as_deref();
-        let profile_keys_ref: Vec<Vec<u8>> = profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
-        
+        let profile_keys_ref: Vec<Vec<u8>> =
+            profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
+
         let encrypted = mobile_manager
             .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
-        let cbor_bytes = cbor::to_vec(&encrypted)
-            .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+        let cbor_bytes = cbor::to_vec(&encrypted).map_err(|e| Error::from_reason(e.to_string()))?;
+
         Ok(Buffer::from(cbor_bytes))
     }
 
     /// Encrypt data using envelope encryption with node manager
-    /// 
+    ///
     /// This function encrypts data for a specific network and profile public keys
     /// using the node key manager's envelope encryption.
     #[napi]
@@ -180,21 +182,23 @@ impl Keys {
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
-        
-        let node_manager = inner.node_owned.as_ref()
+
+        let node_manager = inner
+            .node_owned
+            .as_ref()
             .ok_or_else(|| Error::from_reason("Node manager not initialized"))?;
-        
+
         let network_id_ref = network_id.as_ref();
-        let profile_keys_ref: Vec<Vec<u8>> = profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
-        
+        let profile_keys_ref: Vec<Vec<u8>> =
+            profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
+
         let encrypted = node_manager
             .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
-        let cbor_bytes = cbor::to_vec(&encrypted)
-            .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+        let cbor_bytes = cbor::to_vec(&encrypted).map_err(|e| Error::from_reason(e.to_string()))?;
+
         Ok(Buffer::from(cbor_bytes))
     }
 
@@ -357,37 +361,37 @@ impl Keys {
     #[napi]
     pub fn mobile_decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
-        
+
         // Validate mobile manager exists
         if inner.mobile.is_none() {
             return Err(Error::from_reason("Mobile manager not initialized"));
         }
-        
+
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
             cbor::from_slice(&eed_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         let plain = inner
             .mobile
             .as_ref()
             .unwrap()
             .decrypt_with_network(&eed)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         Ok(Buffer::from(plain))
     }
 
     #[napi]
     pub fn node_decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
-        
+
         // Validate node manager exists
         if inner.node_owned.is_none() && inner.node_shared.is_none() {
             return Err(Error::from_reason("Node manager not initialized"));
         }
-        
+
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
             cbor::from_slice(&eed_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         let plain = if let Some(n) = inner.node_owned.as_ref() {
             n.decrypt_envelope_data(&eed)
         } else if let Some(n) = inner.node_shared.as_ref() {
@@ -396,7 +400,7 @@ impl Keys {
             return Err(Error::from_reason("Node manager not available"));
         }
         .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         Ok(Buffer::from(plain))
     }
 
@@ -673,19 +677,19 @@ impl Keys {
     #[napi]
     pub fn mobile_get_user_public_key(&self) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
-        
+
         // Validate mobile manager exists
         if inner.mobile.is_none() {
             return Err(Error::from_reason("Mobile manager not initialized"));
         }
-        
+
         let pk = inner
             .mobile
             .as_ref()
             .unwrap()
             .get_user_public_key()
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         Ok(Buffer::from(pk))
     }
 
@@ -694,12 +698,12 @@ impl Keys {
     #[napi]
     pub fn node_get_agreement_public_key(&self) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
-        
+
         // Validate node manager exists
         if inner.node_owned.is_none() && inner.node_shared.is_none() {
             return Err(Error::from_reason("Node manager not initialized"));
         }
-        
+
         let pk = if let Some(n) = inner.node_owned.as_ref() {
             n.get_node_agreement_public_key()
         } else if let Some(n) = inner.node_shared.as_ref() {
@@ -708,7 +712,7 @@ impl Keys {
             return Err(Error::from_reason("Node manager not available"));
         }
         .map_err(|e| Error::from_reason(e.to_string()))?;
-        
+
         Ok(Buffer::from(pk))
     }
 }
