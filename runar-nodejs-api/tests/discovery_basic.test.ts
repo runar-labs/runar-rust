@@ -4,9 +4,7 @@ import {
   cleanupTempDir, 
   withTimeout,
   createMobileKeys,
-  createNodeKeys,
-  expectValidBuffer,
-  expectValidString
+  createNodeKeys
 } from './test_utils';
 
 const mod = loadAddon();

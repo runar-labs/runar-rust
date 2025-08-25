@@ -90,49 +90,100 @@ export function createMockCertificateMessage(): Buffer {
  * Create a fresh Keys instance with mobile initialization
  */
 export async function createMobileKeys(tmpDir?: string): Promise<any> {
-  const mod = loadAddon();
-  const keys = new mod.Keys(); // Fresh instance
+  console.log('🔄 Creating mobile keys instance...');
+  const startTime = Date.now();
   
-  if (tmpDir) {
-    keys.setPersistenceDir(tmpDir);
-    keys.enableAutoPersist(true);
-  }
-  
-  keys.initAsMobile();
-  await withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey');
-  
-  return keys;
+  return new Promise((resolve, reject) => {
+    try {
+      console.log('  📱 Creating new Keys instance...');
+      const mod = loadAddon();
+      const keys = new mod.Keys();
+      console.log('  ✅ Keys instance created');
+      
+      if (tmpDir) {
+        console.log('  📁 Setting persistence directory...');
+        keys.setPersistenceDir(tmpDir);
+        keys.enableAutoPersist(true);
+        console.log('  ✅ Persistence configured');
+      }
+
+      console.log('  🔧 Initializing as mobile manager...');
+      keys.initAsMobile();
+      console.log('  ✅ Mobile manager initialized');
+      
+      const duration = Date.now() - startTime;
+      console.log(`  ⏱️  Mobile keys creation completed in ${duration}ms`);
+      resolve(keys);
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.log(`  ❌ Mobile keys creation failed after ${duration}ms:`, error);
+      reject(error);
+    }
+  });
 }
 
 /**
  * Create a fresh Keys instance with node initialization
  */
 export function createNodeKeys(tmpDir?: string): any {
-  const mod = loadAddon();
-  const keys = new mod.Keys(); // Fresh instance
+  console.log('🔄 Creating node keys instance...');
+  const startTime = Date.now();
   
-  if (tmpDir) {
-    keys.setPersistenceDir(tmpDir);
-    keys.enableAutoPersist(true);
+  try {
+    console.log('  🖥️  Creating new Keys instance...');
+    const mod = loadAddon();
+    const keys = new mod.Keys();
+    console.log('  ✅ Keys instance created');
+    
+    if (tmpDir) {
+      console.log('  📁 Setting persistence directory...');
+      keys.setPersistenceDir(tmpDir);
+      keys.enableAutoPersist(true);
+      console.log('  ✅ Persistence configured');
+    }
+
+    console.log('  🔧 Initializing as node manager...');
+    keys.initAsNode();
+    console.log('  ✅ Node manager initialized');
+    
+    const duration = Date.now() - startTime;
+    console.log(`  ⏱️  Node keys creation completed in ${duration}ms`);
+    return keys;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.log(`  ❌ Node keys creation failed after ${duration}ms:`, error);
+    throw error;
   }
-  
-  keys.initAsNode();
-  return keys;
 }
 
 /**
  * Create a fresh Keys instance without initialization
  */
 export function createFreshKeys(tmpDir?: string): any {
-  const mod = loadAddon();
-  const keys = new mod.Keys(); // Fresh instance
+  console.log('🔄 Creating fresh keys instance...');
+  const startTime = Date.now();
   
-  if (tmpDir) {
-    keys.setPersistenceDir(tmpDir);
-    keys.enableAutoPersist(true);
+  try {
+    console.log('  🆕 Creating new Keys instance...');
+    const mod = loadAddon();
+    const keys = new mod.Keys();
+    console.log('  ✅ Keys instance created');
+    
+    if (tmpDir) {
+      console.log('  📁 Setting persistence directory...');
+      keys.setPersistenceDir(tmpDir);
+      keys.enableAutoPersist(true);
+      console.log('  ✅ Persistence configured');
+    }
+    
+    const duration = Date.now() - startTime;
+    console.log(`  ⏱️  Fresh keys creation completed in ${duration}ms`);
+    return keys;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.log(`  ❌ Fresh keys creation failed after ${duration}ms:`, error);
+    throw error;
   }
-  
-  return keys;
 }
 
 /**

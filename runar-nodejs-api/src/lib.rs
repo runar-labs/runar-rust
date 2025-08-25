@@ -48,12 +48,9 @@ impl Keys {
     #[napi(constructor)]
     pub fn new() -> Self {
         let logger = Arc::new(Logger::new_root(Component::Keys));
-        let node = NodeKeyManager::new(logger.clone()).expect("node key manager");
-        let node_id = node.get_node_id();
-        logger.set_node_id(node_id);
         Keys {
             inner: Arc::new(Mutex::new(KeysInner {
-                node_owned: Some(node),
+                node_owned: None,
                 node_shared: None,
                 mobile: None,
                 persistence_dir: None,
@@ -91,14 +88,22 @@ impl Keys {
     /// Returns error if already initialized with different type
     #[napi]
     pub fn init_as_node(&self) -> Result<()> {
-        let inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap();
         
         // Check if already initialized as mobile
         if inner.mobile.is_some() {
             return Err(Error::from_reason("Already initialized as mobile manager"));
         }
         
-        // Node manager is already initialized in constructor
+        // Initialize node manager if not already present
+        if inner.node_owned.is_none() && inner.node_shared.is_none() {
+            let node = NodeKeyManager::new(inner.logger.clone())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            let node_id = node.get_node_id();
+            inner.logger.set_node_id(node_id);
+            inner.node_owned = Some(node);
+        }
+        
         Ok(())
     }
 

@@ -5,9 +5,7 @@ import {
   loadAddon, 
   createTempDir, 
   cleanupTempDir, 
-  withTimeout,
-  expectValidBuffer,
-  expectValidString
+  withTimeout
 } from './test_utils';
 
 describe('Transport Basic Tests', () => {
