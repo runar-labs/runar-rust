@@ -21,6 +21,10 @@ run cargo clippy -p runar_node --all-targets --all-features -- -D warnings
  - Use `format!("Error: {e}")` not `format!("Error: {}", e)` -  run cargo fmt --all at the end of every task.
  - Use proper inmports, do not do let context = runar_serializer::SerializationContext {...} import the type and use  let context = SerializationContext{...}
 
+ALWAYS RUN  cargo fmt --all before u run cargo clippy --all-targets --all-features -- -D warnings  .. to make sure code is properlyformated.
+
+Always add timeout to test commands to make sure it does not run foerever incase of race conditionsn that makes teh code run indefinitvely.
+
 ## 🔑 **Ownership & Borrowing**
 - **Prefer references**: Use `&str`/`&[u8]`/`&T` over `String`/`Vec<u8>`/`T`
 - **API signatures**: Accept `impl AsRef<str>` instead of `impl Into<String>` where practical
