@@ -42,38 +42,15 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             last_err()
         );
 
-        // Set persistence dir to a temp path
-        let tmp_dir =
-            std::env::temp_dir().join(format!("runar_keys_test_{}", uuid::Uuid::new_v4()));
-        let dir = CString::new(tmp_dir.to_string_lossy().to_string()).unwrap();
-        assert_eq!(
-            rn_keys_set_persistence_dir(keys, dir.as_ptr(), &mut err as *mut _),
-            0,
-            "set_persistence_dir: {}",
-            last_err()
-        );
+        // Create separate handles for mobile and node operations
+        let mut mobile_keys: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut node_keys: *mut core::ffi::c_void = std::ptr::null_mut();
 
-        // Enable auto persist
-        assert_eq!(
-            rn_keys_enable_auto_persist(keys, true, &mut err as *mut _),
-            0,
-            "enable_auto_persist: {}",
-            last_err()
-        );
-
-        // Ensure clean start by wiping and recreating handle; then probe (should be 0)
-        assert_eq!(
-            rn_keys_wipe_persistence(keys, &mut err as *mut _),
-            0,
-            "wipe_persistence: {}",
-            last_err()
-        );
-        rn_keys_free(keys);
-        let mut keys: *mut core::ffi::c_void = std::ptr::null_mut();
-        assert_eq!(rn_keys_new(&mut keys, &mut err as *mut _), 0);
+        // Create mobile handle
+        assert_eq!(rn_keys_new(&mut mobile_keys, &mut err as *mut _), 0);
         assert_eq!(
             rn_keys_register_linux_device_keystore(
-                keys,
+                mobile_keys,
                 svc.as_ptr(),
                 acc.as_ptr(),
                 &mut err as *mut _
@@ -81,23 +58,154 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             0
         );
         assert_eq!(
-            rn_keys_set_persistence_dir(keys, dir.as_ptr(), &mut err as *mut _),
+            rn_keys_init_as_mobile(mobile_keys, &mut err as *mut _),
+            0,
+            "init_as_mobile failed: {}",
+            last_err()
+        );
+
+        // Create node handle
+        assert_eq!(rn_keys_new(&mut node_keys, &mut err as *mut _), 0);
+        assert_eq!(
+            rn_keys_register_linux_device_keystore(
+                node_keys,
+                svc.as_ptr(),
+                acc.as_ptr(),
+                &mut err as *mut _
+            ),
             0
         );
         assert_eq!(
-            rn_keys_enable_auto_persist(keys, true, &mut err as *mut _),
+            rn_keys_init_as_node(node_keys, &mut err as *mut _),
+            0,
+            "init_as_node failed: {}",
+            last_err()
+        );
+
+        // Set persistence dir to a temp path
+        let tmp_dir =
+            std::env::temp_dir().join(format!("runar_keys_test_{}", uuid::Uuid::new_v4()));
+        let dir = CString::new(tmp_dir.to_string_lossy().to_string()).unwrap();
+
+        // Set persistence on both handles
+        assert_eq!(
+            rn_keys_set_persistence_dir(mobile_keys, dir.as_ptr(), &mut err as *mut _),
+            0,
+            "set_persistence_dir mobile: {}",
+            last_err()
+        );
+        assert_eq!(
+            rn_keys_set_persistence_dir(node_keys, dir.as_ptr(), &mut err as *mut _),
+            0,
+            "set_persistence_dir node: {}",
+            last_err()
+        );
+
+        // Enable auto persist on both handles
+        assert_eq!(
+            rn_keys_enable_auto_persist(mobile_keys, true, &mut err as *mut _),
+            0,
+            "enable_auto_persist mobile: {}",
+            last_err()
+        );
+        assert_eq!(
+            rn_keys_enable_auto_persist(node_keys, true, &mut err as *mut _),
+            0,
+            "enable_auto_persist node: {}",
+            last_err()
+        );
+
+        // Ensure clean start by wiping and recreating handles; then probe (should be 0)
+        assert_eq!(
+            rn_keys_wipe_persistence(mobile_keys, &mut err as *mut _),
+            0,
+            "wipe_persistence mobile: {}",
+            last_err()
+        );
+        assert_eq!(
+            rn_keys_wipe_persistence(node_keys, &mut err as *mut _),
+            0,
+            "wipe_persistence node: {}",
+            last_err()
+        );
+
+        // Recreate both handles
+        rn_keys_free(mobile_keys);
+        rn_keys_free(node_keys);
+
+        let mut mobile_keys: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut node_keys: *mut core::ffi::c_void = std::ptr::null_mut();
+
+        // Recreate mobile handle
+        assert_eq!(rn_keys_new(&mut mobile_keys, &mut err as *mut _), 0);
+        assert_eq!(
+            rn_keys_register_linux_device_keystore(
+                mobile_keys,
+                svc.as_ptr(),
+                acc.as_ptr(),
+                &mut err as *mut _
+            ),
             0
         );
+        assert_eq!(
+            rn_keys_init_as_mobile(mobile_keys, &mut err as *mut _),
+            0,
+            "init_as_mobile failed: {}",
+            last_err()
+        );
+
+        // Recreate node handle
+        assert_eq!(rn_keys_new(&mut node_keys, &mut err as *mut _), 0);
+        assert_eq!(
+            rn_keys_register_linux_device_keystore(
+                node_keys,
+                svc.as_ptr(),
+                acc.as_ptr(),
+                &mut err as *mut _
+            ),
+            0
+        );
+        assert_eq!(
+            rn_keys_init_as_node(node_keys, &mut err as *mut _),
+            0,
+            "init_as_node failed: {}",
+            last_err()
+        );
+
+        // Set persistence on both handles again
+        assert_eq!(
+            rn_keys_set_persistence_dir(mobile_keys, dir.as_ptr(), &mut err as *mut _),
+            0
+        );
+        assert_eq!(
+            rn_keys_set_persistence_dir(node_keys, dir.as_ptr(), &mut err as *mut _),
+            0
+        );
+
+        // Enable auto persist on both handles again
+        assert_eq!(
+            rn_keys_enable_auto_persist(mobile_keys, true, &mut err as *mut _),
+            0
+        );
+        assert_eq!(
+            rn_keys_enable_auto_persist(node_keys, true, &mut err as *mut _),
+            0
+        );
+
         let mut state = 0i32;
         assert_eq!(
-            rn_keys_mobile_get_keystore_state(keys, &mut state as *mut _, &mut err as *mut _),
+            rn_keys_mobile_get_keystore_state(
+                mobile_keys,
+                &mut state as *mut _,
+                &mut err as *mut _
+            ),
             0
         );
         assert!(state == 0 || state == 1);
 
-        // Initialize user root key
+        // Initialize user root key on mobile handle
         assert_eq!(
-            rn_keys_mobile_initialize_user_root_key(keys, &mut err as *mut _),
+            rn_keys_mobile_initialize_user_root_key(mobile_keys, &mut err as *mut _),
             0,
             "init root: {}",
             last_err()
@@ -108,7 +216,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let mut st_len: usize = 0;
         assert_eq!(
             rn_keys_node_generate_csr(
-                keys,
+                node_keys,
                 &mut st_ptr as *mut _,
                 &mut st_len as *mut _,
                 &mut err as *mut _
@@ -131,7 +239,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let mut nid_len: usize = 0;
         assert_eq!(
             rn_keys_mobile_generate_network_data_key(
-                keys,
+                mobile_keys,
                 &mut nid_c as *mut _,
                 &mut nid_len as *mut _,
                 &mut err as *mut _
@@ -148,7 +256,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let mut nkm_len: usize = 0;
         assert_eq!(
             rn_keys_mobile_create_network_key_message(
-                keys,
+                mobile_keys,
                 nid_cs.as_ptr(),
                 st_val.node_agreement_public_key.as_ptr(),
                 st_val.node_agreement_public_key.len(),
@@ -161,7 +269,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             last_err()
         );
         assert_eq!(
-            rn_keys_node_install_network_key(keys, nkm_ptr, nkm_len, &mut err as *mut _),
+            rn_keys_node_install_network_key(node_keys, nkm_ptr, nkm_len, &mut err as *mut _),
             0,
             "install NKM: {}",
             last_err()
@@ -174,7 +282,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let mut ppk_len: usize = 0;
         assert_eq!(
             rn_keys_mobile_derive_user_profile_key(
-                keys,
+                mobile_keys,
                 label.as_ptr(),
                 &mut ppk_ptr as *mut _,
                 &mut ppk_len as *mut _,
@@ -194,7 +302,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let profile_len_array: [usize; 1] = [ppk_len];
         assert_eq!(
             rn_keys_mobile_encrypt_with_envelope(
-                keys,
+                mobile_keys,
                 data.as_ptr(),
                 data.len(),
                 nid_cs.as_ptr(),
@@ -216,7 +324,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         let mut pt_len: usize = 0;
         assert_eq!(
             rn_keys_mobile_decrypt_envelope(
-                keys,
+                mobile_keys,
                 eed_ptr,
                 eed_len,
                 &mut pt_ptr as *mut _,
@@ -235,14 +343,21 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
 
         // Flush and re-probe
         assert_eq!(
-            rn_keys_flush_state(keys, &mut err as *mut _),
+            rn_keys_flush_state(mobile_keys, &mut err as *mut _),
             0,
-            "flush_state: {}",
+            "flush_state mobile: {}",
+            last_err()
+        );
+        assert_eq!(
+            rn_keys_flush_state(node_keys, &mut err as *mut _),
+            0,
+            "flush_state node: {}",
             last_err()
         );
 
         // New handle, same dir/keystore
-        rn_keys_free(keys);
+        rn_keys_free(mobile_keys);
+        rn_keys_free(node_keys);
         let mut keys2: *mut core::ffi::c_void = std::ptr::null_mut();
         assert_eq!(rn_keys_new(&mut keys2, &mut err as *mut _), 0);
         assert_eq!(
@@ -254,6 +369,15 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             ),
             0
         );
+
+        // Initialize as mobile for state checking
+        assert_eq!(
+            rn_keys_init_as_mobile(keys2, &mut err as *mut _),
+            0,
+            "init_as_mobile failed: {}",
+            last_err()
+        );
+
         assert_eq!(
             rn_keys_set_persistence_dir(keys2, dir.as_ptr(), &mut err as *mut _),
             0
@@ -284,6 +408,14 @@ fn test_ensure_symmetric_key() {
             rn_keys_new(&mut keys, &mut err as *mut _),
             0,
             "rn_keys_new failed: {}",
+            last_err()
+        );
+
+        // Initialize as node key manager (ensure_symmetric_key requires node manager)
+        assert_eq!(
+            rn_keys_init_as_node(keys, &mut err as *mut _),
+            0,
+            "init_as_node failed: {}",
             last_err()
         );
 

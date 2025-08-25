@@ -1,31 +1,14 @@
 //! Comprehensive tests for the new FFI key manager initialization and validation system
-
-use std::ffi::c_void;
-use std::ptr;
+//!
+//! These tests ensure that key manager initialization works correctly on all platforms.
 
 use runar_ffi::*;
 
-// Helper to create a fresh keys handle for testing
-fn create_keys_handle() -> *mut c_void {
-    let mut keys: *mut c_void = ptr::null_mut();
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
+use std::ptr;
 
-    let result = unsafe { rn_keys_new(&mut keys as *mut *mut c_void, &mut error) };
-    assert_eq!(result, 0, "Failed to create keys handle");
-    assert!(!keys.is_null(), "Keys handle should not be null");
-
-    keys
-}
-
-// Helper to destroy keys handle
-fn destroy_keys_handle(keys: *mut c_void) {
-    if !keys.is_null() {
-        rn_keys_free(keys);
-    }
-}
+// Import common utilities
+mod common;
+use common::*;
 
 #[test]
 fn test_keys_handle_creation() {

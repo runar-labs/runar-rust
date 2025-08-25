@@ -4,47 +4,12 @@
 //! using the FFI API. Every single step from the reference test is implemented here.
 
 use runar_ffi::*;
-use std::ffi::c_void;
+
 use std::ptr;
 
-// Helper functions
-fn create_keys_handle() -> *mut c_void {
-    let mut keys: *mut c_void = ptr::null_mut();
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
-
-    let result = unsafe { rn_keys_new(&mut keys as *mut *mut c_void, &mut error) };
-    assert_eq!(result, 0, "Failed to create keys handle");
-    assert!(!keys.is_null(), "Keys handle should not be null");
-
-    keys
-}
-
-fn destroy_keys_handle(keys: *mut c_void) {
-    if !keys.is_null() {
-        rn_keys_free(keys);
-    }
-}
-
-fn init_as_mobile(keys: *mut c_void) {
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
-    let result = unsafe { rn_keys_init_as_mobile(keys, &mut error) };
-    assert_eq!(result, 0, "Should successfully initialize as mobile");
-}
-
-fn init_as_node(keys: *mut c_void) {
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
-    let result = unsafe { rn_keys_init_as_node(keys, &mut error) };
-    assert_eq!(result, 0, "Should successfully initialize as node");
-}
+// Import common utilities
+mod common;
+use common::*;
 
 #[test]
 fn test_complete_ffi_key_management_lifecycle() {
@@ -57,7 +22,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     println!("\n📱 MOBILE SIDE - First Time Setup");
 
     let mobile_keys = create_keys_handle();
-    init_as_mobile(mobile_keys);
+    unsafe { init_as_mobile(mobile_keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -99,7 +64,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     println!("\n🖥️  NODE SIDE - Setup Mode");
 
     let node_keys = create_keys_handle();
-    init_as_node(node_keys);
+    unsafe { init_as_node(node_keys) };
 
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
     // and generate a setup handshake token which contains the CSR request and the node public key

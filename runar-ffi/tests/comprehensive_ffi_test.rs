@@ -4,55 +4,17 @@
 //! and happy path scenarios for the FFI key management API.
 
 use runar_ffi::*;
-use std::ffi::c_void;
+
 use std::ptr;
 
-// Helper to create a fresh keys handle for testing
-fn create_keys_handle() -> *mut c_void {
-    let mut keys: *mut c_void = ptr::null_mut();
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
-
-    let result = unsafe { rn_keys_new(&mut keys as *mut *mut c_void, &mut error) };
-    assert_eq!(result, 0, "Failed to create keys handle");
-    assert!(!keys.is_null(), "Keys handle should not be null");
-
-    keys
-}
-
-// Helper to destroy keys handle
-fn destroy_keys_handle(keys: *mut c_void) {
-    if !keys.is_null() {
-        rn_keys_free(keys);
-    }
-}
-
-// Helper to initialize as mobile
-fn init_as_mobile(keys: *mut c_void) {
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
-    let result = unsafe { rn_keys_init_as_mobile(keys, &mut error) };
-    assert_eq!(result, 0, "Should successfully initialize as mobile");
-}
-
-// Helper to initialize as node
-fn init_as_node(keys: *mut c_void) {
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
-    let result = unsafe { rn_keys_init_as_node(keys, &mut error) };
-    assert_eq!(result, 0, "Should successfully initialize as node");
-}
+// Import common utilities
+mod common;
+use common::*;
 
 #[test]
 fn test_node_encrypt_with_envelope_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -96,7 +58,7 @@ fn test_node_encrypt_with_envelope_happy_path() {
 #[test]
 fn test_mobile_encrypt_with_envelope_happy_path() {
     let keys = create_keys_handle();
-    init_as_mobile(keys);
+    unsafe { init_as_mobile(keys) };
 
     // Initialize user root key for mobile operations
     let mut error = RnError {
@@ -147,7 +109,7 @@ fn test_mobile_encrypt_with_envelope_happy_path() {
 #[test]
 fn test_node_encrypt_with_envelope_null_pointers() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -218,7 +180,7 @@ fn test_node_encrypt_with_envelope_null_pointers() {
 #[test]
 fn test_node_encrypt_with_envelope_zero_length() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -252,7 +214,7 @@ fn test_node_encrypt_with_envelope_zero_length() {
 #[test]
 fn test_node_encrypt_with_envelope_invalid_utf8() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -290,7 +252,7 @@ fn test_node_encrypt_with_envelope_invalid_utf8() {
 #[test]
 fn test_node_encrypt_with_envelope_wrong_manager_type() {
     let keys = create_keys_handle();
-    init_as_mobile(keys); // Initialize as mobile
+    unsafe { init_as_mobile(keys) }; // Initialize as mobile
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -362,7 +324,7 @@ fn test_node_encrypt_with_envelope_not_initialized() {
 #[test]
 fn test_mobile_encrypt_with_envelope_wrong_manager_type() {
     let keys = create_keys_handle();
-    init_as_node(keys); // Initialize as node
+    unsafe { init_as_node(keys) }; // Initialize as node
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -434,7 +396,7 @@ fn test_mobile_encrypt_with_envelope_not_initialized() {
 #[test]
 fn test_node_encrypt_local_data_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -470,7 +432,7 @@ fn test_node_encrypt_local_data_happy_path() {
 #[test]
 fn test_node_encrypt_local_data_wrong_manager_type() {
     let keys = create_keys_handle();
-    init_as_mobile(keys); // Initialize as mobile
+    unsafe { init_as_mobile(keys) }; // Initialize as mobile
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -502,7 +464,7 @@ fn test_node_encrypt_local_data_wrong_manager_type() {
 #[test]
 fn test_node_get_keystore_state_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -522,7 +484,7 @@ fn test_node_get_keystore_state_happy_path() {
 #[test]
 fn test_mobile_get_keystore_state_happy_path() {
     let keys = create_keys_handle();
-    init_as_mobile(keys);
+    unsafe { init_as_mobile(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -542,7 +504,7 @@ fn test_mobile_get_keystore_state_happy_path() {
 #[test]
 fn test_mobile_initialize_user_root_key_happy_path() {
     let keys = create_keys_handle();
-    init_as_mobile(keys);
+    unsafe { init_as_mobile(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -562,7 +524,7 @@ fn test_mobile_initialize_user_root_key_happy_path() {
 #[test]
 fn test_mobile_initialize_user_root_key_wrong_manager_type() {
     let keys = create_keys_handle();
-    init_as_node(keys); // Initialize as node
+    unsafe { init_as_node(keys) }; // Initialize as node
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -581,7 +543,7 @@ fn test_mobile_initialize_user_root_key_wrong_manager_type() {
 #[test]
 fn test_node_get_public_key_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -606,7 +568,7 @@ fn test_node_get_public_key_happy_path() {
 #[test]
 fn test_node_get_public_key_wrong_manager_type() {
     let keys = create_keys_handle();
-    init_as_mobile(keys); // Initialize as mobile
+    unsafe { init_as_mobile(keys) }; // Initialize as mobile
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -625,7 +587,7 @@ fn test_node_get_public_key_wrong_manager_type() {
 #[test]
 fn test_node_get_agreement_public_key_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -650,7 +612,7 @@ fn test_node_get_agreement_public_key_happy_path() {
 #[test]
 fn test_node_get_agreement_public_key_wrong_manager_type() {
     let keys = create_keys_handle();
-    init_as_mobile(keys); // Initialize as mobile
+    unsafe { init_as_mobile(keys) }; // Initialize as mobile
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -670,7 +632,7 @@ fn test_node_get_agreement_public_key_wrong_manager_type() {
 #[test]
 fn test_node_get_id_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -695,7 +657,7 @@ fn test_node_get_id_happy_path() {
 #[test]
 fn test_node_get_id_wrong_manager_type() {
     let keys = create_keys_handle();
-    init_as_mobile(keys); // Initialize as mobile
+    unsafe { init_as_mobile(keys) }; // Initialize as mobile
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -714,7 +676,7 @@ fn test_node_get_id_wrong_manager_type() {
 #[test]
 fn test_set_persistence_dir_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys); // Can work with either manager type
+    unsafe { init_as_node(keys) }; // Can work with either manager type
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -734,7 +696,7 @@ fn test_set_persistence_dir_happy_path() {
 #[test]
 fn test_enable_auto_persist_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys); // Can work with either manager type
+    unsafe { init_as_node(keys) }; // Can work with either manager type
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -754,7 +716,7 @@ fn test_enable_auto_persist_happy_path() {
 #[test]
 fn test_wipe_persistence_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
@@ -770,7 +732,7 @@ fn test_wipe_persistence_happy_path() {
 #[test]
 fn test_flush_state_happy_path() {
     let keys = create_keys_handle();
-    init_as_node(keys);
+    unsafe { init_as_node(keys) };
     let mut error = RnError {
         code: 0,
         message: ptr::null(),

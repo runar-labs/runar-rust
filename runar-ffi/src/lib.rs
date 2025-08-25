@@ -22,7 +22,7 @@ use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
 use serde_cbor as _; // keep dependency linked for now
-use std::panic::{catch_unwind, AssertUnwindSafe};
+                     // panic handling imports removed - no longer needed without ffi_guard
 use std::sync::atomic::AtomicU64;
 use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
@@ -833,8 +833,8 @@ pub unsafe extern "C" fn rn_keys_register_apple_device_keystore(
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
     keys: *mut c_void,
-    service: *const c_char,
-    account: *const c_char,
+    _service: *const c_char,
+    _account: *const c_char,
     err: *mut RnError,
 ) -> i32 {
     #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
@@ -844,11 +844,11 @@ pub unsafe extern "C" fn rn_keys_register_linux_device_keystore(
             Ok(inner) => inner,
             Err(code) => return code,
         };
-        let svc = match validate_utf8_string(service, err, "service") {
+        let svc = match validate_utf8_string(_service, err, "service") {
             Ok(s) => s,
             Err(code) => return code,
         };
-        let acc = match validate_utf8_string(account, err, "account") {
+        let acc = match validate_utf8_string(_account, err, "account") {
             Ok(s) => s,
             Err(code) => return code,
         };
@@ -1343,49 +1343,62 @@ pub unsafe extern "C" fn rn_keys_encrypt_local_data(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || data.is_null() || out_cipher.is_null() || out_len.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let data_slice = std::slice::from_raw_parts(data, data_len);
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if data.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_cipher.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output cipher pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
 
-        let node_manager = match manager.write() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let cipher = match node_manager.encrypt_local_data(data_slice) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("encrypt_local_data failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        if !alloc_bytes(out_cipher, out_len, &cipher) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    // Validate handle upfront
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let data_slice = std::slice::from_raw_parts(data, data_len);
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        0
-    })
+    };
+
+    let node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let cipher = match node_manager.encrypt_local_data(data_slice) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("encrypt_local_data failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_cipher, out_len, &cipher) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 // ------------------------------
@@ -1545,44 +1558,60 @@ pub unsafe extern "C" fn rn_keys_mobile_install_network_public_key(
     len: usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "keys handle is null");
-            return 1;
-        };
-        if network_public_key.is_null() || len == 0 {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let manager = match validate_mobile_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if network_public_key.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "network_public_key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if len == 0 {
+        set_error(
+            err,
+            RN_ERROR_INVALID_ARGUMENT,
+            "network_public_key length is zero",
+        );
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
 
-        let mut mobile_manager = match manager.write() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let buf = std::slice::from_raw_parts(network_public_key, len);
-        match mobile_manager.install_network_public_key(buf) {
-            Ok(_) => 0,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("install_network_public_key failed: {e}"),
-                );
-                RN_ERROR_OPERATION_FAILED
-            }
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-    })
+    };
+
+    let mut mobile_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let buf = std::slice::from_raw_parts(network_public_key, len);
+    match mobile_manager.install_network_public_key(buf) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("install_network_public_key failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
 }
 
 #[no_mangle]
@@ -1592,50 +1621,58 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "keys handle is null");
-            return 1;
-        };
-        if out_str.is_null() || out_len.is_null() {
-            set_error(err, 1, "null out");
-            return 1;
-        }
-        let manager = match validate_mobile_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_str.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output string pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
 
-        let mut mobile_manager = match manager.write() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
 
-        match mobile_manager.generate_network_data_key() {
-            Ok(network_id) => {
-                if !alloc_string(out_str, out_len, &network_id) {
-                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-                    RN_ERROR_MEMORY_ALLOCATION
-                } else {
-                    0
-                }
-            }
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("generate_network_data_key failed: {e}"),
-                );
-                RN_ERROR_OPERATION_FAILED
+    let mut mobile_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match mobile_manager.generate_network_data_key() {
+        Ok(network_id) => {
+            if !alloc_string(out_str, out_len, &network_id) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                RN_ERROR_MEMORY_ALLOCATION
+            } else {
+                0
             }
         }
-    })
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("generate_network_data_key failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
 }
 
 #[no_mangle]
@@ -1646,54 +1683,74 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "keys handle is null");
-            return 1;
-        };
-        if network_id.is_null() || out_pk.is_null() || out_len.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if network_id.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_pk.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output public key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let manager = match validate_mobile_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    };
 
-        let mobile_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
-        let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network_id");
-                return RN_ERROR_INVALID_UTF8;
-            }
-        };
+    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network_id");
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
 
-        match mobile_manager.get_network_public_key(nid) {
-            Ok(pk) => {
-                if !alloc_bytes(out_pk, out_len, &pk) {
-                    set_error(err, 3, "alloc failed");
-                    3
-                } else {
-                    0
-                }
-            }
-            Err(e) => {
-                set_error(err, 2, &format!("get_network_public_key failed: {e}"));
-                2
+    match mobile_manager.get_network_public_key(nid) {
+        Ok(pk) => {
+            if !alloc_bytes(out_pk, out_len, &pk) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                RN_ERROR_MEMORY_ALLOCATION
+            } else {
+                0
             }
         }
-    })
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("get_network_public_key failed: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
 }
 
 #[no_mangle]
@@ -1829,50 +1886,66 @@ pub unsafe extern "C" fn rn_keys_decrypt_local_data(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || encrypted.is_null() || out_plain.is_null() || out_len.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if encrypted.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "encrypted data pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_plain.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output plain pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let enc_slice = std::slice::from_raw_parts(encrypted, enc_len);
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let enc_slice = std::slice::from_raw_parts(encrypted, enc_len);
+    };
 
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
-
-        let node_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let plain = match node_manager.decrypt_local_data(enc_slice) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("decrypt_local_data failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        if !alloc_bytes(out_plain, out_len, &plain) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
         }
-        0
-    })
+    };
+
+    let plain = match node_manager.decrypt_local_data(enc_slice) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("decrypt_local_data failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_plain, out_len, &plain) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 #[no_mangle]
@@ -1886,56 +1959,71 @@ pub unsafe extern "C" fn rn_keys_encrypt_message_for_mobile(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null()
-            || message.is_null()
-            || mobile_public_key.is_null()
-            || out_cipher.is_null()
-            || out_len.is_null()
-        {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if message.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "message pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if mobile_public_key.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "mobile public key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_cipher.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output cipher pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let msg = std::slice::from_raw_parts(message, message_len);
+    let pk = std::slice::from_raw_parts(mobile_public_key, pk_len);
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let msg = std::slice::from_raw_parts(message, message_len);
-        let pk = std::slice::from_raw_parts(mobile_public_key, pk_len);
+    };
 
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
-
-        let node_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let cipher = match node_manager.encrypt_message_for_mobile(msg, pk) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("encrypt_message_for_mobile failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        if !alloc_bytes(out_cipher, out_len, &cipher) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
         }
-        0
-    })
+    };
+
+    let cipher = match node_manager.encrypt_message_for_mobile(msg, pk) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("encrypt_message_for_mobile failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_cipher, out_len, &cipher) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 #[no_mangle]
@@ -1947,51 +2035,66 @@ pub unsafe extern "C" fn rn_keys_decrypt_message_from_mobile(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || encrypted_message.is_null() || out_plain.is_null() || out_len.is_null()
-        {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if encrypted_message.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "encrypted message pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_plain.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output plain pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let enc = std::slice::from_raw_parts(encrypted_message, enc_len);
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let enc = std::slice::from_raw_parts(encrypted_message, enc_len);
+    };
 
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
-
-        let node_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let plain = match node_manager.decrypt_message_from_mobile(enc) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("decrypt_message_from_mobile failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        if !alloc_bytes(out_plain, out_len, &plain) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
         }
-        0
-    })
+    };
+
+    let plain = match node_manager.decrypt_message_from_mobile(enc) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("decrypt_message_from_mobile failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_plain, out_len, &plain) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 /// Encrypt a message from mobile to node using node's agreement public key
@@ -2006,57 +2109,72 @@ pub unsafe extern "C" fn rn_keys_encrypt_message_for_node(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null()
-            || message.is_null()
-            || node_agreement_public_key.is_null()
-            || out_cipher.is_null()
-            || out_len.is_null()
-        {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if message.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "message pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if node_agreement_public_key.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "node agreement public key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_cipher.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output cipher pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "keys handle is null");
-            return 1;
-        };
-        let manager = match validate_mobile_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    };
 
-        let mobile_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let msg = std::slice::from_raw_parts(message, message_len);
-        let pk = std::slice::from_raw_parts(node_agreement_public_key, pk_len);
-
-        let cipher = match mobile_manager.encrypt_message_for_node(msg, pk) {
-            Ok(c) => c,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("encrypt_message_for_node failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-
-        if !alloc_bytes(out_cipher, out_len, &cipher) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
         }
-        0
-    })
+    };
+
+    let msg = std::slice::from_raw_parts(message, message_len);
+    let pk = std::slice::from_raw_parts(node_agreement_public_key, pk_len);
+
+    let cipher = match mobile_manager.encrypt_message_for_node(msg, pk) {
+        Ok(c) => c,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("encrypt_message_for_node failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_cipher, out_len, &cipher) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 /// Decrypt a message from node on mobile using mobile's agreement private key
@@ -2069,52 +2187,67 @@ pub unsafe extern "C" fn rn_keys_mobile_decrypt_message_from_node(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || encrypted_message.is_null() || out_plain.is_null() || out_len.is_null()
-        {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if encrypted_message.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "encrypted message pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_plain.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output plain pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "keys handle is null");
-            return 1;
-        };
-        let manager = match validate_mobile_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    };
 
-        let mobile_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let enc = std::slice::from_raw_parts(encrypted_message, enc_len);
-
-        let plain = match mobile_manager.decrypt_message_from_node(enc) {
-            Ok(p) => p,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("decrypt_message_from_node failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-
-        if !alloc_bytes(out_plain, out_len, &plain) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
         }
-        0
-    })
+    };
+
+    let enc = std::slice::from_raw_parts(encrypted_message, enc_len);
+
+    let plain = match mobile_manager.decrypt_message_from_node(enc) {
+        Ok(p) => p,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("decrypt_message_from_node failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_plain, out_len, &plain) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 #[no_mangle]
@@ -2128,63 +2261,86 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_public_key(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null()
-            || data.is_null()
-            || recipient_public_key.is_null()
-            || out_eed_cbor.is_null()
-            || out_len.is_null()
-        {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if data.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if recipient_public_key.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "recipient public key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_eed_cbor.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output EED CBOR pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let data_slice = std::slice::from_raw_parts(data, data_len);
+    let pk = std::slice::from_raw_parts(recipient_public_key, pk_len);
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
         }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let data_slice = std::slice::from_raw_parts(data, data_len);
-        let pk = std::slice::from_raw_parts(recipient_public_key, pk_len);
+    };
 
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
-
-        let node_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let eed = match node_manager.encrypt_for_public_key(data_slice, pk) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("encrypt_for_public_key failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        let cbor = match serde_cbor::to_vec(&eed) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(err, 2, &format!("encode EED failed: {e}"));
-                return 2;
-            }
-        };
-        if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
         }
-        0
-    })
+    };
+
+    let eed = match node_manager.encrypt_for_public_key(data_slice, pk) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("encrypt_for_public_key failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    let cbor = match serde_cbor::to_vec(&eed) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("encode EED failed: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 #[no_mangle]
@@ -2197,68 +2353,87 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null()
-            || data.is_null()
-            || network_id.is_null()
-            || out_eed_cbor.is_null()
-            || out_len.is_null()
-        {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let data_slice = std::slice::from_raw_parts(data, data_len);
-        let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_error(err, 2, "invalid utf8 network id");
-                return 2;
-            }
-        };
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if data.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if network_id.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_eed_cbor.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output EED CBOR pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
 
-        let node_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let eed = match node_manager.encrypt_for_network(data_slice, nid) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("encrypt_for_network failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        let cbor = match serde_cbor::to_vec(&eed) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(err, 2, &format!("encode EED failed: {e}"));
-                return 2;
-            }
-        };
-        if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let data_slice = std::slice::from_raw_parts(data, data_len);
+    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
+            return RN_ERROR_INVALID_UTF8;
         }
-        0
-    })
+    };
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let eed = match node_manager.encrypt_for_network(data_slice, nid) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("encrypt_for_network failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    let cbor = match serde_cbor::to_vec(&eed) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("encode EED failed: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 
 #[no_mangle]
@@ -2270,56 +2445,72 @@ pub unsafe extern "C" fn rn_keys_decrypt_network_data(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || eed_cbor.is_null() || out_plain.is_null() || out_len.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let slice = std::slice::from_raw_parts(eed_cbor, eed_len);
-        let eed: runar_keys::mobile::EnvelopeEncryptedData = match serde_cbor::from_slice(slice) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(err, 2, &format!("decode EED failed: {e}"));
-                return 2;
-            }
-        };
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if eed_cbor.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "EED CBOR pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_plain.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output plain pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
 
-        let node_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let plain = match node_manager.decrypt_network_data(&eed) {
-            Ok(v) => v,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("decrypt_network_data failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        if !alloc_bytes(out_plain, out_len, &plain) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let slice = std::slice::from_raw_parts(eed_cbor, eed_len);
+    let eed: runar_keys::mobile::EnvelopeEncryptedData = match serde_cbor::from_slice(slice) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode EED failed: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
-        0
-    })
+    };
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let plain = match node_manager.decrypt_network_data(&eed) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("decrypt_network_data failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_plain, out_len, &plain) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }
 fn parse_discovery_options(cbor: &[u8]) -> DiscoveryOptions {
     let mut opts = DiscoveryOptions::default();
@@ -2371,18 +2562,7 @@ fn parse_discovery_options(cbor: &[u8]) -> DiscoveryOptions {
     opts
 }
 
-fn ffi_guard<F>(err: *mut RnError, f: F) -> i32
-where
-    F: FnOnce() -> i32,
-{
-    match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(code) => code,
-        Err(_) => {
-            set_error(err, 1000, "panic in FFI call");
-            1000
-        }
-    }
-}
+// ffi_guard removed - violates design principles by preventing proper error handling flow
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_discovery_new_with_multicast(
@@ -2392,77 +2572,93 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
     out_discovery: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || options_cbor.is_null() || out_discovery.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let Some(keys_inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let slice = std::slice::from_raw_parts(options_cbor, options_len);
-        let opts = parse_discovery_options(slice);
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if options_cbor.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "options CBOR pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_discovery.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output discovery pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
 
-        // Build local peer info from node keys and provided addresses if any
-        let mut addresses: Vec<String> = Vec::new();
-        if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(slice) {
-            for (k, v) in m {
-                if let serde_cbor::Value::Text(s) = k {
-                    if s == "local_addresses" {
-                        if let serde_cbor::Value::Array(arr) = v {
-                            for it in arr {
-                                if let serde_cbor::Value::Text(a) = it {
-                                    addresses.push(a)
-                                }
+    let Some(keys_inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let slice = std::slice::from_raw_parts(options_cbor, options_len);
+    let opts = parse_discovery_options(slice);
+
+    // Build local peer info from node keys and provided addresses if any
+    let mut addresses: Vec<String> = Vec::new();
+    if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(slice) {
+        for (k, v) in m {
+            if let serde_cbor::Value::Text(s) = k {
+                if s == "local_addresses" {
+                    if let serde_cbor::Value::Array(arr) = v {
+                        for it in arr {
+                            if let serde_cbor::Value::Text(a) = it {
+                                addresses.push(a)
                             }
                         }
                     }
                 }
             }
         }
+    }
 
-        let manager = match validate_node_manager(keys_inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    let manager = match validate_node_manager(keys_inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
 
-        let node_manager = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
-        let node_pk = node_manager.get_node_public_key();
+    let node_pk = node_manager.get_node_public_key();
 
-        let local_peer = PeerInfo {
-            public_key: node_pk,
-            addresses,
-        };
-        let logger = keys_inner.logger.as_ref().clone();
-        let disc = match runtime().block_on(MulticastDiscovery::new(local_peer, opts, logger)) {
-            Ok(d) => Arc::new(d),
-            Err(e) => {
-                set_error(err, 2, &format!("Failed to create discovery: {e}"));
-                return 2;
-            }
-        };
-        let inner = DiscoveryInner {
-            logger: keys_inner.logger.clone(),
-            discovery: disc,
-            events_tx: None,
-        };
-        let handle = FfiDiscoveryHandle {
-            inner: Box::into_raw(Box::new(inner)),
-        };
-        *out_discovery = Box::into_raw(Box::new(handle)) as *mut c_void;
-        0
-    })
+    let local_peer = PeerInfo {
+        public_key: node_pk,
+        addresses,
+    };
+    let logger = keys_inner.logger.as_ref().clone();
+    let disc = match runtime().block_on(MulticastDiscovery::new(local_peer, opts, logger)) {
+        Ok(d) => Arc::new(d),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create discovery: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    let inner = DiscoveryInner {
+        logger: keys_inner.logger.clone(),
+        discovery: disc,
+        events_tx: None,
+    };
+    let handle = FfiDiscoveryHandle {
+        inner: Box::into_raw(Box::new(inner)),
+    };
+    *out_discovery = Box::into_raw(Box::new(handle)) as *mut c_void;
+    0
 }
 
 #[no_mangle]
@@ -2499,23 +2695,27 @@ pub unsafe extern "C" fn rn_discovery_init(
     options_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if discovery.is_null() || options_cbor.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let Some(inner) = with_discovery_inner(discovery) else {
-            set_error(err, 1, "invalid discovery handle");
-            return 1;
-        };
-        let slice = std::slice::from_raw_parts(options_cbor, options_len);
-        let opts = parse_discovery_options(slice);
-        if let Err(e) = runtime().block_on(inner.discovery.init(opts)) {
-            set_error(err, 2, &format!("init failed: {e}"));
-            return 2;
-        }
-        0
-    })
+    // Validate parameters upfront - specific error messages
+    if discovery.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if options_cbor.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "options CBOR pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let slice = std::slice::from_raw_parts(options_cbor, options_len);
+    let opts = parse_discovery_options(slice);
+    if let Err(e) = runtime().block_on(inner.discovery.init(opts)) {
+        set_error(err, RN_ERROR_OPERATION_FAILED, &format!("init failed: {e}"));
+        return RN_ERROR_OPERATION_FAILED;
+    }
+    0
 }
 
 #[no_mangle]
@@ -2524,87 +2724,95 @@ pub unsafe extern "C" fn rn_discovery_bind_events_to_transport(
     transport: *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        let Some(disc) = with_discovery_inner(discovery) else {
-            set_error(err, 1, "invalid discovery handle");
-            return 1;
-        };
-        if transport.is_null() {
-            set_error(err, 1, "null transport");
-            return 1;
-        }
-        let t = &mut *(transport as *mut FfiTransportHandle);
-        if t.inner.is_null() {
-            set_error(err, 1, "invalid transport handle");
-            return 1;
-        }
-        let tx = unsafe { &*t.inner }.events_tx.clone();
-        disc.events_tx = Some(tx.clone());
+    // Validate parameters upfront - specific error messages
+    if discovery.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if transport.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
 
-        // Subscribe discovery events to emit into transport poll channel
-        let emitter = tx.clone();
-        let listener: runar_transporter::discovery::DiscoveryListener = Arc::new(move |ev| {
-            let emitter = emitter.clone();
-            Box::pin(async move {
-                let mut map = std::collections::BTreeMap::new();
-                match ev {
-                    DiscoveryEvent::Discovered(peer) => {
-                        map.insert(
-                            serde_cbor::Value::Text("type".into()),
-                            serde_cbor::Value::Text("PeerDiscovered".into()),
-                        );
-                        map.insert(
-                            serde_cbor::Value::Text("v".into()),
-                            serde_cbor::Value::Integer(1),
-                        );
-                        let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
-                        map.insert(
-                            serde_cbor::Value::Text("peer_info".into()),
-                            serde_cbor::Value::Bytes(pi),
-                        );
-                    }
-                    DiscoveryEvent::Updated(peer) => {
-                        map.insert(
-                            serde_cbor::Value::Text("type".into()),
-                            serde_cbor::Value::Text("PeerUpdated".into()),
-                        );
-                        map.insert(
-                            serde_cbor::Value::Text("v".into()),
-                            serde_cbor::Value::Integer(1),
-                        );
-                        let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
-                        map.insert(
-                            serde_cbor::Value::Text("peer_info".into()),
-                            serde_cbor::Value::Bytes(pi),
-                        );
-                    }
-                    DiscoveryEvent::Lost(node_id) => {
-                        map.insert(
-                            serde_cbor::Value::Text("type".into()),
-                            serde_cbor::Value::Text("PeerLost".into()),
-                        );
-                        map.insert(
-                            serde_cbor::Value::Text("v".into()),
-                            serde_cbor::Value::Integer(1),
-                        );
-                        map.insert(
-                            serde_cbor::Value::Text("peer_node_id".into()),
-                            serde_cbor::Value::Text(node_id),
-                        );
-                    }
+    let Some(disc) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let t = &mut *(transport as *mut FfiTransportHandle);
+    if t.inner.is_null() {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let tx = unsafe { &*t.inner }.events_tx.clone();
+    disc.events_tx = Some(tx.clone());
+
+    // Subscribe discovery events to emit into transport poll channel
+    let emitter = tx.clone();
+    let listener: runar_transporter::discovery::DiscoveryListener = Arc::new(move |ev| {
+        let emitter = emitter.clone();
+        Box::pin(async move {
+            let mut map = std::collections::BTreeMap::new();
+            match ev {
+                DiscoveryEvent::Discovered(peer) => {
+                    map.insert(
+                        serde_cbor::Value::Text("type".into()),
+                        serde_cbor::Value::Text("PeerDiscovered".into()),
+                    );
+                    map.insert(
+                        serde_cbor::Value::Text("v".into()),
+                        serde_cbor::Value::Integer(1),
+                    );
+                    let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
+                    map.insert(
+                        serde_cbor::Value::Text("peer_info".into()),
+                        serde_cbor::Value::Bytes(pi),
+                    );
                 }
-                let _ = emitter
-                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                    .await;
-            })
-        });
-        // Register subscription
-        if let Err(e) = runtime().block_on(disc.discovery.subscribe(listener)) {
-            set_error(err, 2, &format!("subscribe failed: {e}"));
-            return 2;
-        }
-        0
-    })
+                DiscoveryEvent::Updated(peer) => {
+                    map.insert(
+                        serde_cbor::Value::Text("type".into()),
+                        serde_cbor::Value::Text("PeerUpdated".into()),
+                    );
+                    map.insert(
+                        serde_cbor::Value::Text("v".into()),
+                        serde_cbor::Value::Integer(1),
+                    );
+                    let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
+                    map.insert(
+                        serde_cbor::Value::Text("peer_info".into()),
+                        serde_cbor::Value::Bytes(pi),
+                    );
+                }
+                DiscoveryEvent::Lost(node_id) => {
+                    map.insert(
+                        serde_cbor::Value::Text("type".into()),
+                        serde_cbor::Value::Text("PeerLost".into()),
+                    );
+                    map.insert(
+                        serde_cbor::Value::Text("v".into()),
+                        serde_cbor::Value::Integer(1),
+                    );
+                    map.insert(
+                        serde_cbor::Value::Text("peer_node_id".into()),
+                        serde_cbor::Value::Text(node_id),
+                    );
+                }
+            }
+            let _ = emitter
+                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                .await;
+        })
+    });
+    // Register subscription
+    if let Err(e) = runtime().block_on(disc.discovery.subscribe(listener)) {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("subscribe failed: {e}"),
+        );
+        return RN_ERROR_OPERATION_FAILED;
+    }
+    0
 }
 
 #[no_mangle]
@@ -2612,17 +2820,25 @@ pub unsafe extern "C" fn rn_discovery_start_announcing(
     discovery: *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        let Some(inner) = with_discovery_inner(discovery) else {
-            set_error(err, 1, "invalid discovery handle");
-            return 1;
-        };
-        if let Err(e) = runtime().block_on(inner.discovery.start_announcing()) {
-            set_error(err, 2, &format!("start_announcing failed: {e}"));
-            return 2;
-        }
-        0
-    })
+    // Validate parameters upfront - specific error messages
+    if discovery.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if let Err(e) = runtime().block_on(inner.discovery.start_announcing()) {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("start_announcing failed: {e}"),
+        );
+        return RN_ERROR_OPERATION_FAILED;
+    }
+    0
 }
 
 #[no_mangle]
@@ -2630,32 +2846,48 @@ pub unsafe extern "C" fn rn_discovery_stop_announcing(
     discovery: *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        let Some(inner) = with_discovery_inner(discovery) else {
-            set_error(err, 1, "invalid discovery handle");
-            return 1;
-        };
-        if let Err(e) = runtime().block_on(inner.discovery.stop_announcing()) {
-            set_error(err, 2, &format!("stop_announcing failed: {e}"));
-            return 2;
-        }
-        0
-    })
+    // Validate parameters upfront - specific error messages
+    if discovery.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if let Err(e) = runtime().block_on(inner.discovery.stop_announcing()) {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("stop_announcing failed: {e}"),
+        );
+        return RN_ERROR_OPERATION_FAILED;
+    }
+    0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_discovery_shutdown(discovery: *mut c_void, err: *mut RnError) -> i32 {
-    ffi_guard(err, || {
-        let Some(inner) = with_discovery_inner(discovery) else {
-            set_error(err, 1, "invalid discovery handle");
-            return 1;
-        };
-        if let Err(e) = runtime().block_on(inner.discovery.shutdown()) {
-            set_error(err, 2, &format!("shutdown failed: {e}"));
-            return 2;
-        }
-        0
-    })
+    // Validate parameters upfront - specific error messages
+    if discovery.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if let Err(e) = runtime().block_on(inner.discovery.shutdown()) {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("shutdown failed: {e}"),
+        );
+        return RN_ERROR_OPERATION_FAILED;
+    }
+    0
 }
 
 #[no_mangle]
@@ -2665,29 +2897,45 @@ pub unsafe extern "C" fn rn_discovery_update_local_peer_info(
     len: usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if discovery.is_null() || peer_info_cbor.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
+    // Validate parameters upfront - specific error messages
+    if discovery.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if peer_info_cbor.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "peer info CBOR pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let slice = std::slice::from_raw_parts(peer_info_cbor, len);
+    let peer: PeerInfo = match serde_cbor::from_slice(slice) {
+        Ok(p) => p,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode PeerInfo: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
-        let Some(inner) = with_discovery_inner(discovery) else {
-            set_error(err, 1, "invalid discovery handle");
-            return 1;
-        };
-        let slice = std::slice::from_raw_parts(peer_info_cbor, len);
-        let peer: PeerInfo = match serde_cbor::from_slice(slice) {
-            Ok(p) => p,
-            Err(e) => {
-                set_error(err, 2, &format!("decode PeerInfo: {e}"));
-                return 2;
-            }
-        };
-        if let Err(e) = runtime().block_on(inner.discovery.update_local_peer_info(peer)) {
-            set_error(err, 2, &format!("update_local_peer_info failed: {e}"));
-            return 2;
-        }
-        0
-    })
+    };
+    if let Err(e) = runtime().block_on(inner.discovery.update_local_peer_info(peer)) {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("update_local_peer_info failed: {e}"),
+        );
+        return RN_ERROR_OPERATION_FAILED;
+    }
+    0
 }
 // Old implementation removed; now use the keys_new_impl wrapper below
 
@@ -3979,53 +4227,65 @@ pub unsafe extern "C" fn rn_keys_ensure_symmetric_key(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    ffi_guard(err, || {
-        if keys.is_null() || key_name.is_null() || out_key.is_null() || out_len.is_null() {
-            set_error(err, 1, "null argument");
-            return 1;
-        }
-        let Some(inner) = with_keys_inner(keys) else {
-            set_error(err, 1, "invalid keys handle");
-            return 1;
-        };
-        let key_name_str = match std::ffi::CStr::from_ptr(key_name).to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                set_error(err, 2, "invalid utf8 key_name");
-                return 2;
-            }
-        };
-        let manager = match validate_node_manager(inner) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                set_error(err, e.code(), &e.message());
-                return e.code();
-            }
-        };
+    // Validate parameters upfront - specific error messages
+    if keys.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if key_name.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "key name pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_key.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output key pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
 
-        let mut node_manager = match manager.write() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-
-        let key = match node_manager.ensure_symmetric_key(key_name_str) {
-            Ok(k) => k,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("ensure_symmetric_key failed: {e}"),
-                );
-                return RN_ERROR_OPERATION_FAILED;
-            }
-        };
-        if !alloc_bytes(out_key, out_len, &key) {
-            set_error(err, 3, "alloc failed");
-            return 3;
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    let key_name_str = match std::ffi::CStr::from_ptr(key_name).to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 key_name");
+            return RN_ERROR_INVALID_UTF8;
         }
-        0
-    })
+    };
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    let key = match node_manager.ensure_symmetric_key(key_name_str) {
+        Ok(k) => k,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("ensure_symmetric_key failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    if !alloc_bytes(out_key, out_len, &key) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+    0
 }

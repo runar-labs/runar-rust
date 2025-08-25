@@ -2,6 +2,9 @@ use runar_ffi::*;
 use serde_cbor::Value;
 use std::ffi::CString;
 
+// Import common utilities
+mod common;
+
 #[repr(C)]
 struct RnError {
     code: i32,

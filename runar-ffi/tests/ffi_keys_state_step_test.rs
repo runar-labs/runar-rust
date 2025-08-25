@@ -26,7 +26,15 @@ fn linux_keystore_minimal_network_key_crash_repro() {
         );
         assert!(!keys.is_null(), "rn_keys_new returned null handle");
 
-        // 2) rn_keys_register_linux_device_keystore with unique account
+        // 2) Initialize as mobile key manager
+        assert_eq!(
+            rn_keys_init_as_mobile(keys, &mut err),
+            0,
+            "init_as_mobile failed: {}",
+            last_err()
+        );
+
+        // 3) rn_keys_register_linux_device_keystore with unique account
         let svc = CString::new("com.runar.keys.test").unwrap();
         let acc = CString::new(format!("state.aead.v1.{}", uuid::Uuid::new_v4())).unwrap();
         assert_eq!(
@@ -36,22 +44,22 @@ fn linux_keystore_minimal_network_key_crash_repro() {
             last_err()
         );
 
-        // 3) rn_keys_set_persistence_dir to a unique temp directory
+        // 4) rn_keys_set_persistence_dir to a unique temp directory
         let tmp_dir =
             std::env::temp_dir().join(format!("runar_keys_test_{}", uuid::Uuid::new_v4()));
         let dir = CString::new(tmp_dir.to_string_lossy().to_string()).unwrap();
         assert_eq!(rn_keys_set_persistence_dir(keys, dir.as_ptr(), &mut err), 0);
 
-        // 4) rn_keys_enable_auto_persist(true)
+        // 5) rn_keys_enable_auto_persist(true)
         assert_eq!(rn_keys_enable_auto_persist(keys, true, &mut err), 0);
 
-        // 5) rn_keys_wipe_persistence
+        // 6) rn_keys_wipe_persistence
         assert_eq!(rn_keys_wipe_persistence(keys, &mut err), 0);
 
-        // 6) rn_keys_mobile_initialize_user_root_key
+        // 7) rn_keys_mobile_initialize_user_root_key
         assert_eq!(rn_keys_mobile_initialize_user_root_key(keys, &mut err), 0);
 
-        // 7) rn_keys_mobile_generate_network_data_key (crash repro point)
+        // 8) rn_keys_mobile_generate_network_data_key (crash repro point)
         let mut nid_ptr: *mut c_char = std::ptr::null_mut();
         let mut nid_len: usize = 0;
         let rc =
