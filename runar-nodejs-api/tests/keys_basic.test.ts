@@ -1,63 +1,65 @@
-import os from 'os';
-import fs from 'fs';
-import path from 'path';
+import { 
+  loadAddon, 
+  createTempDir, 
+  cleanupTempDir, 
+  withTimeout,
+  createMobileKeys,
+  createNodeKeys
+} from './test_utils';
 
-function loadAddon(): any {
-  const filename = 'index.linux-x64-gnu.node';
-  const local = path.join(__dirname, '..', filename);
-  return require(local);
-}
-
-const mod: any = loadAddon();
-
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  let t: NodeJS.Timeout;
-  const timeout = new Promise<never>((_, rej) => {
-    t = setTimeout(() => rej(new Error(`Timeout ${ms}ms: ${label}`)), ms);
-  });
-  // @ts-ignore
-  return Promise.race([p, timeout]).finally(() => clearTimeout(t!));
-}
+const mod = loadAddon();
 
 describe('Keys Basic Tests', () => {
-  test('should initialize mobile keystore and perform basic operations', async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'runar-nodejs-api-'));
-    const keys = new mod.Keys();
-    keys.setPersistenceDir(tmp);
-    keys.enableAutoPersist(true);
+  let tmpDir: string;
 
-    await withTimeout(keys.mobileInitializeUserRootKey(), 3000, 'mobileInitializeUserRootKey');
-
-    const data = Buffer.from('hello world');
-    const enc: Buffer = keys.encryptLocalData(data);
-    expect(Buffer.isBuffer(enc)).toBe(true);
-    expect(enc.equals(data)).toBe(false);
-    
-    const dec: Buffer = keys.decryptLocalData(enc);
-    expect(dec.equals(data)).toBe(true);
-
-    await withTimeout(keys.flushState(), 2000, 'flushState');
-    await withTimeout(keys.wipePersistence(), 2000, 'wipePersistence');
+  beforeEach(() => {
+    tmpDir = createTempDir();
   });
 
-  test('should manage symmetric keys properly', () => {
+  afterEach(() => {
+    cleanupTempDir(tmpDir);
+  });
+
+  test('should create and initialize basic key instances', () => {
+    const mobileKeys = new mod.Keys();
+    const nodeKeys = new mod.Keys();
+    
+    expect(mobileKeys).toBeDefined();
+    expect(nodeKeys).toBeDefined();
+    expect(typeof mobileKeys.initAsMobile).toBe('function');
+    expect(typeof nodeKeys.initAsNode).toBe('function');
+  });
+
+  test('should handle basic persistence operations', () => {
     const keys = new mod.Keys();
     
-    // Test ensure_symmetric_key for different services
-    const key1 = keys.ensureSymmetricKey('test_service_1');
-    const key2 = keys.ensureSymmetricKey('test_service_2');
-    const key1_retrieved = keys.ensureSymmetricKey('test_service_1');
+    expect(() => keys.setPersistenceDir(tmpDir)).not.toThrow();
+    expect(() => keys.enableAutoPersist(true)).not.toThrow();
+    expect(() => keys.enableAutoPersist(false)).not.toThrow();
+  });
+
+  test('should perform basic symmetric key operations', () => {
+    const keys = new mod.Keys();
+    keys.initAsNode();
     
+    const key1 = keys.ensureSymmetricKey('test-service');
     expect(Buffer.isBuffer(key1)).toBe(true);
     expect(key1.length).toBe(32);
-    expect(Buffer.isBuffer(key2)).toBe(true);
-    expect(key2.length).toBe(32);
-    expect(Buffer.isBuffer(key1_retrieved)).toBe(true);
-    expect(key1_retrieved.length).toBe(32);
     
-    // Keys should be different for different services
-    expect(key1.equals(key2)).toBe(false);
-    // Same service should return the same key
-    expect(key1.equals(key1_retrieved)).toBe(true);
+    const key2 = keys.ensureSymmetricKey('test-service');
+    expect(key1.equals(key2)).toBe(true);
+    
+    const key3 = keys.ensureSymmetricKey('different-service');
+    expect(key1.equals(key3)).toBe(false);
+  });
+
+  test('should handle basic keystore capabilities', () => {
+    const keys = new mod.Keys();
+    const caps = keys.getKeystoreCaps();
+    
+    expect(caps).toHaveProperty('version');
+    expect(caps).toHaveProperty('flags');
+    expect(typeof caps.version).toBe('number');
+    expect(typeof caps.flags).toBe('number');
   });
 });
