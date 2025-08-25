@@ -36,4 +36,6 @@ linux-keystore = ["runar-keys/linux-keystore"]
 serde_cbor = "0.11"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
+bincode = "1"
+hex = "0.4"
 
