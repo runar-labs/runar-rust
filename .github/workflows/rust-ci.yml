@@ -26,7 +26,7 @@ jobs:
           echo "---- .gitmodules ----"
           cat .gitmodules || echo "No .gitmodules"
           echo "---- .git/config ----"
-          cat .git/config || echo "No .git/config"
+          cat .git/config || echo "No .gitmodules"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -45,3 +45,20 @@ jobs:
 
       - name: Build runar_ffi (generate header)
         run: cargo build -p runar_ffi --all-targets --features linux-keystore --verbose
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Node.js API dependencies
+        working-directory: runar-nodejs-api
+        run: bun install
+
+      - name: Build Node.js native module
+        working-directory: runar-nodejs-api
+        run: bun run napi build --platform linux
+
+      - name: Run Node.js API tests
+        working-directory: runar-nodejs-api
+        run: bun test --timeout 30000
