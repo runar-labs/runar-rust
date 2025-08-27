@@ -857,9 +857,6 @@ impl NodeKeyManager {
         self.decrypt_key_with_ecdsa(encrypted_message, &self.node_key_pair)
     }
 
-    /// Create an envelope key for per-object encryption
-
-
     /// Create an envelope‐encrypted payload. For the node side we only
     /// support network recipients – any supplied `profile_ids` will be
     /// ignored. This signature exists solely to allow generic code (e.g.
