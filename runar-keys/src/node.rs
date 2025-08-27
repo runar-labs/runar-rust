@@ -932,6 +932,33 @@ impl NodeKeyManager {
     }
 }
 
+// Implementation of EnvelopeCrypto for NodeKeyManager
+impl crate::EnvelopeCrypto for NodeKeyManager {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        network_id: Option<&str>,
+        _profile_public_keys: Vec<Vec<u8>>,
+    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
+        // Nodes only support network-wide encryption.
+        self.create_envelope_for_network(data, network_id)
+    }
+
+    fn decrypt_envelope_data(
+        &self,
+        env: &crate::mobile::EnvelopeEncryptedData,
+    ) -> crate::Result<Vec<u8>> {
+        // Guard: ensure the encrypted key is present
+        if env.network_encrypted_key.is_empty() {
+            return Err(crate::error::KeyError::DecryptionError(
+                "Envelope missing network_encrypted_key".into(),
+            ));
+        }
+
+        NodeKeyManager::decrypt_envelope_data(self, env)
+    }
+}
+
 /// Certificate information for the node
 #[derive(Debug, Clone)]
 pub struct NodeCertificateInfo {
@@ -1035,31 +1062,5 @@ impl NodeKeyManager {
             persistence: None,
             auto_persist: true,
         })
-    }
-}
-
-impl crate::EnvelopeCrypto for NodeKeyManager {
-    fn encrypt_with_envelope(
-        &self,
-        data: &[u8],
-        network_id: Option<&str>,
-        _profile_public_keys: Vec<Vec<u8>>,
-    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        // Nodes only support network-wide encryption.
-        self.create_envelope_for_network(data, network_id)
-    }
-
-    fn decrypt_envelope_data(
-        &self,
-        env: &crate::mobile::EnvelopeEncryptedData,
-    ) -> crate::Result<Vec<u8>> {
-        // Guard: ensure the encrypted key is present
-        if env.network_encrypted_key.is_empty() {
-            return Err(crate::error::KeyError::DecryptionError(
-                "Envelope missing network_encrypted_key".into(),
-            ));
-        }
-
-        NodeKeyManager::decrypt_envelope_data(self, env)
     }
 }

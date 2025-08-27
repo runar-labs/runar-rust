@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_common::routing::{PathTrie, TopicPath};
-use runar_keys::{node::NodeKeyManagerState, NodeKeyManager};
+use runar_keys::{EnvelopeCrypto, NodeKeyManager, Result as KeyResult};
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
@@ -26,7 +26,7 @@ use runar_transporter::{
 };
 use socket2;
 use std::collections::HashMap;
-use std::fmt::Debug;
+
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
@@ -35,7 +35,35 @@ use dashmap::DashMap;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use std::sync::RwLock as StdRwLock;
+use tokio::sync::RwLock;
+
+// Wrapper to implement EnvelopeCrypto for Arc<RwLock<NodeKeyManager>>
+struct NodeKeyManagerWrapper(Arc<StdRwLock<NodeKeyManager>>);
+
+impl EnvelopeCrypto for NodeKeyManagerWrapper {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        network_id: Option<&str>,
+        profile_public_keys: Vec<Vec<u8>>,
+    ) -> KeyResult<runar_keys::mobile::EnvelopeEncryptedData> {
+        let keys_manager = self.0.read().unwrap();
+        keys_manager.encrypt_with_envelope(
+            data,
+            network_id.map(|s| s.to_string()).as_ref(),
+            profile_public_keys,
+        )
+    }
+
+    fn decrypt_envelope_data(
+        &self,
+        env: &runar_keys::mobile::EnvelopeEncryptedData,
+    ) -> KeyResult<Vec<u8>> {
+        let keys_manager = self.0.read().unwrap();
+        keys_manager.decrypt_envelope_data(env)
+    }
+}
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
@@ -94,9 +122,9 @@ type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
 ///
 /// # Security Note
 ///
-/// The `key_manager_state` must be provided via `with_key_manager_state()` for production use.
+/// The `key_manager` must be provided via `with_key_manager()` for production use.
 /// This contains the node's cryptographic credentials and should be stored securely.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NodeConfig {
     /// Unique identifier for this node.
     ///
@@ -128,11 +156,11 @@ pub struct NodeConfig {
     /// If `None`, default Info-level logging is applied.
     pub logging_config: Option<LoggingConfig>,
 
-    /// Serialized key manager state containing node credentials.
+    /// Key manager containing node credentials.
     ///
-    /// This field is private and must be set via `with_key_manager_state()`.
+    /// This field is private and must be set via `with_key_manager()`.
     /// Contains the node's cryptographic keys and certificates.
-    key_manager_state: Option<Vec<u8>>,
+    key_manager: Option<Arc<StdRwLock<NodeKeyManager>>>,
 
     /// Request timeout in milliseconds for all service requests.
     ///
@@ -145,7 +173,7 @@ impl NodeConfig {
     /// Create a new Node configuration with the specified node ID and network ID.
     ///
     /// This constructor creates a basic configuration suitable for development and testing.
-    /// For production use, you must call `with_key_manager_state()` to provide the node's
+    /// For production use, you must call `with_key_manager()` to provide the node's
     /// cryptographic credentials.
     ///
     /// # Arguments
@@ -157,14 +185,19 @@ impl NodeConfig {
     ///
     /// ```rust
     /// use runar_node::NodeConfig;
+    /// use std::sync::{Arc, RwLock};
+    /// use runar_keys::NodeKeyManager;
+    /// use runar_common::logging::Logger;
+    /// use runar_common::logging::Component;
     ///
     /// // Basic configuration
     /// let config = NodeConfig::new("my-node");
     ///
-    /// // Production configuration requires key manager state
-    /// let serialized_keys = vec![1, 2, 3, 4]; // Example key data
+    /// // Production configuration requires key manager
+    /// let logger = Arc::new(Logger::new_root(Component::Keys));
+    /// let node_keys_manager = NodeKeyManager::new(logger).expect("Failed to create key manager");
     /// let config = NodeConfig::new("my-node")
-    ///     .with_key_manager_state(serialized_keys);
+    ///     .with_key_manager(Arc::new(RwLock::new(node_keys_manager)));
     /// ```
     pub fn new(default_network_id: impl Into<String>) -> Self {
         Self {
@@ -172,7 +205,7 @@ impl NodeConfig {
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
-            key_manager_state: None, // Must be set via with_key_manager_state()
+            key_manager: None,         // Must be set via with_key_manager()
             request_timeout_ms: 30000, // 30 seconds
         }
     }
@@ -279,13 +312,18 @@ impl NodeConfig {
     ///
     /// ```rust
     /// use runar_node::NodeConfig;
+    /// use std::sync::{Arc, RwLock};
+    /// use runar_keys::NodeKeyManager;
+    /// use runar_common::logging::Logger;
+    /// use runar_common::logging::Component;
     ///
-    /// let secure_key_bytes = vec![1, 2, 3, 4]; // Example key data
+    /// let logger = Arc::new(Logger::new_root(Component::Keys));
+    /// let node_keys_manager = NodeKeyManager::new(logger).expect("Failed to create key manager");
     /// let config = NodeConfig::new("my-node")
-    ///     .with_key_manager_state(secure_key_bytes);
+    ///     .with_key_manager(Arc::new(RwLock::new(node_keys_manager)));
     /// ```
-    pub fn with_key_manager_state(mut self, key_state_bytes: Vec<u8>) -> Self {
-        self.key_manager_state = Some(key_state_bytes);
+    pub fn with_key_manager(mut self, key_manager: Arc<StdRwLock<NodeKeyManager>>) -> Self {
+        self.key_manager = Some(key_manager);
         self
     }
 }
@@ -435,9 +473,7 @@ pub struct Node {
 
     registry_version: Arc<AtomicI64>,
 
-    keys_manager: Arc<NodeKeyManager>,
-
-    keys_manager_mut: Arc<Mutex<NodeKeyManager>>,
+    keys_manager: Arc<StdRwLock<NodeKeyManager>>,
 
     service_tasks: Arc<RwLock<Vec<ServiceTask>>>,
 
@@ -539,26 +575,17 @@ impl Node {
         let logger = Arc::new(Logger::new_root(Component::Node));
         let service_registry = Arc::new(ServiceRegistry::new(logger.clone()));
 
-        // at this stage the node credentials must already exist and must be in a secure store
-        let key_manager_state_bytes = config
-            .key_manager_state
+        // Extract the key manager from config before moving config
+        let keys_manager = config
+            .key_manager
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Failed to load node credentials."))?;
 
-        let key_manager_state: NodeKeyManagerState = bincode::deserialize(&key_manager_state_bytes)
-            .context("Failed to deserialize node keys state")?;
-
-        let keys_manager = NodeKeyManager::from_state(key_manager_state.clone(), logger.clone())?;
-        let keys_manager_mut = NodeKeyManager::from_state(key_manager_state, logger.clone())?;
-
-        let node_public_key = keys_manager.get_node_public_key();
+        let node_public_key = keys_manager.read().unwrap().get_node_public_key();
         let node_id = compact_id(&node_public_key);
         logger.set_node_id(node_id.clone());
 
         log_info!(logger, "Successfully loaded existing node credentials.");
-
-        let keys_manager = Arc::new(keys_manager);
-        let keys_manager_mut = Arc::new(Mutex::new(keys_manager_mut));
 
         // TODO Create a mechanis for this mappint to be config driven
         let label_resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
@@ -589,7 +616,7 @@ impl Node {
             network_ids,
             node_id,
             node_public_key,
-            config: Arc::new(config),
+            config: Arc::new(config.clone()),
             logger: logger.clone(),
             service_registry,
             remote_node_info: Arc::new(DashMap::new()),
@@ -603,7 +630,6 @@ impl Node {
             label_resolver,
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager,
-            keys_manager_mut,
             service_tasks: Arc::new(RwLock::new(Vec::new())),
             retained_events: Arc::new(RetainedEventsMap::new()),
             retained_index: Arc::new(RwLock::new(PathTrie::new())),
@@ -1506,6 +1532,8 @@ impl Node {
 
                 let cert_config = self
                     .keys_manager
+                    .read()
+                    .unwrap()
                     .get_quic_certificate_config()
                     .context("Failed to get QUIC certificates")?;
 
@@ -1527,7 +1555,7 @@ impl Node {
                     .with_peer_disconnected_callback(peer_disconnected_callback)
                     .with_get_local_node_info(get_local_node_info)
                     .with_logger(self.logger.clone())
-                    .with_keystore(self.keys_manager.clone())
+                    .with_keystore(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())))
                     .with_label_resolver(self.label_resolver.clone())
                     .with_request_callback(request_callback)
                     .with_event_callback(event_callback);
@@ -1784,8 +1812,10 @@ impl Node {
     async fn handle_network_request(&self, message: RequestMessage) -> Result<ResponseMessage> {
         log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_key size: {profile_public_key_size}", path=message.path, correlation_id=message.correlation_id, profile_public_key_size=message.profile_public_key.len());
 
-        let payload =
-            ArcValue::deserialize(&message.payload_bytes, Some(self.keys_manager.clone()))?;
+        let payload = ArcValue::deserialize(
+            &message.payload_bytes,
+            Some(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone()))),
+        )?;
         let params_option = if payload.is_null() {
             None
         } else {
@@ -1818,7 +1848,7 @@ impl Node {
 
                 // Create serialization context for encryption
                 let serialization_context = runar_serializer::traits::SerializationContext {
-                    keystore: self.keys_manager.clone(),
+                    keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver: self.label_resolver.clone(),
                     network_id,
                     profile_public_key: Some(profile_public_key.clone()),
@@ -1838,7 +1868,7 @@ impl Node {
 
                 // Create serialization context for encryption
                 let serialization_context = runar_serializer::traits::SerializationContext {
-                    keystore: self.keys_manager.clone(),
+                    keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver: self.label_resolver.clone(),
                     network_id,
                     profile_public_key: Some(profile_public_key.clone()),
@@ -1945,8 +1975,10 @@ impl Node {
         };
 
         // Deserialize the payload data
-        let payload =
-            ArcValue::deserialize(&message.payload_bytes, Some(self.keys_manager.clone()))?;
+        let payload = ArcValue::deserialize(
+            &message.payload_bytes,
+            Some(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone()))),
+        )?;
 
         // Create proper event context
         let event_context = Arc::new(EventContext::new(
@@ -2331,7 +2363,7 @@ impl Node {
                     network_transport: transport_arc,
                     local_node_id: local_peer_id,
                     logger: self.logger.clone(),
-                    keystore: self.keys_manager.clone(),
+                    keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver: self.label_resolver.clone(),
                 };
 
@@ -2465,7 +2497,7 @@ impl Node {
             );
             let network_id = topic_path.network_id();
             let serialization_context = SerializationContext {
-                keystore: self.keys_manager.clone(),
+                keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                 resolver: self.label_resolver.clone(),
                 network_id,
                 profile_public_key: None,
@@ -2558,7 +2590,7 @@ impl Node {
             network_transport: transport_arc.clone(),
             local_node_id: local_peer_id,
             logger: self.logger.clone(),
-            keystore: self.keys_manager.clone(),
+            keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
             resolver: self.label_resolver.clone(),
         };
 
@@ -2670,7 +2702,7 @@ impl Node {
                 // Create serialization context for this subscription
                 let network_id = topic_path.network_id();
                 let serialization_context = SerializationContext {
-                    keystore: self.keys_manager.clone(),
+                    keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver: self.label_resolver.clone(),
                     network_id,
                     profile_public_key: None,
@@ -3223,7 +3255,7 @@ impl NodeDelegate for Node {
 #[async_trait]
 impl KeysDelegate for Node {
     async fn ensure_symmetric_key(&self, key_name: &str) -> Result<ArcValue> {
-        let mut keys_manager = self.keys_manager_mut.lock().await;
+        let mut keys_manager = self.keys_manager.write().unwrap();
         let key = keys_manager.ensure_symmetric_key(key_name)?;
         Ok(ArcValue::new_bytes(key))
     }
@@ -3363,7 +3395,7 @@ impl Clone for Node {
             label_resolver: self.label_resolver.clone(),
             registry_version: self.registry_version.clone(),
             keys_manager: self.keys_manager.clone(),
-            keys_manager_mut: self.keys_manager_mut.clone(),
+
             service_tasks: self.service_tasks.clone(),
             local_node_info: self.local_node_info.clone(),
             retained_events: self.retained_events.clone(),

@@ -212,7 +212,7 @@ fn negative_unknown_category_byte() {
 
 #[test]
 fn negative_missing_decryptor_for_t() -> Result<()> {
-    let (mobile_ks, _node_ks, resolver, network_id, profile_pk) = build_test_context()?;
+    let (mobile_ks, node_ks, resolver, network_id, profile_pk) = build_test_context()?;
 
     let items = vec![TestProfile {
         id: "1".into(),
@@ -230,7 +230,7 @@ fn negative_missing_decryptor_for_t() -> Result<()> {
     // Serialize with element encryption
     let ser = val.serialize(Some(&ctx))?;
     // Deserialize with keystore so decrypt path can run
-    let de = ArcValue::deserialize(&ser, Some(mobile_ks.clone()))?;
+    let de = ArcValue::deserialize(&ser, Some(node_ks.clone()))?;
     // Ask for WrongPlain (no decryptor registered) -> should error
     let err = de.as_typed_list_ref::<WrongPlain>().unwrap_err();
     assert!(format!("{err}").contains("No decryptor registered"));

@@ -15,7 +15,7 @@ use runar_transporter::{
     transport::QuicTransportOptions,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Create a test configuration with certificates, user root keys, network and node keys installed.
 ///
@@ -83,11 +83,8 @@ pub fn create_node_test_config() -> Result<NodeConfig> {
     let (node_keys_manager, _node_id) =
         create_test_node_keys(&mut mobile_keys_manager, &default_network_id)?;
 
-    let key_state = node_keys_manager.export_state();
-    let key_state_bytes = bincode::serialize(&key_state)?;
-
-    let config =
-        NodeConfig::new(default_network_id.clone()).with_key_manager_state(key_state_bytes);
+    let config = NodeConfig::new(default_network_id.clone())
+        .with_key_manager(Arc::new(RwLock::new(node_keys_manager)));
 
     Ok(config)
 }
@@ -117,9 +114,6 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
             .get_quic_certificate_config()
             .expect("Failed to get QUIC certificates for node1");
 
-        let key_state = node_keys_manager.export_state();
-        let key_state_bytes = bincode::serialize(&key_state)?;
-
         let transport_options = QuicTransportOptions::new()
             .with_certificates(node_cert_config.certificate_chain)
             .with_private_key(node_cert_config.private_key)
@@ -133,7 +127,7 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
         };
 
         let config = NodeConfig::new(default_network_id.clone())
-            .with_key_manager_state(key_state_bytes)
+            .with_key_manager(Arc::new(RwLock::new(node_keys_manager)))
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)
                     .with_discovery_options(discovery_options)
@@ -291,9 +285,8 @@ impl MobileSimulator {
             .get_quic_certificate_config()
             .expect("Failed to get QUIC certificates for node");
 
-        // Export state and create config
-        let key_state = node_key_manager.export_state();
-        let key_state_bytes = bincode::serialize(&key_state)?;
+        // Get node ID before moving node_key_manager
+        let node_id = node_key_manager.get_node_id();
 
         // Create transport options with QUIC certificates
         let transport_options = QuicTransportOptions::new()
@@ -304,7 +297,7 @@ impl MobileSimulator {
         let discovery_options = DiscoveryOptions::default();
 
         let config = NodeConfig::new(self.master.network_id.clone())
-            .with_key_manager_state(key_state_bytes)
+            .with_key_manager(Arc::new(RwLock::new(node_key_manager)))
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)
                     .with_discovery_options(discovery_options)
@@ -312,8 +305,7 @@ impl MobileSimulator {
             );
 
         self.logger.info(format!(
-            "✅ Node configuration created for node: {} with network transport",
-            node_key_manager.get_node_id()
+            "✅ Node configuration created for node: {node_id} with network transport"
         ));
 
         Ok(config)
