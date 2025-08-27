@@ -11,6 +11,7 @@ use runar_macros_common::log_info;
 use runar_node::{Node, NodeConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use crate::config::NodeConfig as CliNodeConfig;
 use crate::key_store::OsKeyStore;
@@ -44,7 +45,7 @@ impl StartCommand {
         );
 
         // Create Runar node configuration using production constructor
-        let runar_config = self.create_runar_config(&config, &node_key_manager)?;
+        let runar_config = self.create_runar_config(&config, node_key_manager)?;
 
         // Create and start the node
         let node = Node::new(runar_config)
@@ -124,19 +125,14 @@ impl StartCommand {
     fn create_runar_config(
         &self,
         config: &CliNodeConfig,
-        node_key_manager: &NodeKeyManager,
+        node_key_manager: NodeKeyManager,
     ) -> Result<NodeConfig> {
-        // Export the current state for the Runar node
-        let node_state = node_key_manager.export_state();
-        let serialized_state = serde_cbor::to_vec(&node_state)
-            .context("Failed to serialize node state for Runar config")?;
-
-        // Create Runar node configuration using production constructor
+        // Create Runar node configuration using the new approach
         let mut runar_config = NodeConfig::new(config.default_network_id.clone());
         runar_config = runar_config
             .with_additional_networks(config.network_ids.clone())
             .with_request_timeout(config.request_timeout_ms)
-            .with_key_manager_state(serialized_state);
+            .with_key_manager(Arc::new(RwLock::new(node_key_manager)));
 
         Ok(runar_config)
     }

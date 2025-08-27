@@ -995,6 +995,7 @@ impl MobileKeyManager {
     }
 }
 
+// Implementation of EnvelopeCrypto for MobileKeyManager
 impl crate::EnvelopeCrypto for MobileKeyManager {
     fn encrypt_with_envelope(
         &self,

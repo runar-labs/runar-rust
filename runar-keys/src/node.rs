@@ -857,16 +857,6 @@ impl NodeKeyManager {
         self.decrypt_key_with_ecdsa(encrypted_message, &self.node_key_pair)
     }
 
-    /// Create an envelope key for per-object encryption
-    /// Envelope keys are ephemeral - generated fresh for each object
-    pub fn create_envelope_key(&self) -> Result<Vec<u8>> {
-        // Generate a fresh 32-byte symmetric key for envelope encryption
-        use rand::RngCore;
-        let mut envelope_key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut envelope_key);
-        Ok(envelope_key.to_vec())
-    }
-
     /// Create an envelope‐encrypted payload. For the node side we only
     /// support network recipients – any supplied `profile_ids` will be
     /// ignored. This signature exists solely to allow generic code (e.g.
@@ -878,7 +868,7 @@ impl NodeKeyManager {
         network_id: Option<&String>,
         profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        let envelope_key = self.create_envelope_key()?;
+        let envelope_key = self.generate_envelope_key()?;
 
         // Encrypt data with envelope key
         let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
@@ -929,6 +919,33 @@ impl NodeKeyManager {
     pub fn install_profile_public_key(&mut self, public_key: Vec<u8>) {
         let pid = compact_id(&public_key);
         self.profile_public_keys.insert(pid, public_key);
+    }
+}
+
+// Implementation of EnvelopeCrypto for NodeKeyManager
+impl crate::EnvelopeCrypto for NodeKeyManager {
+    fn encrypt_with_envelope(
+        &self,
+        data: &[u8],
+        network_id: Option<&str>,
+        _profile_public_keys: Vec<Vec<u8>>,
+    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
+        // Nodes only support network-wide encryption.
+        self.create_envelope_for_network(data, network_id)
+    }
+
+    fn decrypt_envelope_data(
+        &self,
+        env: &crate::mobile::EnvelopeEncryptedData,
+    ) -> crate::Result<Vec<u8>> {
+        // Guard: ensure the encrypted key is present
+        if env.network_encrypted_key.is_empty() {
+            return Err(crate::error::KeyError::DecryptionError(
+                "Envelope missing network_encrypted_key".into(),
+            ));
+        }
+
+        NodeKeyManager::decrypt_envelope_data(self, env)
     }
 }
 
@@ -1035,31 +1052,5 @@ impl NodeKeyManager {
             persistence: None,
             auto_persist: true,
         })
-    }
-}
-
-impl crate::EnvelopeCrypto for NodeKeyManager {
-    fn encrypt_with_envelope(
-        &self,
-        data: &[u8],
-        network_id: Option<&str>,
-        _profile_public_keys: Vec<Vec<u8>>,
-    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        // Nodes only support network-wide encryption.
-        self.create_envelope_for_network(data, network_id)
-    }
-
-    fn decrypt_envelope_data(
-        &self,
-        env: &crate::mobile::EnvelopeEncryptedData,
-    ) -> crate::Result<Vec<u8>> {
-        // Guard: ensure the encrypted key is present
-        if env.network_encrypted_key.is_empty() {
-            return Err(crate::error::KeyError::DecryptionError(
-                "Envelope missing network_encrypted_key".into(),
-            ));
-        }
-
-        NodeKeyManager::decrypt_envelope_data(self, env)
     }
 }
