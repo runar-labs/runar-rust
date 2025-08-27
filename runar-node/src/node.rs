@@ -46,14 +46,11 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
         &self,
         data: &[u8],
         network_id: Option<&str>,
-        profile_public_keys: Vec<Vec<u8>>,
+        _profile_public_keys: Vec<Vec<u8>>,
     ) -> KeyResult<runar_keys::mobile::EnvelopeEncryptedData> {
         let keys_manager = self.0.read().unwrap();
-        keys_manager.encrypt_with_envelope(
-            data,
-            network_id.map(|s| s.to_string()).as_ref(),
-            profile_public_keys,
-        )
+        // Use the original working approach: nodes only support network-wide encryption
+        keys_manager.create_envelope_for_network(data, network_id)
     }
 
     fn decrypt_envelope_data(

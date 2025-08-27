@@ -858,14 +858,7 @@ impl NodeKeyManager {
     }
 
     /// Create an envelope key for per-object encryption
-    /// Envelope keys are ephemeral - generated fresh for each object
-    pub fn create_envelope_key(&self) -> Result<Vec<u8>> {
-        // Generate a fresh 32-byte symmetric key for envelope encryption
-        use rand::RngCore;
-        let mut envelope_key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut envelope_key);
-        Ok(envelope_key.to_vec())
-    }
+
 
     /// Create an envelope‐encrypted payload. For the node side we only
     /// support network recipients – any supplied `profile_ids` will be
@@ -878,7 +871,7 @@ impl NodeKeyManager {
         network_id: Option<&String>,
         profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        let envelope_key = self.create_envelope_key()?;
+        let envelope_key = self.generate_envelope_key()?;
 
         // Encrypt data with envelope key
         let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
