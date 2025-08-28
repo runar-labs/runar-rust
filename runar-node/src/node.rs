@@ -18,8 +18,8 @@ use runar_serializer::{ArcValue, SerializationContext};
 use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
 use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
 use runar_transporter::transport::{
-    EventCallback, EventMessage, GetLocalNodeInfoCallback, PeerConnectedCallback,
-    PeerDisconnectedCallback, RequestCallback, RequestMessage, ResponseMessage,
+    EventCallback, GetLocalNodeInfoCallback, NetworkMessage, NetworkMessagePayloadItem, PeerConnectedCallback,
+    PeerDisconnectedCallback, RequestCallback, MESSAGE_TYPE_RESPONSE,
 };
 use runar_transporter::{
     DiscoveryOptions, MulticastDiscovery, NetworkTransport, NodeDiscovery, QuicTransport,
@@ -59,6 +59,11 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
     ) -> KeyResult<Vec<u8>> {
         let keys_manager = self.0.read().unwrap();
         keys_manager.decrypt_envelope_data(env)
+    }
+
+    fn get_network_public_key(&self, network_id: &str) -> KeyResult<Vec<u8>> {
+        let keys_manager = self.0.read().unwrap();
+        keys_manager.get_network_public_key(network_id)
     }
 }
 
@@ -240,11 +245,11 @@ impl NodeConfig {
     ///     .with_label_resolver_config(LabelResolverConfig {
     ///         label_mappings: std::collections::HashMap::from([
     ///             ("system".to_string(), LabelValue {
-    ///                 network_public_key: Some(system_network_key),
+    ///                 network_public_key: Some(vec![1, 2, 3, 4]), // Example network key
     ///                 user_key_spec: None,
     ///             }),
     ///             ("current_user".to_string(), LabelValue {
-    ///                 network_public_key: Some(default_network_key),
+    ///                 network_public_key: Some(vec![5, 6, 7, 8]), // Example network key
     ///                 user_key_spec: Some(LabelKeyword::CurrentUser),
     ///             }),
     ///         ]),
@@ -1557,15 +1562,15 @@ impl Node {
                 });
 
                 let self_arc_for_callback = self_arc.clone();
-                let request_callback: RequestCallback = Arc::new(move |request: RequestMessage| {
+                let request_callback: RequestCallback = Arc::new(move |msg: NetworkMessage| {
                     let node = self_arc_for_callback.clone();
-                    Box::pin(async move { node.handle_network_request(request).await })
+                    Box::pin(async move { node.handle_network_request(msg).await })
                 });
 
                 let self_arc_for_callback = self_arc.clone();
-                let event_callback: EventCallback = Arc::new(move |event: EventMessage| {
+                let event_callback: EventCallback = Arc::new(move |msg: NetworkMessage| {
                     let node = self_arc_for_callback.clone();
-                    Box::pin(async move { node.handle_network_event(event).await })
+                    Box::pin(async move { node.handle_network_event(msg).await })
                 });
 
                 let cert_config = self
@@ -1847,11 +1852,11 @@ impl Node {
     }
 
     /// Handle a network request
-    async fn handle_network_request(&self, message: RequestMessage) -> Result<ResponseMessage> {
-        log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_keys size: {profile_public_keys_size}", path=message.path, correlation_id=message.correlation_id, profile_public_keys_size=message.profile_public_keys.len());
+    async fn handle_network_request(&self, msg: NetworkMessage) -> Result<NetworkMessage> {
+        log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_keys size: {profile_public_keys_size}", path=msg.payload.path, correlation_id=msg.payload.correlation_id, profile_public_keys_size=msg.payload.profile_public_keys.len());
 
         let payload = ArcValue::deserialize(
-            &message.payload_bytes,
+            &msg.payload.payload_bytes,
             Some(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone()))),
         )?;
         let params_option = if payload.is_null() {
@@ -1860,25 +1865,25 @@ impl Node {
             Some(payload)
         };
 
-        let topic_path = match TopicPath::from_full_path(&message.path) {
+        let topic_path = match TopicPath::from_full_path(&msg.payload.path) {
             Ok(tp) => tp,
             Err(e) => {
                 log_error!(
                     self.logger,
                     "[handle_network_request] Failed to parse topic path: {path} correlation_id: {correlation_id} : {e}",
-                    path=&message.path,
-                    correlation_id=message.correlation_id,
+                    path=&msg.payload.path,
+                    correlation_id=msg.payload.correlation_id,
                     e=e
                 );
                 return Err(anyhow!(
                     "Failed to parse topic path: {path} correlation_id: {correlation_id} : {e}",
-                    path = &message.path,
-                    correlation_id = message.correlation_id
+                    path = &msg.payload.path,
+                    correlation_id = msg.payload.correlation_id
                 ));
             }
         };
         let network_id = topic_path.network_id();
-        let profile_public_keys = message.profile_public_keys.clone();
+        let profile_public_keys = msg.payload.profile_public_keys.clone();
 
         // Resolve network ID to public key (needed for both success and error cases)
         let network_public_key = self
@@ -1889,12 +1894,13 @@ impl Node {
 
         match self.local_request(topic_path.as_str(), params_option).await {
             Ok(response) => {
-                log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=message.correlation_id);
+                log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=msg.payload.correlation_id);
 
-                // Create dynamic resolver with user context
+                // Create dynamic resolver with user context for response serialization
+                // For response serialization, we can use a system-only resolver since we're not encrypting new data
                 let resolver = runar_serializer::traits::create_context_label_resolver(
                     &self.system_label_config,
-                    Some(&profile_public_keys),
+                    &profile_public_keys, // Empty vec is fine for system-only resolver
                 )?;
 
                 let serialization_context = runar_serializer::traits::SerializationContext {
@@ -1907,20 +1913,28 @@ impl Node {
                 // Serialize the response data
                 let serialized_data = response.serialize(Some(&serialization_context))?;
 
-                Ok(ResponseMessage {
-                    correlation_id: message.correlation_id,
-                    payload_bytes: serialized_data,
-                    network_public_key: Some(network_public_key.clone()),
-                    profile_public_keys,
+                // Create response NetworkMessage
+                Ok(NetworkMessage {
+                    source_node_id: self.node_id.clone(),
+                    destination_node_id: msg.source_node_id,
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payload: NetworkMessagePayloadItem {
+                        path: msg.payload.path.clone(),
+                        payload_bytes: serialized_data,
+                        correlation_id: msg.payload.correlation_id.clone(),
+                        profile_public_keys,
+                        network_public_key: Some(network_public_key.clone()),
+                    },
                 })
             }
             Err(e) => {
-                log_error!(self.logger, "❌ [handle_network_request] Local request failed correlation_id: {correlation_id} - Error: {e}", correlation_id=message.correlation_id);
+                log_error!(self.logger, "❌ [handle_network_request] Local request failed correlation_id: {correlation_id} - Error: {e}", correlation_id=msg.payload.correlation_id);
 
-                // Create dynamic resolver with user context
+                // Create dynamic resolver with user context for error response serialization
+                // For error response serialization, we can use a system-only resolver since we're not encrypting new data
                 let resolver = runar_serializer::traits::create_context_label_resolver(
                     &self.system_label_config,
-                    Some(&profile_public_keys),
+                    &profile_public_keys, // Empty vec is fine for system-only resolver
                 )?;
 
                 let serialization_context = runar_serializer::traits::SerializationContext {
@@ -1942,11 +1956,18 @@ impl Node {
                 // Serialize the error value
                 let serialized_error = error_value.serialize(Some(&serialization_context))?;
 
-                Ok(ResponseMessage {
-                    correlation_id: message.correlation_id,
-                    payload_bytes: serialized_error,
-                    network_public_key: Some(network_public_key.clone()),
-                    profile_public_keys,
+                // Create error response NetworkMessage
+                Ok(NetworkMessage {
+                    source_node_id: self.node_id.clone(),
+                    destination_node_id: msg.source_node_id,
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payload: NetworkMessagePayloadItem {
+                        path: msg.payload.path.clone(),
+                        payload_bytes: serialized_error,
+                        correlation_id: msg.payload.correlation_id.clone(),
+                        profile_public_keys,
+                        network_public_key: Some(network_public_key.clone()),
+                    },
                 })
             }
         }
@@ -2011,21 +2032,21 @@ impl Node {
     // } // Closes async fn handle_network_response
 
     /// Handle a network event
-    async fn handle_network_event(&self, message: EventMessage) -> Result<()> {
+    async fn handle_network_event(&self, msg: NetworkMessage) -> Result<()> {
         log_debug!(
             self.logger,
             "[handle_network_event] correlation_id: {correlation_id}",
-            correlation_id = message.correlation_id
+            correlation_id = msg.payload.correlation_id
         );
 
         // Create topic path
-        let topic_path = match TopicPath::from_full_path(&message.path) {
+        let topic_path = match TopicPath::from_full_path(&msg.payload.path) {
             Ok(tp) => tp,
             Err(e) => {
-                log_error!(self.logger, "[handle_network_event] Invalid topic path for event correlation_id: {correlation_id} error: {e}", correlation_id=message.correlation_id, e=e);
+                log_error!(self.logger, "[handle_network_event] Invalid topic path for event correlation_id: {correlation_id} error: {e}", correlation_id=msg.payload.correlation_id, e=e);
                 return Err(anyhow!(
                     "Invalid topic path for event correlation_id: {correlation_id} error: {e}",
-                    correlation_id = message.correlation_id,
+                    correlation_id = msg.payload.correlation_id,
                     e = e
                 ));
             }
@@ -2033,7 +2054,7 @@ impl Node {
 
         // Deserialize the payload data
         let payload = ArcValue::deserialize(
-            &message.payload_bytes,
+            &msg.payload.payload_bytes,
             Some(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone()))),
         )?;
 
@@ -2070,8 +2091,8 @@ impl Node {
         for (subscriber_id, callback, _options) in subscribers {
             let ctx = event_context.clone();
             let logger_arc = self.logger.clone();
-            let correlation_id = message.correlation_id.clone();
-            let path = message.path.clone();
+            let correlation_id = msg.payload.correlation_id.clone();
+            let path = msg.payload.path.clone();
             let payload_option = payload_option.clone();
             delivery_tasks.push(tokio::spawn(async move {
                 log_debug!(logger_arc, "[handle_network_event] delivering event to subscriber correlation_id: {correlation_id} subscriber_id: {subscriber_id} path: {path}");
@@ -2085,7 +2106,7 @@ impl Node {
         for task in delivery_tasks {
             let result = task.await;
             if let Err(e) = result {
-                log_error!(self.logger, "[handle_network_event] error in delivery task correlation_id: {correlation_id} error: {e}", correlation_id=message.correlation_id, e=e);
+                log_error!(self.logger, "[handle_network_event] error in delivery task correlation_id: {correlation_id} error: {e}", correlation_id=msg.payload.correlation_id, e=e);
             }
         }
 
@@ -2130,9 +2151,11 @@ impl Node {
 
             // Execute the handler and return result
             return handler(payload, context).await;
-        } else {
-            Err(anyhow!("No local handler found for topic: {topic_path}"))
         }
+
+        // No local handler found - try remote handlers
+        self.remote_request(topic_path.as_str(), payload, vec![])
+            .await
     }
 
     /// Handle a request for a specific action - Stable API DO NOT CHANGE UNLESS EXPLICITLY ASKED TO DO SO!
@@ -2154,6 +2177,7 @@ impl Node {
 
         log_debug!(self.logger, "Processing request: {topic_path}");
 
+
         // First check local service state - if no state exists, no local service exists
         let service_topic = TopicPath::new_service(&self.network_id, &topic_path.service_path());
         let service_state = self
@@ -2172,7 +2196,7 @@ impl Node {
                 );
                 // Try remote handlers instead
                 match self
-                    .remote_request(topic_path.as_str(), request_payload_av)
+                    .remote_request(topic_path.as_str(), request_payload_av, vec![])
                     .await
                 {
                     Ok(response) => return Ok(response),
@@ -2213,11 +2237,11 @@ impl Node {
         }
 
         // No local handler found - try remote handlers
-        self.remote_request(topic_path.as_str(), request_payload_av)
+        self.remote_request(topic_path.as_str(), request_payload_av, vec![])
             .await
     }
 
-    pub async fn remote_request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    pub async fn remote_request<P>(&self, path: &str, payload: Option<P>, profile_public_keys: Vec<Vec<u8>>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -2260,9 +2284,9 @@ impl Node {
                 topic_path
             );
 
-            // Create request context
-            let context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
+            // Create request context with profile public keys
+            let context = RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
+                .with_user_profile_public_keys(profile_public_keys);
 
             // For remote handlers, we don't have the registration path
             // In the future, we should enhance the remote handler registry to include registration paths
@@ -2560,9 +2584,10 @@ impl Node {
                 .unwrap()
                 .get_network_public_key(&network_id)?;
             // Create dynamic resolver for remote subscription (system context)
+            let empty_profile_keys = vec![];
             let resolver = runar_serializer::traits::create_context_label_resolver(
                 &self.system_label_config,
-                None, // No user context for system operations
+                &empty_profile_keys, // No user context for system operations
             )?;
 
             let serialization_context = SerializationContext {
@@ -2777,9 +2802,10 @@ impl Node {
                     .unwrap()
                     .get_network_public_key(&network_id)?;
                 // Create dynamic resolver for remote subscription (system context)
+                let empty_profile_keys = vec![];
                 let resolver = runar_serializer::traits::create_context_label_resolver(
                     &self.system_label_config,
-                    None, // No user context for system operations
+                    &empty_profile_keys, // No user context for system operations
                 )?;
 
                 let serialization_context = SerializationContext {

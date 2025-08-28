@@ -48,7 +48,8 @@ fn main() -> anyhow::Result<()> {
 
     // 3. Create resolver without user context (system context)
     println!("Creating resolver for system context (no user)...");
-    let system_resolver = create_context_label_resolver(&system_config, None)?;
+    let empty_profile_keys = vec![];
+    let system_resolver = create_context_label_resolver(&system_config, &empty_profile_keys)?;
     
     println!("Available labels: {:?}", system_resolver.available_labels());
     
@@ -69,7 +70,7 @@ fn main() -> anyhow::Result<()> {
     // 4. Create resolver with user context
     println!("Creating resolver for user context...");
     let user_profile_keys = vec![vec![100, 101, 102], vec![103, 104, 105]];
-    let user_resolver = create_context_label_resolver(&system_config, Some(&user_profile_keys))?;
+    let user_resolver = create_context_label_resolver(&system_config, &user_profile_keys)?;
     
     println!("Available labels: {:?}", user_resolver.available_labels());
     

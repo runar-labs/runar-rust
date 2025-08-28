@@ -49,11 +49,17 @@ async fn main() -> Result<()> {
     // Simple handlers; client mostly initiates request and event
     let request_handler: RequestCallback = Arc::new(move |_req| {
         Box::pin(async move {
-            Ok(runar_transporter::transport::ResponseMessage {
-                correlation_id: "".to_string(),
-                payload_bytes: vec![],
-                network_public_key: None,
-                profile_public_key: vec![],
+            Ok(runar_transporter::transport::NetworkMessage {
+                source_node_id: String::new(),
+                destination_node_id: String::new(),
+                message_type: runar_transporter::transport::MESSAGE_TYPE_RESPONSE,
+                payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                    path: String::new(),
+                    correlation_id: "".to_string(),
+                    payload_bytes: vec![],
+                    network_public_key: None,
+                    profile_public_keys: vec![],
+                },
             })
         })
     });
@@ -77,7 +83,7 @@ async fn main() -> Result<()> {
         .with_event_callback(event_handler)
         .with_logger(logger.clone())
         .with_keystore(keystore)
-        .with_label_resolver(label_resolver)
+        .with_label_resolver_config(label_resolver)
         .with_response_cache_ttl(Duration::from_secs(2));
 
     let transport = Arc::new(QuicTransport::new(opts).map_err(|e| anyhow!("{e}"))?);

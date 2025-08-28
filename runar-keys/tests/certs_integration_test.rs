@@ -635,3 +635,84 @@ fn test_symmetric_key_management() {
     let storage_key = node_manager.get_storage_key();
     assert_eq!(storage_key.len(), 32);
 }
+
+/// Test the specific scenario: encryption with network keys + empty profile keys array
+/// This is the exact scenario that's failing in our runtime
+#[tokio::test]
+async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
+    println!("🔒 Testing encryption with network keys + empty profile keys array");
+
+    let mobile_logger = create_test_logger();
+    mobile_logger.set_node_id("mobile".to_string());
+    let node_logger = create_test_logger();
+    node_logger.set_node_id("node".to_string());
+
+    let mut mobile = MobileKeyManager::new(mobile_logger)?;
+    let mut node = NodeKeyManager::new(node_logger)?;
+
+    // Issue certificate for the node (required for network key encryption)
+    let setup_token = node.generate_csr()?;
+    let cert_message = mobile.process_setup_token(&setup_token)?;
+    node.install_certificate(cert_message)?;
+
+    // Initialize user root key (required for envelope encryption)
+    let user_root_public_key = mobile.initialize_user_root_key()?;
+    println!("   ✅ User root key initialized: {} bytes", user_root_public_key.len());
+
+    // Generate network key
+    let network_key = mobile.generate_network_data_key()?;
+    let network_id = network_key.clone();
+    println!("   Network ID: {network_id}");
+
+    // Install network key on node
+    let token = node.generate_csr()?;
+    let network_key_msg = mobile.create_network_key_message(&network_key, &token.node_agreement_public_key)?;
+    node.install_network_key(network_key_msg)?;
+    println!("   ✅ Network key installed on node");
+
+    let test_data = b"This is test data for network-only encryption with empty profile keys";
+
+    // Test 1: Encrypt with network key + EMPTY profile keys array
+    println!("   🔒 Testing encryption with network key + empty profile keys array");
+    let network_public_key = mobile.get_network_public_key(&network_key)?;
+    
+    let envelope_data = mobile.encrypt_with_envelope(
+        test_data,
+        Some(&network_public_key),
+        vec![], // EMPTY profile keys array - this is our failing scenario
+    )?;
+    
+    println!("   ✅ Encryption successful with empty profile keys array");
+    println!("      Network ID: {:?}", envelope_data.network_id);
+    println!("      Profile encrypted keys count: {}", envelope_data.profile_encrypted_keys.len());
+    println!("      Envelope data size: {} bytes", envelope_data.encrypted_data.len());
+
+    // Test 2: Decrypt with network key (node should be able to decrypt)
+    println!("   🔓 Testing decryption with network key");
+    let decrypted_by_node = node.decrypt_envelope_data(&envelope_data)?;
+    assert_eq!(test_data.to_vec(), decrypted_by_node);
+    println!("   ✅ Node successfully decrypted using network key");
+
+    // Test 3: Decrypt with network key from mobile side
+    println!("   🔓 Testing decryption with network key from mobile");
+    let decrypted_by_mobile = mobile.decrypt_with_network(&envelope_data)?;
+    assert_eq!(test_data.to_vec(), decrypted_by_mobile);
+    println!("   ✅ Mobile successfully decrypted using network key");
+
+    // Test 4: Verify that trying to decrypt with any profile key fails (since none were provided)
+    println!("   🚫 Testing that profile key decryption fails (expected behavior)");
+    let fake_profile_id = "fake-profile-id";
+    let profile_decrypt_result = mobile.decrypt_with_profile(&envelope_data, fake_profile_id);
+    assert!(profile_decrypt_result.is_err());
+    println!("   ✅ Correctly failed to decrypt with profile key (as expected)");
+
+    println!("   🎉 Network-only encryption with empty profile keys test completed successfully!");
+    println!("   📊 Summary:");
+    println!("      • Network key: present");
+    println!("      • Profile keys: 0 (empty array)");
+    println!("      • Encryption: ✅ successful");
+    println!("      • Network decryption: ✅ successful");
+    println!("      • Profile decryption: ✅ correctly fails");
+
+    Ok(())
+}

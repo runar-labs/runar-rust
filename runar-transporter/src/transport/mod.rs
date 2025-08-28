@@ -192,35 +192,12 @@ pub type PeerDisconnectedCallback = Arc<dyn Fn(String) -> BoxFuture<'static, ()>
 pub type GetLocalNodeInfoCallback =
     Arc<dyn Fn() -> BoxFuture<'static, Result<NodeInfo>> + Send + Sync>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestMessage {
-    pub path: String,
-    pub correlation_id: String,
-    pub payload_bytes: Vec<u8>,
-    pub network_public_key: Option<Vec<u8>>,
-    pub profile_public_keys: Vec<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseMessage {
-    pub correlation_id: String,
-    pub payload_bytes: Vec<u8>,
-    pub network_public_key: Option<Vec<u8>>,
-    pub profile_public_keys: Vec<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventMessage {
-    pub path: String,
-    pub correlation_id: String,
-    pub payload_bytes: Vec<u8>,
-    pub network_public_key: Option<Vec<u8>>,
-}
+// REMOVED: RequestMessage, ResponseMessage, EventMessage - using NetworkMessage directly
 
 pub type RequestCallback =
-    Arc<dyn Fn(RequestMessage) -> BoxFuture<'static, Result<ResponseMessage>> + Send + Sync>;
+    Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<NetworkMessage>> + Send + Sync>;
 
-pub type EventCallback = Arc<dyn Fn(EventMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+pub type EventCallback = Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]

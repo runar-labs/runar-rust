@@ -29,11 +29,14 @@ use crate::fixtures::math_service::MathService;
 #[tokio::test]
 async fn test_remote_action_call() -> Result<()> {
     // Configure logging to ensure test logs are displayed
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
     logging_config.apply();
 
     // Set up logger
     let logger = Arc::new(Logger::new_root(Component::Custom("remote_action_test")));
+    
+    // Force debug logging for this test
+    logger.debug("🔍 DEBUG LOGGING ENABLED - Test starting with debug level");
 
     let configs =
         create_networked_node_test_config(2).expect("Failed to create multiple node test configs");
@@ -126,6 +129,7 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("✅ Subscription registration delay complete");
 
     // Test 1: Call math1/add service (on node1) from node2
+    logger.debug("🔍 DEBUG: About to call math1/add service from node2 to node1");
     logger.debug("📤 Testing remote action call from node2 to node1 (math1/add)...");
 
     let response_av = node2

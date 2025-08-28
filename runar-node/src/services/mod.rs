@@ -159,7 +159,7 @@ impl LifecycleContext {
             .debug(format!("Making request to processed path: {full_topic}"));
 
         self.node_delegate
-            .remote_request::<P>(&full_topic, payload)
+            .remote_request::<P>(&full_topic, payload, vec![])
             .await
     }
 

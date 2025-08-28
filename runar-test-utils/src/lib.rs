@@ -9,7 +9,6 @@ use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
 use runar_node::NodeConfig;
 use runar_serializer::traits::{
-    ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo, 
     LabelResolverConfig, LabelValue, LabelKeyword, create_context_label_resolver, LabelResolver
 };
 use runar_transporter::{
@@ -43,7 +42,7 @@ pub fn create_test_label_resolver_config(
             }),
             // User-only label - no network key, only user keys
             ("private".to_string(), LabelValue {
-                network_public_key: None,
+                network_public_key: Some(network_public_key.clone()),
                 user_key_spec: Some(LabelKeyword::CurrentUser),
             }),
             // Search label - network key only
@@ -66,7 +65,8 @@ pub fn create_test_label_resolver(
     user_profile_keys: Option<Vec<Vec<u8>>>,
 ) -> Result<Arc<dyn LabelResolver>> {
     let config = create_test_label_resolver_config(network_public_key);
-    create_context_label_resolver(&config, user_profile_keys.as_ref().map(|v| v.as_slice()))
+    let profile_keys = user_profile_keys.unwrap_or_default();
+    create_context_label_resolver(&config, &profile_keys)
 }
 
 /// Create a test SerializationContext with dynamic resolver
@@ -75,7 +75,7 @@ pub fn create_test_serialization_context(
     network_public_key: Vec<u8>,
     user_profile_keys: Option<Vec<Vec<u8>>>,
 ) -> Result<runar_serializer::traits::SerializationContext> {
-    let resolver = create_test_label_resolver(network_public_key, user_profile_keys)?;
+    let resolver = create_test_label_resolver(network_public_key.clone(), user_profile_keys.clone())?;
     
     Ok(runar_serializer::traits::SerializationContext {
         keystore,
@@ -199,8 +199,15 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
             ..Default::default()
         };
 
+        // Create test label resolver config
+        let network_public_key = node_keys_manager.get_network_public_key(&default_network_id)?;
+        let label_config = create_test_label_resolver_config(network_public_key);
+
+
+
         let config = NodeConfig::new(default_network_id.clone())
             .with_key_manager(Arc::new(RwLock::new(node_keys_manager)))
+            .with_label_resolver_config(label_config)
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)
                     .with_discovery_options(discovery_options)
@@ -410,15 +417,17 @@ impl MobileSimulator {
         let system_config = create_test_label_resolver_config(self.master.network_public_key.clone());
 
         // Create mobile resolver (with user context)
+        let profile_keys_vec = profile_keys.values().cloned().collect::<Vec<_>>();
         let mobile_resolver = create_context_label_resolver(
             &system_config,
-            Some(&profile_keys.values().cloned().collect::<Vec<_>>()),
+            &profile_keys_vec,
         )?;
 
         // Create node resolver (system context only)
+        let empty_profile_keys = vec![];
         let node_resolver = create_context_label_resolver(
             &system_config,
-            None, // No user context
+            &empty_profile_keys, // No user context
         )?;
 
         self.logger.info("✅ Label resolvers created");

@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 // Removed custom certificate parsing; rely on rustls standard verification.
 
 use crate::discovery::multicast_discovery::PeerInfo;
-use crate::transport::{EventMessage, NetworkMessagePayloadItem, RequestMessage, ResponseMessage};
+
 use crate::transport::{GetLocalNodeInfoCallback, NetworkError, NetworkMessage, NetworkTransport};
 use runar_keys::NodeKeyManager;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -436,8 +436,10 @@ struct HandshakeData {
 fn encode_message(msg: &NetworkMessage) -> Result<Vec<u8>, NetworkError> {
     let mut buf = serde_cbor::to_vec(msg)
         .map_err(|e| NetworkError::MessageError(format!("failed to encode cbor: {e}")))?;
+    
     let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
     framed.append(&mut buf);
+    
     Ok(framed)
 }
 
@@ -1123,22 +1125,14 @@ impl QuicTransport {
     }
 
     async fn handle_event(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
-        let payload = msg.payload;
-        let event_msg = EventMessage {
-            path: payload.path,
-            correlation_id: payload.correlation_id,
-            payload_bytes: payload.payload_bytes,
-            network_public_key: payload.network_public_key,
-        };
-
         log_debug!(
             self.logger,
             "[handle_event] Processing event message correlation id: {correlation_id}",
-            correlation_id = event_msg.correlation_id
+            correlation_id = msg.payload.correlation_id
         );
 
-        let correlation_id = event_msg.correlation_id.clone();
-        (self.event_callback)(event_msg).await.map_err(|e| {
+        let correlation_id = msg.payload.correlation_id.clone();
+        (self.event_callback)(msg).await.map_err(|e| {
             log_error!(
                 self.logger,
                 "failed to handle event correlation id: {correlation_id } error: {e}"
@@ -1151,29 +1145,23 @@ impl QuicTransport {
 
     async fn handle_request(
         &self,
-        payload: NetworkMessagePayloadItem,
-    ) -> Result<ResponseMessage, NetworkError> {
-        let request_msg = RequestMessage {
-            path: payload.path,
-            correlation_id: payload.correlation_id,
-            payload_bytes: payload.payload_bytes,
-            network_public_key: payload.network_public_key,
-                            profile_public_keys: payload.profile_public_keys.clone(),
-        };
-
+        msg: NetworkMessage,
+    ) -> Result<NetworkMessage, NetworkError> {
         log_debug!(
             self.logger,
             "[handle_request] Processing request message correlation id: {correlation_id}",
-            correlation_id = request_msg.correlation_id
+            correlation_id = msg.payload.correlation_id
         );
-        let correlation_id = request_msg.correlation_id.clone();
-        let response = (self.request_callback)(request_msg).await.map_err(|e| {
+        let correlation_id = msg.payload.correlation_id.clone();
+        let response = (self.request_callback)(msg).await.map_err(|e| {
             log_error!(
                 self.logger,
                 "failed to handle request correlation id: {correlation_id } error: {e}"
             );
             NetworkError::TransportError(format!("failed to handle request: {e}"))
         })?;
+
+
 
         Ok(response)
     }
@@ -1340,7 +1328,10 @@ impl QuicTransport {
             let msg = self.read_message(&mut recv).await?;
 
             log_debug!(self.logger, "[bi_accept_loop] Received message: type={type}, source={source}, dest={dest}", 
-                     type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
+                     type=msg.message_type, 
+                     source=msg.source_node_id, 
+                     dest=msg.destination_node_id
+                     );
 
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
                 self.handle_handshake(
@@ -1378,25 +1369,29 @@ impl QuicTransport {
 
                 //if not cached, handle the request and send the response
                 let correlation_id = msg.payload.correlation_id.clone();
-                let profile_public_keys = msg.payload.profile_public_keys.clone();
-                let path = msg.payload.path.clone();
-                let response = self.handle_request(msg.payload).await?;
+                log_debug!(self.logger, "[bi_accept_loop] Handling request correlation_id: {correlation_id}", correlation_id=correlation_id);
+                let response = self.handle_request(msg.clone()).await?;
+                // response is already NetworkMessage, just update destination
                 let response_msg = NetworkMessage {
                     source_node_id: self.local_node_id.clone(),
                     destination_node_id: msg.source_node_id,
                     message_type: super::MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path,
-                        payload_bytes: response.payload_bytes,
-                        correlation_id: correlation_id.clone(),
-                        profile_public_keys,
-                        network_public_key: None, // Response doesn't need network context
-                    },
+                    payload: response.payload, // response.payload is NetworkMessagePayloadItem
                 };
+                
+                log_debug!(self.logger, "[bi_accept_loop] Built response message correlation_id: {correlation_id} response_payload_bytes: {response_len}", 
+                    correlation_id=correlation_id, 
+                    response_len=response_msg.payload.payload_bytes.len()
+                );
                 let now = Instant::now();
                 let response_msg_arc = Arc::new(response_msg);
                 self.response_cache
-                    .insert(correlation_id, (now, response_msg_arc.clone()));
+                    .insert(correlation_id.clone(), (now, response_msg_arc.clone()));
+                
+                log_debug!(self.logger, "[bi_accept_loop] Writing response message correlation_id: {correlation_id} response_payload_bytes: {response_len}", 
+                    correlation_id=correlation_id, 
+                    response_len=response_msg_arc.payload.payload_bytes.len()
+                );
                 self.write_message(&mut send, &response_msg_arc).await?;
                 send.finish()
                     .map_err(|e| {
@@ -1812,13 +1807,14 @@ impl NetworkTransport for QuicTransport {
     ) -> Result<Vec<u8>, NetworkError> {
         log_debug!(
             self.logger,
-            "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id}"
+            "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id} payload_bytes: {payload_len}",
+            payload_len = payload.len()
         );
 
         // Create dynamic resolver with user context from the request
         let resolver = runar_serializer::traits::create_context_label_resolver(
             &self.label_resolver_config,
-            Some(&profile_public_keys), // Use profile public keys as user context
+            &profile_public_keys, // Use profile public keys as user context
         ).map_err(|e| NetworkError::ConfigurationError(format!("Failed to create label resolver: {e}")))?;
 
         let _serialization_context = runar_serializer::traits::SerializationContext {
@@ -1837,12 +1833,25 @@ impl NetworkTransport for QuicTransport {
             message_type: super::MESSAGE_TYPE_REQUEST,
             payload: super::NetworkMessagePayloadItem {
                 path: topic_path.to_string(),
-                payload_bytes: payload,
+                payload_bytes: payload.clone(),
                 correlation_id: correlation_id.to_string(),
-                profile_public_keys,
+                profile_public_keys: profile_public_keys.clone(),
                 network_public_key: network_public_key.clone(),
             },
         };
+
+        log_debug!(
+            self.logger,
+            "[request] Built NetworkMessage - source: {source} dest: {dest} type: {msg_type} path: {path} payload_bytes: {payload_len} correlation_id: {corr_id}",
+            source = msg.source_node_id,
+            dest = msg.destination_node_id,
+            msg_type = msg.message_type,
+            path = msg.payload.path,
+            payload_len = msg.payload.payload_bytes.len(),
+            corr_id = msg.payload.correlation_id
+        );
+        
+
 
         let mut retry_count = 0;
         let response_msg = loop {
@@ -1858,6 +1867,7 @@ impl NetworkTransport for QuicTransport {
             .await
             .map_err(|_| NetworkError::TransportError("open_bi timeout".into()))??;
 
+            
             if let Err(e) = self.write_message(&mut send, &msg).await {
                 log_error!(
                     self.logger,
@@ -2360,9 +2370,10 @@ impl NetworkTransport for QuicTransport {
     fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver> {
         // Create a dynamic resolver on-demand with no user context (system context)
         // This is for backward compatibility - new code should create resolvers with proper context
+        let empty_profile_keys = vec![];
         runar_serializer::traits::create_context_label_resolver(
             &self.label_resolver_config,
-            None, // No user context for backward compatibility
+            &empty_profile_keys, // No user context for backward compatibility
         ).unwrap_or_else(|_| {
             // Fallback to empty resolver if creation fails
             Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(

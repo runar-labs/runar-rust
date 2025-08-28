@@ -303,7 +303,7 @@ impl RequestContext {
             .debug(format!("Making request to processed path: {full_path}"));
 
         self.node_delegate
-            .remote_request::<P>(&full_path, payload)
+            .remote_request::<P>(&full_path, payload, vec![])
             .await
     }
 

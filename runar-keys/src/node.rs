@@ -947,6 +947,10 @@ impl crate::EnvelopeCrypto for NodeKeyManager {
 
         NodeKeyManager::decrypt_envelope_data(self, env)
     }
+
+    fn get_network_public_key(&self, network_id: &str) -> crate::Result<Vec<u8>> {
+        NodeKeyManager::get_network_public_key(self, network_id)
+    }
 }
 
 /// Certificate information for the node

@@ -21,14 +21,15 @@ fn test_label_resolver_config_creation() {
     // Test validation
     assert!(runar_serializer::traits::ConfigurableLabelResolver::validate_label_config(&config).is_ok());
 
-    // Test resolver creation without user context
-    let resolver = create_context_label_resolver(&config, None).unwrap();
+    // Test resolver creation without user context (empty profile keys)
+    let empty_profile_keys = vec![];
+    let resolver = create_context_label_resolver(&config, &empty_profile_keys).unwrap();
     assert!(resolver.can_resolve("system"));
     assert!(resolver.can_resolve("current_user"));
 
     // Test resolver creation with user context
     let user_keys = vec![vec![10, 11, 12], vec![13, 14, 15]];
-    let resolver_with_user = create_context_label_resolver(&config, Some(&user_keys)).unwrap();
+    let resolver_with_user = create_context_label_resolver(&config, &user_keys).unwrap();
     
     // Verify current_user label gets user keys
     let current_user_info = resolver_with_user.resolve_label_info("current_user").unwrap().unwrap();

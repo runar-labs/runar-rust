@@ -1021,6 +1021,10 @@ impl crate::EnvelopeCrypto for MobileKeyManager {
         }
         self.decrypt_with_network(env)
     }
+
+    fn get_network_public_key(&self, network_id: &str) -> crate::Result<Vec<u8>> {
+        MobileKeyManager::get_network_public_key(self, network_id)
+    }
 }
 
 /// Statistics about the mobile key manager

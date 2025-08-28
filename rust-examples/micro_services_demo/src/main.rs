@@ -67,8 +67,8 @@ async fn main() -> Result<()> {
 
     // Demonstrate encryption flow with database
     encryption_demo::demonstrate_encryption_flow(
-        &mobile_resolver,
-        &node_resolver,
+        mobile_resolver,
+        node_resolver,
         "crud_db",
         &node,
         &logger,

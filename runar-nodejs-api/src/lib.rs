@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{MobileKeyManager /*, mobile::EnvelopeEncryptedData*/, NodeKeyManager};
 use runar_schemas::NodeInfo;
-use runar_serializer::traits::ConfigurableLabelResolver;
+
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
 use runar_transporter::NetworkTransport;
 use runar_transporter::NodeDiscovery;
@@ -39,7 +39,7 @@ struct KeysInner {
     persistence_dir: Option<String>,
     auto_persist: bool,
     logger: Arc<Logger>,
-    label_resolver: Option<Arc<dyn runar_serializer::traits::LabelResolver>>,
+    label_resolver_config: Option<Arc<runar_serializer::traits::LabelResolverConfig>>,
     local_node_info: Arc<Mutex<Option<NodeInfo>>>,
 }
 
@@ -56,7 +56,7 @@ impl Keys {
                 persistence_dir: None,
                 auto_persist: true,
                 logger,
-                label_resolver: None,
+                label_resolver_config: None,
                 local_node_info: Arc::new(Mutex::new(None)),
             })),
         }
@@ -501,11 +501,13 @@ impl Keys {
 
     #[napi]
     pub fn set_label_mapping(&self, mapping_cbor: Buffer) -> Result<()> {
-        let map: HashMap<String, runar_serializer::traits::LabelKeyInfo> =
+        let map: HashMap<String, runar_serializer::traits::LabelValue> =
             cbor::from_slice(&mapping_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
-        let resolver = Arc::new(ConfigurableLabelResolver::from_map(map));
+        let resolver_config = Arc::new(runar_serializer::traits::LabelResolverConfig {
+            label_mappings: map,
+        });
         let mut inner = self.inner.lock().unwrap();
-        inner.label_resolver = Some(resolver);
+        inner.label_resolver_config = Some(resolver_config);
         Ok(())
     }
 
@@ -754,7 +756,7 @@ type EventTsfn = ThreadsafeFunction<(String, Buffer)>;
 struct TransportInner {
     transport: Arc<QuicTransport>,
     pending:
-        AsyncMutex<HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>>,
+        AsyncMutex<HashMap<String, oneshot::Sender<runar_transporter::transport::NetworkMessage>>>,
 }
 
 #[napi]
@@ -762,7 +764,7 @@ impl Transport {
     #[napi(constructor)]
     pub fn new(keys: &Keys, options_cbor: Buffer) -> Result<Self> {
         // Extract shared NodeKeyManager and logger/resolver
-        let (km_arc, logger, resolver_arc, local_info_arc, node_pk) = {
+        let (km_arc, logger, resolver_config_arc, local_info_arc, node_pk) = {
             let mut guard = keys.inner.lock().unwrap();
             let km_arc: Arc<NodeKeyManager> = if let Some(shared) = guard.node_shared.as_ref() {
                 Arc::clone(shared)
@@ -774,17 +776,19 @@ impl Transport {
                 return Err(Error::from_reason("Node not init"));
             };
             let logger = guard.logger.clone();
-            let resolver_arc: Arc<dyn runar_serializer::traits::LabelResolver> =
-                if let Some(r) = guard.label_resolver.as_ref() {
+            let resolver_config_arc: Arc<runar_serializer::traits::LabelResolverConfig> =
+                if let Some(r) = guard.label_resolver_config.as_ref() {
                     Arc::clone(r)
                 } else {
-                    Arc::new(ConfigurableLabelResolver::from_map(HashMap::new()))
+                    Arc::new(runar_serializer::traits::LabelResolverConfig {
+                        label_mappings: HashMap::new(),
+                    })
                 };
             let node_pk = km_arc.get_node_public_key();
             (
                 km_arc,
                 logger,
-                resolver_arc,
+                resolver_config_arc,
                 guard.local_node_info.clone(),
                 node_pk,
             )
@@ -808,7 +812,7 @@ impl Transport {
         let event_tsfn: Arc<Mutex<Option<EventTsfn>>> = Arc::new(Mutex::new(None));
         let pending_map: Arc<
             AsyncMutex<
-                HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>,
+                HashMap<String, oneshot::Sender<runar_transporter::transport::NetworkMessage>>,
             >,
         > = Arc::new(AsyncMutex::new(HashMap::new()));
 
@@ -841,25 +845,31 @@ impl Transport {
         let request_cb: runar_transporter::transport::RequestCallback = {
             let event_tsfn = Arc::clone(&event_tsfn);
             let pending_map = Arc::clone(&pending_map);
-            Arc::new(move |req: runar_transporter::transport::RequestMessage| {
+            Arc::new(move |req: runar_transporter::transport::NetworkMessage| {
                 let event_tsfn = Arc::clone(&event_tsfn);
                 let pending_map = Arc::clone(&pending_map);
                 Box::pin(async move {
                     // If no JS listener registered, auto-echo to avoid hangs in tests
                     let maybe_tsfn_present = event_tsfn.lock().unwrap().is_some();
                     if !maybe_tsfn_present {
-                        return Ok(runar_transporter::transport::ResponseMessage {
-                            correlation_id: req.correlation_id,
-                            payload_bytes: req.payload_bytes,
-                            network_public_key: None,
-                            profile_public_key: req.profile_public_key,
+                        return Ok(runar_transporter::transport::NetworkMessage {
+                            source_node_id: String::new(),
+                            destination_node_id: String::new(),
+                            message_type: 5, // MESSAGE_TYPE_RESPONSE
+                            payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                                path: req.payload.path.clone(),
+                                payload_bytes: req.payload.payload_bytes.clone(),
+                                correlation_id: req.payload.correlation_id.clone(),
+                                network_public_key: None,
+                                profile_public_keys: req.payload.profile_public_keys.clone(),
+                            },
                         });
                     }
                     // Else, register oneshot and emit event for JS to complete
                     let (tx, rx) = oneshot::channel();
                     {
                         let mut map = pending_map.lock().await;
-                        map.insert(req.correlation_id.clone(), tx);
+                        map.insert(req.payload.correlation_id.clone(), tx);
                     }
                     if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
                         let payload = cbor::to_vec(&req)
@@ -877,7 +887,7 @@ impl Transport {
 
         let event_cb: runar_transporter::transport::EventCallback = {
             let event_tsfn = Arc::clone(&event_tsfn);
-            Arc::new(move |ev: runar_transporter::transport::EventMessage| {
+            Arc::new(move |ev: runar_transporter::transport::NetworkMessage| {
                 let event_tsfn = Arc::clone(&event_tsfn);
                 Box::pin(async move {
                     if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
@@ -915,7 +925,7 @@ impl Transport {
             .with_local_node_public_key(node_pk)
             .with_logger(logger)
             .with_key_manager(km_arc)
-            .with_label_resolver(resolver_arc)
+            .with_label_resolver_config(resolver_config_arc)
             .with_get_local_node_info(get_local_node_info)
             .with_request_callback(request_cb)
             .with_event_callback(event_cb)
@@ -944,11 +954,17 @@ impl Transport {
         let guard = self.inner.lock().unwrap();
         let mut map = guard.pending.blocking_lock();
         if let Some(sender) = map.remove(&request_id) {
-            let _ = sender.send(runar_transporter::transport::ResponseMessage {
-                correlation_id: String::new(),
-                payload_bytes: response_payload.to_vec(),
-                network_public_key: None,
-                profile_public_key: profile_pk.to_vec(),
+            let _ = sender.send(runar_transporter::transport::NetworkMessage {
+                source_node_id: String::new(),
+                destination_node_id: String::new(),
+                message_type: 5, // MESSAGE_TYPE_RESPONSE
+                payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                    path: String::new(),
+                    payload_bytes: response_payload.to_vec(),
+                    correlation_id: String::new(),
+                    network_public_key: None,
+                    profile_public_keys: vec![profile_pk.to_vec()],
+                },
             });
             Ok(())
         } else {
@@ -1016,7 +1032,7 @@ impl Transport {
                 payload.to_vec(),
                 &dest_peer_id,
                 None,
-                profile_pk.to_vec(),
+                vec![profile_pk.to_vec()],
             )
             .await
             .map_err(|e| Error::from_reason(format!("request failed: {e}")))?;

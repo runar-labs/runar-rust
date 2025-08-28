@@ -17,7 +17,7 @@ use runar_keys::{
     EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
-use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
+use runar_serializer::traits::{LabelResolverConfig};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
@@ -76,8 +76,8 @@ struct KeysInner {
     mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
     node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
 
-    // Optional platform-provided label resolver
-    label_resolver: Option<Arc<dyn LabelResolver>>,
+    // Optional platform-provided label resolver config
+    label_resolver_config: Option<Arc<LabelResolverConfig>>,
     // Local NodeInfo holder (push-updated from FFI)
     local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
     // Shared device keystore registered at FFI level
@@ -279,7 +279,7 @@ struct TransportInner {
         Mutex<
             std::collections::HashMap<
                 String,
-                oneshot::Sender<runar_transporter::transport::ResponseMessage>,
+                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
             >,
         >,
     >,
@@ -362,7 +362,7 @@ pub unsafe extern "C" fn rn_keys_set_label_mapping(
         return 1;
     }
     let slice = std::slice::from_raw_parts(mapping_cbor, len);
-    let mapping: std::collections::HashMap<String, LabelKeyInfo> =
+    let mapping: std::collections::HashMap<String, runar_serializer::traits::LabelValue> =
         match serde_cbor::from_slice(slice) {
             Ok(m) => m,
             Err(e) => {
@@ -374,8 +374,8 @@ pub unsafe extern "C" fn rn_keys_set_label_mapping(
                 return 2;
             }
         };
-    let resolver = runar_serializer::traits::ConfigurableLabelResolver::from_map(mapping);
-    inner.label_resolver = Some(Arc::new(resolver));
+    let resolver_config = runar_serializer::traits::LabelResolverConfig { label_mappings: mapping };
+    inner.label_resolver_config = Some(Arc::new(resolver_config));
     0
 }
 
@@ -2929,7 +2929,7 @@ fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
         logger,
         mobile_key_manager: None,
         node_key_manager: None,
-        label_resolver: None,
+        label_resolver_config: None,
         local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
         persistence_dir: None,
@@ -3573,7 +3573,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         Mutex<
             std::collections::HashMap<
                 String,
-                oneshot::Sender<runar_transporter::transport::ResponseMessage>,
+                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
             >,
         >,
     > = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -3602,19 +3602,19 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             );
             map.insert(
                 serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(req.path),
+                serde_cbor::Value::Text(req.payload.path.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(req.correlation_id),
+                serde_cbor::Value::Text(req.payload.correlation_id.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(req.payload_bytes),
+                serde_cbor::Value::Bytes(req.payload.payload_bytes.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("profile_public_key".into()),
-                serde_cbor::Value::Bytes(req.profile_public_key),
+                serde_cbor::Value::Bytes(req.payload.profile_public_keys.first().cloned().unwrap_or_default()),
             );
             let _ = req_tx
                 .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
@@ -3622,11 +3622,17 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
 
             match rx_resp.await {
                 Ok(resp) => Ok(resp),
-                Err(_) => Ok(runar_transporter::transport::ResponseMessage {
-                    correlation_id: String::new(),
-                    payload_bytes: Vec::new(),
-                    network_public_key: None,
-                    profile_public_key: Vec::new(),
+                Err(_) => Ok(runar_transporter::transport::NetworkMessage {
+                    source_node_id: String::new(),
+                    destination_node_id: String::new(),
+                    message_type: 5, // MESSAGE_TYPE_RESPONSE
+                    payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                        path: String::new(),
+                        payload_bytes: Vec::new(),
+                        correlation_id: String::new(),
+                        network_public_key: None,
+                        profile_public_keys: Vec::new(),
+                    },
                 }),
             }
         })
@@ -3648,15 +3654,15 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             );
             map.insert(
                 serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(ev.path),
+                serde_cbor::Value::Text(ev.payload.path.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(ev.correlation_id),
+                serde_cbor::Value::Text(ev.payload.correlation_id.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(ev.payload_bytes),
+                serde_cbor::Value::Bytes(ev.payload.payload_bytes.clone()),
             );
             let _ = ev_tx
                 .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
@@ -3665,9 +3671,9 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
-    // Attach platform-provided LabelResolver if present
-    if let Some(resolver) = keys_inner.label_resolver.clone() {
-        let _ = options.with_label_resolver(resolver);
+    // Attach platform-provided LabelResolverConfig if present
+    if let Some(resolver_config) = keys_inner.label_resolver_config.clone() {
+        let _ = options.with_label_resolver_config(resolver_config);
     }
     // Require local NodeInfo to be set before initializing transport
     if keys_inner.local_node_info.load().as_ref().is_none() {
@@ -4012,7 +4018,7 @@ pub unsafe extern "C" fn rn_transport_request(
     let t = (&*handle.inner).transport.clone();
     let events = (&*handle.inner).events_tx.clone();
     runtime().spawn(async move {
-        match t.request(&path, &cid, data, &peer, None, pk).await {
+        match t.request(&path, &cid, data, &peer, None, vec![pk]).await {
             Ok(resp) => {
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(
@@ -4128,11 +4134,17 @@ pub unsafe extern "C" fn rn_transport_complete_request(
     let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
     let mut map = runtime().block_on((&*handle.inner).pending.lock());
     if let Some(sender) = map.remove(&req_id) {
-        let _ = sender.send(runar_transporter::transport::ResponseMessage {
-            correlation_id: String::new(),
-            payload_bytes: data,
-            network_public_key: None,
-            profile_public_key: pk,
+        let _ = sender.send(runar_transporter::transport::NetworkMessage {
+            source_node_id: String::new(),
+            destination_node_id: String::new(),
+            message_type: 5, // MESSAGE_TYPE_RESPONSE
+            payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                path: String::new(),
+                payload_bytes: data,
+                correlation_id: String::new(),
+                network_public_key: None,
+                profile_public_keys: vec![pk],
+            },
         });
         0
     } else {

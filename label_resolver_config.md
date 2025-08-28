@@ -1982,3 +1982,595 @@ let serialization_context = SerializationContext {
 - **Performance testing**: Dynamic resolver creation benchmarks
 - **Security validation**: User context isolation testing
 - **Production deployment**: All architectural issues resolved
+
+## 🚀 **Phase 9: Message Structure Simplification - Eliminate Duplication**
+
+### **Executive Summary**
+
+**GOAL**: Eliminate all message duplication by removing `RequestMessage`, `ResponseMessage`, and `EventMessage` structures entirely and using `NetworkMessage` directly in all callbacks.
+
+**APPROACH**: Option 1 - Single Source of Truth
+- Remove `RequestMessage`, `ResponseMessage`, `EventMessage` completely
+- Use `NetworkMessage` directly in all callback interfaces
+- Eliminate data duplication between wrapper and payload
+- Clean, modern codebase with no legacy patterns
+
+**IMPACT**: **HIGH** - Major breaking changes across transport layer, traits, node layer, and all tests
+
+### **Current Duplication Analysis**
+
+#### **Message Structure Duplication**
+
+**CURRENT PROBLEMATIC STRUCTURE:**
+```rust
+// Top-level wrapper (NetworkMessage)
+pub struct NetworkMessage {
+    source_node_id: String,
+    destination_node_id: String,
+    message_type: u32,
+    payload: NetworkMessagePayloadItem,  // ← Contains all the data
+}
+
+// Duplicated wrapper structures (RequestMessage, ResponseMessage, EventMessage)
+pub struct RequestMessage {
+    path: String,                    // ← DUPLICATED from payload.path
+    correlation_id: String,          // ← DUPLICATED from payload.correlation_id
+    payload_bytes: Vec<u8>,         // ← DUPLICATED from payload.payload_bytes
+    network_public_key: Option<Vec<u8>>,  // ← DUPLICATED from payload.network_public_key
+    profile_public_keys: Vec<Vec<u8>>,    // ← DUPLICATED from payload.profile_public_keys
+}
+
+pub struct ResponseMessage {
+    correlation_id: String,          // ← DUPLICATED from payload.correlation_id
+    payload_bytes: Vec<u8>,         // ← DUPLICATED from payload.payload_bytes
+    network_public_key: Option<Vec<u8>>,  // ← DUPLICATED from payload.network_public_key
+    profile_public_keys: Vec<Vec<u8>>,    // ← DUPLICATED from payload.profile_public_keys
+}
+
+pub struct EventMessage {
+    path: String,                    // ← DUPLICATED from payload.path
+    correlation_id: String,          // ← DUPLICATED from payload.correlation_id
+    payload_bytes: Vec<u8>,         // ← DUPLICATED from payload.payload_bytes
+    network_public_key: Option<Vec<u8>>,  // ← DUPLICATED from payload.network_public_key
+    // MISSING: profile_public_keys field
+}
+```
+
+#### **Why This Happened**
+
+1. **Historical Evolution**: System started with simple message structures
+2. **API Design**: Someone thought "let's expose payload fields directly in wrapper"
+3. **Copy-Paste Development**: When adding encryption fields, copied to both levels
+4. **Lack of Architecture Review**: No one questioned the duplication
+5. **Inconsistent Field Population**: Some fields missing in EventMessage
+
+### **Proposed New Architecture**
+
+#### **Single Message Structure**
+```rust
+// ONLY ONE MESSAGE STRUCTURE - NetworkMessage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkMessage {
+    /// Source node identifier
+    pub source_node_id: String,
+    /// Destination node identifier (MUST be specified)
+    pub destination_node_id: String,
+    /// Message type (Request, Response, Event, etc.)
+    pub message_type: u32,
+    /// Single payload containing all message data
+    pub payload: NetworkMessagePayloadItem,
+}
+
+// Payload contains all the data - no duplication
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkMessagePayloadItem {
+    /// The path/topic associated with this payload
+    pub path: String,
+    /// The serialized value/payload data as bytes
+    pub payload_bytes: Vec<u8>,
+    /// Correlation ID for request/response matching
+    pub correlation_id: String,
+    /// Network public key for encryption context
+    pub network_public_key: Option<Vec<u8>>,
+    /// Profile public keys for user context
+    pub profile_public_keys: Vec<Vec<u8>>,
+}
+
+// REMOVED COMPLETELY:
+// - RequestMessage
+// - ResponseMessage  
+// - EventMessage
+```
+
+#### **Updated Callback Interfaces**
+```rust
+// OLD (with duplicated message types):
+pub type RequestCallback = Arc<dyn Fn(RequestMessage) -> BoxFuture<'static, Result<ResponseMessage>> + Send + Sync>;
+pub type EventCallback = Arc<dyn Fn(EventMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+
+// NEW (using NetworkMessage directly):
+pub type RequestCallback = Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<NetworkMessage>> + Send + Sync>;
+pub type EventCallback = Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+```
+
+### **Full Impact Analysis**
+
+#### **1. Transport Layer (runar-transporter) - HIGH IMPACT**
+
+**Files Affected:**
+- `runar-transporter/src/transport/mod.rs` - Remove message structs, update callbacks
+- `runar-transporter/src/transport/quic_transport.rs` - Update all message handling
+- `runar-transporter/src/lib.rs` - Update public exports
+
+**Specific Changes Required:**
+
+**A. Remove Message Structs (transport/mod.rs):**
+```rust
+// REMOVE THESE STRUCTS COMPLETELY:
+// pub struct RequestMessage { ... }
+// pub struct ResponseMessage { ... }
+// pub struct EventMessage { ... }
+
+// KEEP ONLY:
+pub struct NetworkMessage { ... }
+pub struct NetworkMessagePayloadItem { ... }
+```
+
+**B. Update Callback Types (transport/mod.rs):**
+```rust
+// OLD:
+pub type RequestCallback = Arc<dyn Fn(RequestMessage) -> BoxFuture<'static, Result<ResponseMessage>> + Send + Sync>;
+pub type EventCallback = Arc<dyn Fn(EventMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+
+// NEW:
+pub type RequestCallback = Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<NetworkMessage>> + Send + Sync>;
+pub type EventCallback = Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+```
+
+**C. Update QuicTransport Message Handling (quic_transport.rs):**
+
+**Request Handling:**
+```rust
+// OLD:
+async fn handle_request(&self, payload: NetworkMessagePayloadItem) -> Result<ResponseMessage, NetworkError> {
+    let request_msg = RequestMessage {
+        path: payload.path,
+        correlation_id: payload.correlation_id,
+        payload_bytes: payload.payload_bytes,
+        network_public_key: payload.network_public_key,
+        profile_public_keys: payload.profile_public_keys.clone(),
+    };
+    // ... process and return ResponseMessage
+}
+
+// NEW:
+async fn handle_request(&self, msg: NetworkMessage) -> Result<NetworkMessage, NetworkError> {
+    // Extract payload data directly from NetworkMessage
+    let payload = &msg.payload;
+    
+    // Process request using NetworkMessage directly
+    let response = (self.request_callback)(msg.clone()).await.map_err(|e| {
+        // ... error handling
+    })?;
+    
+    Ok(response) // Return NetworkMessage directly
+}
+```
+
+**Event Handling:**
+```rust
+// OLD:
+async fn handle_event(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
+    let payload = msg.payload;
+    let event_msg = EventMessage {
+        path: payload.path,
+        correlation_id: payload.correlation_id,
+        payload_bytes: payload.payload_bytes,
+        network_public_key: payload.network_public_key,
+    };
+    (self.event_callback)(event_msg).await
+}
+
+// NEW:
+async fn handle_event(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
+    // Pass NetworkMessage directly to callback
+    (self.event_callback)(msg).await.map_err(|e| {
+        // ... error handling
+    })
+}
+```
+
+**Response Creation:**
+```rust
+// OLD:
+let response_msg = NetworkMessage {
+    source_node_id: self.local_node_id.clone(),
+    destination_node_id: msg.source_node_id,
+    message_type: super::MESSAGE_TYPE_RESPONSE,
+    payload: NetworkMessagePayloadItem {
+        path,
+        payload_bytes: response.payload_bytes,        // ← response is ResponseMessage
+        correlation_id: correlation_id.clone(),
+        profile_public_keys,
+        network_public_key: None,
+    },
+};
+
+// NEW:
+// response is already NetworkMessage, just update destination
+let response_msg = NetworkMessage {
+    source_node_id: self.local_node_id.clone(),
+    destination_node_id: msg.source_node_id,
+    message_type: super::MESSAGE_TYPE_RESPONSE,
+    payload: response.payload, // response.payload is NetworkMessagePayloadItem
+};
+```
+
+**D. Update Message Creation Points:**
+```rust
+// OLD: Creating RequestMessage then NetworkMessage
+let request_msg = RequestMessage { ... };
+let msg = NetworkMessage {
+    source_node_id: local_node_id,
+    destination_node_id: peer_node_id.to_string(),
+    message_type: super::MESSAGE_TYPE_REQUEST,
+    payload: super::NetworkMessagePayloadItem {
+        path: topic_path.to_string(),
+        payload_bytes: payload,
+        correlation_id: correlation_id.to_string(),
+        profile_public_keys,
+        network_public_key: network_public_key.clone(),
+    },
+};
+
+// NEW: Create NetworkMessage directly
+let msg = NetworkMessage {
+    source_node_id: local_node_id,
+    destination_node_id: peer_node_id.to_string(),
+    message_type: super::MESSAGE_TYPE_REQUEST,
+    payload: NetworkMessagePayloadItem {
+        path: topic_path.to_string(),
+        payload_bytes: payload,
+        correlation_id: correlation_id.to_string(),
+        profile_public_keys,
+        network_public_key: network_public_key.clone(),
+    },
+};
+```
+
+#### **2. Node Layer (runar-node) - HIGH IMPACT**
+
+**Files Affected:**
+- `runar-node/src/node.rs` - Update callback creation and message handling
+- `runar-node/src/services/remote_service.rs` - Update service message handling
+
+**Specific Changes Required:**
+
+**A. Update Node Callback Creation (node.rs):**
+```rust
+// OLD:
+let request_callback: RequestCallback = Arc::new(move |request: RequestMessage| {
+    let node = self_arc_for_callback.clone();
+    Box::pin(async move { node.handle_network_request(request).await })
+});
+
+// NEW:
+let request_callback: RequestCallback = Arc::new(move |msg: NetworkMessage| {
+    let node = self_arc_for_callback.clone();
+    Box::pin(async move { node.handle_network_request(msg).await })
+});
+```
+
+**B. Update Network Request Handler (node.rs):**
+```rust
+// OLD:
+async fn handle_network_request(&self, message: RequestMessage) -> Result<ResponseMessage> {
+    let payload = ArcValue::deserialize(&message.payload_bytes, ...)?;
+    let profile_public_keys = message.profile_public_keys.clone();
+    // ... process request ...
+    Ok(ResponseMessage {
+        correlation_id: message.correlation_id,
+        payload_bytes: serialized_data,
+        network_public_key: Some(network_public_key.clone()),
+        profile_public_keys,
+    })
+}
+
+// NEW:
+async fn handle_network_request(&self, msg: NetworkMessage) -> Result<NetworkMessage> {
+    let payload = ArcValue::deserialize(&msg.payload.payload_bytes, ...)?;
+    let profile_public_keys = msg.payload.profile_public_keys.clone();
+    // ... process request ...
+    
+    // Create response NetworkMessage
+    Ok(NetworkMessage {
+        source_node_id: self.local_node_id.clone(),
+        destination_node_id: msg.source_node_id,
+        message_type: super::MESSAGE_TYPE_RESPONSE,
+        payload: NetworkMessagePayloadItem {
+            path: msg.payload.path.clone(),
+            payload_bytes: serialized_data,
+            correlation_id: msg.payload.correlation_id.clone(),
+            profile_public_keys,
+            network_public_key: Some(network_public_key.clone()),
+        },
+    })
+}
+```
+
+**C. Update Event Handler (node.rs):**
+```rust
+// OLD:
+let event_callback: EventCallback = Arc::new(move |event: EventMessage| {
+    let node = self_arc_for_callback.clone();
+    Box::pin(async move { node.handle_network_event(event).await })
+});
+
+// NEW:
+let event_callback: EventCallback = Arc::new(move |msg: NetworkMessage| {
+    let node = self_arc_for_callback.clone();
+    Box::pin(async move { node.handle_network_event(msg).await })
+});
+
+// Update handler method:
+async fn handle_network_event(&self, msg: NetworkMessage) -> Result<()> {
+    // Extract data from NetworkMessage.payload directly
+    let payload = &msg.payload;
+    // ... process event ...
+}
+```
+
+#### **3. Trait Definitions - MEDIUM IMPACT**
+
+**Files Affected:**
+- `runar-transporter/src/transport/mod.rs` - Update NetworkTransport trait
+- `runar-transporter/src/lib.rs` - Update public trait exports
+
+**Specific Changes Required:**
+
+**A. Update NetworkTransport Trait (transport/mod.rs):**
+```rust
+// OLD:
+pub trait NetworkTransport: Send + Sync {
+    async fn request(
+        &self,
+        topic_path: &str,
+        correlation_id: &str,
+        payload: Vec<u8>,
+        peer_node_id: &str,
+        network_public_key: Option<Vec<u8>>,
+        profile_public_keys: Vec<Vec<u8>>,
+    ) -> Result<Vec<u8>, NetworkError>;
+}
+
+// NEW: Method signature unchanged, but internal handling changes
+// The trait method signature stays the same for backward compatibility
+// Internal implementation will create NetworkMessage directly
+```
+
+**B. Update Public Exports (lib.rs):**
+```rust
+// OLD:
+pub use transport::{
+    NetworkMessage, NetworkTransport, QuicTransport, QuicTransportOptions,
+    RequestMessage, ResponseMessage, EventMessage,  // ← REMOVE THESE
+    // ... other exports
+};
+
+// NEW:
+pub use transport::{
+    NetworkMessage, NetworkTransport, QuicTransport, QuicTransportOptions,
+    // RequestMessage, ResponseMessage, EventMessage REMOVED
+    // ... other exports
+};
+```
+
+#### **4. Test Files - HIGH IMPACT**
+
+**Files Affected:**
+- All test files in `runar-transporter/tests/`
+- All test files in `runar-node/tests/`
+- Integration tests using message structures
+
+**Specific Changes Required:**
+
+**A. Update Message Creation in Tests:**
+```rust
+// OLD:
+let request = RequestMessage {
+    path: "test/path".to_string(),
+    correlation_id: "test-123".to_string(),
+    payload_bytes: vec![1, 2, 3],
+    network_public_key: Some(vec![4, 5, 6]),
+    profile_public_keys: vec![vec![7, 8, 9]],
+};
+
+// NEW:
+let request = NetworkMessage {
+    source_node_id: "source".to_string(),
+    destination_node_id: "dest".to_string(),
+    message_type: MESSAGE_TYPE_REQUEST,
+    payload: NetworkMessagePayloadItem {
+        path: "test/path".to_string(),
+        correlation_id: "test-123".to_string(),
+        payload_bytes: vec![1, 2, 3],
+        network_public_key: Some(vec![4, 5, 6]),
+        profile_public_keys: vec![vec![7, 8, 9]],
+    },
+};
+```
+
+**B. Update Callback Tests:**
+```rust
+// OLD:
+let callback: RequestCallback = Arc::new(|req: RequestMessage| {
+    Box::pin(async move {
+        Ok(ResponseMessage {
+            correlation_id: req.correlation_id,
+            payload_bytes: vec![1, 2, 3],
+            network_public_key: None,
+            profile_public_keys: vec![],
+        })
+    })
+});
+
+// NEW:
+let callback: RequestCallback = Arc::new(|msg: NetworkMessage| {
+    Box::pin(async move {
+        Ok(NetworkMessage {
+            source_node_id: "response".to_string(),
+            destination_node_id: msg.source_node_id,
+            message_type: MESSAGE_TYPE_RESPONSE,
+            payload: NetworkMessagePayloadItem {
+                path: msg.payload.path.clone(),
+                correlation_id: msg.payload.correlation_id.clone(),
+                payload_bytes: vec![1, 2, 3],
+                network_public_key: None,
+                profile_public_keys: vec![],
+            },
+        })
+    })
+});
+```
+
+#### **5. FFI Layer - MEDIUM IMPACT**
+
+**Files Affected:**
+- `runar-ffi/src/lib.rs` - Update C-compatible message structures
+- FFI test files
+
+**Specific Changes Required:**
+
+**A. Update FFI Message Structures:**
+```rust
+// OLD: Multiple message types
+#[repr(C)]
+pub struct RequestMessageFFI {
+    pub path: *const c_char,
+    pub correlation_id: *const c_char,
+    pub payload_bytes: *const u8,
+    pub payload_len: usize,
+    pub network_public_key: *const u8,
+    pub network_public_key_len: usize,
+    pub profile_public_keys: *const *const u8,
+    pub profile_public_keys_count: usize,
+}
+
+// NEW: Single message type
+#[repr(C)]
+pub struct NetworkMessageFFI {
+    pub source_node_id: *const c_char,
+    pub destination_node_id: *const c_char,
+    pub message_type: u32,
+    pub payload: NetworkMessagePayloadItemFFI,
+}
+
+#[repr(C)]
+pub struct NetworkMessagePayloadItemFFI {
+    pub path: *const c_char,
+    pub payload_bytes: *const u8,
+    pub payload_len: usize,
+    pub correlation_id: *const c_char,
+    pub network_public_key: *const u8,
+    pub network_public_key_len: usize,
+    pub profile_public_keys: *const *const u8,
+    pub profile_public_keys_count: usize,
+}
+```
+
+### **Implementation Plan**
+
+#### **Phase 1: Remove Message Structs (Day 1)**
+1. **Delete RequestMessage, ResponseMessage, EventMessage** from `transport/mod.rs`
+2. **Update callback type definitions** to use NetworkMessage
+3. **Remove public exports** of deleted message types
+4. **Update all imports** throughout the codebase
+
+#### **Phase 2: Update Transport Layer (Day 2)**
+1. **Update QuicTransport message handling** methods
+2. **Remove message conversion logic** (RequestMessage → NetworkMessage)
+3. **Update response creation** to work with NetworkMessage directly
+4. **Fix all message creation points** to create NetworkMessage directly
+
+#### **Phase 3: Update Node Layer (Day 3)**
+1. **Update callback creation** in Node constructor
+2. **Update handle_network_request** to work with NetworkMessage
+3. **Update handle_network_event** to work with NetworkMessage
+4. **Update response creation** to return NetworkMessage
+
+#### **Phase 4: Update Tests (Day 4)**
+1. **Update all test message creation** to use NetworkMessage
+2. **Update callback test implementations** to use NetworkMessage
+3. **Update integration tests** to work with new message flow
+4. **Validate all tests pass** with new architecture
+
+#### **Phase 5: Update FFI Layer (Day 5)**
+1. **Update FFI message structures** to use single NetworkMessage
+2. **Update FFI function signatures** to work with new structures
+3. **Update FFI tests** to validate new message flow
+4. **Validate FFI compatibility** with external integrations
+
+### **Benefits of New Architecture**
+
+#### **✅ Advantages:**
+1. **Eliminates Data Duplication** - Single source of truth for all message data
+2. **Simplifies API** - One message type instead of four
+3. **Reduces Memory Usage** - No duplicate field storage
+4. **Improves Consistency** - All message handling uses same structure
+5. **Easier Maintenance** - Changes only need to be made in one place
+6. **Better Performance** - No unnecessary struct conversions
+7. **Cleaner Code** - Modern, maintainable architecture
+
+#### **❌ Disadvantages:**
+1. **Breaking Changes** - Major API changes affecting all components
+2. **Migration Effort** - Significant refactoring required
+3. **Test Updates** - All tests need to be updated
+4. **FFI Changes** - External integrations affected
+
+### **Risk Assessment**
+
+#### **HIGH RISK:**
+- **Breaking API Changes** - Affects all message handling code
+- **Wide Impact** - Multiple crates and components affected
+- **FFI Compatibility** - External integrations may break
+- **Test Coverage** - Extensive test updates required
+
+#### **MITIGATION STRATEGIES:**
+1. **Atomic Implementation** - All changes made simultaneously
+2. **Comprehensive Testing** - Validate all message flows
+3. **Clear Documentation** - Document new message handling patterns
+4. **Migration Guide** - Provide clear upgrade path for users
+
+### **Success Metrics**
+
+#### **Functional Metrics:**
+- ✅ All message duplication eliminated
+- ✅ Single NetworkMessage structure used everywhere
+- ✅ All callbacks work with NetworkMessage directly
+- ✅ No more RequestMessage/ResponseMessage/EventMessage usage
+- ✅ Consistent message handling across all components
+
+#### **Code Quality Metrics:**
+- ✅ Reduced code duplication
+- ✅ Simplified message flow
+- ✅ Cleaner API design
+- ✅ Better maintainability
+- ✅ Modern architecture patterns
+
+#### **Performance Metrics:**
+- ✅ Reduced memory usage (no duplicate fields)
+- ✅ Faster message processing (no conversions)
+- ✅ Better cache locality (single message structure)
+- ✅ Reduced serialization overhead
+
+### **Conclusion**
+
+This refactor represents a **fundamental architectural improvement** that eliminates decades of accumulated technical debt in the message handling system. By removing the duplicated message structures and using `NetworkMessage` directly in all callbacks, we create a **clean, modern, and maintainable codebase** that follows current best practices.
+
+**The investment in this refactor will pay dividends** in:
+- **Easier maintenance** of message handling code
+- **Better performance** through reduced memory usage and conversions
+- **Cleaner API design** that's easier for developers to understand
+- **Future extensibility** without duplicating message structures
+
+**This is the right time for this refactor** as we're already making major changes to the label resolver system. The combined refactor will result in a **significantly improved architecture** that's ready for future development and scaling.

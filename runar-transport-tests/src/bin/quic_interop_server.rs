@@ -50,13 +50,19 @@ async fn main() -> Result<()> {
             log_debug!(
                 logger,
                 "server received request from {}",
-                req.correlation_id
+                req.payload.correlation_id
             );
-            Ok(runar_transporter::transport::ResponseMessage {
-                correlation_id: req.correlation_id,
-                payload_bytes: req.payload_bytes,
-                network_public_key: None,
-                profile_public_key: req.profile_public_key,
+            Ok(runar_transporter::transport::NetworkMessage {
+                source_node_id: String::new(),
+                destination_node_id: req.source_node_id,
+                message_type: 5, // MESSAGE_TYPE_RESPONSE
+                payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                    path: req.payload.path.clone(),
+                    payload_bytes: req.payload.payload_bytes.clone(),
+                    correlation_id: req.payload.correlation_id.clone(),
+                    network_public_key: None,
+                    profile_public_keys: req.payload.profile_public_keys.clone(),
+                },
             })
         })
     });
@@ -68,7 +74,7 @@ async fn main() -> Result<()> {
             log_info!(
                 logger,
                 "server received event from {}",
-                event.correlation_id
+                event.payload.correlation_id
             );
             Ok(())
         })
@@ -92,7 +98,7 @@ async fn main() -> Result<()> {
         .with_event_callback(event_handler)
         .with_logger(logger.clone())
         .with_keystore(keystore)
-        .with_label_resolver(label_resolver)
+        .with_label_resolver_config(label_resolver)
         .with_response_cache_ttl(Duration::from_secs(2));
 
     let transport = Arc::new(QuicTransport::new(opts).map_err(|e| anyhow::anyhow!("{e}"))?);

@@ -126,7 +126,7 @@ impl ConfigurableLabelResolver {
     /// REQUIRES: Every label must have an explicit network_public_key - no defaults allowed
     pub fn create_context_label_resolver(
         system_config: &LabelResolverConfig,
-        user_profile_keys: Option<&[Vec<u8>]>, // From request context
+        user_profile_keys: &Vec<Vec<u8>>, // From request context - empty vec means no profile keys
     ) -> Result<Arc<dyn LabelResolver>> {
         let mut mappings = HashMap::new();
 
@@ -141,11 +141,8 @@ impl ConfigurableLabelResolver {
             // Process user key specification
             match &label_value.user_key_spec {
                 Some(LabelKeyword::CurrentUser) => {
-                    if let Some(user_keys) = user_profile_keys {
-                        profile_public_keys.extend_from_slice(user_keys);
-                    }
-                    // Note: If no user keys in context, profile_public_keys remains empty
-                    // This allows user-only labels to be valid even in system contexts
+                    // Always extend with user profile keys (empty vec is fine)
+                    profile_public_keys.extend_from_slice(user_profile_keys);
                 },
                 Some(LabelKeyword::Custom(_custom_name)) => {
                     // Future: Call custom resolution function
@@ -222,7 +219,7 @@ impl ConfigurableLabelResolver {
 /// REQUIRES: Every label must have an explicit network_public_key - no defaults allowed
 pub fn create_context_label_resolver(
     system_config: &LabelResolverConfig,
-    user_profile_keys: Option<&[Vec<u8>]>, // From request context
+    user_profile_keys: &Vec<Vec<u8>>, // From request context - empty vec means no profile keys
 ) -> Result<Arc<dyn LabelResolver>> {
     ConfigurableLabelResolver::create_context_label_resolver(system_config, user_profile_keys)
 }

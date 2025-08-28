@@ -1,8 +1,9 @@
 use anyhow::Result;
 use runar_common::logging::Logger;
 use runar_node::Node;
-use runar_serializer::traits::ConfigurableLabelResolver;
+use runar_serializer::traits::LabelResolver;
 use runar_serializer::ArcValue;
+use std::sync::Arc;
 use runar_services::crud_sqlite::{FindOneRequest, FindOneResponse, InsertOneRequest};
 use std::collections::HashMap;
 
@@ -10,8 +11,8 @@ use crate::models::{Account, Order, Profile, User};
 
 /// Demonstrate the encryption flow with the updated API using CrudSqliteService
 pub async fn demonstrate_encryption_flow(
-    _mobile_resolver: &ConfigurableLabelResolver,
-    _node_resolver: &ConfigurableLabelResolver,
+    _mobile_resolver: Arc<dyn LabelResolver>,
+    _node_resolver: Arc<dyn LabelResolver>,
     crud_service_path: &str,
     node: &Node,
     logger: &Logger,

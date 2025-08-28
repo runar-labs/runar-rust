@@ -7,7 +7,7 @@ use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 // Intentionally not importing QuicTransportOptions here
 use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
 use runar_serializer::traits::{
-    ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, LabelResolver,
+    EnvelopeCrypto, LabelResolverConfig, LabelValue,
 };
 use runar_transporter::transport::MESSAGE_TYPE_REQUEST;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer};
@@ -114,18 +114,18 @@ impl EnvelopeCrypto for NoCrypto {
     }
 }
 
-pub fn default_label_resolver() -> Arc<dyn LabelResolver> {
+pub fn default_label_resolver() -> Arc<LabelResolverConfig> {
     let mut mappings = HashMap::new();
     mappings.insert(
         "interop".to_string(),
-        LabelKeyInfo {
-            profile_public_keys: vec![],
+        LabelValue {
             network_public_key: Some("interop".as_bytes().to_vec()),
+            user_key_spec: None,
         },
     );
-    Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+    Arc::new(LabelResolverConfig {
         label_mappings: mappings,
-    }))
+    })
 }
 
 pub fn build_node_info(node_id: &str, bind_addr: &SocketAddr) -> NodeInfo {
@@ -179,7 +179,7 @@ pub fn make_echo_request(source_id: &str, dest_id: &str, payload: &[u8]) -> Netw
             payload_bytes: payload.to_vec(),
             correlation_id: uuid::Uuid::new_v4().to_string(),
             network_public_key: None,
-            profile_public_key: vec![],
+            profile_public_keys: vec![],
         },
     }
 }

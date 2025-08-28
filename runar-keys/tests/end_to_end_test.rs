@@ -514,7 +514,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let test_data = b"This is a test message that should be encrypted and decrypted";
     // Resolve network ID to public key
     let network_public_key = mobile_keys_manager.get_network_public_key(&network_id)?;
-    let envelope = mobile_keys_manager
+    let envelope: runar_keys::mobile::EnvelopeEncryptedData = mobile_keys_manager
         .encrypt_with_envelope(
             test_data,
             Some(&network_public_key),

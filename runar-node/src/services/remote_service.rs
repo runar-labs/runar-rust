@@ -217,7 +217,16 @@ impl RemoteService {
             let logger = service.logger.clone();
             let keystore = service.keystore.clone();
             let label_resolver_config = service.label_resolver_config.clone();
-            let network_public_key = service.network_public_key.clone();
+            //let network_public_key = service.network_public_key.clone();
+            let network_id = service.service_topic.network_id();
+            let network_public_key = match keystore.get_network_public_key(&network_id) {
+                Ok(key) => key,
+                Err(e) => {
+                    let error_msg = format!("Failed to get network public key for network {}: {}", network_id, e);
+                    log_error!(logger, "🔒 [RemoteService] {}", error_msg);
+                    return Box::pin(async move { Err(anyhow::anyhow!(error_msg)) });
+                }
+            };
 
             Box::pin(async move {
                 // Generate a unique request ID
@@ -234,9 +243,10 @@ impl RemoteService {
                 let topic_path_str = action_topic_path.as_str();
                 
                 // Create dynamic resolver with user context
+                // For request serialization, we can use a system-only resolver if no user keys are provided
                 let resolver = runar_serializer::traits::create_context_label_resolver(
                     &label_resolver_config,
-                    Some(&profile_public_keys),
+                    &profile_public_keys, // Empty vec is fine for system-only resolver
                 ).map_err(|e| anyhow::anyhow!("Failed to create label resolver: {e}"))?;
                 
                 // Create serialization context with dynamic resolver
@@ -247,10 +257,15 @@ impl RemoteService {
                     profile_public_keys: profile_public_keys.clone(),
                 };
 
-                let params_bytes = params
-                    .unwrap_or(ArcValue::null())
+                let params_to_serialize = params.unwrap_or(ArcValue::null());
+                
+                // Serialize request parameters with encryption (all external payloads must be encrypted)
+                let params_bytes = params_to_serialize
                     .serialize(Some(&serialization_context))
-                    .unwrap_or_default();
+                    .map_err(|e| {
+                        log_error!(logger, "🔒 [RemoteService] Encryption failed for request params: {e}");
+                        anyhow::anyhow!("Failed to encrypt request params: {e}")
+                    })?;
                 match network_transport
                     .request(
                         topic_path_str,
