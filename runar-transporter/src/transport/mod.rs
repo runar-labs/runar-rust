@@ -126,7 +126,7 @@ pub struct NetworkMessagePayloadItem {
     /// Network public key for encryption context
     pub network_public_key: Option<Vec<u8>>,
 
-    pub profile_public_key: Vec<u8>,
+    pub profile_public_keys: Vec<Vec<u8>>,
 }
 
 pub const MESSAGE_TYPE_DISCOVERY: u32 = 1;
@@ -198,7 +198,7 @@ pub struct RequestMessage {
     pub correlation_id: String,
     pub payload_bytes: Vec<u8>,
     pub network_public_key: Option<Vec<u8>>,
-    pub profile_public_key: Vec<u8>,
+    pub profile_public_keys: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,7 +206,7 @@ pub struct ResponseMessage {
     pub correlation_id: String,
     pub payload_bytes: Vec<u8>,
     pub network_public_key: Option<Vec<u8>>,
-    pub profile_public_key: Vec<u8>,
+    pub profile_public_keys: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,7 +249,7 @@ pub trait NetworkTransport: Send + Sync {
         payload: Vec<u8>,
         peer_node_id: &str,
         network_public_key: Option<Vec<u8>>,
-        profile_public_key: Vec<u8>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>, NetworkError>;
 
     /// Fire-and-forget / broadcast message (pattern B)  

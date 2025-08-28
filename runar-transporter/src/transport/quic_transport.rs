@@ -1158,7 +1158,7 @@ impl QuicTransport {
             correlation_id: payload.correlation_id,
             payload_bytes: payload.payload_bytes,
             network_public_key: payload.network_public_key,
-            profile_public_key: payload.profile_public_key,
+                            profile_public_keys: payload.profile_public_keys.clone(),
         };
 
         log_debug!(
@@ -1306,7 +1306,7 @@ impl QuicTransport {
                     path: "handshake".to_string(),
                     payload_bytes: serde_cbor::to_vec(&response_hs).unwrap_or_default(),
                     correlation_id: msg.payload.correlation_id,
-                    profile_public_key: msg.payload.profile_public_key,
+                    profile_public_keys: msg.payload.profile_public_keys.clone(),
                     network_public_key: None, // Handshake doesn't need network context
                 },
             };
@@ -1378,7 +1378,7 @@ impl QuicTransport {
 
                 //if not cached, handle the request and send the response
                 let correlation_id = msg.payload.correlation_id.clone();
-                let profile_public_key = msg.payload.profile_public_key.clone();
+                let profile_public_keys = msg.payload.profile_public_keys.clone();
                 let path = msg.payload.path.clone();
                 let response = self.handle_request(msg.payload).await?;
                 let response_msg = NetworkMessage {
@@ -1389,7 +1389,7 @@ impl QuicTransport {
                         path,
                         payload_bytes: response.payload_bytes,
                         correlation_id: correlation_id.clone(),
-                        profile_public_key,
+                        profile_public_keys,
                         network_public_key: None, // Response doesn't need network context
                     },
                 };
@@ -1442,7 +1442,7 @@ impl QuicTransport {
             path: "handshake".to_string(),
             payload_bytes,
             correlation_id: uuid::Uuid::new_v4().to_string(),
-            profile_public_key: vec![],
+            profile_public_keys: vec![],
             network_public_key: None, // Handshake doesn't need network context
         };
 
@@ -1808,7 +1808,7 @@ impl NetworkTransport for QuicTransport {
         payload: Vec<u8>,
         peer_node_id: &str,
         network_public_key: Option<Vec<u8>>,
-        profile_public_key: Vec<u8>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>, NetworkError> {
         log_debug!(
             self.logger,
@@ -1818,14 +1818,14 @@ impl NetworkTransport for QuicTransport {
         // Create dynamic resolver with user context from the request
         let resolver = runar_serializer::traits::create_context_label_resolver(
             &self.label_resolver_config,
-            Some(&[profile_public_key.clone()]), // Use profile public key as user context
+            Some(&profile_public_keys), // Use profile public keys as user context
         ).map_err(|e| NetworkError::ConfigurationError(format!("Failed to create label resolver: {e}")))?;
 
         let _serialization_context = runar_serializer::traits::SerializationContext {
             keystore: self.keystore.clone(),
             resolver,
             network_public_key: network_public_key.clone().unwrap_or_default(),
-            profile_public_keys: vec![profile_public_key.clone()],
+            profile_public_keys: profile_public_keys.clone(),
         };
 
         let local_node_id = self.local_node_id.clone();
@@ -1839,7 +1839,7 @@ impl NetworkTransport for QuicTransport {
                 path: topic_path.to_string(),
                 payload_bytes: payload,
                 correlation_id: correlation_id.to_string(),
-                profile_public_key,
+                profile_public_keys,
                 network_public_key: network_public_key.clone(),
             },
         };
@@ -1952,7 +1952,7 @@ impl NetworkTransport for QuicTransport {
                 path: topic_path.to_string(),
                 payload_bytes: payload,
                 correlation_id: correlation_id.to_string(),
-                profile_public_key: vec![],
+                profile_public_keys: vec![],
                 network_public_key,
             },
         };
@@ -2314,7 +2314,7 @@ impl NetworkTransport for QuicTransport {
                 path: "handshake".to_string(),
                 payload_bytes,
                 correlation_id: uuid::Uuid::new_v4().to_string(),
-                profile_public_key: vec![],
+                profile_public_keys: vec![],
                 network_public_key: None, // Update message doesn't need network context
             },
         };

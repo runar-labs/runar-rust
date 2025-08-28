@@ -1848,7 +1848,7 @@ impl Node {
 
     /// Handle a network request
     async fn handle_network_request(&self, message: RequestMessage) -> Result<ResponseMessage> {
-        log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_key size: {profile_public_key_size}", path=message.path, correlation_id=message.correlation_id, profile_public_key_size=message.profile_public_key.len());
+        log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_keys size: {profile_public_keys_size}", path=message.path, correlation_id=message.correlation_id, profile_public_keys_size=message.profile_public_keys.len());
 
         let payload = ArcValue::deserialize(
             &message.payload_bytes,
@@ -1878,7 +1878,7 @@ impl Node {
             }
         };
         let network_id = topic_path.network_id();
-        let profile_public_key = message.profile_public_key;
+        let profile_public_keys = message.profile_public_keys.clone();
 
         // Resolve network ID to public key (needed for both success and error cases)
         let network_public_key = self
@@ -1892,17 +1892,16 @@ impl Node {
                 log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=message.correlation_id);
 
                 // Create dynamic resolver with user context
-                // Create dynamic resolver with user context
                 let resolver = runar_serializer::traits::create_context_label_resolver(
                     &self.system_label_config,
-                    Some(&[profile_public_key.clone()]),
+                    Some(&profile_public_keys),
                 )?;
 
                 let serialization_context = runar_serializer::traits::SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver,
                     network_public_key: network_public_key.clone(),
-                    profile_public_keys: vec![profile_public_key.clone()],
+                    profile_public_keys: profile_public_keys.clone(),
                 };
 
                 // Serialize the response data
@@ -1912,7 +1911,7 @@ impl Node {
                     correlation_id: message.correlation_id,
                     payload_bytes: serialized_data,
                     network_public_key: Some(network_public_key.clone()),
-                    profile_public_key,
+                    profile_public_keys,
                 })
             }
             Err(e) => {
@@ -1921,14 +1920,14 @@ impl Node {
                 // Create dynamic resolver with user context
                 let resolver = runar_serializer::traits::create_context_label_resolver(
                     &self.system_label_config,
-                    Some(&[profile_public_key.clone()]),
+                    Some(&profile_public_keys),
                 )?;
 
                 let serialization_context = runar_serializer::traits::SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver,
                     network_public_key: network_public_key.clone(),
-                    profile_public_keys: vec![profile_public_key.clone()],
+                    profile_public_keys: profile_public_keys.clone(),
                 };
                 //TODO improve this by having a proper error type
                 // Create a map for the error response
@@ -1947,7 +1946,7 @@ impl Node {
                     correlation_id: message.correlation_id,
                     payload_bytes: serialized_error,
                     network_public_key: Some(network_public_key.clone()),
-                    profile_public_key,
+                    profile_public_keys,
                 })
             }
         }
@@ -2417,18 +2416,12 @@ impl Node {
                     request_timeout_ms: self.config.request_timeout_ms,
                 };
 
-                // Create dynamic resolver for remote service (system context)
-                let resolver = runar_serializer::traits::create_context_label_resolver(
-                    &self.system_label_config,
-                    None, // No user context for system operations
-                )?;
-
                 let rs_dependencies = RemoteServiceDependencies {
                     network_transport: transport_arc,
                     local_node_id: local_peer_id,
                     logger: self.logger.clone(),
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-                    resolver,
+                    label_resolver_config: self.system_label_config.clone(),
                 };
 
                 if let Ok(remote_services) =
@@ -2662,18 +2655,12 @@ impl Node {
             .clone()
             .ok_or_else(|| anyhow!("Network transport not available"))?;
 
-        // Create dynamic resolver for remote service (system context)
-        let resolver = runar_serializer::traits::create_context_label_resolver(
-            &self.system_label_config,
-            None, // No user context for system operations
-        )?;
-
         let rs_dependencies = RemoteServiceDependencies {
             network_transport: transport_arc.clone(),
             local_node_id: local_peer_id,
             logger: self.logger.clone(),
             keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-            resolver,
+            label_resolver_config: self.system_label_config.clone(),
         };
 
         let remote_services =

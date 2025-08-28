@@ -46,8 +46,8 @@ pub struct RemoteService {
 
     /// Keystore for encryption/decryption
     keystore: Arc<dyn runar_serializer::EnvelopeCrypto>,
-    /// Resolver for labels
-    resolver: Arc<dyn runar_serializer::LabelResolver>,
+    /// Label resolver configuration for dynamic resolver creation
+    label_resolver_config: Arc<runar_serializer::LabelResolverConfig>,
 }
 
 /// Configuration for creating a RemoteService instance.
@@ -66,7 +66,7 @@ pub struct RemoteServiceDependencies {
     pub local_node_id: String, // ID of the local node
     pub logger: Arc<Logger>,
     pub keystore: Arc<dyn runar_serializer::EnvelopeCrypto>,
-    pub resolver: Arc<dyn runar_serializer::LabelResolver>,
+    pub label_resolver_config: Arc<runar_serializer::LabelResolverConfig>,
 }
 
 /// Configuration for creating multiple RemoteService instances from capabilities.
@@ -94,7 +94,7 @@ impl RemoteService {
             actions: Arc::new(DashMap::new()),
             logger: dependencies.logger,
             keystore: dependencies.keystore.clone(),
-            resolver: dependencies.resolver.clone(),
+            label_resolver_config: dependencies.label_resolver_config.clone(),
         }
     }
 
@@ -152,7 +152,7 @@ impl RemoteService {
                 local_node_id: dependencies.local_node_id.clone(),
                 logger: dependencies.logger.clone(),
                 keystore: dependencies.keystore.clone(),
-                resolver: dependencies.resolver.clone(),
+                label_resolver_config: dependencies.label_resolver_config.clone(),
             };
 
             // Create the remote service
@@ -216,8 +216,8 @@ impl RemoteService {
             //let _request_timeout_ms = service.request_timeout_ms;
             let logger = service.logger.clone();
             let keystore = service.keystore.clone();
-            let resolver = service.resolver.clone();
-                            let network_public_key = service.network_public_key.clone();
+            let label_resolver_config = service.label_resolver_config.clone();
+            let network_public_key = service.network_public_key.clone();
 
             Box::pin(async move {
                 // Generate a unique request ID
@@ -228,16 +228,23 @@ impl RemoteService {
                     "🚀 [RemoteService] Starting remote request - Action: {action} Target: {peer_node_id} Correlation ID: {correlation_id}"
                 );
 
-                let profile_public_key = request_context.user_profile_public_key;
+                let profile_public_keys = request_context.user_profile_public_keys.clone();
 
                 // Send the request
                 let topic_path_str = action_topic_path.as_str();
-                // Create serialization context with network public key from the service
+                
+                // Create dynamic resolver with user context
+                let resolver = runar_serializer::traits::create_context_label_resolver(
+                    &label_resolver_config,
+                    Some(&profile_public_keys),
+                ).map_err(|e| anyhow::anyhow!("Failed to create label resolver: {e}"))?;
+                
+                // Create serialization context with dynamic resolver
                 let serialization_context = SerializationContext {
                     keystore: keystore.clone(),
-                    resolver: resolver.clone(),
+                    resolver,
                     network_public_key: network_public_key.clone(),
-                    profile_public_keys: vec![profile_public_key.clone()],
+                    profile_public_keys: profile_public_keys.clone(),
                 };
 
                 let params_bytes = params
@@ -251,7 +258,7 @@ impl RemoteService {
                         params_bytes,
                         &peer_node_id,
                         Some(network_public_key.clone()),
-                        profile_public_key,
+                        profile_public_keys,
                     )
                     .await
                 {
