@@ -13,7 +13,7 @@ use runar_keys::{EnvelopeCrypto, NodeKeyManager, Result as KeyResult};
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
-use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
+use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver, LabelResolverConfig};
 use runar_serializer::{ArcValue, LabelKeyInfo, SerializationContext};
 use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
 use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
@@ -168,7 +168,7 @@ pub struct NodeConfig {
     /// REQUIRED: Label resolver configuration for system labels
     /// These are static mappings known at node startup
     /// NO OPTION - This field is REQUIRED for all nodes
-    pub label_resolver_config: runar_serializer::traits::LabelResolverConfig,
+    pub label_resolver_config: LabelResolverConfig,
 }
 
 impl NodeConfig {
@@ -250,7 +250,7 @@ impl NodeConfig {
     ///         ]),
     ///     });
     /// ```
-    pub fn with_label_resolver_config(mut self, config: runar_serializer::traits::LabelResolverConfig) -> Self {
+    pub fn with_label_resolver_config(mut self, config: LabelResolverConfig) -> Self {
         self.label_resolver_config = config;
         self
     }
@@ -514,7 +514,8 @@ pub struct Node {
     /// Load balancer for selecting remote handlers
     load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
 
-    label_resolver: Arc<dyn LabelResolver>,
+    /// System label configuration for dynamic resolver creation
+    system_label_config: Arc<LabelResolverConfig>,
 
     registry_version: Arc<AtomicI64>,
 
@@ -677,7 +678,7 @@ impl Node {
             network_discovery_providers: Arc::new(RwLock::new(None)),
             load_balancer: Arc::new(RwLock::new(RoundRobinLoadBalancer::new())),
             // pending_requests: Arc::new(DashMap::new()),
-            label_resolver,
+            system_label_config: Arc::new(config.label_resolver_config),
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager,
             service_tasks: Arc::new(RwLock::new(Vec::new())),
@@ -1916,6 +1917,7 @@ impl Node {
                 Ok(ResponseMessage {
                     correlation_id: message.correlation_id,
                     payload_bytes: serialized_data,
+                    network_public_key: Some(network_public_key.clone()),
                     profile_public_key,
                 })
             }
@@ -1951,6 +1953,7 @@ impl Node {
                 Ok(ResponseMessage {
                     correlation_id: message.correlation_id,
                     payload_bytes: serialized_error,
+                    network_public_key: Some(network_public_key.clone()),
                     profile_public_key,
                 })
             }

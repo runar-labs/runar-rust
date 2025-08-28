@@ -1482,14 +1482,17 @@ encrypt_with_envelope(data, Some(&network_key), recipients)
 ### 🔄 IN PROGRESS TASKS
 
 #### Phase 4: Node Integration 🔄 IN PROGRESS
-- [ ] **Node struct update** - Replace `label_resolver: Arc<dyn LabelResolver>` with `system_label_config: LabelResolverConfig`
+- [x] **Node struct update** - Replaced `label_resolver: Arc<dyn LabelResolver>` with `system_label_config: Arc<LabelResolverConfig>` (performance optimized)
+- [x] **Node constructor update** - Updated to use `config.label_resolver_config`
+- [x] **ResponseMessage updates** - Added `network_public_key` field to response messages
 - [ ] **Dynamic resolver creation** - Update all SerializationContext creations to use dynamic resolvers
 - [ ] **Request context integration** - Add user profile key propagation through request chains
 
 #### Phase 5: Transport Layer Integration 🔄 IN PROGRESS
-- [ ] **QuicTransport update** - Replace static resolver with system label config
-- [ ] **API signature updates** - Fix method signatures to match new trait requirements
-- [ ] **Message struct updates** - Add missing `network_public_key` fields
+- [x] **QuicTransport struct update** - Replaced static resolver with system label config
+- [x] **API signature updates** - Fixed method signatures to match new trait requirements
+- [x] **EventMessage and RequestMessage updates** - Added missing `network_public_key` fields
+- [ ] **NetworkMessagePayloadItem updates** - Add missing `network_public_key` fields to all initializations
 
 ### ❌ NOT STARTED TASKS
 
@@ -1511,7 +1514,7 @@ encrypt_with_envelope(data, Some(&network_key), recipients)
 ### 🎯 NEXT IMMEDIATE STEPS
 
 1. **✅ Test Utilities Updated** - runar-test-utils now uses new LabelResolverConfig system
-2. **Complete Node Integration** - Update Node struct and all SerializationContext creation points
+2. **🔄 Node Integration In Progress** - Node struct updated, need to complete SerializationContext updates
 3. **Fix Transport Layer** - Complete QuicTransport updates and fix compilation errors
 4. **Update Remote Services** - Remove static resolver usage throughout the codebase
 5. **Comprehensive Testing** - Run full test suite to ensure all functionality works

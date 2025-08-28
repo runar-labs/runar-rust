@@ -1128,6 +1128,7 @@ impl QuicTransport {
             path: payload.path,
             correlation_id: payload.correlation_id,
             payload_bytes: payload.payload_bytes,
+            network_public_key: payload.network_public_key,
         };
 
         log_debug!(
@@ -1156,6 +1157,7 @@ impl QuicTransport {
             path: payload.path,
             correlation_id: payload.correlation_id,
             payload_bytes: payload.payload_bytes,
+            network_public_key: payload.network_public_key,
             profile_public_key: payload.profile_public_key,
         };
 
