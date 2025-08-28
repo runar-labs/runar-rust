@@ -46,7 +46,7 @@ pub struct QuicTransportOptions {
     //connection_callback: Option<super::ConnectionCallback>,
     logger: Option<Arc<Logger>>,
     keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
-    label_resolver: Option<Arc<dyn runar_serializer::traits::LabelResolver>>,
+    label_resolver_config: Option<Arc<runar_serializer::traits::LabelResolverConfig>>,
     // Cache TTL for idempotent response replay
     response_cache_ttl: Duration,
     // Maximum number of retries for failed requests
@@ -103,9 +103,9 @@ impl std::fmt::Debug for QuicTransportOptions {
                 },
             )
             .field(
-                "label_resolver",
-                &if self.label_resolver.is_some() {
-                    "Some(LabelResolver)"
+                "label_resolver_config",
+                &if self.label_resolver_config.is_some() {
+                    "Some(LabelResolverConfig)"
                 } else {
                     "None"
                 },
@@ -149,7 +149,7 @@ impl Default for QuicTransportOptions {
             get_local_node_info: None,
             logger: None,
             keystore: None,
-            label_resolver: None,
+            label_resolver_config: None,
             response_cache_ttl: Duration::from_secs(5),
             max_request_retries: None,
             handshake_response_timeout: Duration::from_secs(2),
@@ -259,11 +259,11 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_label_resolver(
+    pub fn with_label_resolver_config(
         mut self,
-        resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
+        config: Arc<runar_serializer::traits::LabelResolverConfig>,
     ) -> Self {
-        self.label_resolver = Some(resolver);
+        self.label_resolver_config = Some(config);
         self
     }
 
@@ -327,8 +327,8 @@ impl QuicTransportOptions {
         self.keystore.as_ref()
     }
 
-    pub fn label_resolver(&self) -> Option<&Arc<dyn runar_serializer::traits::LabelResolver>> {
-        self.label_resolver.as_ref()
+    pub fn label_resolver_config(&self) -> Option<&Arc<runar_serializer::traits::LabelResolverConfig>> {
+        self.label_resolver_config.as_ref()
     }
 
     pub fn response_cache_ttl(&self) -> Duration {
@@ -361,7 +361,7 @@ impl Clone for QuicTransportOptions {
             get_local_node_info: self.get_local_node_info.clone(),
             logger: self.logger.clone(),
             keystore: self.keystore.clone(),
-            label_resolver: self.label_resolver.clone(),
+            label_resolver_config: self.label_resolver_config.clone(),
             response_cache_ttl: self.response_cache_ttl,
             max_request_retries: self.max_request_retries,
             handshake_response_timeout: self.handshake_response_timeout,
@@ -468,7 +468,7 @@ pub struct QuicTransport {
 
     // crypto helpers
     keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
-    label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
+    label_resolver_config: Arc<runar_serializer::traits::LabelResolverConfig>,
 
     // shared runtime state (peers + broadcast)
     state: SharedState,
@@ -709,10 +709,10 @@ impl QuicTransport {
                     NetworkError::ConfigurationError("keystore or key_manager is required".into())
                 })?
             };
-        let label_resolver = options
-            .label_resolver
+        let label_resolver_config = options
+            .label_resolver_config
             .take()
-            .ok_or_else(|| NetworkError::ConfigurationError("label_resolver is required".into()))?;
+            .ok_or_else(|| NetworkError::ConfigurationError("label_resolver_config is required".into()))?;
 
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             rustls::crypto::ring::default_provider()
@@ -776,7 +776,7 @@ impl QuicTransport {
             get_local_node_info,
             local_node_id,
             keystore,
-            label_resolver,
+            label_resolver_config,
             state: Self::shared_state(),
             tasks: Mutex::new(Vec::new()),
             running: AtomicBool::new(false),
@@ -1307,6 +1307,7 @@ impl QuicTransport {
                     payload_bytes: serde_cbor::to_vec(&response_hs).unwrap_or_default(),
                     correlation_id: msg.payload.correlation_id,
                     profile_public_key: msg.payload.profile_public_key,
+                    network_public_key: None, // Handshake doesn't need network context
                 },
             };
 
@@ -1389,6 +1390,7 @@ impl QuicTransport {
                         payload_bytes: response.payload_bytes,
                         correlation_id: correlation_id.clone(),
                         profile_public_key,
+                        network_public_key: None, // Response doesn't need network context
                     },
                 };
                 let now = Instant::now();
@@ -1441,6 +1443,7 @@ impl QuicTransport {
             payload_bytes,
             correlation_id: uuid::Uuid::new_v4().to_string(),
             profile_public_key: vec![],
+            network_public_key: None, // Handshake doesn't need network context
         };
 
         let msg = NetworkMessage {
@@ -1812,12 +1815,18 @@ impl NetworkTransport for QuicTransport {
             "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id}"
         );
 
-        // let serialization_context = SerializationContext {
-        //     keystore: self.keystore.clone(),
-        //     resolver: self.label_resolver.clone(),
-        //     network_id: network_id.to_string(),
-        //     profile_public_key: Some(profile_public_key.clone()),
-        // };
+        // Create dynamic resolver with user context from the request
+        let resolver = runar_serializer::traits::create_context_label_resolver(
+            &self.label_resolver_config,
+            Some(&[profile_public_key.clone()]), // Use profile public key as user context
+        ).map_err(|e| NetworkError::ConfigurationError(format!("Failed to create label resolver: {e}")))?;
+
+        let _serialization_context = runar_serializer::traits::SerializationContext {
+            keystore: self.keystore.clone(),
+            resolver,
+            network_public_key: network_public_key.clone().unwrap_or_default(),
+            profile_public_keys: vec![profile_public_key.clone()],
+        };
 
         let local_node_id = self.local_node_id.clone();
 
@@ -1831,6 +1840,7 @@ impl NetworkTransport for QuicTransport {
                 payload_bytes: payload,
                 correlation_id: correlation_id.to_string(),
                 profile_public_key,
+                network_public_key: network_public_key.clone(),
             },
         };
 
@@ -1943,6 +1953,7 @@ impl NetworkTransport for QuicTransport {
                 payload_bytes: payload,
                 correlation_id: correlation_id.to_string(),
                 profile_public_key: vec![],
+                network_public_key,
             },
         };
 
@@ -2304,6 +2315,7 @@ impl NetworkTransport for QuicTransport {
                 payload_bytes,
                 correlation_id: uuid::Uuid::new_v4().to_string(),
                 profile_public_key: vec![],
+                network_public_key: None, // Update message doesn't need network context
             },
         };
 
@@ -2346,6 +2358,20 @@ impl NetworkTransport for QuicTransport {
     }
 
     fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver> {
-        self.label_resolver.clone()
+        // Create a dynamic resolver on-demand with no user context (system context)
+        // This is for backward compatibility - new code should create resolvers with proper context
+        runar_serializer::traits::create_context_label_resolver(
+            &self.label_resolver_config,
+            None, // No user context for backward compatibility
+        ).unwrap_or_else(|_| {
+            // Fallback to empty resolver if creation fails
+            Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
+                runar_serializer::traits::KeyMappingConfig {
+                    label_mappings: std::collections::HashMap::new(),
+                }
+            ))
+        })
     }
+
+
 }

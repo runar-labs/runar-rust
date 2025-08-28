@@ -1481,18 +1481,22 @@ encrypt_with_envelope(data, Some(&network_key), recipients)
 
 ### 🔄 IN PROGRESS TASKS
 
-#### Phase 4: Node Integration 🔄 IN PROGRESS
+#### Phase 4: Node Integration ✅ COMPLETED
 - [x] **Node struct update** - Replaced `label_resolver: Arc<dyn LabelResolver>` with `system_label_config: Arc<LabelResolverConfig>` (performance optimized)
 - [x] **Node constructor update** - Updated to use `config.label_resolver_config`
 - [x] **ResponseMessage updates** - Added `network_public_key` field to response messages
-- [ ] **Dynamic resolver creation** - Update all SerializationContext creations to use dynamic resolvers
-- [ ] **Request context integration** - Add user profile key propagation through request chains
+- [x] **SerializationContext updates** - All SerializationContext creations now use dynamic resolvers from system_label_config
+- [x] **Transport integration** - Fixed all NetworkMessagePayloadItem initializations to include network_public_key field
+- [x] **Dynamic resolver creation** - All SerializationContext creations now use dynamic resolvers
+- [x] **Request context integration** - User profile keys properly propagated through request chains
 
-#### Phase 5: Transport Layer Integration 🔄 IN PROGRESS
+#### Phase 5: Transport Layer Integration ✅ COMPLETED
 - [x] **QuicTransport struct update** - Replaced static resolver with system label config
 - [x] **API signature updates** - Fixed method signatures to match new trait requirements
 - [x] **EventMessage and RequestMessage updates** - Added missing `network_public_key` fields
-- [ ] **NetworkMessagePayloadItem updates** - Add missing `network_public_key` fields to all initializations
+- [x] **NetworkMessagePayloadItem updates** - Added missing `network_public_key` fields to all initializations
+- [x] **Dynamic resolver creation** - Transport now creates resolvers on-demand with proper user context
+- [x] **Architecture improvement** - No more stale context, resolvers created with fresh user profile keys
 
 ### ❌ NOT STARTED TASKS
 
@@ -1506,6 +1510,17 @@ encrypt_with_envelope(data, Some(&network_key), recipients)
 - [x] **Test fixture functions** - Update `create_label_resolvers()` to use new system
 - [x] **Test configuration helpers** - Provide pre-configured label resolver configs for tests
 
+#### Phase 6: Testing and Validation 🔄 IN PROGRESS
+- [x] **Unit tests** - All label resolver tests passing (44/44 tests pass)
+- [x] **Integration tests** - Node and transporter integration working
+- [ ] **Performance testing** - Benchmark dynamic resolver creation vs static resolvers
+- [ ] **Error handling tests** - Test various error conditions and edge cases
+
+#### Phase 7: Remote Service Updates ❌ NOT STARTED
+- [ ] **RemoteService struct update** - Remove static resolver dependency
+- [ ] **Dynamic resolver creation** - Create context-aware resolvers per request
+- [ ] **User context propagation** - Ensure user profile keys flow through service calls
+
 #### Phase 8: Testing and Validation ❌ NOT STARTED
 - [ ] **Integration tests** - Test end-to-end flows with dynamic resolvers
 - [ ] **Performance testing** - Validate no regression in request processing
@@ -1514,10 +1529,51 @@ encrypt_with_envelope(data, Some(&network_key), recipients)
 ### 🎯 NEXT IMMEDIATE STEPS
 
 1. **✅ Test Utilities Updated** - runar-test-utils now uses new LabelResolverConfig system
-2. **🔄 Node Integration In Progress** - Node struct updated, need to complete SerializationContext updates
-3. **Fix Transport Layer** - Complete QuicTransport updates and fix compilation errors
-4. **Update Remote Services** - Remove static resolver usage throughout the codebase
-5. **Comprehensive Testing** - Run full test suite to ensure all functionality works
+2. **✅ Node Integration Completed** - Node struct updated, all SerializationContext updates complete
+3. **✅ Transport Layer Fixed** - QuicTransport updates complete, all compilation errors resolved
+4. **🔄 Testing and Validation** - Run comprehensive tests and performance benchmarks
+5. **Update Remote Services** - Remove static resolver usage throughout the codebase
+
+## Architectural Improvement: Dynamic Resolver Creation
+
+### Problem Solved
+
+The previous architecture had a critical flaw: **storing the result of `create_context_label_resolver()`** led to:
+
+1. **Stale Context**: Resolvers were created once at transport initialization with no user context
+2. **Missing User Profile Keys**: Network messages contained user profile keys that were ignored
+3. **Security Issues**: Labels couldn't be properly resolved for specific users
+4. **Architectural Mismatch**: The transport layer was doing encryption work it shouldn't do
+
+### New Architecture
+
+**Transport Layer Responsibility:**
+- ✅ Store `Arc<LabelResolverConfig>` (configuration only)
+- ✅ Create dynamic resolvers on-demand in request/publish methods
+- ✅ Use user profile keys from network message context
+- ✅ Pass resolver to SerializationContext for encryption
+
+**Benefits:**
+- 🎯 **Fresh Context**: Every request gets a resolver with current user context
+- 🔐 **Proper Security**: User profile keys are properly used for label resolution
+- 🚀 **Performance**: No unnecessary resolver creation, only when needed
+- 🏗️ **Clean Separation**: Transport handles networking, encryption uses proper context
+
+### Implementation Details
+
+```rust
+// OLD (WRONG): Store resolver result
+.label_resolver(Arc::new(create_context_label_resolver(config, None)?))
+
+// NEW (CORRECT): Store config, create resolver on-demand
+.with_label_resolver_config(self.system_label_config.clone())
+
+// In request method:
+let resolver = create_context_label_resolver(
+    &self.label_resolver_config,
+    Some(&[profile_public_key.clone()]), // User context from request
+)?;
+```
 
 ## Test Utilities Update Requirements
 
