@@ -657,7 +657,10 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
 
     // Initialize user root key (required for envelope encryption)
     let user_root_public_key = mobile.initialize_user_root_key()?;
-    println!("   ✅ User root key initialized: {} bytes", user_root_public_key.len());
+    println!(
+        "   ✅ User root key initialized: {} bytes",
+        user_root_public_key.len()
+    );
 
     // Generate network key
     let network_key = mobile.generate_network_data_key()?;
@@ -666,7 +669,8 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
 
     // Install network key on node
     let token = node.generate_csr()?;
-    let network_key_msg = mobile.create_network_key_message(&network_key, &token.node_agreement_public_key)?;
+    let network_key_msg =
+        mobile.create_network_key_message(&network_key, &token.node_agreement_public_key)?;
     node.install_network_key(network_key_msg)?;
     println!("   ✅ Network key installed on node");
 
@@ -675,17 +679,23 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
     // Test 1: Encrypt with network key + EMPTY profile keys array
     println!("   🔒 Testing encryption with network key + empty profile keys array");
     let network_public_key = mobile.get_network_public_key(&network_key)?;
-    
+
     let envelope_data = mobile.encrypt_with_envelope(
         test_data,
         Some(&network_public_key),
         vec![], // EMPTY profile keys array - this is our failing scenario
     )?;
-    
+
     println!("   ✅ Encryption successful with empty profile keys array");
     println!("      Network ID: {:?}", envelope_data.network_id);
-    println!("      Profile encrypted keys count: {}", envelope_data.profile_encrypted_keys.len());
-    println!("      Envelope data size: {} bytes", envelope_data.encrypted_data.len());
+    println!(
+        "      Profile encrypted keys count: {}",
+        envelope_data.profile_encrypted_keys.len()
+    );
+    println!(
+        "      Envelope data size: {} bytes",
+        envelope_data.encrypted_data.len()
+    );
 
     // Test 2: Decrypt with network key (node should be able to decrypt)
     println!("   🔓 Testing decryption with network key");

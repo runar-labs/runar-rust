@@ -327,7 +327,9 @@ impl QuicTransportOptions {
         self.keystore.as_ref()
     }
 
-    pub fn label_resolver_config(&self) -> Option<&Arc<runar_serializer::traits::LabelResolverConfig>> {
+    pub fn label_resolver_config(
+        &self,
+    ) -> Option<&Arc<runar_serializer::traits::LabelResolverConfig>> {
         self.label_resolver_config.as_ref()
     }
 
@@ -436,10 +438,10 @@ struct HandshakeData {
 fn encode_message(msg: &NetworkMessage) -> Result<Vec<u8>, NetworkError> {
     let mut buf = serde_cbor::to_vec(msg)
         .map_err(|e| NetworkError::MessageError(format!("failed to encode cbor: {e}")))?;
-    
+
     let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
     framed.append(&mut buf);
-    
+
     Ok(framed)
 }
 
@@ -711,10 +713,9 @@ impl QuicTransport {
                     NetworkError::ConfigurationError("keystore or key_manager is required".into())
                 })?
             };
-        let label_resolver_config = options
-            .label_resolver_config
-            .take()
-            .ok_or_else(|| NetworkError::ConfigurationError("label_resolver_config is required".into()))?;
+        let label_resolver_config = options.label_resolver_config.take().ok_or_else(|| {
+            NetworkError::ConfigurationError("label_resolver_config is required".into())
+        })?;
 
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             rustls::crypto::ring::default_provider()
@@ -1075,7 +1076,7 @@ impl QuicTransport {
         &self,
         recv: &mut quinn::RecvStream,
     ) -> Result<NetworkMessage, NetworkError> {
-        log_debug!(self.logger, "[read_message] Reading message from stream");
+        // log_debug!(self.logger, "[read_message] Reading message from stream");
 
         let mut len_buf = [0u8; 4];
 
@@ -1098,10 +1099,10 @@ impl QuicTransport {
 
         let mut msg_buf = vec![0u8; len];
 
-        log_debug!(
-            self.logger,
-            "[read_message] Reading message payload of length {len}"
-        );
+        // log_debug!(
+        //     self.logger,
+        //     "[read_message] Reading message payload of length {len}"
+        // );
 
         match recv.read_exact(&mut msg_buf).await {
             Ok(_) => {}
@@ -1143,10 +1144,7 @@ impl QuicTransport {
         Ok(())
     }
 
-    async fn handle_request(
-        &self,
-        msg: NetworkMessage,
-    ) -> Result<NetworkMessage, NetworkError> {
+    async fn handle_request(&self, msg: NetworkMessage) -> Result<NetworkMessage, NetworkError> {
         log_debug!(
             self.logger,
             "[handle_request] Processing request message correlation id: {correlation_id}",
@@ -1160,8 +1158,6 @@ impl QuicTransport {
             );
             NetworkError::TransportError(format!("failed to handle request: {e}"))
         })?;
-
-
 
         Ok(response)
     }
@@ -1327,11 +1323,11 @@ impl QuicTransport {
             };
             let msg = self.read_message(&mut recv).await?;
 
-            log_debug!(self.logger, "[bi_accept_loop] Received message: type={type}, source={source}, dest={dest}", 
-                     type=msg.message_type, 
-                     source=msg.source_node_id, 
-                     dest=msg.destination_node_id
-                     );
+            log_debug!(self.logger, "[bi_accept_loop] Received message: type={type}, source={source}, dest={dest}",
+            type=msg.message_type,
+            source=msg.source_node_id,
+            dest=msg.destination_node_id
+            );
 
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
                 self.handle_handshake(
@@ -1369,7 +1365,11 @@ impl QuicTransport {
 
                 //if not cached, handle the request and send the response
                 let correlation_id = msg.payload.correlation_id.clone();
-                log_debug!(self.logger, "[bi_accept_loop] Handling request correlation_id: {correlation_id}", correlation_id=correlation_id);
+                log_debug!(
+                    self.logger,
+                    "[bi_accept_loop] Handling request correlation_id: {correlation_id}",
+                    correlation_id = correlation_id
+                );
                 let response = self.handle_request(msg.clone()).await?;
                 // response is already NetworkMessage, just update destination
                 let response_msg = NetworkMessage {
@@ -1378,7 +1378,7 @@ impl QuicTransport {
                     message_type: super::MESSAGE_TYPE_RESPONSE,
                     payload: response.payload, // response.payload is NetworkMessagePayloadItem
                 };
-                
+
                 log_debug!(self.logger, "[bi_accept_loop] Built response message correlation_id: {correlation_id} response_payload_bytes: {response_len}", 
                     correlation_id=correlation_id, 
                     response_len=response_msg.payload.payload_bytes.len()
@@ -1387,7 +1387,7 @@ impl QuicTransport {
                 let response_msg_arc = Arc::new(response_msg);
                 self.response_cache
                     .insert(correlation_id.clone(), (now, response_msg_arc.clone()));
-                
+
                 log_debug!(self.logger, "[bi_accept_loop] Writing response message correlation_id: {correlation_id} response_payload_bytes: {response_len}", 
                     correlation_id=correlation_id, 
                     response_len=response_msg_arc.payload.payload_bytes.len()
@@ -1815,7 +1815,10 @@ impl NetworkTransport for QuicTransport {
         let resolver = runar_serializer::traits::create_context_label_resolver(
             &self.label_resolver_config,
             &profile_public_keys, // Use profile public keys as user context
-        ).map_err(|e| NetworkError::ConfigurationError(format!("Failed to create label resolver: {e}")))?;
+        )
+        .map_err(|e| {
+            NetworkError::ConfigurationError(format!("Failed to create label resolver: {e}"))
+        })?;
 
         let _serialization_context = runar_serializer::traits::SerializationContext {
             keystore: self.keystore.clone(),
@@ -1850,8 +1853,6 @@ impl NetworkTransport for QuicTransport {
             payload_len = msg.payload.payload_bytes.len(),
             corr_id = msg.payload.correlation_id
         );
-        
-
 
         let mut retry_count = 0;
         let response_msg = loop {
@@ -1867,7 +1868,6 @@ impl NetworkTransport for QuicTransport {
             .await
             .map_err(|_| NetworkError::TransportError("open_bi timeout".into()))??;
 
-            
             if let Err(e) = self.write_message(&mut send, &msg).await {
                 log_error!(
                     self.logger,
@@ -2374,15 +2374,14 @@ impl NetworkTransport for QuicTransport {
         runar_serializer::traits::create_context_label_resolver(
             &self.label_resolver_config,
             &empty_profile_keys, // No user context for backward compatibility
-        ).unwrap_or_else(|_| {
+        )
+        .unwrap_or_else(|_| {
             // Fallback to empty resolver if creation fails
             Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
                 runar_serializer::traits::KeyMappingConfig {
                     label_mappings: std::collections::HashMap::new(),
-                }
+                },
             ))
         })
     }
-
-
 }

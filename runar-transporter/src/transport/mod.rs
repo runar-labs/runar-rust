@@ -197,7 +197,8 @@ pub type GetLocalNodeInfoCallback =
 pub type RequestCallback =
     Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<NetworkMessage>> + Send + Sync>;
 
-pub type EventCallback = Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+pub type EventCallback =
+    Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]

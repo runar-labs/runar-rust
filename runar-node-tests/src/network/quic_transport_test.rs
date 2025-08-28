@@ -5,7 +5,7 @@ async fn test_dial_cancel_on_inbound_connect(
     use runar_common::logging::{Component, Logger};
     use runar_common::logging::{LogLevel, LoggingConfig};
     // PeerInfo not used in this test
-    use runar_transporter::transport::{NetworkTransport};
+    use runar_transporter::transport::NetworkTransport;
     use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
     use std::sync::Arc;
     use std::time::Duration;
@@ -146,13 +146,25 @@ async fn test_dial_cancel_on_inbound_connect(
     // Simple request to verify stable connection
     let topic = TopicPath::new("$registry/services/list", "main").unwrap();
     let res1 = t1
-        .request(topic.as_str(), "test_corr_1", ArcValue::null().serialize(None).unwrap_or_default(), &id2, None, vec![],
+        .request(
+            topic.as_str(),
+            "test_corr_1",
+            ArcValue::null().serialize(None).unwrap_or_default(),
+            &id2,
+            None,
+            vec![],
         )
         .await;
     let _ = match res1 {
         Ok(v) => Ok(v),
         Err(_) => {
-            t2.request(topic.as_str(), "test_corr_2", ArcValue::null().serialize(None).unwrap_or_default(), &id1, None, vec![],
+            t2.request(
+                topic.as_str(),
+                "test_corr_2",
+                ArcValue::null().serialize(None).unwrap_or_default(),
+                &id1,
+                None,
+                vec![],
             )
             .await
         }
@@ -167,8 +179,8 @@ use runar_common::logging::{Component, Logger};
 use runar_common::logging::{LogLevel, LoggingConfig};
 use runar_schemas::{NodeInfo, NodeMetadata, SubscriptionMetadata};
 use runar_transporter::transport::{
-    GetLocalNodeInfoCallback, MESSAGE_TYPE_EVENT,
-    MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
+    GetLocalNodeInfoCallback, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST,
+    MESSAGE_TYPE_RESPONSE,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -177,7 +189,7 @@ use tokio::sync::Mutex;
 use runar_common::routing::TopicPath;
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_node::{ActionMetadata, ServiceMetadata};
-use runar_serializer::traits::{LabelResolverConfig};
+use runar_serializer::traits::LabelResolverConfig;
 use runar_serializer::ArcValue;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::transport::{
@@ -426,17 +438,17 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
             let response_value =
                 ArcValue::new_primitive(format!("Response from Node2: {}", req.payload.path));
             let response = NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: req.source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path: req.payload.path.clone(),
-                        correlation_id: req.payload.correlation_id,
-                        payload_bytes: response_value.serialize(None).unwrap_or_default(),
-                        network_public_key: None,
-                        profile_public_keys: req.payload.profile_public_keys,
-                    },
-                };
+                source_node_id: String::new(),
+                destination_node_id: req.source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path: req.payload.path.clone(),
+                    correlation_id: req.payload.correlation_id,
+                    payload_bytes: response_value.serialize(None).unwrap_or_default(),
+                    network_public_key: None,
+                    profile_public_keys: req.payload.profile_public_keys,
+                },
+            };
             Ok(response)
         })
     });
@@ -577,10 +589,8 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     };
 
     // Insert resolver and local node info callbacks
-    let resolver: Arc<LabelResolverConfig> =
-        Arc::new(LabelResolverConfig {
+    let resolver: Arc<LabelResolverConfig> = Arc::new(LabelResolverConfig {
         label_mappings: HashMap::new(),
-        
     });
 
     let node1_info_clone2 = node1_info.clone();
@@ -640,7 +650,13 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // Send a too-large payload and expect error due to max_message_size being small
     let large_payload = vec![7u8; 4096];
     let res = t1
-        .request("test:limits/echo", "corr-limits", large_payload, &runar_common::compact_ids::compact_id(&node2_info.node_public_key), None, vec![node1_info.node_public_key.clone()],
+        .request(
+            "test:limits/echo",
+            "corr-limits",
+            large_payload,
+            &runar_common::compact_ids::compact_id(&node2_info.node_public_key),
+            None,
+            vec![node1_info.node_public_key.clone()],
         )
         .await;
     assert!(
@@ -718,17 +734,17 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
                 req.payload.profile_public_keys.len()
             ));
             let resp = NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: req.source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path: req.payload.path.clone(),
-                        correlation_id: req.payload.correlation_id,
-                        payload_bytes: req.payload.payload_bytes.clone(),
-                        network_public_key: None,
-                        profile_public_keys: req.payload.profile_public_keys,
-                    },
-                };
+                source_node_id: String::new(),
+                destination_node_id: req.source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path: req.payload.path.clone(),
+                    correlation_id: req.payload.correlation_id,
+                    payload_bytes: req.payload.payload_bytes.clone(),
+                    network_public_key: None,
+                    profile_public_keys: req.payload.profile_public_keys,
+                },
+            };
             Ok(resp)
         })
     });
@@ -744,17 +760,17 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
                 req.payload.profile_public_keys.len()
             ));
             let resp = NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: req.source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path: req.payload.path.clone(),
-                        correlation_id: req.payload.correlation_id,
-                        payload_bytes: req.payload.payload_bytes.clone(),
-                        network_public_key: None,
-                        profile_public_keys: req.payload.profile_public_keys,
-                    },
-                };
+                source_node_id: String::new(),
+                destination_node_id: req.source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path: req.payload.path.clone(),
+                    correlation_id: req.payload.correlation_id,
+                    payload_bytes: req.payload.payload_bytes.clone(),
+                    network_public_key: None,
+                    profile_public_keys: req.payload.profile_public_keys,
+                },
+            };
             Ok(resp)
         })
     });
@@ -762,10 +778,8 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         Arc::new(move |_event: NetworkMessage| Box::pin(async { Ok(()) }));
 
     // Build transports
-    let empty_resolver: Arc<LabelResolverConfig> =
-        Arc::new(LabelResolverConfig {
+    let empty_resolver: Arc<LabelResolverConfig> = Arc::new(LabelResolverConfig {
         label_mappings: HashMap::new(),
-        
     });
 
     let node1_info_clone = node1_info.clone();
@@ -844,9 +858,21 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
     // Concurrent requests both directions to ensure stability
     let path1 = TopicPath::new("test:echo/req", "test")?;
     let payload = ArcValue::new_primitive("x".to_string());
-    let f1 = t1.request(path1.as_str(), "corr1", payload.serialize(None).unwrap_or_default(), &node2_id, None, vec![node1_info.node_public_key.clone()],
+    let f1 = t1.request(
+        path1.as_str(),
+        "corr1",
+        payload.serialize(None).unwrap_or_default(),
+        &node2_id,
+        None,
+        vec![node1_info.node_public_key.clone()],
     );
-    let f2 = t2.request(path1.as_str(), "corr2", payload.serialize(None).unwrap_or_default(), &node1_id, None, vec![node2_info.node_public_key.clone()],
+    let f2 = t2.request(
+        path1.as_str(),
+        "corr2",
+        payload.serialize(None).unwrap_or_default(),
+        &node1_id,
+        None,
+        vec![node2_info.node_public_key.clone()],
     );
     let (r1, r2) = tokio::join!(f1, f2);
     assert!(
@@ -917,17 +943,17 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         let source_node_id = req.source_node_id.clone();
         Box::pin(async move {
             Ok(NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path,
-                        correlation_id: "".to_string(),
-                        payload_bytes: vec![],
-                        network_public_key: None,
-                        profile_public_keys: vec![],
-                    },
-                })
+                source_node_id: String::new(),
+                destination_node_id: source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path,
+                    correlation_id: "".to_string(),
+                    payload_bytes: vec![],
+                    network_public_key: None,
+                    profile_public_keys: vec![],
+                },
+            })
         })
     });
     let event_handler: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
@@ -978,10 +1004,8 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         })
     };
 
-    let resolver: Arc<LabelResolverConfig> =
-        Arc::new(LabelResolverConfig {
+    let resolver: Arc<LabelResolverConfig> = Arc::new(LabelResolverConfig {
         label_mappings: HashMap::new(),
-        
     });
 
     let info1_clone = info1.clone();
@@ -1144,17 +1168,17 @@ async fn test_capability_version_bump_across_reconnect(
         let source_node_id = req.source_node_id.clone();
         Box::pin(async move {
             Ok(NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path,
-                        correlation_id: "".to_string(),
-                        payload_bytes: vec![],
-                        network_public_key: None,
-                        profile_public_keys: vec![],
-                    },
-                })
+                source_node_id: String::new(),
+                destination_node_id: source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path,
+                    correlation_id: "".to_string(),
+                    payload_bytes: vec![],
+                    network_public_key: None,
+                    profile_public_keys: vec![],
+                },
+            })
         })
     });
     let event_handler1: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
@@ -1163,17 +1187,17 @@ async fn test_capability_version_bump_across_reconnect(
         let source_node_id = req.source_node_id.clone();
         Box::pin(async move {
             Ok(NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path,
-                        correlation_id: "".to_string(),
-                        payload_bytes: vec![],
-                        network_public_key: None,
-                        profile_public_keys: vec![],
-                    },
-                })
+                source_node_id: String::new(),
+                destination_node_id: source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path,
+                    correlation_id: "".to_string(),
+                    payload_bytes: vec![],
+                    network_public_key: None,
+                    profile_public_keys: vec![],
+                },
+            })
         })
     });
     let event_handler2: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
@@ -1326,17 +1350,17 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         let source_node_id = req.source_node_id.clone();
         Box::pin(async move {
             Ok(NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path,
-                        correlation_id: "".to_string(),
-                        payload_bytes: vec![],
-                        network_public_key: None,
-                        profile_public_keys: vec![],
-                    },
-                })
+                source_node_id: String::new(),
+                destination_node_id: source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path,
+                    correlation_id: "".to_string(),
+                    payload_bytes: vec![],
+                    network_public_key: None,
+                    profile_public_keys: vec![],
+                },
+            })
         })
     });
     let request_handler2: RequestCallback = Arc::new(|req| {
@@ -1344,17 +1368,17 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         let source_node_id = req.source_node_id.clone();
         Box::pin(async move {
             Ok(NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path,
-                        correlation_id: "".to_string(),
-                        payload_bytes: vec![],
-                        network_public_key: None,
-                        profile_public_keys: vec![],
-                    },
-                })
+                source_node_id: String::new(),
+                destination_node_id: source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path,
+                    correlation_id: "".to_string(),
+                    payload_bytes: vec![],
+                    network_public_key: None,
+                    profile_public_keys: vec![],
+                },
+            })
         })
     });
     let event_handler1: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
@@ -1461,8 +1485,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
 
     // Repeated race rounds
     let p1 = PeerInfo::new(info1.node_public_key.clone(), info1.addresses.clone());
-    let p2 = PeerInfo::new(
-            info2.node_public_key.clone(), info2.addresses.clone());
+    let p2 = PeerInfo::new(info2.node_public_key.clone(), info2.addresses.clone());
     for _ in 0..5 {
         let (a, b) = tokio::join!(
             t1.clone().connect_peer(p2.clone()),
@@ -1517,7 +1540,7 @@ async fn test_transport_message_header_bounds_checking(
         destination_node_id: "test_dest".to_string(),
         message_type: MESSAGE_TYPE_REQUEST,
         payload: NetworkMessagePayloadItem {
-                    network_public_key: None,
+            network_public_key: None,
             path: "test".to_string(),
             payload_bytes: vec![1, 2, 3, 4],
             correlation_id: "test_corr".to_string(),
@@ -1556,7 +1579,7 @@ async fn test_transport_message_header_bounds_checking(
         destination_node_id: "test_dest".to_string(),
         message_type: MESSAGE_TYPE_REQUEST,
         payload: NetworkMessagePayloadItem {
-                    network_public_key: None,
+            network_public_key: None,
             path: "test".to_string(),
             payload_bytes: large_payload,
             correlation_id: "test_corr".to_string(),
@@ -1588,7 +1611,7 @@ async fn test_transport_message_header_bounds_checking(
         destination_node_id: "".to_string(),
         message_type: MESSAGE_TYPE_REQUEST,
         payload: NetworkMessagePayloadItem {
-                    network_public_key: None,
+            network_public_key: None,
             path: "".to_string(),
             payload_bytes: vec![],
             correlation_id: "".to_string(),
@@ -1630,7 +1653,6 @@ async fn test_transport_start_stop_idempotence(
     let keystore = Arc::new(NoCrypto);
     let resolver = Arc::new(LabelResolverConfig {
         label_mappings: HashMap::new(),
-    
     });
 
     let local_pk = km.get_node_public_key();
@@ -1654,17 +1676,17 @@ async fn test_transport_start_stop_idempotence(
     let request_cb: RequestCallback = Arc::new(|req| {
         Box::pin(async move {
             Ok(NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: req.source_node_id,
-                    message_type: MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path: req.payload.path.clone(),
-                        correlation_id: "c".into(),
-                        payload_bytes: vec![1],
-                        network_public_key: None,
-                        profile_public_keys: vec![],
-                    },
-                })
+                source_node_id: String::new(),
+                destination_node_id: req.source_node_id,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
+                    path: req.payload.path.clone(),
+                    correlation_id: "c".into(),
+                    payload_bytes: vec![1],
+                    network_public_key: None,
+                    profile_public_keys: vec![],
+                },
+            })
         })
     });
     let event_cb: EventCallback = Arc::new(|_e| Box::pin(async move { Ok(()) }));
@@ -1698,7 +1720,13 @@ async fn test_transport_start_stop_idempotence(
 
     // After stop, operations should fail quickly (no background tasks serving)
     let res = t
-        .publish("test:path", "corr", vec![], &runar_common::compact_ids::compact_id(&local_pk), None)
+        .publish(
+            "test:path",
+            "corr",
+            vec![],
+            &runar_common::compact_ids::compact_id(&local_pk),
+            None,
+        )
         .await;
     assert!(res.is_err(), "publish after stop should fail");
 

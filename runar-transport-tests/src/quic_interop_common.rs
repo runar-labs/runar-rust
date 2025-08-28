@@ -6,9 +6,7 @@ use runar_schemas::NodeInfo;
 use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 // Intentionally not importing QuicTransportOptions here
 use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
-use runar_serializer::traits::{
-    EnvelopeCrypto, LabelResolverConfig, LabelValue,
-};
+use runar_serializer::traits::{EnvelopeCrypto, LabelResolverConfig, LabelValue};
 use runar_transporter::transport::MESSAGE_TYPE_REQUEST;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer};
 use std::collections::HashMap;

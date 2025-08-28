@@ -125,7 +125,13 @@ async fn main() -> Result<()> {
     // Also send a one-way event
     let event_correlation_id = uuid::Uuid::new_v4().to_string();
     transport
-        .publish(topic.as_str(), &event_correlation_id, vec![], &remote_id, None)
+        .publish(
+            topic.as_str(),
+            &event_correlation_id,
+            vec![],
+            &remote_id,
+            None,
+        )
         .await
         .map_err(|e| anyhow!("publish failed: {e}"))?;
 

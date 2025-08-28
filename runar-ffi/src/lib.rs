@@ -17,7 +17,7 @@ use runar_keys::{
     EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
-use runar_serializer::traits::{LabelResolverConfig};
+use runar_serializer::traits::LabelResolverConfig;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
@@ -374,7 +374,9 @@ pub unsafe extern "C" fn rn_keys_set_label_mapping(
                 return 2;
             }
         };
-    let resolver_config = runar_serializer::traits::LabelResolverConfig { label_mappings: mapping };
+    let resolver_config = runar_serializer::traits::LabelResolverConfig {
+        label_mappings: mapping,
+    };
     inner.label_resolver_config = Some(Arc::new(resolver_config));
     0
 }
@@ -3614,7 +3616,13 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             );
             map.insert(
                 serde_cbor::Value::Text("profile_public_key".into()),
-                serde_cbor::Value::Bytes(req.payload.profile_public_keys.first().cloned().unwrap_or_default()),
+                serde_cbor::Value::Bytes(
+                    req.payload
+                        .profile_public_keys
+                        .first()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
             );
             let _ = req_tx
                 .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())

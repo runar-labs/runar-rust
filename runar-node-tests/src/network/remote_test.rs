@@ -34,7 +34,7 @@ async fn test_remote_action_call() -> Result<()> {
 
     // Set up logger
     let logger = Arc::new(Logger::new_root(Component::Custom("remote_action_test")));
-    
+
     // Force debug logging for this test
     logger.debug("🔍 DEBUG LOGGING ENABLED - Test starting with debug level");
 

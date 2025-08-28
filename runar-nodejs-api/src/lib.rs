@@ -1062,9 +1062,15 @@ impl Transport {
         dest_peer_id: String,
     ) -> Result<()> {
         let t = { self.inner.lock().unwrap().transport.clone() };
-        t.publish(&path, &correlation_id, payload.to_vec(), &dest_peer_id, None)
-            .await
-            .map_err(|e| Error::from_reason(format!("publish failed: {e}")))
+        t.publish(
+            &path,
+            &correlation_id,
+            payload.to_vec(),
+            &dest_peer_id,
+            None,
+        )
+        .await
+        .map_err(|e| Error::from_reason(format!("publish failed: {e}")))
     }
 
     #[napi]

@@ -18,8 +18,8 @@ use runar_serializer::{ArcValue, SerializationContext};
 use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
 use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
 use runar_transporter::transport::{
-    EventCallback, GetLocalNodeInfoCallback, NetworkMessage, NetworkMessagePayloadItem, PeerConnectedCallback,
-    PeerDisconnectedCallback, RequestCallback, MESSAGE_TYPE_RESPONSE,
+    EventCallback, GetLocalNodeInfoCallback, NetworkMessage, NetworkMessagePayloadItem,
+    PeerConnectedCallback, PeerDisconnectedCallback, RequestCallback, MESSAGE_TYPE_RESPONSE,
 };
 use runar_transporter::{
     DiscoveryOptions, MulticastDiscovery, NetworkTransport, NodeDiscovery, QuicTransport,
@@ -209,12 +209,13 @@ impl NodeConfig {
         // Create default label resolver config with system label
         let default_network_id_str = default_network_id.into();
         let label_resolver_config = runar_serializer::traits::LabelResolverConfig {
-            label_mappings: std::collections::HashMap::from([
-                ("system".to_string(), runar_serializer::traits::LabelValue {
+            label_mappings: std::collections::HashMap::from([(
+                "system".to_string(),
+                runar_serializer::traits::LabelValue {
                     network_public_key: None, // Will be resolved at runtime
                     user_key_spec: None,
-                }),
-            ]),
+                },
+            )]),
         };
 
         Self {
@@ -636,9 +637,6 @@ impl Node {
         logger.set_node_id(node_id.clone());
 
         log_info!(logger, "Successfully loaded existing node credentials.");
-
-
-
 
         let local_node_info = NodeInfo {
             node_public_key: node_public_key.clone(),
@@ -2176,7 +2174,6 @@ impl Node {
 
         log_debug!(self.logger, "Processing request: {topic_path}");
 
-
         // First check local service state - if no state exists, no local service exists
         let service_topic = TopicPath::new_service(&self.network_id, &topic_path.service_path());
         let service_state = self
@@ -2240,7 +2237,12 @@ impl Node {
             .await
     }
 
-    pub async fn remote_request<P>(&self, path: &str, payload: Option<P>, profile_public_keys: Vec<Vec<u8>>) -> Result<ArcValue>
+    pub async fn remote_request<P>(
+        &self,
+        path: &str,
+        payload: Option<P>,
+        profile_public_keys: Vec<Vec<u8>>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -2284,8 +2286,9 @@ impl Node {
             );
 
             // Create request context with profile public keys
-            let context = RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
-                .with_user_profile_public_keys(profile_public_keys);
+            let context =
+                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
+                    .with_user_profile_public_keys(profile_public_keys);
 
             // For remote handlers, we don't have the registration path
             // In the future, we should enhance the remote handler registry to include registration paths

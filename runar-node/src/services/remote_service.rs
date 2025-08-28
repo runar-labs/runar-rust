@@ -222,7 +222,10 @@ impl RemoteService {
             let network_public_key = match keystore.get_network_public_key(&network_id) {
                 Ok(key) => key,
                 Err(e) => {
-                    let error_msg = format!("Failed to get network public key for network {}: {}", network_id, e);
+                    let error_msg = format!(
+                        "Failed to get network public key for network {}: {}",
+                        network_id, e
+                    );
                     log_error!(logger, "🔒 [RemoteService] {}", error_msg);
                     return Box::pin(async move { Err(anyhow::anyhow!(error_msg)) });
                 }
@@ -234,21 +237,22 @@ impl RemoteService {
 
                 log_debug!(
                     logger,
-                    "🚀 [RemoteService] Starting remote request - Action: {action} Target: {peer_node_id} Correlation ID: {correlation_id}"
+                    "🚀 [RemoteService] Starting remote request - Action: {action} Target: {peer_node_id}"
                 );
 
                 let profile_public_keys = request_context.user_profile_public_keys.clone();
 
                 // Send the request
                 let topic_path_str = action_topic_path.as_str();
-                
+
                 // Create dynamic resolver with user context
                 // For request serialization, we can use a system-only resolver if no user keys are provided
                 let resolver = runar_serializer::traits::create_context_label_resolver(
                     &label_resolver_config,
                     &profile_public_keys, // Empty vec is fine for system-only resolver
-                ).map_err(|e| anyhow::anyhow!("Failed to create label resolver: {e}"))?;
-                
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to create label resolver: {e}"))?;
+
                 // Create serialization context with dynamic resolver
                 let serialization_context = SerializationContext {
                     keystore: keystore.clone(),
@@ -258,12 +262,15 @@ impl RemoteService {
                 };
 
                 let params_to_serialize = params.unwrap_or(ArcValue::null());
-                
+
                 // Serialize request parameters with encryption (all external payloads must be encrypted)
                 let params_bytes = params_to_serialize
                     .serialize(Some(&serialization_context))
                     .map_err(|e| {
-                        log_error!(logger, "🔒 [RemoteService] Encryption failed for request params: {e}");
+                        log_error!(
+                            logger,
+                            "🔒 [RemoteService] Encryption failed for request params: {e}"
+                        );
                         anyhow::anyhow!("Failed to encrypt request params: {e}")
                     })?;
                 match network_transport
@@ -278,10 +285,7 @@ impl RemoteService {
                     .await
                 {
                     Ok(response_bytes) => {
-                        log_debug!(
-                            logger,
-                            "✅ [RemoteService] Response received successfully correlation_id: {correlation_id}"
-                        );
+                        log_debug!(logger, "✅ [RemoteService] Response received successfully");
                         // Deserialize the response bytes back to ArcValue
                         match ArcValue::deserialize(
                             &response_bytes,
@@ -291,7 +295,7 @@ impl RemoteService {
                             Err(e) => {
                                 log_error!(
                                     logger,
-                                    "❌ [RemoteService] Failed to deserialize response correlation_id: {correlation_id}: {e}"
+                                    "❌ [RemoteService] Failed to deserialize response: {e}"
                                 );
                                 Err(anyhow::anyhow!("Response deserialization error: {e}"))
                             }
@@ -300,7 +304,7 @@ impl RemoteService {
                     Err(e) => {
                         log_error!(
                             logger,
-                            "❌ [RemoteService] Remote request failed correlation_id: {correlation_id}: {e}"
+                            "❌ [RemoteService] Remote request failed: {e}"
                         );
                         Err(anyhow::anyhow!("Remote service error: {e}"))
                     }

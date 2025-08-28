@@ -135,7 +135,9 @@ impl ConfigurableLabelResolver {
             let mut profile_public_keys = Vec::new();
 
             // Get network key if specified, or use empty for user-only labels
-            let network_public_key = label_value.network_public_key.clone()
+            let network_public_key = label_value
+                .network_public_key
+                .clone()
                 .unwrap_or_else(|| vec![]); // Empty key for user-only labels
 
             // Process user key specification
@@ -143,27 +145,33 @@ impl ConfigurableLabelResolver {
                 Some(LabelKeyword::CurrentUser) => {
                     // Always extend with user profile keys (empty vec is fine)
                     profile_public_keys.extend_from_slice(user_profile_keys);
-                },
+                }
                 Some(LabelKeyword::Custom(_custom_name)) => {
                     // Future: Call custom resolution function
                     // For now, profile_public_keys remains empty
                     // Custom resolver would populate profile_public_keys here
-                },
+                }
                 None => {
                     // No user keys - profile_public_keys remains empty
-                },
+                }
             }
 
             // Validation: Label must have either network key OR user keys OR both
             // Empty network key + empty profile keys = invalid label
             if network_public_key.is_empty() && profile_public_keys.is_empty() {
-                return Err(anyhow::anyhow!("Label '{}' must specify either network_public_key or user_key_spec (or both)", label));
+                return Err(anyhow::anyhow!(
+                    "Label '{}' must specify either network_public_key or user_key_spec (or both)",
+                    label
+                ));
             }
 
-            mappings.insert(label.clone(), LabelKeyInfo {
-                network_public_key: Some(network_public_key),
-                profile_public_keys,
-            });
+            mappings.insert(
+                label.clone(),
+                LabelKeyInfo {
+                    network_public_key: Some(network_public_key),
+                    profile_public_keys,
+                },
+            );
         }
 
         Ok(Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
@@ -175,7 +183,9 @@ impl ConfigurableLabelResolver {
     pub fn validate_label_config(config: &LabelResolverConfig) -> Result<()> {
         // Ensure config has required label mappings
         if config.label_mappings.is_empty() {
-            return Err(anyhow::anyhow!("LabelResolverConfig must contain at least one label mapping"));
+            return Err(anyhow::anyhow!(
+                "LabelResolverConfig must contain at least one label mapping"
+            ));
         }
 
         // Validate each label mapping
@@ -185,13 +195,19 @@ impl ConfigurableLabelResolver {
             let has_user_spec = label_value.user_key_spec.is_some();
 
             if !has_network_key && !has_user_spec {
-                return Err(anyhow::anyhow!("Label '{}' must specify either network_public_key or user_key_spec (or both)", label));
+                return Err(anyhow::anyhow!(
+                    "Label '{}' must specify either network_public_key or user_key_spec (or both)",
+                    label
+                ));
             }
 
             // If network key is provided, validate it's not empty
             if let Some(network_key) = &label_value.network_public_key {
                 if network_key.is_empty() {
-                    return Err(anyhow::anyhow!("Label '{}' has empty network_public_key - use None for user-only labels", label));
+                    return Err(anyhow::anyhow!(
+                        "Label '{}' has empty network_public_key - use None for user-only labels",
+                        label
+                    ));
                 }
             }
 
@@ -200,10 +216,13 @@ impl ConfigurableLabelResolver {
                 match user_spec {
                     LabelKeyword::CurrentUser => {
                         // CurrentUser is always valid
-                    },
+                    }
                     LabelKeyword::Custom(resolver_name) => {
                         if resolver_name.is_empty() {
-                            return Err(anyhow::anyhow!("Label '{}' has empty custom resolver name", label));
+                            return Err(anyhow::anyhow!(
+                                "Label '{}' has empty custom resolver name",
+                                label
+                            ));
                         }
                         // Future: Could validate that custom resolver exists
                     }
