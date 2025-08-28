@@ -565,8 +565,8 @@ impl ArcValue {
 
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
-            let network_public_key = &ctx.network_public_key;     // ← PRE-RESOLVED KEY
-            let recipients = ctx.profile_public_keys.clone();     // ← ALL PROFILE KEYS
+            let network_public_key = &ctx.network_public_key; // ← PRE-RESOLVED KEY
+            let recipients = ctx.profile_public_keys.clone(); // ← ALL PROFILE KEYS
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
                 // Container-aware encryption for list/map: delegate to ser_fn with context

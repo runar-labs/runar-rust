@@ -851,7 +851,7 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
     keys: *mut c_void,
     data: *const u8,
     data_len: usize,
-    network_public_key: *const u8,    // ← NETWORK PUBLIC KEY BYTES
+    network_public_key: *const u8, // ← NETWORK PUBLIC KEY BYTES
     network_public_key_len: usize,
     profile_pks: *const *const u8,
     profile_lens: *const usize,
@@ -949,7 +949,11 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
         }
     };
 
-    match node_manager.encrypt_with_envelope(data_slice, network_public_key_opt.as_deref(), profiles) {
+    match node_manager.encrypt_with_envelope(
+        data_slice,
+        network_public_key_opt.as_deref(),
+        profiles,
+    ) {
         Ok(eed) => {
             let cbor = match serde_cbor::to_vec(&eed) {
                 Ok(v) => v,
@@ -985,7 +989,7 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
     keys: *mut c_void,
     data: *const u8,
     data_len: usize,
-    network_public_key: *const u8,    // ← NETWORK PUBLIC KEY BYTES
+    network_public_key: *const u8, // ← NETWORK PUBLIC KEY BYTES
     network_public_key_len: usize,
     profile_pks: *const *const u8,
     profile_lens: *const usize,
@@ -1083,7 +1087,11 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
         }
     };
 
-    match mobile_manager.encrypt_with_envelope(data_slice, network_public_key_opt.as_deref(), profiles) {
+    match mobile_manager.encrypt_with_envelope(
+        data_slice,
+        network_public_key_opt.as_deref(),
+        profiles,
+    ) {
         Ok(eed) => {
             let cbor = match serde_cbor::to_vec(&eed) {
                 Ok(v) => v,

@@ -45,7 +45,7 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
+        network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         _profile_public_keys: Vec<Vec<u8>>,
     ) -> KeyResult<runar_keys::mobile::EnvelopeEncryptedData> {
         let keys_manager = self.0.read().unwrap();
@@ -586,7 +586,10 @@ impl Node {
 
         // TODO Create a mechanis for this mappint to be config driven
         // Get network public key from keystore
-        let network_public_key = keys_manager.read().unwrap().get_network_public_key(&default_network_id)?;
+        let network_public_key = keys_manager
+            .read()
+            .unwrap()
+            .get_network_public_key(&default_network_id)?;
         let label_resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
             label_mappings: HashMap::from([(
                 "system".to_string(),
@@ -1847,7 +1850,11 @@ impl Node {
 
                 // Create serialization context for encryption
                 // Resolve network ID to public key
-                let network_public_key = self.keys_manager.read().unwrap().get_network_public_key(&network_id)?;
+                let network_public_key = self
+                    .keys_manager
+                    .read()
+                    .unwrap()
+                    .get_network_public_key(&network_id)?;
                 let serialization_context = runar_serializer::traits::SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver: self.label_resolver.clone(),
@@ -1869,7 +1876,11 @@ impl Node {
 
                 // Create serialization context for encryption
                 // Resolve network ID to public key
-                let network_public_key = self.keys_manager.read().unwrap().get_network_public_key(&network_id)?;
+                let network_public_key = self
+                    .keys_manager
+                    .read()
+                    .unwrap()
+                    .get_network_public_key(&network_id)?;
                 let serialization_context = runar_serializer::traits::SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver: self.label_resolver.clone(),
@@ -2500,7 +2511,11 @@ impl Node {
             );
             let network_id = topic_path.network_id();
             // Resolve network ID to public key
-            let network_public_key = self.keys_manager.read().unwrap().get_network_public_key(&network_id)?;
+            let network_public_key = self
+                .keys_manager
+                .read()
+                .unwrap()
+                .get_network_public_key(&network_id)?;
             let serialization_context = SerializationContext {
                 keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                 resolver: self.label_resolver.clone(),
@@ -2707,7 +2722,11 @@ impl Node {
                 // Create serialization context for this subscription
                 let network_id = topic_path.network_id();
                 // Resolve network ID to public key
-                let network_public_key = self.keys_manager.read().unwrap().get_network_public_key(&network_id)?;
+                let network_public_key = self
+                    .keys_manager
+                    .read()
+                    .unwrap()
+                    .get_network_public_key(&network_id)?;
                 let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver: self.label_resolver.clone(),

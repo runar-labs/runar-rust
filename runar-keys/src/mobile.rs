@@ -456,7 +456,7 @@ impl MobileKeyManager {
     pub fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
+        network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData> {
         // Generate ephemeral envelope key
@@ -1003,7 +1003,7 @@ impl crate::EnvelopeCrypto for MobileKeyManager {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
+        network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         MobileKeyManager::encrypt_with_envelope(self, data, network_public_key, profile_public_keys)

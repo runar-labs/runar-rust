@@ -50,7 +50,7 @@ pub trait EnvelopeCrypto: Send + Sync {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_public_key: Option<&[u8]>,  // CHANGED: &[u8] instead of &str
+        network_public_key: Option<&[u8]>, // CHANGED: &[u8] instead of &str
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData>;
 

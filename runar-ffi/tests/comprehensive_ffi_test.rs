@@ -126,7 +126,7 @@ fn test_node_encrypt_with_envelope_null_pointers() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -147,7 +147,7 @@ fn test_node_encrypt_with_envelope_null_pointers() {
             ptr::null(),
             data.len(),
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -165,7 +165,7 @@ fn test_node_encrypt_with_envelope_null_pointers() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -200,7 +200,7 @@ fn test_node_encrypt_with_envelope_zero_length() {
             data.as_ptr(),
             0, // zero length
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -275,7 +275,7 @@ fn test_node_encrypt_with_envelope_wrong_manager_type() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -312,7 +312,7 @@ fn test_node_encrypt_with_envelope_not_initialized() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -349,7 +349,7 @@ fn test_mobile_encrypt_with_envelope_wrong_manager_type() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -386,7 +386,7 @@ fn test_mobile_encrypt_with_envelope_not_initialized() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
-            0,           // network_public_key_len
+            0, // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,

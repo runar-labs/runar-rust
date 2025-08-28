@@ -146,7 +146,7 @@ impl Keys {
     pub fn mobile_encrypt_with_envelope(
         &self,
         data: Buffer,
-        network_public_key: Option<Buffer>,  // ← NETWORK PUBLIC KEY BYTES
+        network_public_key: Option<Buffer>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
@@ -178,7 +178,7 @@ impl Keys {
     pub fn node_encrypt_with_envelope(
         &self,
         data: Buffer,
-        network_public_key: Option<Buffer>,  // ← NETWORK PUBLIC KEY BYTES
+        network_public_key: Option<Buffer>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();

@@ -376,12 +376,12 @@ fn test_complete_ffi_key_management_lifecycle() {
     println!("\n🔐 MULTI-RECIPIENT ENVELOPE ENCRYPTION");
 
     let test_data = b"This is a test message that should be encrypted and decrypted";
-    
+
     // Get the actual network public key bytes (not the network ID string)
     let mut network_pubkey_ptr: *mut u8 = ptr::null_mut();
     let mut network_pubkey_len: usize = 0;
     let network_id_c = std::ffi::CString::new(network_id_str.clone()).unwrap();
-    
+
     let result = unsafe {
         rn_keys_mobile_get_network_public_key(
             mobile_keys,
@@ -392,8 +392,9 @@ fn test_complete_ffi_key_management_lifecycle() {
         )
     };
     assert_eq!(result, 0, "Should successfully get network public key");
-    
-    let network_public_key = unsafe { std::slice::from_raw_parts(network_pubkey_ptr, network_pubkey_len) }.to_vec();
+
+    let network_public_key =
+        unsafe { std::slice::from_raw_parts(network_pubkey_ptr, network_pubkey_len) }.to_vec();
     rn_free(network_pubkey_ptr, network_pubkey_len);
 
     // 5.1 Mobile encrypts with envelope
@@ -410,8 +411,8 @@ fn test_complete_ffi_key_management_lifecycle() {
             mobile_keys,
             test_data.as_ptr(),
             test_data.len(),
-            network_public_key.as_ptr(),        // Use actual network public key bytes
-            network_public_key.len(),           // network_public_key_len
+            network_public_key.as_ptr(), // Use actual network public key bytes
+            network_public_key.len(),    // network_public_key_len
             profile_keys_array.as_ptr(),
             profile_lens_array.as_ptr(),
             2, // Two profile keys
