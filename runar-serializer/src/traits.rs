@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -79,6 +79,34 @@ impl LabelResolver for Box<dyn LabelResolver> {
     }
 }
 
+/// Configuration for label resolver system labels
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelResolverConfig {
+    /// Static label mappings for system labels
+    /// These are config-driven and known at startup
+    /// Supports both direct network public keys and dynamic keywords
+    pub label_mappings: HashMap<String, LabelValue>,
+}
+
+/// Value specification for a label
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelValue {
+    /// Optional network public key for this label
+    /// If None, will use empty key for user-only labels
+    pub network_public_key: Option<Vec<u8>>,
+    /// Optional user key specification for this label
+    pub user_key_spec: Option<LabelKeyword>,
+}
+
+/// Keywords for dynamic label resolution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LabelKeyword {
+    /// Maps to current user's profile public keys from request context
+    CurrentUser,
+    /// Reserved for future custom resolution functions
+    Custom(String), // Function name for custom resolution
+}
+
 /// Configurable label resolver implementation
 pub struct ConfigurableLabelResolver {
     /// Concurrent mapping used heavily on read path
@@ -94,6 +122,112 @@ impl ConfigurableLabelResolver {
         Self { mapping: dm }
     }
 
+    /// Creates a label resolver for a specific context
+    /// REQUIRES: Every label must have an explicit network_public_key - no defaults allowed
+    pub fn create_context_label_resolver(
+        system_config: &LabelResolverConfig,
+        user_profile_keys: Option<&[Vec<u8>]>, // From request context
+    ) -> Result<Arc<dyn LabelResolver>> {
+        let mut mappings = HashMap::new();
+
+        // Process system label mappings
+        for (label, label_value) in &system_config.label_mappings {
+            let mut profile_public_keys = Vec::new();
+
+            // Get network key if specified, or use empty for user-only labels
+            let network_public_key = label_value.network_public_key.clone()
+                .unwrap_or_else(|| vec![]); // Empty key for user-only labels
+
+            // Process user key specification
+            match &label_value.user_key_spec {
+                Some(LabelKeyword::CurrentUser) => {
+                    if let Some(user_keys) = user_profile_keys {
+                        profile_public_keys.extend_from_slice(user_keys);
+                    }
+                    // Note: If no user keys in context, profile_public_keys remains empty
+                    // This allows user-only labels to be valid even in system contexts
+                },
+                Some(LabelKeyword::Custom(_custom_name)) => {
+                    // Future: Call custom resolution function
+                    // For now, profile_public_keys remains empty
+                    // Custom resolver would populate profile_public_keys here
+                },
+                None => {
+                    // No user keys - profile_public_keys remains empty
+                },
+            }
+
+            // Validation: Label must have either network key OR user keys OR both
+            // Empty network key + empty profile keys = invalid label
+            if network_public_key.is_empty() && profile_public_keys.is_empty() {
+                return Err(anyhow::anyhow!("Label '{}' must specify either network_public_key or user_key_spec (or both)", label));
+            }
+
+            mappings.insert(label.clone(), LabelKeyInfo {
+                network_public_key: Some(network_public_key),
+                profile_public_keys,
+            });
+        }
+
+        Ok(Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+            label_mappings: mappings,
+        })))
+    }
+
+    /// Validate label resolver configuration
+    pub fn validate_label_config(config: &LabelResolverConfig) -> Result<()> {
+        // Ensure config has required label mappings
+        if config.label_mappings.is_empty() {
+            return Err(anyhow::anyhow!("LabelResolverConfig must contain at least one label mapping"));
+        }
+
+        // Validate each label mapping
+        for (label, label_value) in &config.label_mappings {
+            // Check that label has either network key OR user key spec OR both
+            let has_network_key = label_value.network_public_key.is_some();
+            let has_user_spec = label_value.user_key_spec.is_some();
+
+            if !has_network_key && !has_user_spec {
+                return Err(anyhow::anyhow!("Label '{}' must specify either network_public_key or user_key_spec (or both)", label));
+            }
+
+            // If network key is provided, validate it's not empty
+            if let Some(network_key) = &label_value.network_public_key {
+                if network_key.is_empty() {
+                    return Err(anyhow::anyhow!("Label '{}' has empty network_public_key - use None for user-only labels", label));
+                }
+            }
+
+            // Validate user key spec if provided
+            if let Some(user_spec) = &label_value.user_key_spec {
+                match user_spec {
+                    LabelKeyword::CurrentUser => {
+                        // CurrentUser is always valid
+                    },
+                    LabelKeyword::Custom(resolver_name) => {
+                        if resolver_name.is_empty() {
+                            return Err(anyhow::anyhow!("Label '{}' has empty custom resolver name", label));
+                        }
+                        // Future: Could validate that custom resolver exists
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Creates a label resolver for a specific context
+/// REQUIRES: Every label must have an explicit network_public_key - no defaults allowed
+pub fn create_context_label_resolver(
+    system_config: &LabelResolverConfig,
+    user_profile_keys: Option<&[Vec<u8>]>, // From request context
+) -> Result<Arc<dyn LabelResolver>> {
+    ConfigurableLabelResolver::create_context_label_resolver(system_config, user_profile_keys)
+}
+
+impl ConfigurableLabelResolver {
     pub fn from_map(map: std::collections::HashMap<String, LabelKeyInfo>) -> Self {
         let dm = dashmap::DashMap::new();
         for (k, v) in map {

@@ -1802,6 +1802,7 @@ impl NetworkTransport for QuicTransport {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
+        network_public_key: Option<Vec<u8>>,
         profile_public_key: Vec<u8>,
     ) -> Result<Vec<u8>, NetworkError> {
         log_debug!(
@@ -1927,6 +1928,7 @@ impl NetworkTransport for QuicTransport {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
+        network_public_key: Option<Vec<u8>>,
     ) -> Result<(), NetworkError> {
         let local_node_id = self.local_node_id.clone();
         // Create the NetworkMessage internally

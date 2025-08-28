@@ -123,6 +123,9 @@ pub struct NetworkMessagePayloadItem {
     /// Correlation ID
     pub correlation_id: String,
 
+    /// Network public key for encryption context
+    pub network_public_key: Option<Vec<u8>>,
+
     pub profile_public_key: Vec<u8>,
 }
 
@@ -194,6 +197,7 @@ pub struct RequestMessage {
     pub path: String,
     pub correlation_id: String,
     pub payload_bytes: Vec<u8>,
+    pub network_public_key: Option<Vec<u8>>,
     pub profile_public_key: Vec<u8>,
 }
 
@@ -201,6 +205,7 @@ pub struct RequestMessage {
 pub struct ResponseMessage {
     pub correlation_id: String,
     pub payload_bytes: Vec<u8>,
+    pub network_public_key: Option<Vec<u8>>,
     pub profile_public_key: Vec<u8>,
 }
 
@@ -209,6 +214,7 @@ pub struct EventMessage {
     pub path: String,
     pub correlation_id: String,
     pub payload_bytes: Vec<u8>,
+    pub network_public_key: Option<Vec<u8>>,
 }
 
 pub type RequestCallback =
@@ -242,6 +248,7 @@ pub trait NetworkTransport: Send + Sync {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
+        network_public_key: Option<Vec<u8>>,
         profile_public_key: Vec<u8>,
     ) -> Result<Vec<u8>, NetworkError>;
 
@@ -253,6 +260,7 @@ pub trait NetworkTransport: Send + Sync {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
+        network_public_key: Option<Vec<u8>>,
     ) -> Result<(), NetworkError>;
 
     /// connect to a discovered node and perform the NodeInfo handshake.

@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
             Ok(runar_transporter::transport::ResponseMessage {
                 correlation_id: req.correlation_id,
                 payload_bytes: req.payload_bytes,
+                network_public_key: None,
                 profile_public_key: req.profile_public_key,
             })
         })

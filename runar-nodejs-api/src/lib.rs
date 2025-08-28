@@ -851,6 +851,7 @@ impl Transport {
                         return Ok(runar_transporter::transport::ResponseMessage {
                             correlation_id: req.correlation_id,
                             payload_bytes: req.payload_bytes,
+                            network_public_key: None,
                             profile_public_key: req.profile_public_key,
                         });
                     }
@@ -946,6 +947,7 @@ impl Transport {
             let _ = sender.send(runar_transporter::transport::ResponseMessage {
                 correlation_id: String::new(),
                 payload_bytes: response_payload.to_vec(),
+                network_public_key: None,
                 profile_public_key: profile_pk.to_vec(),
             });
             Ok(())
@@ -1013,6 +1015,7 @@ impl Transport {
                 &correlation_id,
                 payload.to_vec(),
                 &dest_peer_id,
+                None,
                 profile_pk.to_vec(),
             )
             .await
@@ -1043,7 +1046,7 @@ impl Transport {
         dest_peer_id: String,
     ) -> Result<()> {
         let t = { self.inner.lock().unwrap().transport.clone() };
-        t.publish(&path, &correlation_id, payload.to_vec(), &dest_peer_id)
+        t.publish(&path, &correlation_id, payload.to_vec(), &dest_peer_id, None)
             .await
             .map_err(|e| Error::from_reason(format!("publish failed: {e}")))
     }

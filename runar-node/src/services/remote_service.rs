@@ -217,7 +217,7 @@ impl RemoteService {
             let logger = service.logger.clone();
             let keystore = service.keystore.clone();
             let resolver = service.resolver.clone();
-            let network_public_key = service.network_public_key.clone();
+                            let network_public_key = service.network_public_key.clone();
 
             Box::pin(async move {
                 // Generate a unique request ID
@@ -236,7 +236,7 @@ impl RemoteService {
                 let serialization_context = SerializationContext {
                     keystore: keystore.clone(),
                     resolver: resolver.clone(),
-                    network_public_key,
+                    network_public_key: network_public_key.clone(),
                     profile_public_keys: vec![profile_public_key.clone()],
                 };
 
@@ -250,6 +250,7 @@ impl RemoteService {
                         &correlation_id,
                         params_bytes,
                         &peer_node_id,
+                        Some(network_public_key.clone()),
                         profile_public_key,
                     )
                     .await

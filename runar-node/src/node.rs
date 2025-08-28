@@ -164,6 +164,11 @@ pub struct NodeConfig {
     /// This timeout applies to both local and remote service calls.
     /// Default is 30 seconds (30000ms).
     pub request_timeout_ms: u64,
+
+    /// REQUIRED: Label resolver configuration for system labels
+    /// These are static mappings known at node startup
+    /// NO OPTION - This field is REQUIRED for all nodes
+    pub label_resolver_config: runar_serializer::traits::LabelResolverConfig,
 }
 
 impl NodeConfig {
@@ -197,14 +202,57 @@ impl NodeConfig {
     ///     .with_key_manager(Arc::new(RwLock::new(node_keys_manager)));
     /// ```
     pub fn new(default_network_id: impl Into<String>) -> Self {
+        // Create default label resolver config with system label
+        let default_network_id_str = default_network_id.into();
+        let label_resolver_config = runar_serializer::traits::LabelResolverConfig {
+            label_mappings: std::collections::HashMap::from([
+                ("system".to_string(), runar_serializer::traits::LabelValue {
+                    network_public_key: None, // Will be resolved at runtime
+                    user_key_spec: None,
+                }),
+            ]),
+        };
+
         Self {
-            default_network_id: default_network_id.into(),
+            default_network_id: default_network_id_str,
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
             key_manager: None,         // Must be set via with_key_manager()
             request_timeout_ms: 30000, // 30 seconds
+            label_resolver_config,
         }
+    }
+
+    /// Set the label resolver configuration for system labels.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Label resolver configuration with system label mappings
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use runar_node::NodeConfig;
+    /// use runar_serializer::traits::{LabelResolverConfig, LabelValue, LabelKeyword};
+    ///
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_label_resolver_config(LabelResolverConfig {
+    ///         label_mappings: std::collections::HashMap::from([
+    ///             ("system".to_string(), LabelValue {
+    ///                 network_public_key: Some(system_network_key),
+    ///                 user_key_spec: None,
+    ///             }),
+    ///             ("current_user".to_string(), LabelValue {
+    ///                 network_public_key: Some(default_network_key),
+    ///                 user_key_spec: Some(LabelKeyword::CurrentUser),
+    ///             }),
+    ///         ]),
+    ///     });
+    /// ```
+    pub fn with_label_resolver_config(mut self, config: runar_serializer::traits::LabelResolverConfig) -> Self {
+        self.label_resolver_config = config;
+        self
     }
 
     /// Add network configuration to enable peer-to-peer communication.

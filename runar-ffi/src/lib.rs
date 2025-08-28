@@ -3625,6 +3625,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
                 Err(_) => Ok(runar_transporter::transport::ResponseMessage {
                     correlation_id: String::new(),
                     payload_bytes: Vec::new(),
+                    network_public_key: None,
                     profile_public_key: Vec::new(),
                 }),
             }
@@ -4011,7 +4012,7 @@ pub unsafe extern "C" fn rn_transport_request(
     let t = (&*handle.inner).transport.clone();
     let events = (&*handle.inner).events_tx.clone();
     runtime().spawn(async move {
-        match t.request(&path, &cid, data, &peer, pk).await {
+        match t.request(&path, &cid, data, &peer, None, pk).await {
             Ok(resp) => {
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(
@@ -4088,7 +4089,7 @@ pub unsafe extern "C" fn rn_transport_publish(
     let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
     let t = (&*handle.inner).transport.clone();
     runtime().spawn(async move {
-        let _ = t.publish(&path, &cid, data, &peer).await;
+        let _ = t.publish(&path, &cid, data, &peer, None).await;
     });
     0
 }
@@ -4130,6 +4131,7 @@ pub unsafe extern "C" fn rn_transport_complete_request(
         let _ = sender.send(runar_transporter::transport::ResponseMessage {
             correlation_id: String::new(),
             payload_bytes: data,
+            network_public_key: None,
             profile_public_key: pk,
         });
         0

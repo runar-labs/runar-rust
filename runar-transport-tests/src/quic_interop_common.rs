@@ -178,6 +178,7 @@ pub fn make_echo_request(source_id: &str, dest_id: &str, payload: &[u8]) -> Netw
             path: topic_echo().as_str().to_string(),
             payload_bytes: payload.to_vec(),
             correlation_id: uuid::Uuid::new_v4().to_string(),
+            network_public_key: None,
             profile_public_key: vec![],
         },
     }
