@@ -31,7 +31,7 @@ pub type KeyStore = dyn EnvelopeCrypto;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabelKeyInfo {
     pub profile_public_keys: Vec<Vec<u8>>,
-    pub network_id: Option<String>,
+    pub network_public_key: Option<Vec<u8>>,  // ← PRE-RESOLVED NETWORK PUBLIC KEY
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +158,6 @@ pub trait RunarDecrypt {
 pub struct SerializationContext {
     pub keystore: Arc<KeyStore>,
     pub resolver: Arc<dyn LabelResolver>,
-    pub network_id: String,
-    pub profile_public_key: Option<Vec<u8>>,
+    pub network_public_key: Vec<u8>,          // ← PRE-RESOLVED PUBLIC KEY
+    pub profile_public_keys: Vec<Vec<u8>>,    // ← MULTIPLE PROFILE KEYS
 }

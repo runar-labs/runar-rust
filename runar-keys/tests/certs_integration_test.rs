@@ -514,9 +514,11 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     // Encrypt for multiple profiles and a network
     println!("   Encrypting envelope for network: {network1_id}");
+    // Resolve network ID to public key
+    let network1_public_key = mobile.get_network_public_key(&network1_key)?;
     let envelope_data = mobile.encrypt_with_envelope(
         sensitive_data,
-        Some(&network1_key),
+        Some(&network1_public_key),
         vec![profile1_key.clone(), profile2_key.clone()],
     )?;
     let envelope_network_id = envelope_data
@@ -559,7 +561,7 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     // Node creates envelope for sharing
     let node_data = b"Data created by the node for network sharing";
-    let node_envelope = node.create_envelope_for_network(node_data, Some(&network1_key))?;
+    let node_envelope = node.create_envelope_for_network(node_data, Some(&network1_public_key))?;
 
     // Mobile can decrypt node's envelope
     let decrypted_node_data = mobile.decrypt_with_network(&node_envelope)?;

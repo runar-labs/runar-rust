@@ -335,28 +335,28 @@ impl MobileSimulator {
                     "user".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: profile_keys.values().cloned().collect(),
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
                 (
                     "system".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
                 (
                     "search".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
                 (
                     "system_only".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: vec![], // system_only has no profile keys
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
             ]),
@@ -370,28 +370,28 @@ impl MobileSimulator {
                     "user".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: profile_keys.values().cloned().collect(),
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
                 (
                     "system".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
                 (
                     "search".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
                 (
                     "system_only".to_string(),
                     LabelKeyInfo {
                         profile_public_keys: vec![], // system_only has no profile keys
-                        network_id: Some(self.master.network_id.clone()),
+                        network_public_key: Some(self.master.network_public_key.clone()),
                     },
                 ),
             ]),

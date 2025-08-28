@@ -301,12 +301,10 @@ impl NodeKeyManager {
     pub fn create_envelope_for_network(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
     ) -> Result<crate::mobile::EnvelopeEncryptedData> {
-        let network_id = network_id
-            .ok_or_else(|| KeyError::DecryptionError("Missing network_id".to_string()))?;
-
-        let network_public_key_bytes = self.get_network_public_key(network_id)?;
+        let network_public_key = network_public_key
+            .ok_or_else(|| KeyError::DecryptionError("Missing network_public_key".to_string()))?;
 
         // Generate ephemeral envelope key
         let envelope_key = self.generate_envelope_key()?;
@@ -316,11 +314,14 @@ impl NodeKeyManager {
 
         // Encrypt envelope key with network key
         let encrypted_envelope_key =
-            self.encrypt_key_with_ecdsa(&envelope_key, &network_public_key_bytes)?;
+            self.encrypt_key_with_ecdsa(&envelope_key, network_public_key)?;
+
+        // Derive network ID from public key for storage
+        let network_id = compact_id(network_public_key);
 
         Ok(crate::mobile::EnvelopeEncryptedData {
             encrypted_data,
-            network_id: Some(network_id.to_string()),
+            network_id: Some(network_id),
             network_encrypted_key: encrypted_envelope_key,
             profile_encrypted_keys: HashMap::new(),
         })
@@ -698,11 +699,13 @@ impl NodeKeyManager {
         data: &[u8],
         network_id: &str,
     ) -> Result<EnvelopeEncryptedData> {
-        // Use envelope encryption with just this network
+        // Resolve network ID to public key
+        let network_public_key = self.get_network_public_key(network_id)?;
+        // Use envelope encryption with the resolved public key
         let envelope_data = NodeKeyManager::encrypt_with_envelope(
             self,
             data,
-            Some(&network_id.to_string()),
+            Some(&network_public_key),
             vec![],
         )?;
         // Return just the encrypted data for compatibility
@@ -865,7 +868,7 @@ impl NodeKeyManager {
     pub fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&String>,
+        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         let envelope_key = self.generate_envelope_key()?;
@@ -873,14 +876,14 @@ impl NodeKeyManager {
         // Encrypt data with envelope key
         let encrypted_data = self.encrypt_with_symmetric_key(data, &envelope_key)?;
 
-        // Encrypt envelope key with network key if network_id provided
+        // Encrypt envelope key with network key if network_public_key provided
         let mut network_encrypted_key = Vec::new();
-        if let Some(network_id) = network_id {
-            // Check both network_data_keys and network_public_keys
-            let network_public_key_bytes = self.get_network_public_key(network_id)?;
-
-            network_encrypted_key =
-                self.encrypt_key_with_ecdsa(&envelope_key, &network_public_key_bytes)?;
+        let mut network_id = None;
+        if let Some(network_public_key) = network_public_key {
+            // DIRECT USE - NO INTERNAL RESOLUTION
+            network_encrypted_key = self.encrypt_key_with_ecdsa(&envelope_key, network_public_key)?;
+            // Derive network ID from public key for storage
+            network_id = Some(compact_id(network_public_key));
         }
 
         // Encrypt envelope key for each profile id using stored public key
@@ -893,7 +896,7 @@ impl NodeKeyManager {
 
         Ok(crate::mobile::EnvelopeEncryptedData {
             encrypted_data,
-            network_id: network_id.cloned(),
+            network_id,
             network_encrypted_key,
             profile_encrypted_keys,
         })
@@ -905,8 +908,8 @@ impl NodeKeyManager {
         data: &[u8],
         public_key: &[u8],
     ) -> Result<crate::mobile::EnvelopeEncryptedData> {
-        let network_id = compact_id(public_key);
-        self.encrypt_with_envelope(data, Some(&network_id), Vec::new())
+        // Call the public method directly, not the trait method
+        NodeKeyManager::encrypt_with_envelope(self, data, Some(public_key), Vec::new())
     }
 
     /// Check if the manager holds the private key for the given network public key.
@@ -927,11 +930,11 @@ impl crate::EnvelopeCrypto for NodeKeyManager {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
         _profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
         // Nodes only support network-wide encryption.
-        self.create_envelope_for_network(data, network_id)
+        self.create_envelope_for_network(data, network_public_key)
     }
 
     fn decrypt_envelope_data(

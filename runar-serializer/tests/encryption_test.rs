@@ -77,28 +77,28 @@ fn build_test_context() -> Result<TestContext> {
                 "user".into(),
                 LabelKeyInfo {
                     profile_public_keys: vec![profile_pk.clone()],
-                    network_id: None,
+                    network_public_key: None,
                 },
             ),
             (
                 "system".to_string(),
                 LabelKeyInfo {
                     profile_public_keys: vec![profile_pk.clone()],
-                    network_id: Some(network_id.clone()),
+                    network_public_key: Some(network_pub.clone()),
                 },
             ),
             (
                 "system_only".to_string(),
                 LabelKeyInfo {
                     profile_public_keys: vec![], // system only has no profile ids
-                    network_id: Some(network_id.clone()),
+                    network_public_key: Some(network_pub.clone()),
                 },
             ),
             (
                 "search".to_string(),
                 LabelKeyInfo {
                     profile_public_keys: vec![profile_pk.clone()],
-                    network_id: Some(network_id.clone()),
+                    network_public_key: Some(network_pub.clone()),
                 },
             ),
         ]),
@@ -165,12 +165,13 @@ fn test_encryption_in_arcvalue() -> Result<()> {
     let val = ArcValue::new_struct(profile.clone());
     assert_eq!(val.category(), ValueCategory::Struct);
 
-    // Create serialization context
+    // Create serialization context - resolve network_public_key from resolver
+    let system_info = resolver.resolve_label_info("system")?.unwrap();
     let context = SerializationContext {
         keystore: mobile_ks.clone(),
         resolver: resolver.clone(),
-        network_id: network_id.clone(),
-        profile_public_key: Some(profile_pk.clone()),
+        network_public_key: system_info.network_public_key.unwrap(),
+        profile_public_keys: vec![profile_pk.clone()],
     };
 
     // Serialize with encryption

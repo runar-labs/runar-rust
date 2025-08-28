@@ -565,22 +565,17 @@ impl ArcValue {
 
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
-            let network_id = &ctx.network_id;
-            let profile_public_key = &ctx.profile_public_key;
-            let resolver = &ctx.resolver;
+            let network_public_key = &ctx.network_public_key;     // ← PRE-RESOLVED KEY
+            let recipients = ctx.profile_public_keys.clone();     // ← ALL PROFILE KEYS
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
                 // Container-aware encryption for list/map: delegate to ser_fn with context
-                ser_fn(inner, Some(ks), Some(resolver.as_ref()))
+                ser_fn(inner, Some(ks), Some(ctx.resolver.as_ref()))
             } else {
                 return Err(anyhow!("No serialize function available"));
             }?;
 
-            let recipients: Vec<Vec<u8>> = match profile_public_key.as_ref() {
-                Some(pk) => vec![pk.clone()],
-                None => Vec::new(),
-            };
-            let data = ks.encrypt_with_envelope(&bytes, Some(network_id.as_str()), recipients)?;
+            let data = ks.encrypt_with_envelope(&bytes, Some(network_public_key), recipients)?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);

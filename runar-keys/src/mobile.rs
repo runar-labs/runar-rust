@@ -456,7 +456,7 @@ impl MobileKeyManager {
     pub fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData> {
         // Generate ephemeral envelope key
@@ -467,12 +467,13 @@ impl MobileKeyManager {
 
         // Encrypt envelope key for network (optional)
         let mut network_encrypted_key = Vec::new();
-        if let Some(network_id) = network_id {
-            // Check both network_data_keys and network_public_keys
-            let network_public_key_bytes = self.get_network_public_key(network_id)?;
-
+        let mut network_id = None;
+        if let Some(network_public_key) = network_public_key {
+            // DIRECT USE - NO INTERNAL RESOLUTION
             network_encrypted_key =
-                self.encrypt_key_with_ecdsa(&envelope_key, &network_public_key_bytes)?;
+                self.encrypt_key_with_ecdsa(&envelope_key, network_public_key)?;
+            // Derive network ID from public key for storage
+            network_id = Some(compact_id(network_public_key));
         }
 
         // Encrypt envelope key for each profile
@@ -485,7 +486,7 @@ impl MobileKeyManager {
 
         Ok(EnvelopeEncryptedData {
             encrypted_data,
-            network_id: network_id.map(|s| s.to_string()),
+            network_id,
             network_encrypted_key,
             profile_encrypted_keys,
         })
@@ -883,9 +884,11 @@ impl MobileKeyManager {
 
     /// Encrypt data for a network (legacy method for compatibility)  
     pub fn encrypt_for_network(&self, data: &[u8], network_id: &str) -> Result<Vec<u8>> {
-        // Use envelope encryption with just this network
+        // Resolve network ID to public key
+        let network_public_key = self.get_network_public_key(network_id)?;
+        // Use envelope encryption with the resolved public key
         let envelope_data =
-            MobileKeyManager::encrypt_with_envelope(self, data, Some(network_id), vec![])?;
+            MobileKeyManager::encrypt_with_envelope(self, data, Some(&network_public_key), vec![])?;
         // Return just the encrypted data for compatibility
         Ok(envelope_data.encrypted_data)
     }
@@ -1000,10 +1003,10 @@ impl crate::EnvelopeCrypto for MobileKeyManager {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        network_public_key: Option<&[u8]>,     // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
     ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        MobileKeyManager::encrypt_with_envelope(self, data, network_id, profile_public_keys)
+        MobileKeyManager::encrypt_with_envelope(self, data, network_public_key, profile_public_keys)
     }
 
     fn decrypt_envelope_data(

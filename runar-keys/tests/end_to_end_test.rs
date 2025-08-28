@@ -512,10 +512,12 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     //     user profile key and network key, so only the user or apps running in the
     //     network can decrypt it.
     let test_data = b"This is a test message that should be encrypted and decrypted";
+    // Resolve network ID to public key
+    let network_public_key = mobile_keys_manager.get_network_public_key(&network_id)?;
     let envelope = mobile_keys_manager
         .encrypt_with_envelope(
             test_data,
-            Some(&network_id),
+            Some(&network_public_key),
             vec![restored_personal_key.clone(), profile_work_key.clone()],
         )
         .expect("Failed to encrypt data with envelope");
@@ -616,7 +618,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let envelope_2 = mobile_keys_manager
         .encrypt_with_envelope(
             test_data_2,
-            Some(&network_id),
+            Some(&network_public_key),
             vec![profile_personal_key.clone()],
         )
         .expect("Mobile failed to encrypt data after restoration");

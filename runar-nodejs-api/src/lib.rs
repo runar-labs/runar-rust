@@ -146,7 +146,7 @@ impl Keys {
     pub fn mobile_encrypt_with_envelope(
         &self,
         data: Buffer,
-        network_id: Option<String>,
+        network_public_key: Option<Buffer>,  // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
@@ -156,12 +156,12 @@ impl Keys {
             .as_ref()
             .ok_or_else(|| Error::from_reason("Mobile manager not initialized"))?;
 
-        let network_id_ref = network_id.as_deref();
+        let network_public_key_ref = network_public_key.as_ref().map(|b| b.as_ref());
         let profile_keys_ref: Vec<Vec<u8>> =
             profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
 
         let encrypted = mobile_manager
-            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
+            .encrypt_with_envelope(&data, network_public_key_ref, profile_keys_ref)
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
@@ -178,7 +178,7 @@ impl Keys {
     pub fn node_encrypt_with_envelope(
         &self,
         data: Buffer,
-        network_id: Option<String>,
+        network_public_key: Option<Buffer>,  // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
@@ -188,12 +188,12 @@ impl Keys {
             .as_ref()
             .ok_or_else(|| Error::from_reason("Node manager not initialized"))?;
 
-        let network_id_ref = network_id.as_ref();
+        let network_public_key_ref = network_public_key.as_ref().map(|b| b.as_ref());
         let profile_keys_ref: Vec<Vec<u8>> =
             profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
 
         let encrypted = node_manager
-            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
+            .encrypt_with_envelope(&data, network_public_key_ref, profile_keys_ref)
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation

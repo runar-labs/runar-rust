@@ -35,6 +35,7 @@ fn test_node_encrypt_with_envelope_happy_path() {
             data.as_ptr(),
             data.len(),
             network_id,  // null network_id
+            0,           // network_public_key_len
             ptr::null(), // no profile keys
             ptr::null(),
             0,
@@ -86,6 +87,7 @@ fn test_mobile_encrypt_with_envelope_happy_path() {
             data.as_ptr(),
             data.len(),
             ptr::null(), // no network_id
+            0,           // network_public_key_len
             ptr::null(), // no profile keys
             ptr::null(),
             0,
@@ -124,6 +126,7 @@ fn test_node_encrypt_with_envelope_null_pointers() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -144,6 +147,7 @@ fn test_node_encrypt_with_envelope_null_pointers() {
             ptr::null(),
             data.len(),
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -161,6 +165,7 @@ fn test_node_encrypt_with_envelope_null_pointers() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -195,6 +200,7 @@ fn test_node_encrypt_with_envelope_zero_length() {
             data.as_ptr(),
             0, // zero length
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -222,7 +228,7 @@ fn test_node_encrypt_with_envelope_invalid_utf8() {
 
     let data = b"Hello, World!";
 
-    // Create invalid UTF-8 string
+    // Create invalid UTF-8 string (now treated as raw bytes)
     let invalid_utf8 = [0xFF, 0xFE]; // Invalid UTF-8 sequence
 
     let mut eed_ptr: *mut u8 = ptr::null_mut();
@@ -232,7 +238,8 @@ fn test_node_encrypt_with_envelope_invalid_utf8() {
             keys,
             data.as_ptr(),
             data.len(),
-            invalid_utf8.as_ptr() as *const i8, // Cast to simulate C string
+            invalid_utf8.as_ptr() as *const u8, // Cast to simulate C string
+            invalid_utf8.len(),                 // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -241,10 +248,9 @@ fn test_node_encrypt_with_envelope_invalid_utf8() {
             &mut error,
         )
     };
-    assert_eq!(
-        result, RN_ERROR_INVALID_UTF8,
-        "Should fail with invalid UTF-8"
-    );
+    // With our refactor, network_public_key is now raw bytes, not a string
+    // So UTF-8 validation no longer applies - it should succeed or fail on other grounds
+    assert!(result != 0, "Should not succeed with invalid data");
 
     destroy_keys_handle(keys);
 }
@@ -269,6 +275,7 @@ fn test_node_encrypt_with_envelope_wrong_manager_type() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -305,6 +312,7 @@ fn test_node_encrypt_with_envelope_not_initialized() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -341,6 +349,7 @@ fn test_mobile_encrypt_with_envelope_wrong_manager_type() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,
@@ -377,6 +386,7 @@ fn test_mobile_encrypt_with_envelope_not_initialized() {
             data.as_ptr(),
             data.len(),
             ptr::null(),
+            0,           // network_public_key_len
             ptr::null(),
             ptr::null(),
             0,

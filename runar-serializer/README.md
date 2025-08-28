@@ -105,7 +105,7 @@ let _mobile_view = enc.decrypt_with_keystore(&mobile_ks)?; // user fields availa
 let _node_view = enc.decrypt_with_keystore(&node_ks)?;     // system fields available
 
 // ArcValue integration with transparent encryption on serialize
-let ctx = SerializationContext { keystore: mobile_ks, resolver, network_id, profile_public_key: Some(profile_pk) };
+let ctx = SerializationContext { keystore: mobile_ks, resolver, network_public_key: network_pk, profile_public_keys: vec![profile_pk] };
 let av = ArcValue::new_struct(Profile { id: "1".into(), name: "Alice".into(), private: "s".into(), email: "a@ex".into(), system_metadata: "m".into() });
 let ser = av.serialize(Some(&ctx))?;              // encrypted
 let de = ArcValue::deserialize(&ser, Some(node_ks))?; // decrypted for node

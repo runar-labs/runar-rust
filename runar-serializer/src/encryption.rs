@@ -38,7 +38,7 @@ pub fn encrypt_label_group<T: Serialize>(
 
     let envelope = keystore.encrypt_with_envelope(
         &plain_bytes,
-        info.network_id.as_deref(),
+        info.network_public_key.as_deref(),
         info.profile_public_keys,
     )?;
 

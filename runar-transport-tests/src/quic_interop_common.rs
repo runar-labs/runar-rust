@@ -94,13 +94,13 @@ impl EnvelopeCrypto for NoCrypto {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        _network_public_key: Option<&[u8]>,
         _profile_public_keys: Vec<Vec<u8>>,
     ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
         use std::collections::HashMap;
         Ok(runar_keys::mobile::EnvelopeEncryptedData {
             encrypted_data: data.to_vec(),
-            network_id: Some(network_id.unwrap_or("interop").to_string()),
+            network_id: Some("interop".to_string()), // For interop tests, use fixed network ID
             network_encrypted_key: vec![],
             profile_encrypted_keys: HashMap::new(),
         })
@@ -120,7 +120,7 @@ pub fn default_label_resolver() -> Arc<dyn LabelResolver> {
         "interop".to_string(),
         LabelKeyInfo {
             profile_public_keys: vec![],
-            network_id: Some("interop".to_string()),
+            network_public_key: Some("interop".as_bytes().to_vec()),
         },
     );
     Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {

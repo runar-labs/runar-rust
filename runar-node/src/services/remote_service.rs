@@ -30,8 +30,8 @@ pub struct RemoteService {
     pub service_topic: TopicPath,
     pub version: String,
     pub description: String,
-    /// Network ID for this service
-    pub network_id: String,
+    /// Network public key for this service
+    pub network_public_key: Vec<u8>,
 
     /// Remote peer information
     peer_node_id: String,
@@ -79,13 +79,16 @@ pub struct CreateRemoteServicesConfig {
 impl RemoteService {
     /// Create a new RemoteService instance
     pub fn new(config: RemoteServiceConfig, dependencies: RemoteServiceDependencies) -> Self {
-        let network_id = config.service_topic.network_id();
+        let _network_id = config.service_topic.network_id();
+        // For now, we'll use a placeholder network public key
+        // TODO: This should be resolved from the keystore or passed in
+        let network_public_key = vec![0u8; 32]; // Placeholder
         Self {
             name: config.name,
             service_topic: config.service_topic,
             version: config.version,
             description: config.description,
-            network_id, // Derived from service_topic
+            network_public_key, // TODO: Should be resolved from keystore
             peer_node_id: config.peer_node_id,
             network_transport: dependencies.network_transport,
             actions: Arc::new(DashMap::new()),
@@ -214,6 +217,7 @@ impl RemoteService {
             let logger = service.logger.clone();
             let keystore = service.keystore.clone();
             let resolver = service.resolver.clone();
+            let network_public_key = service.network_public_key.clone();
 
             Box::pin(async move {
                 // Generate a unique request ID
@@ -228,13 +232,12 @@ impl RemoteService {
 
                 // Send the request
                 let topic_path_str = action_topic_path.as_str();
-                // Create serialization context with network ID from the topic path
-                let network_id = action_topic_path.network_id();
+                // Create serialization context with network public key from the service
                 let serialization_context = SerializationContext {
                     keystore: keystore.clone(),
                     resolver: resolver.clone(),
-                    network_id,
-                    profile_public_key: Some(profile_public_key.clone()),
+                    network_public_key,
+                    profile_public_keys: vec![profile_public_key.clone()],
                 };
 
                 let params_bytes = params

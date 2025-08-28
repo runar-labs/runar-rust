@@ -55,7 +55,7 @@ fn build_test_context() -> Result<TestContext> {
             "system".to_string(),
             LabelKeyInfo {
                 profile_public_keys: vec![profile_pk.clone()],
-                network_id: Some(network_id.clone()),
+                network_public_key: Some(network_pub.clone()),
             },
         )]),
     }));
@@ -73,11 +73,13 @@ fn negative_typed_list_missing_keystore() -> Result<()> {
     }];
     let val = ArcValue::new_list(items);
 
+    // Resolve network_public_key from resolver
+    let system_info = resolver.resolve_label_info("system")?.unwrap();
     let ctx = SerializationContext {
         keystore: mobile_ks.clone(),
         resolver: resolver.clone(),
-        network_id: network_id.clone(),
-        profile_public_key: Some(profile_pk.clone()),
+        network_public_key: system_info.network_public_key.unwrap(),
+        profile_public_keys: vec![profile_pk.clone()],
     };
 
     // Serialize with context so element-level encryption is applied (bytes container)
@@ -220,11 +222,13 @@ fn negative_missing_decryptor_for_t() -> Result<()> {
     }];
     let val = ArcValue::new_list(items);
 
+    // Resolve network_public_key from resolver
+    let system_info = resolver.resolve_label_info("system")?.unwrap();
     let ctx = SerializationContext {
         keystore: mobile_ks.clone(),
         resolver: resolver.clone(),
-        network_id: network_id.clone(),
-        profile_public_key: Some(profile_pk.clone()),
+        network_public_key: system_info.network_public_key.unwrap(),
+        profile_public_keys: vec![profile_pk.clone()],
     };
 
     // Serialize with element encryption
