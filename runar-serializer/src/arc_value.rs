@@ -13,10 +13,10 @@ use crate::RunarEncrypt;
 use super::encryption::decrypt_bytes;
 
 use super::erased_arc::ErasedArc;
-use super::traits::{KeyStore, LabelResolver, SerializationContext};
+use super::traits::{ConfigurableLabelResolver, KeyStore, SerializationContext};
 
 // Type alias to simplify very complex function pointer type used for serialization functions.
-type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&dyn LabelResolver>) -> Result<Vec<u8>>
+type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&ConfigurableLabelResolver>) -> Result<Vec<u8>>
     + Send
     + Sync;
 

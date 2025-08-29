@@ -43,7 +43,7 @@ fn main() -> anyhow::Result<()> {
 
     // 2. Validate the configuration
     println!("Validating system label configuration...");
-    runar_serializer::traits::ConfigurableLabelResolver::validate_label_config(&system_config)?;
+            runar_serializer::traits::LabelResolver::validate_label_config(&system_config)?;
     println!("✅ Configuration is valid\n");
 
     // 3. Create resolver without user context (system context)

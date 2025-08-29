@@ -11,7 +11,6 @@ use std::sync::Arc;
 // Declare modules
 mod account_service;
 mod db_services;
-mod encryption_demo;
 mod models;
 mod order_service;
 mod profile_service;
@@ -65,15 +64,6 @@ async fn main() -> Result<()> {
     node.start().await?;
     logger.info("✅ Node started successfully");
 
-    // Demonstrate encryption flow with database
-    encryption_demo::demonstrate_encryption_flow(
-        mobile_resolver,
-        node_resolver,
-        "crud_db",
-        &node,
-        &logger,
-    )
-    .await?;
 
     // Run some test operations
     logger.info("🧪 Running test operations...");

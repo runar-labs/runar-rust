@@ -64,7 +64,7 @@ pub fn derive_plain(input: TokenStream) -> TokenStream {
             fn encrypt_with_keystore(
                 &self,
                 _keystore: &std::sync::Arc<runar_serializer::KeyStore>,
-                _resolver: &dyn runar_serializer::LabelResolver,
+                _resolver: &runar_serializer::traits::ConfigurableLabelResolver,
             ) -> anyhow::Result<Self::Encrypted> {
                 Ok(self.clone())
             }
@@ -253,7 +253,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             fn encrypt_with_keystore(
                 &self,
                 keystore: &std::sync::Arc<runar_serializer::KeyStore>,
-                resolver: &dyn runar_serializer::LabelResolver,
+                resolver: &runar_serializer::traits::ConfigurableLabelResolver,
             ) -> anyhow::Result<Self::Encrypted> {
                 let encrypted = #encrypted_name { #(#encrypt_plaintext_inits)* #(#encrypt_label_match_arms)* };
                 Ok(encrypted)
@@ -277,7 +277,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             fn encrypt_with_keystore(
                 &self,
                 keystore: &std::sync::Arc<runar_serializer::KeyStore>,
-                resolver: &dyn runar_serializer::LabelResolver,
+                resolver: &runar_serializer::traits::ConfigurableLabelResolver,
             ) -> anyhow::Result<#encrypted_name> {
                 #encrypt_impl
             }
