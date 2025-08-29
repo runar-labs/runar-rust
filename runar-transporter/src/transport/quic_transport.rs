@@ -2367,7 +2367,7 @@ impl NetworkTransport for QuicTransport {
         self.keystore.clone()
     }
 
-    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver> {
+    fn label_resolver(&self) -> Arc<runar_serializer::traits::ConfigurableLabelResolver> {
         // Create a dynamic resolver on-demand with no user context (system context)
         // This is for backward compatibility - new code should create resolvers with proper context
         let empty_profile_keys = vec![];

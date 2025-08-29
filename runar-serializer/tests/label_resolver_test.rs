@@ -25,7 +25,9 @@ fn test_label_resolver_config_creation() {
     };
 
     // Test validation
-    assert!(runar_serializer::traits::LabelResolver::validate_label_config(&config).is_ok());
+    assert!(
+        runar_serializer::traits::ConfigurableLabelResolver::validate_label_config(&config).is_ok()
+    );
 
     // Test resolver creation without user context (empty profile keys)
     let empty_profile_keys = vec![];
@@ -51,7 +53,10 @@ fn test_label_resolver_config_validation() {
     let empty_config = LabelResolverConfig {
         label_mappings: std::collections::HashMap::new(),
     };
-    assert!(runar_serializer::traits::LabelResolver::validate_label_config(&empty_config).is_err());
+    assert!(
+        runar_serializer::traits::ConfigurableLabelResolver::validate_label_config(&empty_config)
+            .is_err()
+    );
 
     // Test invalid label with neither network key nor user spec (should fail)
     let invalid_config = LabelResolverConfig {
@@ -64,7 +69,8 @@ fn test_label_resolver_config_validation() {
         )]),
     };
     assert!(
-        runar_serializer::traits::LabelResolver::validate_label_config(&invalid_config).is_err()
+        runar_serializer::traits::ConfigurableLabelResolver::validate_label_config(&invalid_config)
+            .is_err()
     );
 
     // Test valid user-only label
@@ -78,7 +84,9 @@ fn test_label_resolver_config_validation() {
         )]),
     };
     assert!(
-        runar_serializer::traits::LabelResolver::validate_label_config(&valid_user_only_config)
-            .is_ok()
+        runar_serializer::traits::ConfigurableLabelResolver::validate_label_config(
+            &valid_user_only_config
+        )
+        .is_ok()
     );
 }

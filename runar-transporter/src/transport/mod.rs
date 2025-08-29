@@ -254,7 +254,7 @@ pub trait NetworkTransport: Send + Sync {
     fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
 
     /// Expose the transport-owned label resolver.
-    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver>;
+    fn label_resolver(&self) -> Arc<runar_serializer::traits::ConfigurableLabelResolver>;
 }
 
 /// Error type for network operations

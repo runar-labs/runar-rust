@@ -53,30 +53,30 @@ pub struct KeyMappingConfig {
 
 /// Simple trait for LabelResolver to maintain macro compatibility
 /// This delegates to the concrete ConfigurableLabelResolver struct
-pub trait LabelResolver: Send + Sync {
-    /// Resolve a label to key-info (public key + scope).
-    fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>>;
+// pub trait LabelResolver: Send + Sync {
+//     /// Resolve a label to key-info (public key + scope).
+//     fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>>;
 
-    /// Get available labels in current context
-    fn available_labels(&self) -> Vec<String>;
+//     /// Get available labels in current context
+//     fn available_labels(&self) -> Vec<String>;
 
-    /// Check if a label can be resolved
-    fn can_resolve(&self, label: &str) -> bool;
-}
+//     /// Check if a label can be resolved
+//     fn can_resolve(&self, label: &str) -> bool;
+// }
 
-impl LabelResolver for ConfigurableLabelResolver {
-    fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
-        self.resolve_label_info(label)
-    }
+// impl LabelResolver for ConfigurableLabelResolver {
+//     fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
+//         self.resolve_label_info(label)
+//     }
 
-    fn available_labels(&self) -> Vec<String> {
-        self.available_labels()
-    }
+//     fn available_labels(&self) -> Vec<String> {
+//         self.available_labels()
+//     }
 
-    fn can_resolve(&self, label: &str) -> bool {
-        self.can_resolve(label)
-    }
-}
+//     fn can_resolve(&self, label: &str) -> bool {
+//         self.can_resolve(label)
+//     }
+// }
 
 /// Configuration for label resolver system labels
 #[derive(Debug, Clone, Serialize, Deserialize)]

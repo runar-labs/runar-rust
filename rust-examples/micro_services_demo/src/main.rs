@@ -64,7 +64,6 @@ async fn main() -> Result<()> {
     node.start().await?;
     logger.info("✅ Node started successfully");
 
-
     // Run some test operations
     logger.info("🧪 Running test operations...");
 
