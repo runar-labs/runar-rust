@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -45,37 +46,110 @@ pub struct KeyMappingConfig {
     pub label_mappings: HashMap<String, LabelKeyInfo>,
 }
 
-/// Label resolver interface for mapping labels to public keys
-pub trait LabelResolver: Send + Sync {
-    /// Resolve a label to key-info (public key + scope).
-    fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>>;
-
-    /// Get available labels in current context
-    fn available_labels(&self) -> Vec<String>;
-
-    /// Check if a label can be resolved
-    fn can_resolve(&self, label: &str) -> bool;
-
-    /// Clone this trait object
-    fn clone_box(&self) -> Box<dyn LabelResolver>;
+/// Label resolver implementation - concrete struct (no trait overhead)
+/// Uses DashMap for concurrent access and high performance
+pub struct LabelResolver {
+    /// Concurrent mapping used heavily on read path
+    mapping: DashMap<String, LabelKeyInfo>,
 }
 
-// Implement LabelResolver for Box<dyn LabelResolver> to allow cloning
-impl LabelResolver for Box<dyn LabelResolver> {
-    fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
-        self.as_ref().resolve_label_info(label)
+impl LabelResolver {
+    pub fn new(config: KeyMappingConfig) -> Self {
+        let dm = DashMap::new();
+        for (k, v) in config.label_mappings {
+            dm.insert(k, v);
+        }
+        Self { mapping: dm }
     }
 
-    fn available_labels(&self) -> Vec<String> {
-        self.as_ref().available_labels()
+    /// Creates a label resolver for a specific context
+    /// REQUIRES: Every label must have an explicit network_public_key - no defaults allowed
+    pub fn create_context_label_resolver(
+        system_config: &LabelResolverConfig,
+        user_profile_keys: &Vec<Vec<u8>>, // From request context - empty vec means no profile keys
+    ) -> Result<Arc<Self>> {
+        let mut mappings = HashMap::new();
+
+        // Process system label mappings
+        for (label, label_value) in &system_config.label_mappings {
+            let mut profile_public_keys = Vec::new();
+
+            // Get network key if specified, or use empty for user-only labels
+            let network_public_key = label_value
+                .network_public_key
+                .clone()
+                .unwrap_or_else(|| vec![]); // Empty key for user-only labels
+
+            // Process user key specification
+            match &label_value.user_key_spec {
+                Some(LabelKeyword::CurrentUser) => {
+                    // Always extend with user profile keys (empty vec is fine)
+                    profile_public_keys.extend_from_slice(user_profile_keys);
+                }
+                Some(LabelKeyword::Custom(_custom_name)) => {
+                    // Future: Call custom resolution function
+                    // For now, profile_public_keys remains empty
+                    // Custom resolver would populate profile_public_keys here
+                }
+                None => {
+                    // No user keys - profile_public_keys remains empty
+                }
+            }
+
+            // Validation: Label must have either network key OR user keys OR both
+            // Empty network key + empty profile keys = invalid label
+            if network_public_key.is_empty() && profile_public_keys.is_empty() {
+                return Err(anyhow!(
+                    "Label '{}' must specify either network_public_key or user_key_spec (or both)",
+                    label
+                ));
+            }
+
+            mappings.insert(
+                label.clone(),
+                LabelKeyInfo {
+                    profile_public_keys,
+                    network_public_key: Some(network_public_key),
+                },
+            );
+        }
+
+        // Create resolver with processed mappings
+        let resolver = Self::from_map(mappings);
+        Ok(Arc::new(resolver))
     }
 
-    fn can_resolve(&self, label: &str) -> bool {
-        self.as_ref().can_resolve(label)
+    /// Creates a label resolver from a map of label mappings
+    pub fn from_map(map: HashMap<String, LabelKeyInfo>) -> Self {
+        let dm = DashMap::new();
+        for (k, v) in map {
+            dm.insert(k, v);
+        }
+        Self { mapping: dm }
     }
 
-    fn clone_box(&self) -> Box<dyn LabelResolver> {
-        self.as_ref().clone_box()
+    /// Resolve a label to key-info (public key + scope).
+    pub fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
+        Ok(self.mapping.get(label).map(|v| v.clone()))
+    }
+
+    /// Get available labels in current context
+    pub fn available_labels(&self) -> Vec<String> {
+        self.mapping.iter().map(|kv| kv.key().clone()).collect()
+    }
+
+    /// Check if a label can be resolved
+    pub fn can_resolve(&self, label: &str) -> bool {
+        self.mapping.contains_key(label)
+    }
+
+    /// Clone this resolver
+    pub fn clone(&self) -> Self {
+        let dm = DashMap::new();
+        for e in self.mapping.iter() {
+            dm.insert(e.key().clone(), e.value().clone());
+        }
+        Self { mapping: dm }
     }
 }
 
@@ -239,40 +313,8 @@ impl ConfigurableLabelResolver {
 pub fn create_context_label_resolver(
     system_config: &LabelResolverConfig,
     user_profile_keys: &Vec<Vec<u8>>, // From request context - empty vec means no profile keys
-) -> Result<Arc<dyn LabelResolver>> {
-    ConfigurableLabelResolver::create_context_label_resolver(system_config, user_profile_keys)
-}
-
-impl ConfigurableLabelResolver {
-    pub fn from_map(map: std::collections::HashMap<String, LabelKeyInfo>) -> Self {
-        let dm = dashmap::DashMap::new();
-        for (k, v) in map {
-            dm.insert(k, v);
-        }
-        Self { mapping: dm }
-    }
-}
-
-impl LabelResolver for ConfigurableLabelResolver {
-    fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
-        Ok(self.mapping.get(label).map(|v| v.clone()))
-    }
-
-    fn available_labels(&self) -> Vec<String> {
-        self.mapping.iter().map(|kv| kv.key().clone()).collect()
-    }
-
-    fn can_resolve(&self, label: &str) -> bool {
-        self.mapping.contains_key(label)
-    }
-
-    fn clone_box(&self) -> Box<dyn LabelResolver> {
-        let dm = dashmap::DashMap::new();
-        for e in self.mapping.iter() {
-            dm.insert(e.key().clone(), e.value().clone());
-        }
-        Box::new(ConfigurableLabelResolver { mapping: dm })
-    }
+) -> Result<Arc<LabelResolver>> {
+    LabelResolver::create_context_label_resolver(system_config, user_profile_keys)
 }
 
 /// Marker trait for detecting encryption capability at runtime
@@ -285,7 +327,7 @@ pub trait RunarEncrypt: RunarEncryptable {
     fn encrypt_with_keystore(
         &self,
         keystore: &Arc<KeyStore>,
-        resolver: &dyn LabelResolver,
+        resolver: &LabelResolver,
     ) -> Result<Self::Encrypted>;
 }
 
@@ -307,7 +349,7 @@ pub trait RunarDecrypt {
 #[derive(Clone)]
 pub struct SerializationContext {
     pub keystore: Arc<KeyStore>,
-    pub resolver: Arc<dyn LabelResolver>,
+    pub resolver: Arc<LabelResolver>,
     pub network_public_key: Vec<u8>, // ← PRE-RESOLVED PUBLIC KEY
     pub profile_public_keys: Vec<Vec<u8>>, // ← MULTIPLE PROFILE KEYS
 }

@@ -302,10 +302,7 @@ impl RemoteService {
                         }
                     }
                     Err(e) => {
-                        log_error!(
-                            logger,
-                            "❌ [RemoteService] Remote request failed: {e}"
-                        );
+                        log_error!(logger, "❌ [RemoteService] Remote request failed: {e}");
                         Err(anyhow::anyhow!("Remote service error: {e}"))
                     }
                 }
