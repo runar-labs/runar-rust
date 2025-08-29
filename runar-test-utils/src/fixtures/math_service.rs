@@ -100,6 +100,7 @@ impl MathService {
         // Perform the addition
         let result = a + b;
 
+        // Publish event - now uses default options with broadcast: true
         let _ = ctx
             .publish("math/added", Some(ArcValue::new_primitive(result)), None)
             .await;

@@ -170,8 +170,12 @@ impl TestService {
             map_field: HashMap::new(),
             network_id: self.get_network_id(),
         };
-        ctx.publish("my_data_changed", Some(ArcValue::new_struct(data.clone())), None)
-            .await?;
+        ctx.publish(
+            "my_data_changed",
+            Some(ArcValue::new_struct(data.clone())),
+            None,
+        )
+        .await?;
         ctx.publish("age_changed", Some(ArcValue::new_primitive(25)), None)
             .await?;
         Ok(data)

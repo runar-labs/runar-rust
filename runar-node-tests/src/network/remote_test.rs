@@ -177,7 +177,11 @@ async fn test_remote_action_call() -> Result<()> {
     // Test 2: Call math2/multiply service (on node2) from node1
     logger.debug("📤 Testing remote action call from node1 to node2 (math2/multiply)...");
     let response_av: ArcValue = node1
-        .request("math2/multiply", Some(params! { "a" => 4.0, "b" => 7.0 }), None)
+        .request(
+            "math2/multiply",
+            Some(params! { "a" => 4.0, "b" => 7.0 }),
+            None,
+        )
         .await?;
     let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 28.0);
@@ -237,7 +241,11 @@ async fn test_remote_action_call() -> Result<()> {
     logger.info("🧪 Testing additional secure operations...");
 
     let response_av: ArcValue = node2
-        .request("math1/subtract", Some(params! { "a" => 20.0, "b" => 8.0 }), None)
+        .request(
+            "math1/subtract",
+            Some(params! { "a" => 20.0, "b" => 8.0 }),
+            None,
+        )
         .await?;
     let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 12.0);
@@ -246,7 +254,11 @@ async fn test_remote_action_call() -> Result<()> {
     // Test divide operation on math2
 
     let response_av: ArcValue = node1
-        .request("math2/divide", Some(params! { "a" => 15.0, "b" => 3.0 }), None)
+        .request(
+            "math2/divide",
+            Some(params! { "a" => 15.0, "b" => 3.0 }),
+            None,
+        )
         .await?;
     let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 5.0);
@@ -428,7 +440,11 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.info("🧪 Testing remote call after Node 1 restart...");
 
         let response_av = node2
-            .request("math1/add", Some(params! { "a" => 20.0, "b" => 10.0 }), None)
+            .request(
+                "math1/add",
+                Some(params! { "a" => 20.0, "b" => 10.0 }),
+                None,
+            )
             .await?
             .as_type_ref::<f64>()?;
 
@@ -445,7 +461,11 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
 
         // Test call from restarted Node 1 to Node 2
         let response_av = node1
-            .request("math2/multiply", Some(params! { "a" => 6.0, "b" => 7.0 }), None)
+            .request(
+                "math2/multiply",
+                Some(params! { "a" => 6.0, "b" => 7.0 }),
+                None,
+            )
             .await?
             .as_type_ref::<f64>()?;
 

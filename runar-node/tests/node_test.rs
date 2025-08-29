@@ -397,7 +397,9 @@ async fn test_on_method() {
         );
 
         // Publish the event (should trigger the future)
-        node.publish(topic, Some(event_data.clone()), None).await.unwrap();
+        node.publish(topic, Some(event_data.clone()), None)
+            .await
+            .unwrap();
 
         // Wait for the event
         let received_data = await_on(future)
@@ -772,21 +774,33 @@ async fn test_multiple_concurrent_on_calls() {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = node_clone1
-                .publish(topic1, Some(ArcValue::new_primitive("data1".to_string())), None)
+                .publish(
+                    topic1,
+                    Some(ArcValue::new_primitive("data1".to_string())),
+                    None,
+                )
                 .await;
         });
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(200)).await;
             let _ = node_clone2
-                .publish(topic2, Some(ArcValue::new_primitive("data2".to_string())), None)
+                .publish(
+                    topic2,
+                    Some(ArcValue::new_primitive("data2".to_string())),
+                    None,
+                )
                 .await;
         });
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let _ = node_clone3
-                .publish(topic3, Some(ArcValue::new_primitive("data3".to_string())), None)
+                .publish(
+                    topic3,
+                    Some(ArcValue::new_primitive("data3".to_string())),
+                    None,
+                )
                 .await;
         });
 

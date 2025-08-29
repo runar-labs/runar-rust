@@ -583,7 +583,7 @@ impl ServiceRequest {
 ///
 /// INTENTION: Provide configuration options for event publishing,
 /// allowing control over delivery scope, guarantees, and retention.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PublishOptions {
     /// Whether this event should be broadcast to all nodes in the network
     pub broadcast: bool,
@@ -615,6 +615,18 @@ impl PublishOptions {
     pub fn with_retain_for(mut self, duration: std::time::Duration) -> Self {
         self.retain_for = Some(duration);
         self
+    }
+}
+
+impl Default for PublishOptions {
+    fn default() -> Self {
+        Self {
+            broadcast: true, // Changed from false to true
+            guaranteed_delivery: false,
+            retain_for: None,
+            target: None,
+            profile_public_keys: None,
+        }
     }
 }
 

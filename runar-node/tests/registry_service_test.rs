@@ -43,7 +43,7 @@ async fn test_registry_service_list_services() {
 
         // Use the request method to query the registry service
         let services_av: ArcValue = node
-            .request("$registry/services/list", Option::<ArcValue>::None, None,)
+            .request("$registry/services/list", Option::<ArcValue>::None, None)
             .await
             .unwrap();
         // Convert ArcValue list into Vec<ServiceMetadata>
@@ -130,7 +130,7 @@ async fn test_registry_service_get_service_info() {
 
         // Debug log available handlers using logger
         let list_av: ArcValue = node
-            .request("$registry/services/list", None::<ArcValue>, None,)
+            .request("$registry/services/list", None::<ArcValue>, None)
             .await
             .unwrap();
         let list_av_clone = list_av.clone();
@@ -144,7 +144,7 @@ async fn test_registry_service_get_service_info() {
         // Use the request method to query the registry service for the math service
         // Note: We should use the correct parameter path format
         let response_av: ArcValue = node
-            .request("$registry/services/math", Option::<ArcValue>::None, None,)
+            .request("$registry/services/math", Option::<ArcValue>::None, None)
             .await
             .unwrap();
         let response: ServiceMetadata =
@@ -263,7 +263,7 @@ async fn test_registry_service_missing_parameter() {
         // The registry service expects a path parameter in the URL, but we're using an invalid path
         // that the router won't be able to match to a template with a parameter
         let response: Result<ArcValue> = node
-            .request("$registry/services", Option::<ArcValue>::None, None,)
+            .request("$registry/services", Option::<ArcValue>::None, None)
             .await;
 
         // The request should fail or return an error response
@@ -351,7 +351,11 @@ async fn test_registry_service_pause_service() {
 
         // Pause the service
         let pause_response: ArcValue = node
-            .request("$registry/services/math/pause", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/pause",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await
             .unwrap();
         let paused_state: ServiceState =
@@ -367,7 +371,8 @@ async fn test_registry_service_pause_service() {
             .request(
                 "$registry/services/math/state",
                 Some(ArcValue::new_primitive(true)),
-                None)
+                None,
+            )
             .await
             .unwrap();
         let current_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
@@ -379,7 +384,11 @@ async fn test_registry_service_pause_service() {
 
         // Try to pause again (should fail)
         let pause_again_result: Result<ArcValue> = node
-            .request("$registry/services/math/pause", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/pause",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await;
         assert!(
             pause_again_result.is_err(),
@@ -421,7 +430,11 @@ async fn test_registry_service_resume_service() {
 
         // Pause the service first
         let _pause_response: ArcValue = node
-            .request("$registry/services/math/pause", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/pause",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -430,7 +443,8 @@ async fn test_registry_service_resume_service() {
             .request(
                 "$registry/services/math/state",
                 Some(ArcValue::new_primitive(true)),
-                None)
+                None,
+            )
             .await
             .unwrap();
         let paused_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
@@ -442,7 +456,11 @@ async fn test_registry_service_resume_service() {
 
         // Resume the service
         let resume_response: ArcValue = node
-            .request("$registry/services/math/resume", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/resume",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await
             .unwrap();
         let resumed_state: ServiceState =
@@ -458,7 +476,8 @@ async fn test_registry_service_resume_service() {
             .request(
                 "$registry/services/math/state",
                 Some(ArcValue::new_primitive(true)),
-                None)
+                None,
+            )
             .await
             .unwrap();
         let current_state: ServiceState = ServiceState::from_arc_value(state_av.clone()).unwrap();
@@ -470,7 +489,11 @@ async fn test_registry_service_resume_service() {
 
         // Try to resume again (should fail)
         let resume_again_result: Result<ArcValue> = node
-            .request("$registry/services/math/resume", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/resume",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await;
         assert!(
             resume_again_result.is_err(),
@@ -511,7 +534,11 @@ async fn test_registry_service_request_to_paused_service() {
 
         // Pause the service
         let _pause_response: ArcValue = node
-            .request("$registry/services/math/pause", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/pause",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -523,7 +550,8 @@ async fn test_registry_service_request_to_paused_service() {
                     ArcValue::new_primitive(5i32),
                     ArcValue::new_primitive(3i32),
                 ])),
-                None)
+                None,
+            )
             .await;
 
         // The request should fail with a state-related error
@@ -663,7 +691,11 @@ async fn test_registry_service_resume_running_service() {
 
         // Try to resume a service that is already running
         let resume_result: Result<ArcValue> = node
-            .request("$registry/services/math/resume", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/resume",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await;
 
         // The request should fail with a state-related error
@@ -711,13 +743,21 @@ async fn test_registry_service_pause_already_paused_service() {
 
         // Pause the service first
         let _pause_response: ArcValue = node
-            .request("$registry/services/math/pause", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/pause",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await
             .unwrap();
 
         // Try to pause the service again (should fail)
         let pause_again_result: Result<ArcValue> = node
-            .request("$registry/services/math/pause", Option::<ArcValue>::None, None,)
+            .request(
+                "$registry/services/math/pause",
+                Option::<ArcValue>::None,
+                None,
+            )
             .await;
 
         // The request should fail with a state-related error
@@ -765,7 +805,8 @@ async fn test_registry_service_request_to_nonexistent_service() {
                     ArcValue::new_primitive(5i32),
                     ArcValue::new_primitive(3i32),
                 ])),
-                None)
+                None,
+            )
             .await;
 
         // The request should fail with a "No handler found" error
