@@ -23,9 +23,9 @@ use runar_node::services::EventContext;
 use runar_macros_common::params;
 
 // Import the test fixtures
-use crate::fixtures::math_service::MathService;
-use crate::fixtures::path_params_service::PathParamsService;
 use anyhow::Result;
+use runar_test_utils::fixtures::math_service::MathService;
+use runar_test_utils::fixtures::path_params_service::PathParamsService;
 use tokio::task::JoinHandle;
 
 /// Test that verifies basic node creation functionality
@@ -134,7 +134,7 @@ async fn test_node_request() {
 
         // Make a request to the math service's add action
         let result_av = node
-            .request("math/add", Some(params))
+            .request("math/add", Some(params), None)
             .await
             .expect("math/add call failed")
             .as_type_ref::<f64>()
@@ -202,7 +202,7 @@ async fn test_node_event_metadata_registration() -> Result<()> {
 
     // Request the list of services from the registry
     let list_arc = node
-        .request("$registry/services/list", None::<ArcValue>)
+        .request("$registry/services/list", None::<ArcValue>, None)
         .await?
         .as_typed_list_ref::<ServiceMetadata>()?;
 
@@ -290,7 +290,7 @@ async fn test_node_events() {
 
         // Publish an event to the topic
         let data = ArcValue::new_primitive("test data".to_string());
-        node.publish(&topic, Some(data)).await.unwrap();
+        node.publish(&topic, Some(data), None).await.unwrap();
 
         // Small delay to allow async handler to execute
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -328,7 +328,7 @@ async fn test_path_params_in_context() {
 
     // Make a request to a path that matches the template
     let av = node
-        .request("test/abc123/items/xyz789", None::<ArcValue>)
+        .request("test/abc123/items/xyz789", None::<ArcValue>, None)
         .await
         .unwrap();
 
@@ -397,7 +397,7 @@ async fn test_on_method() {
         );
 
         // Publish the event (should trigger the future)
-        node.publish(topic, Some(event_data.clone())).await.unwrap();
+        node.publish(topic, Some(event_data.clone()), None).await.unwrap();
 
         // Wait for the event
         let received_data = await_on(future)
@@ -430,7 +430,7 @@ async fn test_on_method() {
         );
 
         // Publish event for context test
-        node.publish(context_topic, Some(context_event_data.clone()))
+        node.publish(context_topic, Some(context_event_data.clone()), None)
             .await
             .unwrap();
 
@@ -459,7 +459,7 @@ async fn test_on_method() {
         );
 
         // Publish event for lifecycle context test
-        node.publish(lifecycle_topic, Some(lifecycle_event_data.clone()))
+        node.publish(lifecycle_topic, Some(lifecycle_event_data.clone()), None)
             .await
             .unwrap();
 
@@ -772,21 +772,21 @@ async fn test_multiple_concurrent_on_calls() {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let _ = node_clone1
-                .publish(topic1, Some(ArcValue::new_primitive("data1".to_string())))
+                .publish(topic1, Some(ArcValue::new_primitive("data1".to_string())), None)
                 .await;
         });
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(200)).await;
             let _ = node_clone2
-                .publish(topic2, Some(ArcValue::new_primitive("data2".to_string())))
+                .publish(topic2, Some(ArcValue::new_primitive("data2".to_string())), None)
                 .await;
         });
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let _ = node_clone3
-                .publish(topic3, Some(ArcValue::new_primitive("data3".to_string())))
+                .publish(topic3, Some(ArcValue::new_primitive("data3".to_string())), None)
                 .await;
         });
 
@@ -876,7 +876,7 @@ async fn test_on_method_timeout_variations() {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
             let _ = node_clone
-                .publish(&topic_clone, Some(event_data_clone))
+                .publish(&topic_clone, Some(event_data_clone), None)
                 .await;
         });
 
@@ -902,7 +902,7 @@ async fn test_on_method_timeout_variations() {
         let _wildcard_pattern = "svc_wild/*";
         let data_w = ArcValue::new_primitive("past_data".to_string());
         // publish with retain_for so it is retained
-        node.publish(wildcard_exact, Some(data_w.clone()))
+        node.publish(wildcard_exact, Some(data_w.clone()), None)
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -916,7 +916,7 @@ async fn test_on_method_timeout_variations() {
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let _ = node_clone2
-                .publish(&topic_clone2, Some(event_data_clone2))
+                .publish(&topic_clone2, Some(event_data_clone2), None)
                 .await;
         });
 

@@ -735,3 +735,6 @@ mod tests {
         Ok(())
     }
 }
+
+// Export test fixtures
+pub mod fixtures;

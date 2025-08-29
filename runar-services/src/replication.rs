@@ -130,6 +130,7 @@ impl ReplicationManager {
             .request(
                 format!("$registry/services/{service_path}/state"),
                 Some(ArcValue::new_primitive(false)),
+                None,
             )
             .await?
             .as_type::<ServiceState>()?;
@@ -578,7 +579,7 @@ impl ReplicationManager {
         ));
 
         match context
-            .remote_request(&remote_path, Some(ArcValue::new_struct(request)))
+            .remote_request(&remote_path, Some(ArcValue::new_struct(request)), None)
             .await
         {
             Ok(response) => {

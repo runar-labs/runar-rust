@@ -18,6 +18,16 @@
 - **IMPORTANT**: These are NOT API changes in the codebase - they are compilation context differences
 - **LESSON**: Moving tests reveals hidden API compatibility issues that were masked by external dependency compilation
 
+### 🆕 **RECENT API CHANGES TO APPLY DURING MIGRATION**
+- **`publish()` method**: Now has optional `options` parameter - pass `None` for existing calls
+- **`publish_with_options()` method**: REMOVED - use `publish(Some(options))` instead
+- **`request()` method**: Now has optional `options` parameter - pass `None` for existing calls
+- **Migration pattern**:
+  - `publish(topic, data)` → `publish(topic, data, None)`
+  - `publish_with_options(topic, data, options)` → `publish(topic, data, Some(options))`
+  - `request(topic, data)` → `request(topic, data, None)`
+- **This affects**: All tests that use these methods when moved to `runar-node/tests/`
+
 ### 🧪 **TEST SPLITTING COMPLEXITY**
 - **DISCOVERY**: `topic_path_wildcard_test.rs` contained TWO different types of tests:
   1. **Pure TopicPath tests** (lines 1-280) - should go to `runar-common/tests/`

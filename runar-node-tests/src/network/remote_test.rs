@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 // Import the fixture MathService
-use crate::fixtures::math_service::MathService;
+use runar_test_utils::fixtures::math_service::MathService;
 
 // TODO issues we found in the last refactoru of this test ( to be addressewd later)
 // 1 - when I changed the params to use params!{} macro which wraps each element in a map with ArcValue the serializer
@@ -133,7 +133,7 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("📤 Testing remote action call from node2 to node1 (math1/add)...");
 
     let response_av = node2
-        .request("math1/add", Some(params! { "a" => 5.0, "b" => 3.0 }))
+        .request("math1/add", Some(params! { "a" => 5.0, "b" => 3.0 }), None)
         .await?
         .as_type_ref::<f64>()?;
 
@@ -177,7 +177,7 @@ async fn test_remote_action_call() -> Result<()> {
     // Test 2: Call math2/multiply service (on node2) from node1
     logger.debug("📤 Testing remote action call from node1 to node2 (math2/multiply)...");
     let response_av: ArcValue = node1
-        .request("math2/multiply", Some(params! { "a" => 4.0, "b" => 7.0 }))
+        .request("math2/multiply", Some(params! { "a" => 4.0, "b" => 7.0 }), None)
         .await?;
     let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 28.0);
@@ -205,7 +205,7 @@ async fn test_remote_action_call() -> Result<()> {
     logger.debug("📤 Testing remote action call to newly added service (math3/add)...");
 
     let response_av: ArcValue = node2
-        .request("math3/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
+        .request("math3/add", Some(params! { "a" => 10.0, "b" => 5.0 }), None)
         .await?;
     let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 15.0);
@@ -237,7 +237,7 @@ async fn test_remote_action_call() -> Result<()> {
     logger.info("🧪 Testing additional secure operations...");
 
     let response_av: ArcValue = node2
-        .request("math1/subtract", Some(params! { "a" => 20.0, "b" => 8.0 }))
+        .request("math1/subtract", Some(params! { "a" => 20.0, "b" => 8.0 }), None)
         .await?;
     let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 12.0);
@@ -246,7 +246,7 @@ async fn test_remote_action_call() -> Result<()> {
     // Test divide operation on math2
 
     let response_av: ArcValue = node1
-        .request("math2/divide", Some(params! { "a" => 15.0, "b" => 3.0 }))
+        .request("math2/divide", Some(params! { "a" => 15.0, "b" => 3.0 }), None)
         .await?;
     let response: f64 = *response_av.as_type_ref::<f64>()?;
     assert_eq!(response, 5.0);
@@ -342,7 +342,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.debug("✅ Services started");
 
         let response_av = node2
-            .request("math1/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
+            .request("math1/add", Some(params! { "a" => 10.0, "b" => 5.0 }), None)
             .await?
             .as_type_ref::<f64>()?;
 
@@ -369,7 +369,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.info("🧪 Verifying Node 1 is unreachable...");
 
         let remote_call_result = node2
-            .request("math1/add", Some(params! { "a" => 1.0, "b" => 1.0 }))
+            .request("math1/add", Some(params! { "a" => 1.0, "b" => 1.0 }), None)
             .await;
 
         assert!(
@@ -428,7 +428,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
         logger.info("🧪 Testing remote call after Node 1 restart...");
 
         let response_av = node2
-            .request("math1/add", Some(params! { "a" => 20.0, "b" => 10.0 }))
+            .request("math1/add", Some(params! { "a" => 20.0, "b" => 10.0 }), None)
             .await?
             .as_type_ref::<f64>()?;
 
@@ -445,7 +445,7 @@ async fn test_node_stop_restart_reconnection() -> Result<()> {
 
         // Test call from restarted Node 1 to Node 2
         let response_av = node1
-            .request("math2/multiply", Some(params! { "a" => 6.0, "b" => 7.0 }))
+            .request("math2/multiply", Some(params! { "a" => 6.0, "b" => 7.0 }), None)
             .await?
             .as_type_ref::<f64>()?;
 

@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
                 "email" => "test@example.com".to_string(),
                 "password_hash" => "hashed_password".to_string()
             }),
+            None,
         )
         .await?;
     let created_user: User = user_arc.as_type()?;
@@ -91,6 +92,7 @@ async fn main() -> Result<()> {
                 "bio" => "Test bio".to_string(),
                 "private_notes" => "Private notes".to_string()
             }),
+            None,
         )
         .await?;
     let created_profile: Profile = profile_arc.as_type()?;
@@ -105,6 +107,7 @@ async fn main() -> Result<()> {
                 "balance_cents" => 10000u64, // $100.00 in cents
                 "account_type" => "checking".to_string()
             }),
+            None,
         )
         .await?;
     let created_account: Account = account_arc.as_type()?;
@@ -125,6 +128,7 @@ async fn main() -> Result<()> {
                 "total_price_cents" => 1500u64, // $15.00 in cents
                 "status" => "pending".to_string()
             }),
+            None,
         )
         .await?;
     let created_order: Order = order_arc.as_type()?;

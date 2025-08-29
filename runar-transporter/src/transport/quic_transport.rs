@@ -1810,7 +1810,7 @@ impl NetworkTransport for QuicTransport {
             "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id} payload_bytes: {payload_len}",
             payload_len = payload.len()
         );
- 
+
         let local_node_id = self.local_node_id.clone();
 
         // build message
@@ -2338,5 +2338,4 @@ impl NetworkTransport for QuicTransport {
         );
         Ok(())
     }
- 
 }
