@@ -65,7 +65,7 @@ fn build_test_context() -> Result<TestContext> {
 
 #[test]
 fn negative_typed_list_missing_keystore() -> Result<()> {
-    let (mobile_ks, _node_ks, resolver, network_id, profile_pk) = build_test_context()?;
+    let (mobile_ks, _node_ks, resolver, _network_id, profile_pk) = build_test_context()?;
 
     let items = vec![TestProfile {
         id: "1".into(),
@@ -214,7 +214,7 @@ fn negative_unknown_category_byte() {
 
 #[test]
 fn negative_missing_decryptor_for_t() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id, profile_pk) = build_test_context()?;
+    let (mobile_ks, node_ks, resolver, _network_id, profile_pk) = build_test_context()?;
 
     let items = vec![TestProfile {
         id: "1".into(),

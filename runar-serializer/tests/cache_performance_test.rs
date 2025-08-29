@@ -33,8 +33,12 @@ fn test_resolver_cache_performance() -> Result<()> {
     println!("\n📊 Test 4: LRU Eviction Test");
     test_lru_eviction(&config)?;
 
-    // Test 5: Test concurrent access
-    println!("\n📊 Test 5: Concurrent Access Test");
+    // Test 5: Test TTL expiration
+    println!("\n📊 Test 5: TTL Expiration Test");
+    test_ttl_expiration(&config, &user_keys_1)?;
+
+    // Test 6: Test concurrent access
+    println!("\n📊 Test 6: Concurrent Access Test");
     test_concurrent_access(&config, &user_keys_1)?;
 
     println!("\n✅ All cache performance tests completed successfully!");
@@ -44,7 +48,7 @@ fn test_resolver_cache_performance() -> Result<()> {
 /// Measure baseline performance without cache
 fn measure_baseline_performance(
     config: &LabelResolverConfig,
-    user_keys: &Vec<Vec<u8>>,
+    user_keys: &[Vec<u8>],
     iterations: usize,
 ) -> Result<Vec<f64>> {
     let mut times = Vec::new();
@@ -66,7 +70,7 @@ fn measure_baseline_performance(
 /// Test cache hit performance
 fn test_cache_hit_performance(
     config: &LabelResolverConfig,
-    user_keys: &Vec<Vec<u8>>,
+    user_keys: &[Vec<u8>],
     iterations: usize,
 ) -> Result<()> {
     // Create a custom cache for testing
@@ -76,7 +80,7 @@ fn test_cache_hit_performance(
     let start = Instant::now();
     let _resolver1 = cache.get_or_create(config, user_keys)?;
     let first_access_time = start.elapsed().as_secs_f64() * 1000.0;
-    println!("   First access (cache miss): {:.2}ms", first_access_time);
+    println!("   First access (cache miss): {first_access_time:.2}ms");
 
     // Subsequent accesses - cache hits
     let mut hit_times = Vec::new();
@@ -93,7 +97,7 @@ fn test_cache_hit_performance(
     println!();
 
     let avg_hit_time = hit_times.iter().sum::<f64>() / hit_times.len() as f64;
-    println!("   Average cache hit time: {:.2}ms", avg_hit_time);
+    println!("   Average cache hit time: {avg_hit_time:.2}ms");
     println!(
         "   Cache hit speedup: {:.1}x faster than creation",
         first_access_time / avg_hit_time
@@ -109,8 +113,8 @@ fn test_cache_hit_performance(
 /// Test cache miss performance with different user contexts
 fn test_cache_miss_performance(
     config: &LabelResolverConfig,
-    user_keys_1: &Vec<Vec<u8>>,
-    user_keys_2: &Vec<Vec<u8>>,
+    user_keys_1: &[Vec<u8>],
+    user_keys_2: &[Vec<u8>],
     iterations: usize,
 ) -> Result<()> {
     let cache = ResolverCache::new(100, Duration::from_secs(60));
@@ -131,7 +135,7 @@ fn test_cache_miss_performance(
     println!();
 
     let avg_time = times.iter().sum::<f64>() / times.len() as f64;
-    println!("   Average cache miss time: {:.2}ms", avg_time);
+    println!("   Average cache miss time: {avg_time:.2}ms");
 
     let stats = cache.stats();
     println!("   Final cache entries: {}", stats.total_entries);
@@ -140,7 +144,7 @@ fn test_cache_miss_performance(
 }
 
 /// Test TTL expiration functionality
-fn test_ttl_expiration(config: &LabelResolverConfig, user_keys: &Vec<Vec<u8>>) -> Result<()> {
+fn test_ttl_expiration(config: &LabelResolverConfig, user_keys: &[Vec<u8>]) -> Result<()> {
     // Create cache with very short TTL for testing
     let cache = ResolverCache::new(100, Duration::from_millis(100));
 
@@ -165,7 +169,7 @@ fn test_ttl_expiration(config: &LabelResolverConfig, user_keys: &Vec<Vec<u8>>) -
         "   Cache entries after expiration: {}",
         stats_after.total_entries
     );
-    println!("   Post-expiration access time: {:.2}ms", access_time);
+    println!("   Post-expiration access time: {access_time:.2}ms");
     println!("   ✅ TTL expiration working correctly");
 
     Ok(())
@@ -204,10 +208,10 @@ fn test_lru_eviction(config: &LabelResolverConfig) -> Result<()> {
 }
 
 /// Test concurrent access to cache
-fn test_concurrent_access(config: &LabelResolverConfig, user_keys: &Vec<Vec<u8>>) -> Result<()> {
+fn test_concurrent_access(config: &LabelResolverConfig, user_keys: &[Vec<u8>]) -> Result<()> {
     let cache = std::sync::Arc::new(ResolverCache::new(100, Duration::from_secs(60)));
     let config = std::sync::Arc::new(config.clone());
-    let user_keys = std::sync::Arc::new(user_keys.clone());
+    let user_keys = std::sync::Arc::new(user_keys.to_vec());
 
     let mut handles = Vec::new();
 
@@ -215,7 +219,7 @@ fn test_concurrent_access(config: &LabelResolverConfig, user_keys: &Vec<Vec<u8>>
     for i in 0..10 {
         let cache_clone = cache.clone();
         let config_clone = config.clone();
-        let user_keys_clone = user_keys.clone();
+        let user_keys_clone = user_keys.to_vec();
 
         let handle = std::thread::spawn(move || {
             let start = Instant::now();
@@ -240,7 +244,7 @@ fn test_concurrent_access(config: &LabelResolverConfig, user_keys: &Vec<Vec<u8>>
     results.sort_by_key(|(_, duration)| (*duration * 1000.0) as u64);
     println!("   Concurrent access times:");
     for (task_id, duration) in &results {
-        println!("     Task {}: {:.2}ms", task_id, duration);
+        println!("     Task {task_id}: {duration:.2}ms");
     }
 
     let stats = cache.stats();
@@ -298,7 +302,7 @@ fn create_test_config() -> LabelResolverConfig {
     // Add more labels to increase complexity
     for i in 10..20 {
         label_mappings.insert(
-            format!("label_{}", i),
+            format!("label_{i}"),
             LabelValue {
                 network_public_key: Some(vec![i as u8; 65]),
                 user_key_spec: if i % 2 == 0 {
@@ -345,7 +349,7 @@ fn test_global_cache_functionality() -> Result<()> {
 
     // Test 4: Cleanup expired
     let cleanup_count = cleanup_global_cache();
-    println!("   ✅ Cleanup expired returned: {}", cleanup_count);
+    println!("   ✅ Cleanup expired returned: {cleanup_count}");
 
     println!("✅ Global cache functionality tests completed!");
     Ok(())

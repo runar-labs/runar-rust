@@ -222,10 +222,8 @@ impl RemoteService {
             let network_public_key = match keystore.get_network_public_key(&network_id) {
                 Ok(key) => key,
                 Err(e) => {
-                    let error_msg = format!(
-                        "Failed to get network public key for network {}: {}",
-                        network_id, e
-                    );
+                    let error_msg =
+                        format!("Failed to get network public key for network {network_id}: {e}");
                     log_error!(logger, "🔒 [RemoteService] {}", error_msg);
                     return Box::pin(async move { Err(anyhow::anyhow!(error_msg)) });
                 }

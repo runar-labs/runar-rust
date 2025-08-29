@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
 
     // Setup encryption infrastructure using mobile simulator
     let (simulator, config) = create_test_environment()?;
-    let (mobile_resolver, node_resolver) = simulator.create_label_resolvers()?;
+    let (_mobile_resolver, _node_resolver) = simulator.create_label_resolvers()?;
 
     simulator.print_summary();
     logger.info("✅ Encryption infrastructure ready");

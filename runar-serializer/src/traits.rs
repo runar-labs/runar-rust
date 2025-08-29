@@ -1,10 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -51,8 +49,8 @@ pub struct KeyMappingConfig {
     pub label_mappings: HashMap<String, LabelKeyInfo>,
 }
 
-/// Simple trait for LabelResolver to maintain macro compatibility
-/// This delegates to the concrete ConfigurableLabelResolver struct
+// /// Simple trait for LabelResolver to maintain macro compatibility
+// /// This delegates to the concrete ConfigurableLabelResolver struct
 // pub trait LabelResolver: Send + Sync {
 //     /// Resolve a label to key-info (public key + scope).
 //     fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>>;
@@ -140,7 +138,7 @@ impl ConfigurableLabelResolver {
     /// REQUIRES: Every label must have an explicit network_public_key - no defaults allowed
     pub fn create_context_label_resolver(
         system_config: &LabelResolverConfig,
-        user_profile_keys: &Vec<Vec<u8>>, // From request context - empty vec means no profile keys
+        user_profile_keys: &[Vec<u8>], // From request context - empty vec means no profile keys
     ) -> Result<Arc<ConfigurableLabelResolver>> {
         let mut mappings = HashMap::new();
 
@@ -152,7 +150,7 @@ impl ConfigurableLabelResolver {
             let network_public_key = label_value
                 .network_public_key
                 .clone()
-                .unwrap_or_else(|| vec![]); // Empty key for user-only labels
+                .unwrap_or_else(Vec::new); // Empty key for user-only labels
 
             // Process user key specification
             match &label_value.user_key_spec {
@@ -252,7 +250,7 @@ impl ConfigurableLabelResolver {
 /// REQUIRES: Every label must have an explicit network_public_key - no defaults allowed
 pub fn create_context_label_resolver(
     system_config: &LabelResolverConfig,
-    user_profile_keys: &Vec<Vec<u8>>, // From request context - empty vec means no profile keys
+    user_profile_keys: &[Vec<u8>], // From request context - empty vec means no profile keys
 ) -> Result<Arc<ConfigurableLabelResolver>> {
     ConfigurableLabelResolver::create_context_label_resolver(system_config, user_profile_keys)
 }
@@ -374,7 +372,7 @@ impl ResolverCache {
     pub fn get_or_create(
         &self,
         config: &LabelResolverConfig,
-        user_profile_keys: &Vec<Vec<u8>>,
+        user_profile_keys: &[Vec<u8>],
     ) -> Result<Arc<ConfigurableLabelResolver>> {
         let cache_key = self.generate_cache_key(user_profile_keys);
 
@@ -412,7 +410,7 @@ impl ResolverCache {
 
     /// Generate a cache key for user profile keys only
     /// Simplified approach: config changes are rare, so only hash user keys
-    fn generate_cache_key(&self, user_profile_keys: &Vec<Vec<u8>>) -> String {
+    fn generate_cache_key(&self, user_profile_keys: &[Vec<u8>]) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
@@ -468,7 +466,6 @@ impl ResolverCache {
 
     /// Clear expired entries from the cache
     pub fn cleanup_expired(&self) -> usize {
-        let now = Instant::now();
         let mut removed_count = 0;
 
         let expired_keys: Vec<_> = self
@@ -568,7 +565,7 @@ impl ResolverMetrics {
         // you'd want to use atomic operations for thread safety
     }
 
-    fn record_creation_time(&self, duration: Duration) {
+    fn record_creation_time(&self, _duration: Duration) {
         // Note: This is a simplified version - in a real implementation,
         // you'd want to use atomic operations for thread safety
     }
@@ -597,7 +594,7 @@ pub fn set_global_cache(cache: ResolverCache) {
 /// Simplified approach: cache key is just user_profile_keys
 pub fn get_cached_resolver(
     config: &LabelResolverConfig,
-    user_profile_keys: &Vec<Vec<u8>>,
+    user_profile_keys: &[Vec<u8>],
 ) -> Result<Arc<ConfigurableLabelResolver>> {
     let cache = get_global_cache();
     cache.get_or_create(config, user_profile_keys)

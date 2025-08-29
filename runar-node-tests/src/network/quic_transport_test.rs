@@ -68,8 +68,8 @@ async fn test_dial_cancel_on_inbound_connect(
     };
     let request_handler1 = mk_request_handler();
     let request_handler2 = mk_request_handler();
-    let event_handler1: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
-    let event_handler2: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
+    let event_handler1: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
+    let event_handler2: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
     // Use the default configurable resolver with empty config
     let resolver = Arc::new(LabelResolverConfig {
         label_mappings: HashMap::new(),
@@ -956,7 +956,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             })
         })
     });
-    let event_handler: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
+    let event_handler: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
 
     // Capture lifecycle events
     let events1: Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
@@ -1181,7 +1181,7 @@ async fn test_capability_version_bump_across_reconnect(
             })
         })
     });
-    let event_handler1: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
+    let event_handler1: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
     let request_handler2: RequestCallback = Arc::new(|req| {
         let path = req.payload.path.clone();
         let source_node_id = req.source_node_id.clone();
@@ -1200,7 +1200,7 @@ async fn test_capability_version_bump_across_reconnect(
             })
         })
     });
-    let event_handler2: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
+    let event_handler2: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
     let resolver: std::sync::Arc<runar_serializer::traits::LabelResolverConfig> =
         std::sync::Arc::new(runar_serializer::traits::LabelResolverConfig {
             label_mappings: std::collections::HashMap::new(),
@@ -1381,8 +1381,8 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
             })
         })
     });
-    let event_handler1: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
-    let event_handler2: EventCallback = Arc::new(|event| Box::pin(async { Ok(()) }));
+    let event_handler1: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
+    let event_handler2: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
     let resolver: std::sync::Arc<runar_serializer::traits::LabelResolverConfig> =
         std::sync::Arc::new(runar_serializer::traits::LabelResolverConfig {
             label_mappings: std::collections::HashMap::new(),

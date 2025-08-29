@@ -151,7 +151,7 @@ fn test_encryption_basic() -> Result<()> {
 
 #[test]
 fn test_encryption_in_arcvalue() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id, profile_pk) = build_test_context()?; // keep network_id & profile_id used below
+    let (mobile_ks, node_ks, resolver, _network_id, profile_pk) = build_test_context()?; // keep network_id & profile_id used below
 
     let profile = TestProfile {
         id: "789".to_string(),
