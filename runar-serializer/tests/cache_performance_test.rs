@@ -150,7 +150,7 @@ fn test_ttl_expiration(config: &LabelResolverConfig, user_keys: &[Vec<u8>]) -> R
 
     // Create entry
     let _resolver1 = cache.get_or_create(config, user_keys)?;
-    
+
     let stats_before = cache.stats();
     println!(
         "   Cache entries before sleep: {}",
@@ -163,7 +163,7 @@ fn test_ttl_expiration(config: &LabelResolverConfig, user_keys: &[Vec<u8>]) -> R
     // Access again - should be cache miss due to expiration
     let start = Instant::now();
     let _resolver2 = cache.get_or_create(config, user_keys)?;
-    
+
     let access_time = start.elapsed().as_secs_f64() * 1000.0;
 
     let stats_after = cache.stats();
