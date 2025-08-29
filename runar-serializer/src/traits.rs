@@ -377,17 +377,23 @@ impl ResolverCache {
         let cache_key = self.generate_cache_key(user_profile_keys);
 
         // Try to get from cache first
-        if let Some(entry) = self.cache.get(&cache_key) {
+        let should_remove_expired = if let Some(entry) = self.cache.get(&cache_key) {
             // Check if entry is still valid
             if entry.age() < self.ttl {
                 entry.access();
                 self.metrics.cache_hit();
                 return Ok(entry.resolver.clone());
             } else {
-                // Entry expired, remove it
-                self.cache.remove(&cache_key);
-                self.metrics.expired_removed();
+                true // Mark for removal
             }
+        } else {
+            false
+        };
+
+        // Remove expired entry if needed (outside of the get() scope to avoid deadlock)
+        if should_remove_expired {
+            self.cache.remove(&cache_key);
+            self.metrics.expired_removed();
         }
 
         // Cache miss - create new resolver
