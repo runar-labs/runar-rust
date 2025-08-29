@@ -1,5 +1,5 @@
 use runar_serializer::traits::{
-    create_context_label_resolver, LabelKeyword, LabelResolverConfig, LabelValue,
+    create_context_label_resolver, LabelKeyword, LabelResolverConfig, LabelValue, validate_label_config,
 };
 
 /// Example demonstrating the new label resolver system
@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 
     // 2. Validate the configuration
     println!("Validating system label configuration...");
-    runar_serializer::traits::ConfigurableLabelResolver::validate_label_config(&system_config)?;
+    validate_label_config(&system_config)?;
     println!("✅ Configuration is valid\n");
 
     // 3. Create resolver without user context (system context)

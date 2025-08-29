@@ -110,6 +110,10 @@ impl EnvelopeCrypto for NoCrypto {
     ) -> runar_keys::Result<Vec<u8>> {
         Ok(env.encrypted_data.clone())
     }
+
+    fn get_network_public_key(&self, _network_id: &str) -> runar_keys::Result<Vec<u8>> {
+        Ok("interop".as_bytes().to_vec())
+    }
 }
 
 pub fn default_label_resolver() -> Arc<LabelResolverConfig> {

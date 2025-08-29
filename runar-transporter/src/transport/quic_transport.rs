@@ -1379,8 +1379,8 @@ impl QuicTransport {
                     payload: response.payload, // response.payload is NetworkMessagePayloadItem
                 };
 
-                log_debug!(self.logger, "[bi_accept_loop] Built response message correlation_id: {correlation_id} response_payload_bytes: {response_len}", 
-                    correlation_id=correlation_id, 
+                log_debug!(self.logger, "[bi_accept_loop] Built response message correlation_id: {correlation_id} response_payload_bytes: {response_len}",
+                    correlation_id=correlation_id,
                     response_len=response_msg.payload.payload_bytes.len()
                 );
                 let now = Instant::now();
@@ -1388,8 +1388,8 @@ impl QuicTransport {
                 self.response_cache
                     .insert(correlation_id.clone(), (now, response_msg_arc.clone()));
 
-                log_debug!(self.logger, "[bi_accept_loop] Writing response message correlation_id: {correlation_id} response_payload_bytes: {response_len}", 
-                    correlation_id=correlation_id, 
+                log_debug!(self.logger, "[bi_accept_loop] Writing response message correlation_id: {correlation_id} response_payload_bytes: {response_len}",
+                    correlation_id=correlation_id,
                     response_len=response_msg_arc.payload.payload_bytes.len()
                 );
                 self.write_message(&mut send, &response_msg_arc).await?;

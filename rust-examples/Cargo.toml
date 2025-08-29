@@ -45,6 +45,3 @@ path = "validate_swift_vectors.rs"
 name = "validate_typescript_vectors"
 path = "validate_typescript_vectors.rs"
 
-[[example]]
-name = "label_resolver_example"
-path = "label_resolver_example.rs"
