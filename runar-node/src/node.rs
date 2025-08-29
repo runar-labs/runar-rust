@@ -81,7 +81,7 @@ use crate::services::remote_service::{
 use crate::services::service_registry::{
     is_internal_service, EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry,
 };
-use crate::services::NodeDelegate;
+use crate::services::{NodeDelegate, RequestOptions};
 use crate::services::{
     ActionHandler, EventRegistrationOptions, PublishOptions, RegistryDelegate,
     RemoteLifecycleContext, RequestContext,
@@ -817,18 +817,19 @@ impl Node {
             registry
                 .update_local_service_state(&service_topic, ServiceState::Error)
                 .await?;
-            self.publish_with_options(
+            self.publish(
                 &format!(
                     "$registry/services/{}/state/error",
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions {
+                Some(PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
                     retain_for: Some(Duration::from_secs(10)),
                     target: None,
-                },
+                    profile_public_keys: None,
+                }),
             )
             .await?;
             return Err(anyhow!("Failed to initialize service: {e}"));
@@ -836,18 +837,19 @@ impl Node {
         registry
             .update_local_service_state(&service_topic, ServiceState::Initialized)
             .await?;
-        self.publish_with_options(
+        self.publish(
             &format!(
                 "$registry/services/{}/state/initialized",
                 service_topic.service_path()
             ),
             Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-            PublishOptions {
+            Some(PublishOptions {
                 broadcast: false,
                 guaranteed_delivery: false,
                 retain_for: Some(Duration::from_secs(10)),
                 target: None,
-            },
+                profile_public_keys: None,
+            }),
         )
         .await?;
         // Service initialized successfully, create the ServiceEntry and register it
@@ -1211,18 +1213,19 @@ impl Node {
                 );
             }
             if let Err(publish_err) = self
-                .publish_with_options(
+                .publish(
                     &format!(
                         "$registry/services/{}/state/error",
                         service_topic.service_path()
                     ),
                     Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                    PublishOptions {
+                    Some(PublishOptions {
                         broadcast: false,
                         guaranteed_delivery: false,
                         retain_for: Some(Duration::from_secs(10)),
                         target: None,
-                    },
+                        profile_public_keys: None,
+                    }),
                 )
                 .await
             {
@@ -1245,18 +1248,19 @@ impl Node {
         }
 
         if let Err(publish_err) = self
-            .publish_with_options(
+            .publish(
                 &format!(
                     "$registry/services/{}/state/running",
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions {
+                Some(PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
                     retain_for: Some(Duration::from_secs(120)),
                     target: None,
-                },
+                    profile_public_keys: None,
+                }),
             )
             .await
         {
@@ -1336,18 +1340,19 @@ impl Node {
             registry
                 .update_local_service_state(&service_topic, ServiceState::Stopped)
                 .await?;
-            self.publish_with_options(
+            self.publish(
                 &format!(
                     "$registry/services/{}/state/stopped",
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions {
+                Some(PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
                     retain_for: Some(Duration::from_secs(3)),
                     target: None,
-                },
+                    profile_public_keys: None,  
+                }),
             )
             .await?;
         }
@@ -1642,10 +1647,10 @@ impl Node {
             self.update_peer_capabilities(&existing_peer, &peer_node_info)
                 .await?;
             // replace stored peer info
-            self.publish_with_options(
+            self.publish(
                 &format!("$registry/peer/{peer_node_id}/updated"),
                 Some(ArcValue::new_primitive(peer_node_id.clone())),
-                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
+                Some(PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10))),
             )
             .await?;
         } else {
@@ -1654,10 +1659,10 @@ impl Node {
                 "[handle_peer_connected] peer_node_id:{peer_node_id} is new"
             );
             self.add_new_peer(&peer_node_info).await?;
-            self.publish_with_options(
+            self.publish(
                 &format!("$registry/peer/{peer_node_id}/discovered"),
                 Some(ArcValue::new_primitive(peer_node_id.clone())),
-                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
+                Some(PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10))),
             )
             .await?;
         }
@@ -1750,53 +1755,7 @@ impl Node {
 
         Ok(())
     }
-
-    // /// Handle a network message
-    // async fn handle_network_message(
-    //     &self,
-    //     message: NetworkMessage,
-    // ) -> Result<Option<NetworkMessage>> {
-    //     // Skip if networking is not enabled
-    //     if !self.supports_networking {
-    //         log_warn!(
-    //             self.logger,
-    //             "Received network message but networking is disabled"
-    //         );
-    //         return Ok(None);
-    //     }
-
-    //     log_debug!(
-    //         self.logger,
-    //         "Received network message: {}",
-    //         message.message_type
-    //     );
-
-    //     // Match on message type
-    //     match message.message_type {
-    //         // MESSAGE_TYPE_REQUEST => {
-    //         //     let response = self.handle_network_request(message).await?;
-    //         //     if let Some(response_message) = response {
-    //         //         Ok(Some(response_message))
-    //         //     } else {
-    //         //         Ok(None)
-    //         //     }
-    //         // }
-    //         // MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
-    //         MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
-    //         _ => {
-    //             log_warn!(
-    //                 self.logger,
-    //                 "Unknown message type: {}",
-    //                 message.message_type
-    //             );
-    //             Err(anyhow!(
-    //                 "Unknown message type: {message_type}",
-    //                 message_type = message.message_type
-    //             ))
-    //         }
-    //     }
-    // }
-
+ 
     /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
     /// and forget the peer from known_peers and discovery caches.
     async fn cleanup_disconnected_peer(&self, peer_node_id: &str) {
@@ -1834,10 +1793,10 @@ impl Node {
 
         // 4) Publish a local-only event indicating peer removal
         if let Err(e) = self
-            .publish_with_options(
+            .publish(
                 &format!("$registry/peer/{peer_node_id}/disconnected"),
                 Some(ArcValue::new_primitive(peer_node_id.to_string())),
-                PublishOptions::local_only(),
+                Some(PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10))),
             )
             .await
         {
@@ -2150,9 +2109,7 @@ impl Node {
             return handler(payload, context).await;
         }
 
-        // No local handler found - try remote handlers
-        self.remote_request(topic_path.as_str(), payload, vec![])
-            .await
+        return Err(anyhow!("No local handler found for: {topic_path}"));
     }
 
     /// Handle a request for a specific action - Stable API DO NOT CHANGE UNLESS EXPLICITLY ASKED TO DO SO!
@@ -2162,7 +2119,7 @@ impl Node {
     /// Apply load balancing when multiple remote handlers are available.
     ///
     /// This is the central request routing mechanism for the Node.
-    pub async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, path: &str, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -2192,7 +2149,7 @@ impl Node {
                 );
                 // Try remote handlers instead
                 match self
-                    .remote_request(topic_path.as_str(), request_payload_av, vec![])
+                    .remote_request(topic_path.as_str(), request_payload_av, options)
                     .await
                 {
                     Ok(response) => return Ok(response),
@@ -2203,7 +2160,7 @@ impl Node {
                 }
             }
         }
-
+ 
         // Service is either running or doesn't exist locally - check for local handler
         if let Some((handler, registration_path)) = self
             .service_registry
@@ -2211,10 +2168,16 @@ impl Node {
             .await
         {
             log_debug!(self.logger, "Executing local handler for: {topic_path}");
+ 
+            let profile_public_keys = options
+                .map(|o| o.profile_public_keys)
+                .unwrap_or_default()
+                .unwrap_or_default();
 
             // Create request context
             let mut context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
+                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
+                .with_user_profile_public_keys(profile_public_keys);
 
             // Extract parameters using the original registration path
             if let Ok(path_params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -2233,7 +2196,7 @@ impl Node {
         }
 
         // No local handler found - try remote handlers
-        self.remote_request(topic_path.as_str(), request_payload_av, vec![])
+        self.remote_request(topic_path.as_str(), request_payload_av, options)
             .await
     }
 
@@ -2241,7 +2204,7 @@ impl Node {
         &self,
         path: &str,
         payload: Option<P>,
-        profile_public_keys: Vec<Vec<u8>>,
+        options: Option<RequestOptions>,
     ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
@@ -2267,11 +2230,23 @@ impl Node {
                 topic_path
             );
 
+            let profile_public_keys = options
+                .map(|o| o.profile_public_keys)
+                .unwrap_or_default()
+                .unwrap_or_default();
+
+
+            // Create request context with profile public keys
+            let context =
+                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
+                    .with_user_profile_public_keys(profile_public_keys);
+
+
             // Apply load balancing strategy to select a handler
             let load_balancer = self.load_balancer.read().await;
             let handler_index = load_balancer.select_handler(
                 &remote_handlers,
-                &RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone()),
+                &context,
             );
 
             // Get the selected handler
@@ -2284,11 +2259,6 @@ impl Node {
                 remote_handlers.len(),
                 topic_path
             );
-
-            // Create request context with profile public keys
-            let context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
-                    .with_user_profile_public_keys(profile_public_keys);
 
             // For remote handlers, we don't have the registration path
             // In the future, we should enhance the remote handler registry to include registration paths
@@ -2303,11 +2273,11 @@ impl Node {
     }
 
     /// Publish with options - Helper method to implement the publish_with_options functionality
-    pub async fn publish_with_options(
+    pub async fn publish(
         &self,
         topic: &str,
         data: Option<ArcValue>,
-        options: PublishOptions,
+        options: Option<PublishOptions>,
     ) -> Result<()> {
         let topic_string = topic.to_string();
         // Check for valid topic path
@@ -2338,6 +2308,8 @@ impl Node {
                 );
             }
         }
+
+        let options = options.unwrap_or_default();
 
         // Retain event locally if configured
         if let Some(retain_for) = options.retain_for {
@@ -2485,7 +2457,7 @@ impl Node {
 
                         // Publish local-only running state for remote service so local components can await readiness
                         if let Err(publish_err) = self
-                            .publish_with_options(
+                            .publish(
                                 &format!(
                                     "$registry/services/{}/state/running",
                                     service_topic_path.service_path()
@@ -2493,8 +2465,8 @@ impl Node {
                                 Some(ArcValue::new_primitive(
                                     service_topic_path.as_str().to_string(),
                                 )),
-                                PublishOptions::local_only()
-                                    .with_retain_for(Duration::from_secs(120)),
+                                Some(PublishOptions::local_only()
+                                    .with_retain_for(Duration::from_secs(120))),
                             )
                             .await
                         {
@@ -2742,7 +2714,7 @@ impl Node {
 
             // Publish local-only running state for remote service so local components can await readiness
             if let Err(publish_err) = self
-                .publish_with_options(
+                .publish(
                     &format!(
                         "$registry/services/{}/state/running",
                         service_topic_path.service_path()
@@ -2750,7 +2722,7 @@ impl Node {
                     Some(ArcValue::new_primitive(
                         service_topic_path.as_str().to_string(),
                     )),
-                    PublishOptions::local_only().with_retain_for(Duration::from_secs(120)),
+                    Some(PublishOptions::local_only().with_retain_for(Duration::from_secs(120))),
                 )
                 .await
             {
@@ -3103,24 +3075,16 @@ impl Node {
 
 #[async_trait]
 impl NodeDelegate for Node {
-    async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    async fn request<P>(&self, path: &str, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
         // Delegate directly to our (now generic) inherent implementation.
-        self.request(path, payload).await
+        self.request(path, payload, options).await
     }
 
-    async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()> {
-        // Create default options
-        let options = PublishOptions {
-            broadcast: true,
-            guaranteed_delivery: false,
-            retain_for: None,
-            target: None,
-        };
-
-        self.publish_with_options(topic, data, options).await
+    async fn publish(&self, topic: &str, data: Option<ArcValue>, options: Option<PublishOptions>) -> Result<()> {
+        self.publish(topic, data, options).await
     }
 
     async fn subscribe(

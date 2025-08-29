@@ -11,7 +11,7 @@
 // while maintaining proper isolation between events.
 
 use crate::node::Node; // Added for concrete type
-use crate::services::PublishOptions; // Restored
+use crate::services::{PublishOptions, RequestOptions}; // Restored
 use crate::NodeDelegate; // Keep one instance
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
@@ -160,7 +160,7 @@ impl EventContext {
     /// - Full path with network ID: "network:service/topic" (used as is)
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
-    pub async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()> {
+    pub async fn publish(&self, topic: &str, data: Option<ArcValue>, options: Option<PublishOptions>) -> Result<()> {
         let topic_string = topic.to_string();
 
         // Process the topic based on its format
@@ -185,13 +185,14 @@ impl EventContext {
 
         self.logger
             .debug(format!("Publishing to processed topic: {full_topic}"));
-        self.node_delegate.publish(&full_topic, data).await
+        self.node_delegate.publish(&full_topic, data, options).await
     }
 
     pub async fn remote_request<P>(
         &self,
         path: impl Into<String>,
         payload: Option<P>,
+        options: Option<RequestOptions>,
     ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
@@ -221,7 +222,7 @@ impl EventContext {
         log_debug!(self.logger, "Making request to processed path: {full_path}");
 
         self.node_delegate
-            .remote_request::<P>(&full_path, payload, vec![])
+            .remote_request::<P>(&full_path, payload, options)
             .await
     }
 
@@ -235,7 +236,7 @@ impl EventContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, path: &str, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -263,7 +264,7 @@ impl EventContext {
 
         log_debug!(self.logger, "Making request to processed path: {full_path}");
 
-        self.node_delegate.request::<P>(&full_path, payload).await
+        self.node_delegate.request::<P>(&full_path, payload, options).await
     }
 
     /// Wait for an event to occur with a timeout

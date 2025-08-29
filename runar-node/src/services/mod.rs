@@ -137,6 +137,7 @@ impl LifecycleContext {
         &self,
         topic: impl AsRef<str>,
         payload: Option<P>,
+        options: Option<RequestOptions>,
     ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
@@ -159,7 +160,7 @@ impl LifecycleContext {
             .debug(format!("Making request to processed path: {full_topic}"));
 
         self.node_delegate
-            .remote_request::<P>(&full_topic, payload, vec![])
+            .remote_request::<P>(&full_topic, payload, options)
             .await
     }
 
@@ -172,7 +173,7 @@ impl LifecycleContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (current network ID added)
     /// - Simple action: "action" (current network ID and service path added - calls own service)
-    pub async fn request<P>(&self, topic: impl AsRef<str>, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(&self, topic: impl AsRef<str>, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -191,7 +192,7 @@ impl LifecycleContext {
         self.logger.debug(format!(
             "LifecycleContext making request to processed path: {full_topic}"
         ));
-        self.node_delegate.request::<P>(&full_topic, payload).await
+        self.node_delegate.request::<P>(&full_topic, payload, options).await
     }
 
     /// Publish an event from the lifecycle context.
@@ -202,7 +203,7 @@ impl LifecycleContext {
     /// - Full topic with network ID: "network:service/topic" (used as is)
     /// - Topic with service: "service/topic" (current network ID added)
     /// - Simple topic: "topic" (current network ID and service path added)
-    pub async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()> {
+    pub async fn publish(&self, topic: &str, data: Option<ArcValue>, options: Option<PublishOptions>) -> Result<()> {
         let full_topic = if topic.contains(':') {
             topic.to_string()
         } else if topic.contains('/') {
@@ -214,36 +215,9 @@ impl LifecycleContext {
         self.logger.debug(format!(
             "LifecycleContext publishing to processed topic: {full_topic}"
         ));
-        self.node_delegate.publish(&full_topic, data).await
+        self.node_delegate.publish(&full_topic, data, options).await
     }
-
-    /// Publish an event with options (e.g., retain_for for include_past support)
-    pub async fn publish_with_options(
-        &self,
-        topic: impl AsRef<str>,
-        data: Option<ArcValue>,
-        options: PublishOptions,
-    ) -> Result<()> {
-        let topic_string = topic.as_ref();
-        let full_topic = if topic_string.contains(':') {
-            topic_string.to_string()
-        } else if topic_string.contains('/') {
-            format!("{0}:{1}", self.network_id, topic_string)
-        } else {
-            format!(
-                "{0}:{1}/{2}",
-                self.network_id, self.service_path, topic_string
-            )
-        };
-
-        self.logger.debug(format!(
-            "LifecycleContext publishing (with options) to processed topic: {full_topic}"
-        ));
-        self.node_delegate
-            .publish_with_options(&full_topic, data, options)
-            .await
-    }
-
+ 
     /// Wait for an event to occur with a timeout
     ///
     /// INTENTION: Allow services during their lifecycle to wait for specific events
@@ -609,6 +583,8 @@ pub struct PublishOptions {
     /// None means no retention.
     pub retain_for: Option<std::time::Duration>,
 
+    pub profile_public_keys: Option<Vec<Vec<u8>>>,
+
     /// Target a specific node or service instead of all subscribers
     pub target: Option<String>,
 }
@@ -620,6 +596,7 @@ impl PublishOptions {
             guaranteed_delivery: false,
             retain_for: None,
             target: None,
+            profile_public_keys: None,
         }
     }
 
@@ -642,6 +619,11 @@ pub struct EventRegistrationOptions {
     pub include_past: Option<std::time::Duration>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RequestOptions {
+    pub profile_public_keys: Option<Vec<Vec<u8>>>,
+}
+ 
 /// Options for one-shot event waits (on)
 #[derive(Clone, Debug)]
 pub struct OnOptions {
@@ -776,12 +758,12 @@ pub trait EventDispatcher: Send + Sync {
 #[async_trait::async_trait]
 pub trait NodeDelegate: Send + Sync {
     /// Process a service request
-    async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    async fn request<P>(&self, path: &str, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync;
 
     /// Simplified publish for common cases
-    async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()>;
+    async fn publish(&self, topic: &str, data: Option<ArcValue>, options: Option<PublishOptions>) -> Result<()>;
 
     /// Subscribe to a topic
     async fn subscribe(

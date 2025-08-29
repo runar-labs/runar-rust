@@ -250,11 +250,11 @@ pub trait NetworkTransport: Send + Sync {
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
 
-    /// Expose the transport-owned keystore (read-only).
-    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
+    // / Expose the transport-owned keystore (read-only).
+    // fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
 
-    /// Expose the transport-owned label resolver.
-    fn label_resolver(&self) -> Arc<runar_serializer::traits::ConfigurableLabelResolver>;
+    // / Expose the transport-owned label resolver.
+    // fn label_resolver(&self) -> Arc<runar_serializer::traits::ConfigurableLabelResolver>;
 }
 
 /// Error type for network operations

@@ -1810,23 +1810,7 @@ impl NetworkTransport for QuicTransport {
             "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id} payload_bytes: {payload_len}",
             payload_len = payload.len()
         );
-
-        // Create dynamic resolver with user context from the request
-        let resolver = runar_serializer::traits::create_context_label_resolver(
-            &self.label_resolver_config,
-            &profile_public_keys, // Use profile public keys as user context
-        )
-        .map_err(|e| {
-            NetworkError::ConfigurationError(format!("Failed to create label resolver: {e}"))
-        })?;
-
-        let _serialization_context = runar_serializer::traits::SerializationContext {
-            keystore: self.keystore.clone(),
-            resolver,
-            network_public_key: network_public_key.clone().unwrap_or_default(),
-            profile_public_keys: profile_public_keys.clone(),
-        };
-
+ 
         let local_node_id = self.local_node_id.clone();
 
         // build message
@@ -1932,14 +1916,6 @@ impl NetworkTransport for QuicTransport {
             message_type=response_msg.message_type,
             payload_bytes=response_msg.payload.payload_bytes.len()
         );
-
-        // let av = ArcValue::deserialize(bytes, Some(self.keystore.clone())).map_err(|e| {
-        //     log_error!(
-        //         self.logger,
-        //         "❌ [request] Failed to deserialize response: {e}"
-        //     );
-        //     NetworkError::MessageError(format!("deserialize response: {e}"))
-        // })?;
 
         Ok(response_msg.payload.payload_bytes)
     }
@@ -2362,26 +2338,5 @@ impl NetworkTransport for QuicTransport {
         );
         Ok(())
     }
-
-    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto> {
-        self.keystore.clone()
-    }
-
-    fn label_resolver(&self) -> Arc<runar_serializer::traits::ConfigurableLabelResolver> {
-        // Create a dynamic resolver on-demand with no user context (system context)
-        // This is for backward compatibility - new code should create resolvers with proper context
-        let empty_profile_keys = vec![];
-        runar_serializer::traits::create_context_label_resolver(
-            &self.label_resolver_config,
-            &empty_profile_keys, // No user context for backward compatibility
-        )
-        .unwrap_or_else(|_| {
-            // Fallback to empty resolver if creation fails
-            Arc::new(runar_serializer::traits::ConfigurableLabelResolver::new(
-                runar_serializer::traits::KeyMappingConfig {
-                    label_mappings: std::collections::HashMap::new(),
-                },
-            ))
-        })
-    }
+ 
 }
