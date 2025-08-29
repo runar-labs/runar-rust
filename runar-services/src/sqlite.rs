@@ -883,7 +883,11 @@ impl AbstractService for SqliteService {
                                         ));
 
                                         req_ctx
-                                            .publish(&event_path, Some(ArcValue::new_struct(event)))
+                                            .publish(
+                                                &event_path,
+                                                Some(ArcValue::new_struct(event)),
+                                                None,
+                                            )
                                             .await?;
 
                                         req_ctx.info("✅ SQLite event published successfully");
@@ -1066,6 +1070,7 @@ impl AbstractService for SqliteService {
                 .request(
                     "$keys/ensure_symmetric_key",
                     Some(ArcValue::new_primitive(key_name)),
+                    None,
                 )
                 .await?;
             let key = key_arc.as_type_ref::<Vec<u8>>()?;

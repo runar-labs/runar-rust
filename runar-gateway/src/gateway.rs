@@ -91,7 +91,7 @@ impl GatwayService {
                 get(move |State(ctx): State<LifecycleContext>| async move {
                     let req_path = format!("{service_path_clone}/{action_name_clone}");
                     let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
-                    match ctx.request(req_path, None::<ArcValue>).await {
+                    match ctx.request(req_path, None::<ArcValue>, None).await {
                         Ok(arc_value) => {
                             let json_value = arc_value
                                 .to_json()
@@ -128,7 +128,7 @@ impl GatwayService {
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                         match ctx
-                            .request(req_path, Some(request_arc_value))
+                            .request(req_path, Some(request_arc_value), None)
                             .await
                         {
                             Ok(arc_value) => {
@@ -257,7 +257,7 @@ impl AbstractService for GatwayService {
         ));
 
         match context
-            .request("$registry/services/list", None::<ArcValue>)
+            .request("$registry/services/list", None::<ArcValue>, None)
             .await
         {
             Ok(services_arc_value) => {

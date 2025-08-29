@@ -81,12 +81,12 @@ use crate::services::remote_service::{
 use crate::services::service_registry::{
     is_internal_service, EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry,
 };
-use crate::services::{NodeDelegate, RequestOptions};
 use crate::services::{
     ActionHandler, EventRegistrationOptions, PublishOptions, RegistryDelegate,
     RemoteLifecycleContext, RequestContext,
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
+use crate::services::{NodeDelegate, RequestOptions};
 use crate::{AbstractService, ServiceState};
 
 // Type aliases to reduce clippy type_complexity warnings
@@ -1351,7 +1351,7 @@ impl Node {
                     guaranteed_delivery: false,
                     retain_for: Some(Duration::from_secs(3)),
                     target: None,
-                    profile_public_keys: None,  
+                    profile_public_keys: None,
                 }),
             )
             .await?;
@@ -1650,7 +1650,10 @@ impl Node {
             self.publish(
                 &format!("$registry/peer/{peer_node_id}/updated"),
                 Some(ArcValue::new_primitive(peer_node_id.clone())),
-                Some(PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10))),
+                Some(
+                    PublishOptions::local_only()
+                        .with_retain_for(std::time::Duration::from_secs(10)),
+                ),
             )
             .await?;
         } else {
@@ -1662,7 +1665,10 @@ impl Node {
             self.publish(
                 &format!("$registry/peer/{peer_node_id}/discovered"),
                 Some(ArcValue::new_primitive(peer_node_id.clone())),
-                Some(PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10))),
+                Some(
+                    PublishOptions::local_only()
+                        .with_retain_for(std::time::Duration::from_secs(10)),
+                ),
             )
             .await?;
         }
@@ -1755,7 +1761,7 @@ impl Node {
 
         Ok(())
     }
- 
+
     /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
     /// and forget the peer from known_peers and discovery caches.
     async fn cleanup_disconnected_peer(&self, peer_node_id: &str) {
@@ -1796,7 +1802,10 @@ impl Node {
             .publish(
                 &format!("$registry/peer/{peer_node_id}/disconnected"),
                 Some(ArcValue::new_primitive(peer_node_id.to_string())),
-                Some(PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10))),
+                Some(
+                    PublishOptions::local_only()
+                        .with_retain_for(std::time::Duration::from_secs(10)),
+                ),
             )
             .await
         {
@@ -2119,7 +2128,12 @@ impl Node {
     /// Apply load balancing when multiple remote handlers are available.
     ///
     /// This is the central request routing mechanism for the Node.
-    pub async fn request<P>(&self, path: &str, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
+    pub async fn request<P>(
+        &self,
+        path: &str,
+        payload: Option<P>,
+        options: Option<RequestOptions>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -2160,7 +2174,7 @@ impl Node {
                 }
             }
         }
- 
+
         // Service is either running or doesn't exist locally - check for local handler
         if let Some((handler, registration_path)) = self
             .service_registry
@@ -2168,7 +2182,7 @@ impl Node {
             .await
         {
             log_debug!(self.logger, "Executing local handler for: {topic_path}");
- 
+
             let profile_public_keys = options
                 .map(|o| o.profile_public_keys)
                 .unwrap_or_default()
@@ -2177,7 +2191,7 @@ impl Node {
             // Create request context
             let mut context =
                 RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
-                .with_user_profile_public_keys(profile_public_keys);
+                    .with_user_profile_public_keys(profile_public_keys);
 
             // Extract parameters using the original registration path
             if let Ok(path_params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -2235,19 +2249,14 @@ impl Node {
                 .unwrap_or_default()
                 .unwrap_or_default();
 
-
             // Create request context with profile public keys
             let context =
                 RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
                     .with_user_profile_public_keys(profile_public_keys);
 
-
             // Apply load balancing strategy to select a handler
             let load_balancer = self.load_balancer.read().await;
-            let handler_index = load_balancer.select_handler(
-                &remote_handlers,
-                &context,
-            );
+            let handler_index = load_balancer.select_handler(&remote_handlers, &context);
 
             // Get the selected handler
             let handler = &remote_handlers[handler_index];
@@ -2465,8 +2474,10 @@ impl Node {
                                 Some(ArcValue::new_primitive(
                                     service_topic_path.as_str().to_string(),
                                 )),
-                                Some(PublishOptions::local_only()
-                                    .with_retain_for(Duration::from_secs(120))),
+                                Some(
+                                    PublishOptions::local_only()
+                                        .with_retain_for(Duration::from_secs(120)),
+                                ),
                             )
                             .await
                         {
@@ -3075,7 +3086,12 @@ impl Node {
 
 #[async_trait]
 impl NodeDelegate for Node {
-    async fn request<P>(&self, path: &str, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
+    async fn request<P>(
+        &self,
+        path: &str,
+        payload: Option<P>,
+        options: Option<RequestOptions>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -3083,7 +3099,12 @@ impl NodeDelegate for Node {
         self.request(path, payload, options).await
     }
 
-    async fn publish(&self, topic: &str, data: Option<ArcValue>, options: Option<PublishOptions>) -> Result<()> {
+    async fn publish(
+        &self,
+        topic: &str,
+        data: Option<ArcValue>,
+        options: Option<PublishOptions>,
+    ) -> Result<()> {
         self.publish(topic, data, options).await
     }
 

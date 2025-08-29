@@ -13,8 +13,8 @@
 
 use crate::node::Node; // Added for concrete type
 use crate::services::service_registry::EventHandler;
-use crate::services::{NodeDelegate, RequestOptions};
 use crate::services::{EventRegistrationOptions, PublishOptions};
+use crate::services::{NodeDelegate, RequestOptions};
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext};
 use runar_common::routing::TopicPath;
@@ -188,7 +188,12 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/topic" (used as is)
     /// - Path with service: "service/topic" (network ID added)
     /// - Simple topic: "topic" (both service path and network ID added)
-    pub async fn publish(&self, topic: &str, data: Option<ArcValue>, options: Option<PublishOptions>,) -> Result<()> {
+    pub async fn publish(
+        &self,
+        topic: &str,
+        data: Option<ArcValue>,
+        options: Option<PublishOptions>,
+    ) -> Result<()> {
         let topic_string = topic.to_string();
 
         // Process the topic based on its format
@@ -227,7 +232,7 @@ impl RequestContext {
         log_debug!(self.logger, "Publishing to processed topic: {full_topic}");
         self.node_delegate.publish(&full_topic, data, options).await
     }
- 
+
     pub async fn remote_request<P>(
         &self,
         path: impl AsRef<str>,
@@ -277,7 +282,12 @@ impl RequestContext {
     /// - Full path with network ID: "network:service/action" (used as is)
     /// - Path with service: "service/action" (network ID added)
     /// - Simple action: "action" (both service path and network ID added - calls own service)
-    pub async fn request<P>(&self, path: &str, payload: Option<P>, options: Option<RequestOptions>) -> Result<ArcValue>
+    pub async fn request<P>(
+        &self,
+        path: &str,
+        payload: Option<P>,
+        options: Option<RequestOptions>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -305,7 +315,9 @@ impl RequestContext {
 
         log_debug!(self.logger, "Making request to processed path: {full_path}");
 
-        self.node_delegate.request::<P>(&full_path, payload, options).await
+        self.node_delegate
+            .request::<P>(&full_path, payload, options)
+            .await
     }
 
     /// Wait for an event to occur with a timeout
