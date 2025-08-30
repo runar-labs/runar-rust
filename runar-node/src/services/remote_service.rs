@@ -12,12 +12,15 @@ use uuid::Uuid;
 
 use crate::services::abstract_service::AbstractService;
 
-use crate::services::{ActionHandler, LifecycleContext};
+use crate::services::{ActionHandler, LifecycleContext, RemoteLifecycleContext};
 use runar_common::logging::Logger;
 use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
-use runar_serializer::{ArcValue, SerializationContext};
+use runar_serializer::{
+    traits::create_context_label_resolver, ArcValue, EnvelopeCrypto, LabelResolverConfig,
+    SerializationContext,
+};
 use runar_transporter::transport::NetworkTransport;
 
 // No direct key-store or label resolver – encryption handled by transport layer
@@ -45,9 +48,9 @@ pub struct RemoteService {
     logger: Arc<Logger>,
 
     /// Keystore for encryption/decryption
-    keystore: Arc<dyn runar_serializer::EnvelopeCrypto>,
+    keystore: Arc<dyn EnvelopeCrypto>,
     /// Label resolver configuration for dynamic resolver creation
-    label_resolver_config: Arc<runar_serializer::LabelResolverConfig>,
+    label_resolver_config: Arc<LabelResolverConfig>,
 }
 
 /// Configuration for creating a RemoteService instance.
@@ -65,8 +68,8 @@ pub struct RemoteServiceDependencies {
     pub network_transport: Arc<dyn NetworkTransport>,
     pub local_node_id: String, // ID of the local node
     pub logger: Arc<Logger>,
-    pub keystore: Arc<dyn runar_serializer::EnvelopeCrypto>,
-    pub label_resolver_config: Arc<runar_serializer::LabelResolverConfig>,
+    pub keystore: Arc<dyn EnvelopeCrypto>,
+    pub label_resolver_config: Arc<LabelResolverConfig>,
 }
 
 /// Configuration for creating multiple RemoteService instances from capabilities.
@@ -245,7 +248,7 @@ impl RemoteService {
 
                 // Create dynamic resolver with user context
                 // For request serialization, we can use a system-only resolver if no user keys are provided
-                let resolver = runar_serializer::traits::create_context_label_resolver(
+                let resolver = create_context_label_resolver(
                     &label_resolver_config,
                     &profile_public_keys, // Empty vec is fine for system-only resolver
                 )
@@ -323,7 +326,7 @@ impl RemoteService {
     ///
     /// INTENTION: Handle service initialization and register all available
     /// action handlers with the provided context.
-    pub async fn init(&self, context: crate::services::RemoteLifecycleContext) -> Result<()> {
+    pub async fn init(&self, context: RemoteLifecycleContext) -> Result<()> {
         // Get available actions
         let action_names = self.get_available_actions();
 
@@ -348,7 +351,7 @@ impl RemoteService {
         Ok(())
     }
 
-    pub async fn stop(&self, context: crate::services::RemoteLifecycleContext) -> Result<()> {
+    pub async fn stop(&self, context: RemoteLifecycleContext) -> Result<()> {
         let action_names = self.get_available_actions();
 
         for action_name in action_names {

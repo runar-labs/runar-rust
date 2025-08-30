@@ -13,7 +13,7 @@
 
 use crate::node::Node; // Added for concrete type
 use crate::services::service_registry::EventHandler;
-use crate::services::{EventRegistrationOptions, PublishOptions};
+use crate::services::{EventRegistrationOptions, OnOptions, PublishOptions};
 use crate::services::{NodeDelegate, RequestOptions};
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext};
@@ -330,7 +330,7 @@ impl RequestContext {
     pub async fn on(
         &self,
         topic: impl Into<String>,
-        options: Option<crate::services::OnOptions>,
+        options: Option<OnOptions>,
     ) -> Result<Option<ArcValue>> {
         // Node::on returns a JoinHandle; await the handle, then unwrap the inner Result
         let handle = self.node_delegate.on(topic, options);

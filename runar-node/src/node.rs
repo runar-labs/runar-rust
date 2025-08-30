@@ -9,9 +9,9 @@ use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_common::routing::{PathTrie, TopicPath};
-use runar_common::Component as CommonComponent;
-use runar_keys::mobile::EnvelopeEncryptedData;
-use runar_keys::{EnvelopeCrypto, NodeKeyManager, Result as KeyResult};
+use runar_keys::{
+    mobile::EnvelopeEncryptedData, EnvelopeCrypto, NodeKeyManager, Result as KeyResult,
+};
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
@@ -29,7 +29,7 @@ use runar_transporter::{
 use socket2;
 use std::collections::HashMap;
 
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 use tokio::{
     spawn,
@@ -55,15 +55,12 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
         data: &[u8],
         network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
-    ) -> KeyResult<runar_keys::mobile::EnvelopeEncryptedData> {
+    ) -> KeyResult<EnvelopeEncryptedData> {
         let keys_manager = self.0.read().unwrap();
         keys_manager.encrypt_with_envelope(data, network_public_key, profile_public_keys)
     }
 
-    fn decrypt_envelope_data(
-        &self,
-        env: &runar_keys::mobile::EnvelopeEncryptedData,
-    ) -> KeyResult<Vec<u8>> {
+    fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> KeyResult<Vec<u8>> {
         let keys_manager = self.0.read().unwrap();
         keys_manager.decrypt_envelope_data(env)
     }
@@ -76,7 +73,7 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
-type ServiceTask = (TopicPath, tokio::task::JoinHandle<()>);
+type ServiceTask = (TopicPath, JoinHandle<()>);
 // Certificate and PrivateKey types are now imported via the cert_utils module
 use runar_common::logging::LoggingConfig;
 
@@ -90,16 +87,16 @@ use crate::services::service_registry::{
     is_internal_service, EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry,
 };
 use crate::services::{
-    ActionHandler, EventRegistrationOptions, PublishOptions, RegistryDelegate,
-    RemoteLifecycleContext, RequestContext,
+    ActionHandler, EventRegistrationOptions, LifecycleContext, OnOptions, PublishOptions,
+    RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
 use crate::services::{NodeDelegate, RequestOptions};
 use crate::{AbstractService, ServiceState};
 
 // Type aliases to reduce clippy type_complexity warnings
-type RetainedDeque = std::collections::VecDeque<(std::time::Instant, Option<ArcValue>)>;
-type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
+type RetainedDeque = std::collections::VecDeque<(Instant, Option<ArcValue>)>;
+type RetainedEventsMap = DashMap<String, RetainedDeque>;
 
 /// Configuration for a Runar Node instance.
 ///
@@ -216,10 +213,10 @@ impl NodeConfig {
     pub fn new(default_network_id: impl Into<String>) -> Self {
         // Create default label resolver config with system label
         let default_network_id_str = default_network_id.into();
-        let label_resolver_config = runar_serializer::traits::LabelResolverConfig {
+        let label_resolver_config = LabelResolverConfig {
             label_mappings: std::collections::HashMap::from([(
                 "system".to_string(),
-                runar_serializer::traits::LabelValue {
+                LabelValue {
                     network_public_key: None, // Will be resolved at runtime
                     user_key_spec: None,
                 },
@@ -483,7 +480,7 @@ pub struct Node {
     /// INTENTION: Ensures that rapid successive calls to notify_node_change only trigger a single
     /// notification after a 1s debounce window. This prevents unnecessary network traffic and ensures
     /// only the latest node state is broadcast. Internal use only; not exposed outside Node.
-    debounce_notify_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    debounce_notify_task: std::sync::Arc<Mutex<Option<JoinHandle<()>>>>,
 
     /// Default network id to be used when service are added without a network ID
     network_id: String,
@@ -659,7 +656,7 @@ impl Node {
 
         let node = Self {
             local_node_info: Arc::new(RwLock::new(local_node_info)),
-            debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            debounce_notify_task: std::sync::Arc::new(Mutex::new(None)),
             network_id: default_network_id,
             network_ids,
             node_id,
@@ -806,14 +803,10 @@ impl Node {
         };
 
         // Create a lifecycle context for initialization
-        let init_context = crate::services::LifecycleContext::new(
+        let init_context = LifecycleContext::new(
             &service_topic,
             Arc::new(self.clone()), // Node delegate
-            Arc::new(
-                self.logger
-                    .clone()
-                    .with_component(runar_common::Component::Service),
-            ),
+            Arc::new(self.logger.clone().with_component(Component::Service)),
         );
 
         // Initialize the service using the context
@@ -861,8 +854,8 @@ impl Node {
         )
         .await?;
         // Service initialized successfully, create the ServiceEntry and register it
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
@@ -957,8 +950,8 @@ impl Node {
     pub fn on(
         &self,
         topic: impl Into<String>,
-        options: Option<crate::services::OnOptions>,
-    ) -> tokio::task::JoinHandle<Result<Option<ArcValue>>> {
+        options: Option<OnOptions>,
+    ) -> JoinHandle<Result<Option<ArcValue>>> {
         let topic_string = topic.into();
 
         // Build full topic path synchronously (no I/O here)
@@ -976,11 +969,11 @@ impl Node {
 
         let node = self.clone();
 
-        tokio::spawn(async move {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
+        spawn(async move {
+            let (tx, mut rx) = mpsc::channel::<Option<ArcValue>>(1);
 
             // Register subscription now (await inside the spawned task)
-            let on_opts = options.clone().unwrap_or(crate::services::OnOptions {
+            let on_opts = options.clone().unwrap_or(OnOptions {
                 timeout: Duration::from_secs(5),
                 include_past: None,
             });
@@ -1001,7 +994,7 @@ impl Node {
                 .await?;
 
             // Wait for event or timeout
-            let result = match tokio::time::timeout(on_opts.timeout, rx.recv()).await {
+            let result = match timeout(on_opts.timeout, rx.recv()).await {
                 Ok(Some(event_data)) => Ok(event_data),
                 Ok(None) => Err(anyhow!(
                     "Channel closed while waiting for event on topic: {full_topic}"
@@ -1139,14 +1132,14 @@ impl Node {
             let node_clone = Arc::new(self.clone());
             let service_topic_clone = service_topic.clone();
             let service_entry_clone = service_entry.clone();
-            let task = tokio::spawn(async move {
+            let task = spawn(async move {
                 log_info!(
                     node_clone.logger,
                     "Starting separate thread to start service: {service_topic_clone}"
                 );
 
                 // Add timeout to the service start operation
-                match tokio::time::timeout(
+                match timeout(
                     service_start_timeout,
                     node_clone.start_service(&service_topic_clone, &service_entry_clone, true),
                 )
@@ -1195,14 +1188,10 @@ impl Node {
         let registry = &self.service_registry.clone();
 
         // Create a lifecycle context for starting
-        let start_context = crate::services::LifecycleContext::new(
+        let start_context = LifecycleContext::new(
             service_topic,
             Arc::new(self.clone()), // Node delegate
-            Arc::new(
-                self.logger
-                    .clone()
-                    .with_component(runar_common::Component::Service),
-            ),
+            Arc::new(self.logger.clone().with_component(Component::Service)),
         );
 
         // Start the service using the context
@@ -1326,14 +1315,10 @@ impl Node {
             let service = service_entry.service.clone();
 
             // Create a lifecycle context for stopping
-            let stop_context = crate::services::LifecycleContext::new(
+            let stop_context = LifecycleContext::new(
                 &service_topic,
                 Arc::new(self.clone()), // Node delegate
-                Arc::new(
-                    self.logger
-                        .clone()
-                        .with_component(runar_common::Component::Service),
-                ),
+                Arc::new(self.logger.clone().with_component(Component::Service)),
             );
 
             // Stop the service using the context
@@ -1745,7 +1730,7 @@ impl Node {
             if should_debounce {
                 log_debug!(self.logger, "Debounced discovery for {discovered_peer_id}");
                 // Do not early-return; small delay then continue to connect to ensure reconnection after restart
-                tokio::time::sleep(Duration::from_millis(150)).await;
+                sleep(Duration::from_millis(150)).await;
             } else {
                 self.discovery_seen_times
                     .insert(discovered_peer_id.clone(), Instant::now());
@@ -1869,12 +1854,12 @@ impl Node {
 
                 // Create dynamic resolver with user context for response serialization
                 // For response serialization, we can use a system-only resolver since we're not encrypting new data
-                let resolver = runar_serializer::traits::create_context_label_resolver(
+                let resolver = create_context_label_resolver(
                     &self.system_label_config,
                     &profile_public_keys, // Empty vec is fine for system-only resolver
                 )?;
 
-                let serialization_context = runar_serializer::traits::SerializationContext {
+                let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver,
                     network_public_key: network_public_key.clone(),
@@ -1903,12 +1888,12 @@ impl Node {
 
                 // Create dynamic resolver with user context for error response serialization
                 // For error response serialization, we can use a system-only resolver since we're not encrypting new data
-                let resolver = runar_serializer::traits::create_context_label_resolver(
+                let resolver = create_context_label_resolver(
                     &self.system_label_config,
                     &profile_public_keys, // Empty vec is fine for system-only resolver
                 )?;
 
-                let serialization_context = runar_serializer::traits::SerializationContext {
+                let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     resolver,
                     network_public_key: network_public_key.clone(),
@@ -2056,7 +2041,7 @@ impl Node {
         } else {
             Some(payload)
         };
-        let mut delivery_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+        let mut delivery_tasks: Vec<JoinHandle<()>> = Vec::new();
 
         // Notify all subscribers
         for (subscriber_id, callback, _options) in subscribers {
@@ -2065,7 +2050,7 @@ impl Node {
             let correlation_id = msg.payload.correlation_id.clone();
             let path = msg.payload.path.clone();
             let payload_option = payload_option.clone();
-            delivery_tasks.push(tokio::spawn(async move {
+            delivery_tasks.push(spawn(async move {
                 log_debug!(logger_arc, "[handle_network_event] delivering event to subscriber correlation_id: {correlation_id} subscriber_id: {subscriber_id} path: {path}");
                 // Invoke callback. errors are logged but not propagated to avoid affecting other subscribers
                 let result = callback(ctx, payload_option).await;
@@ -2576,7 +2561,7 @@ impl Node {
                 .get_network_public_key(&network_id)?;
             // Create dynamic resolver for remote subscription (system context)
             let empty_profile_keys = vec![];
-            let resolver = runar_serializer::traits::create_context_label_resolver(
+            let resolver = create_context_label_resolver(
                 &self.system_label_config,
                 &empty_profile_keys, // No user context for system operations
             )?;
@@ -2794,7 +2779,7 @@ impl Node {
                     .get_network_public_key(&network_id)?;
                 // Create dynamic resolver for remote subscription (system context)
                 let empty_profile_keys = vec![];
-                let resolver = runar_serializer::traits::create_context_label_resolver(
+                let resolver = create_context_label_resolver(
                     &self.system_label_config,
                     &empty_profile_keys, // No user context for system operations
                 )?;
@@ -2906,7 +2891,7 @@ impl Node {
             }
         }
         // Spawn a new debounce task
-        let handle = tokio::spawn(async move {
+        let handle = spawn(async move {
             sleep(Duration::from_secs(1)).await;
             // Ignore errors from notify_node_change_impl; log if needed
             if let Err(e) = this.notify_node_change_impl().await {
@@ -3299,11 +3284,7 @@ impl NodeDelegate for Node {
     ///
     /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    async fn on(
-        &self,
-        topic: &str,
-        options: Option<crate::services::OnOptions>,
-    ) -> Result<Option<ArcValue>> {
+    async fn on(&self, topic: &str, options: Option<OnOptions>) -> Result<Option<ArcValue>> {
         let full_topic = if topic.contains(':') {
             topic.to_string()
         } else {
@@ -3311,8 +3292,8 @@ impl NodeDelegate for Node {
         };
 
         let node = self.clone();
-        let handle = tokio::spawn(async move {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
+        let handle = spawn(async move {
+            let (tx, mut rx) = mpsc::channel::<Option<ArcValue>>(1);
             use crate::services as services_mod;
             let on_opts = options.clone().unwrap_or(services_mod::OnOptions {
                 timeout: Duration::from_secs(5),
@@ -3335,7 +3316,7 @@ impl NodeDelegate for Node {
                 )
                 .await?;
 
-            let result = match tokio::time::timeout(on_opts.timeout, rx.recv()).await {
+            let result = match timeout(on_opts.timeout, rx.recv()).await {
                 Ok(Some(event_data)) => Ok(event_data),
                 Ok(None) => Err(anyhow!(
                     "Channel closed while waiting for event on topic: {full_topic}"
@@ -3475,7 +3456,7 @@ impl Clone for Node {
 
     fn clone(&self) -> Self {
         Self {
-            debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            debounce_notify_task: std::sync::Arc::new(Mutex::new(None)),
             network_id: self.network_id.clone(),
             network_ids: self.network_ids.clone(),
             node_id: self.node_id.clone(),

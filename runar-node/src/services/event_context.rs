@@ -11,8 +11,8 @@
 // while maintaining proper isolation between events.
 
 use crate::node::Node; // Added for concrete type
-use crate::services::{PublishOptions, RequestOptions}; // Restored
-                                                       // Removed unused import: use crate::NodeDelegate;
+use crate::services::{OnOptions, PublishOptions, RequestOptions}; // Restored
+                                                                  // Removed unused import: use crate::NodeDelegate;
 use anyhow::Result;
 use runar_common::logging::{Component, Logger, LoggingContext}; // Restored
 use runar_common::routing::TopicPath;
@@ -289,7 +289,7 @@ impl EventContext {
     pub async fn on(
         &self,
         topic: impl Into<String>,
-        options: Option<crate::services::OnOptions>,
+        options: Option<OnOptions>,
     ) -> Result<Option<ArcValue>> {
         let handle = self.node_delegate.on(topic, options);
         let inner = handle.await.map_err(|e| anyhow::anyhow!(e))?;
