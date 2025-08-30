@@ -4,17 +4,27 @@ use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::watch;
 
 use async_trait::async_trait;
-use quinn::{ClientConfig, Endpoint, ServerConfig};
-use runar_common::compact_ids::compact_id;
-use runar_common::logging::Logger;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
-use serde::{Deserialize, Serialize};
-
 use dashmap::DashMap;
+use quinn::{
+    crypto::rustls::QuicClientConfig, ClientConfig, Connection, Endpoint, IdleTimeout, RecvStream,
+    SendStream, ServerConfig, TransportConfig, VarInt,
+};
+use rand;
+use runar_common::{compact_ids::compact_id, logging::Logger, Component};
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use rustls::crypto::ring;
+use rustls::{crypto::CryptoProvider, ClientConfig as RustlsClientConfig, RootCertStore};
+use serde::{Deserialize, Serialize};
+use serde_cbor;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
-use tokio::sync::Notify;
-use tokio::sync::RwLock;
+use tokio::{
+    io::{AsyncWrite, AsyncWriteExt},
+    spawn,
+    sync::{Mutex, Notify, RwLock},
+    task::JoinHandle,
+    time,
+};
+use uuid::Uuid;
 // Removed custom certificate parsing; rely on rustls standard verification.
 
 use crate::discovery::multicast_discovery::PeerInfo;
@@ -226,7 +236,7 @@ impl QuicTransportOptions {
     }
 
     pub fn with_logger_from_node_id(mut self, node_id: String) -> Self {
-        let logger = Arc::new(Logger::new_root(runar_common::Component::Transporter));
+        let logger = Arc::new(Logger::new_root(Component::Transporter));
         logger.set_node_id(node_id);
         self.logger = Some(logger);
         self
@@ -649,10 +659,10 @@ impl QuicTransport {
             .logger
             .take()
             .ok_or_else(|| NetworkError::ConfigurationError("logger is required".into()))?)
-        .with_component(runar_common::Component::Transporter);
+        .with_component(Component::Transporter);
 
-        if rustls::crypto::CryptoProvider::get_default().is_none() {
-            rustls::crypto::ring::default_provider()
+        if CryptoProvider::get_default().is_none() {
+            ring::default_provider()
                 .install_default()
                 .expect("Failed to install default crypto provider");
         }

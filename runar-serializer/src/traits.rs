@@ -107,12 +107,12 @@ pub enum LabelKeyword {
 /// Label resolver implementation
 pub struct ConfigurableLabelResolver {
     /// Concurrent mapping used heavily on read path
-    mapping: dashmap::DashMap<String, LabelKeyInfo>,
+    mapping: DashMap<String, LabelKeyInfo>,
 }
 
 impl ConfigurableLabelResolver {
     pub fn new(config: KeyMappingConfig) -> Self {
-        let dm = dashmap::DashMap::new();
+        let dm = DashMap::new();
         for (k, v) in config.label_mappings {
             dm.insert(k, v);
         }

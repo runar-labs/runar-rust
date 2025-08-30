@@ -1,6 +1,7 @@
 use crate::traits::{ConfigurableLabelResolver, EnvelopeEncryptedData, KeyStore};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use serde_cbor::{from_slice, to_vec};
 use std::sync::Arc;
 
 /// Container for label-grouped encryption (one per label)
@@ -29,7 +30,7 @@ pub fn encrypt_label_group<T: Serialize>(
     resolver: &ConfigurableLabelResolver,
 ) -> Result<EncryptedLabelGroup> {
     // Serialize the fields within this label group using serde_cbor
-    let plain_bytes = serde_cbor::to_vec(fields_struct)?;
+    let plain_bytes = to_vec(fields_struct)?;
 
     // Resolve the label to key info (public key + scope)
     let info = resolver
@@ -68,7 +69,7 @@ pub fn decrypt_label_group<T: for<'de> Deserialize<'de> + Default>(
     let plaintext = keystore.decrypt_envelope_data(env)?;
 
     // Deserialize the fields struct from plaintext using serde_cbor
-    let fields_struct: T = serde_cbor::from_slice(&plaintext)?;
+    let fields_struct: T = from_slice(&plaintext)?;
     Ok(fields_struct)
 }
 
@@ -81,7 +82,7 @@ pub fn decrypt_label_group<T: for<'de> Deserialize<'de> + Default>(
 //     Ok(env.encode_to_vec())
 // }
 
-pub fn decrypt_bytes(bytes: &[u8], keystore: &Arc<KeyStore>) -> anyhow::Result<Vec<u8>> {
-    let env: EnvelopeEncryptedData = serde_cbor::from_slice(bytes).map_err(|e| anyhow!(e))?;
+pub fn decrypt_bytes(bytes: &[u8], keystore: &Arc<KeyStore>) -> Result<Vec<u8>> {
+    let env: EnvelopeEncryptedData = from_slice(bytes).map_err(|e| anyhow!(e))?;
     keystore.decrypt_envelope_data(&env).map_err(|e| anyhow!(e))
 }

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use runar_common::logging::Logger;
 use runar_macros_common::{log_debug, log_info};
-use runar_node::services::LifecycleContext;
+use runar_node::services::{LifecycleContext, OnOptions};
 use runar_node::{AbstractService, ServiceState};
 use runar_serializer::{ArcValue, Plain};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-use crate::sqlite::{SqlQuery, SqliteService, Value};
+use crate::sqlite::{Params, SqlQuery, SqliteService, SqliteWorkerCommand, Value};
 
 // Constants for action names to avoid hardcoding
 const REPLICATION_GET_TABLE_EVENTS_ACTION: &str = "replication/get_table_events";
@@ -142,7 +142,7 @@ impl ReplicationManager {
             let on_running = context
                 .on(
                     format!("$registry/services/{service_path}/state/running"),
-                    Some(runar_node::services::OnOptions {
+                    Some(OnOptions {
                         timeout: Duration::from_secs(
                             replication_config.wait_remote_service_timeout,
                         ),
@@ -260,7 +260,7 @@ impl ReplicationManager {
         // Begin transaction
         let _ = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                 query: SqlQuery::new("BEGIN IMMEDIATE"),
                 reply_to: reply_tx,
             })
@@ -273,7 +273,7 @@ impl ReplicationManager {
                 // Rollback and surface error
                 let _ = self
                     .sqlite_service
-                    .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                    .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                         query: SqlQuery::new("ROLLBACK"),
                         reply_to: reply_tx,
                     })
@@ -287,7 +287,7 @@ impl ReplicationManager {
                 // Rollback and surface error
                 let _ = self
                     .sqlite_service
-                    .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                    .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                         query: SqlQuery::new("ROLLBACK"),
                         reply_to: reply_tx,
                     })
@@ -300,13 +300,13 @@ impl ReplicationManager {
                 VALUES (?, ?, ?)
                 ON CONFLICT(table_name, origin_node_id)
                 DO UPDATE SET origin_seq = MAX(replication_checkpoints.origin_seq, excluded.origin_seq)";
-            let cp_params = crate::sqlite::Params::new()
+            let cp_params = Params::new()
                 .with_value(Value::Text(event.table_name.clone()))
                 .with_value(Value::Text(event.source_node_id.clone()))
                 .with_value(Value::Integer(event.origin_seq));
             let _ = self
                 .sqlite_service
-                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                     query: SqlQuery::new(upsert_checkpoint_sql).with_params(cp_params),
                     reply_to: reply_tx,
                 })
@@ -317,7 +317,7 @@ impl ReplicationManager {
         // Commit transaction
         let commit_res = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                 query: SqlQuery::new("COMMIT"),
                 reply_to: reply_tx,
             })
@@ -327,7 +327,7 @@ impl ReplicationManager {
             // Best-effort rollback if commit fails
             let _ = self
                 .sqlite_service
-                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                     query: SqlQuery::new("ROLLBACK"),
                     reply_to: reply_tx,
                 })
@@ -349,7 +349,7 @@ impl ReplicationManager {
 
         let result = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+            .send_command(|reply_tx| SqliteWorkerCommand::Query {
                 query,
                 reply_to: reply_tx,
             })
@@ -371,7 +371,7 @@ impl ReplicationManager {
         let count_query = SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {table_name}"));
         let count_result = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+            .send_command(|reply_tx| SqliteWorkerCommand::Query {
                 query: count_query,
                 reply_to: reply_tx,
             })
@@ -438,7 +438,7 @@ impl ReplicationManager {
         let query = SqlQuery::new(&format!(
             "INSERT INTO {event_table_name} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, origin_seq, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         ))
-        .with_params(crate::sqlite::Params::new()
+        .with_params(Params::new()
             .with_value(Value::Text(event.id.clone()))
             .with_value(Value::Text(event.table_name.clone()))
             .with_value(Value::Text(event.operation_type.clone()))
@@ -451,7 +451,7 @@ impl ReplicationManager {
         );
 
         self.sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                 query,
                 reply_to: reply_tx,
             })
@@ -484,7 +484,7 @@ impl ReplicationManager {
         let query = SqlQuery::new(&format!(
             "INSERT OR IGNORE INTO {event_table_name} (id, table_name, operation_type, record_id, data, timestamp, source_node_id, origin_seq, processed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         ))
-        .with_params(crate::sqlite::Params::new()
+        .with_params(Params::new()
             .with_value(Value::Text(event.id.clone()))
             .with_value(Value::Text(event.table_name.clone()))
             .with_value(Value::Text(event.operation_type.clone()))
@@ -498,7 +498,7 @@ impl ReplicationManager {
 
         let rows = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                 query,
                 reply_to: reply_tx,
             })
@@ -525,7 +525,7 @@ impl ReplicationManager {
 
         // Extract the SQL query from the event data
         // The event data should contain the original SqlQuery that was executed
-        let mut sql_query = event.data.as_type::<crate::sqlite::SqlQuery>()?;
+        let mut sql_query = event.data.as_type::<SqlQuery>()?;
 
         // Idempotence for CREATE operations: force INSERT OR IGNORE
         if event.operation_type.eq_ignore_ascii_case("create") {
@@ -541,7 +541,7 @@ impl ReplicationManager {
         // Execute the SQL query against the database
         let result = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                 query: sql_query,
                 reply_to: reply_tx,
             })
@@ -665,7 +665,7 @@ impl ReplicationManager {
             )
         };
 
-        let mut params = crate::sqlite::Params::new();
+        let mut params = Params::new();
         // params for NOT IN list
         for oc in &request.from_by_origin {
             params = params.with_value(Value::Text(oc.origin_node_id.clone()));
@@ -685,7 +685,7 @@ impl ReplicationManager {
 
         let result = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+            .send_command(|reply_tx| SqliteWorkerCommand::Query {
                 query,
                 reply_to: reply_tx,
             })
@@ -723,7 +723,7 @@ impl ReplicationManager {
                         Some(Value::Text(s)) => {
                             let data_json = serde_json::from_str(s).unwrap_or_default();
                             let json_arc = ArcValue::new_json(data_json);
-                            match json_arc.as_type::<crate::sqlite::SqlQuery>() {
+                            match json_arc.as_type::<SqlQuery>() {
                                 Ok(sql_query) => ArcValue::new_struct(sql_query),
                                 Err(_) => json_arc,
                             }
@@ -764,7 +764,7 @@ impl ReplicationManager {
                 SqlQuery::new(&format!("SELECT COUNT(*) as count FROM {event_table_name}"));
             let total_result = self
                 .sqlite_service
-                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+                .send_command(|reply_tx| SqliteWorkerCommand::Query {
                     query: total_query,
                     reply_to: reply_tx,
                 })
@@ -842,7 +842,7 @@ impl ReplicationManager {
 
             let query = SqlQuery::new(&create_table_sql);
             self.sqlite_service
-                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                     query,
                     reply_to: reply_tx,
                 })
@@ -855,7 +855,7 @@ impl ReplicationManager {
             );
             let index1_query = SqlQuery::new(&index1_sql);
             self.sqlite_service
-                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                     query: index1_query,
                     reply_to: reply_tx,
                 })
@@ -868,7 +868,7 @@ impl ReplicationManager {
             );
             let index2_query = SqlQuery::new(&index2_sql);
             self.sqlite_service
-                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                     query: index2_query,
                     reply_to: reply_tx,
                 })
@@ -881,7 +881,7 @@ impl ReplicationManager {
             );
             let uniq_query = SqlQuery::new(&uniq_sql);
             self.sqlite_service
-                .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+                .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                     query: uniq_query,
                     reply_to: reply_tx,
                 })
@@ -894,7 +894,7 @@ impl ReplicationManager {
         // Ensure replication metadata and checkpoints tables exist
         let meta_table_sql = "CREATE TABLE IF NOT EXISTS replication_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)";
         self.sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                 query: SqlQuery::new(meta_table_sql),
                 reply_to: reply_tx,
             })
@@ -909,7 +909,7 @@ impl ReplicationManager {
             PRIMARY KEY(table_name, origin_node_id)
         )";
         self.sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Execute {
+            .send_command(|reply_tx| SqliteWorkerCommand::Execute {
                 query: SqlQuery::new(checkpoints_sql),
                 reply_to: reply_tx,
             })
@@ -925,10 +925,10 @@ impl ReplicationManager {
         let cp_query = SqlQuery::new(
             "SELECT origin_node_id, origin_seq FROM replication_checkpoints WHERE table_name = ?",
         )
-        .with_params(crate::sqlite::Params::new().with_value(Value::Text(table.to_string())));
+        .with_params(Params::new().with_value(Value::Text(table.to_string())));
         let cp_rows = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+            .send_command(|reply_tx| SqliteWorkerCommand::Query {
                 query: cp_query,
                 reply_to: reply_tx,
             })
@@ -961,7 +961,7 @@ impl ReplicationManager {
         ));
         let rows = self
             .sqlite_service
-            .send_command(|reply_tx| crate::sqlite::SqliteWorkerCommand::Query {
+            .send_command(|reply_tx| SqliteWorkerCommand::Query {
                 query,
                 reply_to: reply_tx,
             })
