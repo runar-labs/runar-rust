@@ -3679,10 +3679,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
-    // Attach platform-provided LabelResolverConfig if present
-    if let Some(resolver_config) = keys_inner.label_resolver_config.clone() {
-        let _ = options.with_label_resolver_config(resolver_config);
-    }
     // Require local NodeInfo to be set before initializing transport
     if keys_inner.local_node_info.load().as_ref().is_none() {
         set_error(

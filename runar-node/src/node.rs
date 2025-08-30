@@ -1600,8 +1600,6 @@ impl Node {
                     .with_peer_disconnected_callback(peer_disconnected_callback)
                     .with_get_local_node_info(get_local_node_info)
                     .with_logger(self.logger.clone())
-                    .with_keystore(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())))
-                    .with_label_resolver_config(self.system_label_config.clone())
                     .with_request_callback(request_callback)
                     .with_event_callback(event_callback);
 
@@ -2118,7 +2116,7 @@ impl Node {
             return handler(payload, context).await;
         }
 
-        return Err(anyhow!("No local handler found for: {topic_path}"));
+        Err(anyhow!("No local handler found for: {topic_path}"))
     }
 
     /// Handle a request for a specific action - Stable API DO NOT CHANGE UNLESS EXPLICITLY ASKED TO DO SO!

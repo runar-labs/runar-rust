@@ -764,7 +764,7 @@ impl Transport {
     #[napi(constructor)]
     pub fn new(keys: &Keys, options_cbor: Buffer) -> Result<Self> {
         // Extract shared NodeKeyManager and logger/resolver
-        let (km_arc, logger, resolver_config_arc, local_info_arc, node_pk) = {
+        let (km_arc, logger, local_info_arc, node_pk) = {
             let mut guard = keys.inner.lock().unwrap();
             let km_arc: Arc<NodeKeyManager> = if let Some(shared) = guard.node_shared.as_ref() {
                 Arc::clone(shared)
@@ -776,22 +776,8 @@ impl Transport {
                 return Err(Error::from_reason("Node not init"));
             };
             let logger = guard.logger.clone();
-            let resolver_config_arc: Arc<runar_serializer::traits::LabelResolverConfig> =
-                if let Some(r) = guard.label_resolver_config.as_ref() {
-                    Arc::clone(r)
-                } else {
-                    Arc::new(runar_serializer::traits::LabelResolverConfig {
-                        label_mappings: HashMap::new(),
-                    })
-                };
             let node_pk = km_arc.get_node_public_key();
-            (
-                km_arc,
-                logger,
-                resolver_config_arc,
-                guard.local_node_info.clone(),
-                node_pk,
-            )
+            (km_arc, logger, guard.local_node_info.clone(), node_pk)
         };
 
         // Parse bind address from options (CBOR: { bind_addr: "ip:port" })
@@ -925,7 +911,6 @@ impl Transport {
             .with_local_node_public_key(node_pk)
             .with_logger(logger)
             .with_key_manager(km_arc)
-            .with_label_resolver_config(resolver_config_arc)
             .with_get_local_node_info(get_local_node_info)
             .with_request_callback(request_cb)
             .with_event_callback(event_cb)

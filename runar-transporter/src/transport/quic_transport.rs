@@ -45,8 +45,7 @@ pub struct QuicTransportOptions {
     get_local_node_info: Option<GetLocalNodeInfoCallback>,
     //connection_callback: Option<super::ConnectionCallback>,
     logger: Option<Arc<Logger>>,
-    keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
-    label_resolver_config: Option<Arc<runar_serializer::traits::LabelResolverConfig>>,
+
     // Cache TTL for idempotent response replay
     response_cache_ttl: Duration,
     // Maximum number of retries for failed requests
@@ -95,22 +94,6 @@ impl std::fmt::Debug for QuicTransportOptions {
                 },
             )
             .field(
-                "keystore",
-                &if self.keystore.is_some() {
-                    "Some(EnvelopeCrypto)"
-                } else {
-                    "None"
-                },
-            )
-            .field(
-                "label_resolver_config",
-                &if self.label_resolver_config.is_some() {
-                    "Some(LabelResolverConfig)"
-                } else {
-                    "None"
-                },
-            )
-            .field(
                 "request_callback",
                 &if self.request_callback.is_some() {
                     "Some(RequestCallback)"
@@ -148,8 +131,6 @@ impl Default for QuicTransportOptions {
             event_callback: None,
             get_local_node_info: None,
             logger: None,
-            keystore: None,
-            label_resolver_config: None,
             response_cache_ttl: Duration::from_secs(5),
             max_request_retries: None,
             handshake_response_timeout: Duration::from_secs(2),
@@ -251,22 +232,6 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_keystore(
-        mut self,
-        keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
-    ) -> Self {
-        self.keystore = Some(keystore);
-        self
-    }
-
-    pub fn with_label_resolver_config(
-        mut self,
-        config: Arc<runar_serializer::traits::LabelResolverConfig>,
-    ) -> Self {
-        self.label_resolver_config = Some(config);
-        self
-    }
-
     pub fn with_response_cache_ttl(mut self, ttl: Duration) -> Self {
         self.response_cache_ttl = ttl;
         self
@@ -323,16 +288,6 @@ impl QuicTransportOptions {
         self.logger.as_ref()
     }
 
-    pub fn keystore(&self) -> Option<&Arc<dyn runar_serializer::traits::EnvelopeCrypto>> {
-        self.keystore.as_ref()
-    }
-
-    pub fn label_resolver_config(
-        &self,
-    ) -> Option<&Arc<runar_serializer::traits::LabelResolverConfig>> {
-        self.label_resolver_config.as_ref()
-    }
-
     pub fn response_cache_ttl(&self) -> Duration {
         self.response_cache_ttl
     }
@@ -362,8 +317,6 @@ impl Clone for QuicTransportOptions {
             event_callback: self.event_callback.clone(),
             get_local_node_info: self.get_local_node_info.clone(),
             logger: self.logger.clone(),
-            keystore: self.keystore.clone(),
-            label_resolver_config: self.label_resolver_config.clone(),
             response_cache_ttl: self.response_cache_ttl,
             max_request_retries: self.max_request_retries,
             handshake_response_timeout: self.handshake_response_timeout,
@@ -469,11 +422,6 @@ pub struct QuicTransport {
 
     // Per-peer connect guards to avoid concurrent connects
     peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-
-    // crypto helpers
-    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
-    label_resolver_config: Arc<runar_serializer::traits::LabelResolverConfig>,
-
     // shared runtime state (peers + broadcast)
     state: SharedState,
 
@@ -702,20 +650,6 @@ impl QuicTransport {
             .take()
             .ok_or_else(|| NetworkError::ConfigurationError("logger is required".into()))?)
         .with_component(runar_common::Component::Transporter);
-        // Prefer EnvelopeCrypto provided by the key manager. Fall back to explicit keystore only for
-        // legacy/tests that don't use a key manager.
-        let keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto> =
-            if let Some(km) = options.key_manager().cloned() {
-                // NodeKeyManager implements EnvelopeCrypto
-                km as Arc<dyn runar_serializer::traits::EnvelopeCrypto>
-            } else {
-                options.keystore.take().ok_or_else(|| {
-                    NetworkError::ConfigurationError("keystore or key_manager is required".into())
-                })?
-            };
-        let label_resolver_config = options.label_resolver_config.take().ok_or_else(|| {
-            NetworkError::ConfigurationError("label_resolver_config is required".into())
-        })?;
 
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             rustls::crypto::ring::default_provider()
@@ -778,8 +712,6 @@ impl QuicTransport {
             peer_connect_mutexes: Arc::new(DashMap::new()),
             get_local_node_info,
             local_node_id,
-            keystore,
-            label_resolver_config,
             state: Self::shared_state(),
             tasks: Mutex::new(Vec::new()),
             running: AtomicBool::new(false),

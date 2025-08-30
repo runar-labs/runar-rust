@@ -12,8 +12,7 @@ use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
 // no-op
 
 use runar_transport_tests::quic_interop_common::{
-    build_node_info, default_label_resolver, default_logger, read_pem_certs, read_pem_key,
-    CommonArgs, NoCrypto,
+    build_node_info, default_logger, read_pem_certs, read_pem_key, CommonArgs,
 };
 
 #[tokio::main]
@@ -80,9 +79,6 @@ async fn main() -> Result<()> {
         })
     });
 
-    let keystore = Arc::new(NoCrypto);
-    let label_resolver = default_label_resolver();
-
     // Build NodeInfo; we set node_public_key bytes to node_id bytes for interop simplicity
     let node_info: NodeInfo = build_node_info(&node_id, &bind_addr);
 
@@ -97,8 +93,6 @@ async fn main() -> Result<()> {
         .with_request_callback(request_handler)
         .with_event_callback(event_handler)
         .with_logger(logger.clone())
-        .with_keystore(keystore)
-        .with_label_resolver_config(label_resolver)
         .with_response_cache_ttl(Duration::from_secs(2));
 
     let transport = Arc::new(QuicTransport::new(opts).map_err(|e| anyhow::anyhow!("{e}"))?);

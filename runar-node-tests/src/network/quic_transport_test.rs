@@ -70,10 +70,7 @@ async fn test_dial_cancel_on_inbound_connect(
     let request_handler2 = mk_request_handler();
     let event_handler1: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
     let event_handler2: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
-    // Use the default configurable resolver with empty config
-    let resolver = Arc::new(LabelResolverConfig {
-        label_mappings: HashMap::new(),
-    });
+
     let t1_info_clone = t1_info.clone();
     let t2_info_clone = t2_info.clone();
     let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
@@ -93,8 +90,6 @@ async fn test_dial_cancel_on_inbound_connect(
         .with_bind_addr(t1_addr)
         .with_request_callback(request_handler1)
         .with_event_callback(event_handler1)
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver_config(resolver.clone())
         .with_logger(logger.clone());
     let t2_opts = QuicTransportOptions::new()
         .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
@@ -105,8 +100,6 @@ async fn test_dial_cancel_on_inbound_connect(
         .with_bind_addr(t2_addr)
         .with_request_callback(request_handler2)
         .with_event_callback(event_handler2)
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver_config(resolver)
         .with_logger(logger.clone());
     let id1 = compact_id(&km1.get_node_public_key());
     let id2 = compact_id(&km2.get_node_public_key());
@@ -189,7 +182,6 @@ use tokio::sync::Mutex;
 use runar_common::routing::TopicPath;
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_node::{ActionMetadata, ServiceMetadata};
-use runar_serializer::traits::LabelResolverConfig;
 use runar_serializer::ArcValue;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::transport::{
@@ -197,40 +189,10 @@ use runar_transporter::transport::{
     PeerConnectedCallback, PeerDisconnectedCallback, QuicTransport, QuicTransportOptions,
     RequestCallback,
 };
-use std::collections::HashMap;
 // Removed unused imports: AtomicUsize, Ordering
 use std::time::Duration;
 
-// Dummy crypto that performs no-op encryption for tests
-struct NoCrypto;
-
-impl runar_serializer::traits::EnvelopeCrypto for NoCrypto {
-    fn encrypt_with_envelope(
-        &self,
-        data: &[u8],
-        _network_public_key: Option<&[u8]>,
-        _profile_public_keys: Vec<Vec<u8>>,
-    ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
-        Ok(runar_keys::mobile::EnvelopeEncryptedData {
-            encrypted_data: data.to_vec(),
-            network_id: Some("test-network".to_string()),
-            network_encrypted_key: Vec::new(),
-            profile_encrypted_keys: std::collections::HashMap::new(),
-        })
-    }
-
-    fn decrypt_envelope_data(
-        &self,
-        env: &runar_keys::mobile::EnvelopeEncryptedData,
-    ) -> runar_keys::Result<Vec<u8>> {
-        Ok(env.encrypted_data.clone())
-    }
-
-    fn get_network_public_key(&self, _network_id: &str) -> runar_keys::Result<Vec<u8>> {
-        // Return a dummy 65-byte network public key for testing
-        Ok(vec![0u8; 65])
-    }
-}
+// Removed unused NoCrypto struct and implementation
 
 /// This test ensures the transport layer properly handles:
 /// 1. Bidirectional streams for request-response patterns
@@ -588,11 +550,6 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         version: 1,
     };
 
-    // Insert resolver and local node info callbacks
-    let resolver: Arc<LabelResolverConfig> = Arc::new(LabelResolverConfig {
-        label_mappings: HashMap::new(),
-    });
-
     let node1_info_clone2 = node1_info.clone();
     let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let info = node1_info_clone2.clone();
@@ -614,8 +571,6 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         .with_request_callback(node1_request_handler)
         .with_event_callback(node1_event_handler)
         .with_logger(logger.clone())
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver_config(resolver.clone())
         .with_handshake_response_timeout(std::time::Duration::from_millis(500))
         .with_max_message_size(1024);
 
@@ -629,8 +584,6 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         .with_request_callback(node2_request_handler)
         .with_event_callback(node2_event_handler)
         .with_logger(logger.clone())
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver_config(resolver.clone())
         .with_handshake_response_timeout(std::time::Duration::from_millis(500))
         .with_max_message_size(1024);
 
@@ -777,11 +730,6 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
     let event_handler2: EventCallback =
         Arc::new(move |_event: NetworkMessage| Box::pin(async { Ok(()) }));
 
-    // Build transports
-    let empty_resolver: Arc<LabelResolverConfig> = Arc::new(LabelResolverConfig {
-        label_mappings: HashMap::new(),
-    });
-
     let node1_info_clone = node1_info.clone();
     let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
         let node1_info_clone = node1_info_clone.clone();
@@ -801,9 +749,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         .with_bind_addr("127.0.0.1:50111".parse::<SocketAddr>()?)
         .with_request_callback(request_handler1)
         .with_event_callback(event_handler1)
-        .with_logger(logger.clone())
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver_config(empty_resolver.clone());
+        .with_logger(logger.clone());
     let t2_opts = QuicTransportOptions::new()
         .with_certificates(node2_cert_config.certificate_chain)
         .with_private_key(node2_cert_config.private_key)
@@ -813,9 +759,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         .with_bind_addr("127.0.0.1:50112".parse::<SocketAddr>()?)
         .with_request_callback(request_handler2)
         .with_event_callback(event_handler2)
-        .with_logger(logger.clone())
-        .with_keystore(Arc::new(NoCrypto))
-        .with_label_resolver_config(empty_resolver.clone());
+        .with_logger(logger.clone());
 
     let t1 = Arc::new(QuicTransport::new(t1_opts)?);
     let t2 = Arc::new(QuicTransport::new(t2_opts)?);
@@ -1004,10 +948,6 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
         })
     };
 
-    let resolver: Arc<LabelResolverConfig> = Arc::new(LabelResolverConfig {
-        label_mappings: HashMap::new(),
-    });
-
     let info1_clone = info1.clone();
     let info2_clone = info2.clone();
     let get_local_node_info_t1: GetLocalNodeInfoCallback = Arc::new(move || {
@@ -1031,9 +971,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             .with_event_callback(event_handler.clone())
             .with_peer_connected_callback(cb1_connected)
             .with_peer_disconnected_callback(cb1_disconnected)
-            .with_logger(logger.clone())
-            .with_keystore(Arc::new(NoCrypto))
-            .with_label_resolver_config(resolver.clone()),
+            .with_logger(logger.clone()),
     )?);
     let t2 = Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
@@ -1047,9 +985,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
             .with_event_callback(event_handler.clone())
             .with_peer_connected_callback(cb2_connected)
             .with_peer_disconnected_callback(cb2_disconnected)
-            .with_logger(logger.clone())
-            .with_keystore(Arc::new(NoCrypto))
-            .with_label_resolver_config(resolver.clone()),
+            .with_logger(logger.clone()),
     )?);
 
     let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
@@ -1201,10 +1137,6 @@ async fn test_capability_version_bump_across_reconnect(
         })
     });
     let event_handler2: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
-    let resolver: std::sync::Arc<runar_serializer::traits::LabelResolverConfig> =
-        std::sync::Arc::new(runar_serializer::traits::LabelResolverConfig {
-            label_mappings: std::collections::HashMap::new(),
-        });
 
     let info1_clone = info1.clone();
     let info2_clone = info2.clone();
@@ -1226,9 +1158,7 @@ async fn test_capability_version_bump_across_reconnect(
             .with_bind_addr("127.0.0.1:50171".parse()?)
             .with_request_callback(request_handler1.clone())
             .with_event_callback(event_handler1.clone())
-            .with_logger(logger.clone())
-            .with_keystore(std::sync::Arc::new(NoCrypto))
-            .with_label_resolver_config(resolver.clone()),
+            .with_logger(logger.clone()),
     )?);
     let t2 = std::sync::Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
@@ -1240,9 +1170,7 @@ async fn test_capability_version_bump_across_reconnect(
             .with_bind_addr("127.0.0.1:50172".parse()?)
             .with_request_callback(request_handler2.clone())
             .with_event_callback(event_handler2.clone())
-            .with_logger(logger.clone())
-            .with_keystore(std::sync::Arc::new(NoCrypto))
-            .with_label_resolver_config(resolver.clone()),
+            .with_logger(logger.clone()),
     )?);
 
     let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
@@ -1383,10 +1311,6 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     });
     let event_handler1: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
     let event_handler2: EventCallback = Arc::new(|_event| Box::pin(async { Ok(()) }));
-    let resolver: std::sync::Arc<runar_serializer::traits::LabelResolverConfig> =
-        std::sync::Arc::new(runar_serializer::traits::LabelResolverConfig {
-            label_mappings: std::collections::HashMap::new(),
-        });
 
     // Lifecycle counters
     let ev1: std::sync::Arc<tokio::sync::Mutex<Vec<(String, bool)>>> =
@@ -1457,9 +1381,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
             .with_event_callback(event_handler1.clone())
             .with_peer_connected_callback(cb1_connected)
             .with_peer_disconnected_callback(cb1_disconnected)
-            .with_logger(logger.clone())
-            .with_keystore(std::sync::Arc::new(NoCrypto))
-            .with_label_resolver_config(resolver.clone()),
+            .with_logger(logger.clone()),
     )?);
     let t2 = std::sync::Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
@@ -1473,9 +1395,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
             .with_event_callback(event_handler2.clone())
             .with_peer_connected_callback(cb2_connected)
             .with_peer_disconnected_callback(cb2_disconnected)
-            .with_logger(logger.clone())
-            .with_keystore(std::sync::Arc::new(NoCrypto))
-            .with_label_resolver_config(resolver.clone()),
+            .with_logger(logger.clone()),
     )?);
 
     let (sr1, sr2) = tokio::join!(t1.clone().start(), t2.clone().start());
@@ -1649,12 +1569,6 @@ async fn test_transport_start_stop_idempotence(
     let cert = ca.process_setup_token(&csr)?;
     km.install_certificate(cert)?;
 
-    // Build transport directly from Node's network config pieces
-    let keystore = Arc::new(NoCrypto);
-    let resolver = Arc::new(LabelResolverConfig {
-        label_mappings: HashMap::new(),
-    });
-
     let local_pk = km.get_node_public_key();
 
     // Minimal NodeInfo provider
@@ -1699,9 +1613,7 @@ async fn test_transport_start_stop_idempotence(
             .with_bind_addr("127.0.0.1:50201".parse()?)
             .with_request_callback(request_cb)
             .with_event_callback(event_cb)
-            .with_logger(logger.clone())
-            .with_keystore(keystore)
-            .with_label_resolver_config(resolver),
+            .with_logger(logger.clone()),
     )?);
 
     for _ in 0..3u8 {
