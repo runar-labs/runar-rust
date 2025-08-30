@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{de, de::DeserializeOwned, ser, Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
-use serde_json::{from_value, to_value, Number, Value as JsonValue, Value};
+use serde_json::{from_value, to_value, Number, Value as JsonValue};
 
 use crate::RunarEncrypt;
 
@@ -644,7 +644,7 @@ impl ArcValue {
         self.handle_lazy_data(|payload, type_name| {
             //handle the case when the serialized type is JSON and the requested type is not JSON
             if type_name == "Value" && target_name != type_name {
-                if let Ok(json_value) = from_slice::<Value>(payload) {
+                if let Ok(json_value) = from_slice::<JsonValue>(payload) {
                     if target_name.contains("ArcValue") {
                         let converted_arc = Self::json_to_arc_value(&json_value);
                         return converted_arc.as_type_ref::<T>();
@@ -953,7 +953,7 @@ impl ArcValue {
                         }
                         // No rust-name fallback: only wire-name converters are supported
                         // Final fallback: attempt generic CBOR -> JSON value
-                        if let Ok(value) = from_slice::<Value>(payload) {
+                        if let Ok(value) = from_slice::<JsonValue>(payload) {
                             return Ok(value);
                         }
                         // If everything fails, return a specific error

@@ -4,22 +4,27 @@
 //! certificate signing requests (CSRs) and manages received certificates.
 
 use crate::certificate::{CertificateRequest, CertificateValidator, EcdsaKeyPair, X509Certificate};
+use crate::derivation;
 use crate::error::{KeyError, Result};
+use crate::keystore::persistence;
 use crate::mobile::{EnvelopeEncryptedData, NetworkKeyMessage, NodeCertificateMessage, SetupToken};
+use crate::EnvelopeCrypto;
 use crate::{log_debug, log_info, log_warn};
+
 // use p256::ecdsa::SigningKey; // no longer needed here
 use crate::keystore::{
     persistence::{load_state, save_state, PersistenceConfig, Role},
-    DeviceKeystore,
+    DeviceKeystore, DeviceKeystoreCaps,
 };
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
-use rand::RngCore;
+use rand::{thread_rng, RngCore};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
+use serde_cbor::{from_slice, to_vec};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -102,7 +107,7 @@ impl NodeKeyManager {
         };
 
         // Derive node agreement key from node master signing key
-        let node_agreement_secret = crate::derivation::derive_agreement_from_master(
+        let node_agreement_secret = derivation::derive_agreement_from_master(
             &node_key_pair.signing_key().to_bytes(),
             b"runar-v1:node-identity:agreement",
         )?;
@@ -154,7 +159,7 @@ impl NodeKeyManager {
 
     /// Attempt to load state from disk using the configured keystore.
     /// Returns true if state was loaded, false if not found.
-    pub fn probe_and_load_state(&mut self) -> crate::Result<bool> {
+    pub fn probe_and_load_state(&mut self) -> Result<bool> {
         let (Some(keystore), Some(cfg)) = (self.device_keystore.clone(), self.persistence.clone())
         else {
             return Ok(false);
@@ -162,7 +167,7 @@ impl NodeKeyManager {
         let node_id = self.get_node_id();
         let role = Role::Node { node_id: &node_id };
         if let Ok(Some(bytes)) = load_state(&keystore, &cfg, &role) {
-            if let Ok(state) = serde_cbor::from_slice::<crate::node::NodeKeyManagerState>(&bytes) {
+            if let Ok(state) = from_slice::<NodeKeyManagerState>(&bytes) {
                 let logger = self.logger.clone();
                 let (device_keystore, persistence, auto_persist) = (
                     self.device_keystore.clone(),
@@ -182,12 +187,12 @@ impl NodeKeyManager {
     }
 
     /// Persist current state if auto-persist is enabled and keystore/persistence are configured.
-    pub fn flush_state(&self) -> crate::Result<()> {
+    pub fn flush_state(&self) -> Result<()> {
         if let (Some(keystore), Some(cfg)) =
             (self.device_keystore.as_ref(), self.persistence.as_ref())
         {
             let state = self.export_state();
-            let bytes = serde_cbor::to_vec(&state).map_err(|e| {
+            let bytes = to_vec(&state).map_err(|e| {
                 KeyError::EncodingError(format!("Failed to encode node state: {e}"))
             })?;
             let node_id = self.get_node_id();
@@ -203,15 +208,15 @@ impl NodeKeyManager {
     }
 
     /// Query keystore capabilities if a device keystore is configured.
-    pub fn get_keystore_caps(&self) -> Option<crate::keystore::DeviceKeystoreCaps> {
+    pub fn get_keystore_caps(&self) -> Option<DeviceKeystoreCaps> {
         self.device_keystore.as_ref().map(|k| k.capabilities())
     }
 
     /// Wipe persisted state file (if configured)
-    pub fn wipe_persistence(&self) -> crate::Result<()> {
+    pub fn wipe_persistence(&self) -> Result<()> {
         if let Some(cfg) = &self.persistence {
             let id = self.get_node_id();
-            crate::keystore::persistence::wipe(cfg, &Role::Node { node_id: &id })?;
+            persistence::wipe(cfg, &Role::Node { node_id: &id })?;
         }
         Ok(())
     }
@@ -241,7 +246,7 @@ impl NodeKeyManager {
 
         // Generate a new 32-byte symmetric key
         let mut key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut key);
+        thread_rng().fill_bytes(&mut key);
         let key_vec = key.to_vec();
 
         // Store the key for future use
@@ -269,10 +274,7 @@ impl NodeKeyManager {
     }
 
     /// Decrypt envelope-encrypted data using network key
-    pub fn decrypt_envelope_data(
-        &self,
-        envelope_data: &crate::mobile::EnvelopeEncryptedData,
-    ) -> Result<Vec<u8>> {
+    pub fn decrypt_envelope_data(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
         let network_id = envelope_data
             .network_id
             .as_ref()
@@ -302,7 +304,7 @@ impl NodeKeyManager {
         &self,
         data: &[u8],
         network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
-    ) -> Result<crate::mobile::EnvelopeEncryptedData> {
+    ) -> Result<EnvelopeEncryptedData> {
         let network_public_key = network_public_key
             .ok_or_else(|| KeyError::DecryptionError("Missing network_public_key".to_string()))?;
 
@@ -319,7 +321,7 @@ impl NodeKeyManager {
         // Derive network ID from public key for storage
         let network_id = compact_id(network_public_key);
 
-        Ok(crate::mobile::EnvelopeEncryptedData {
+        Ok(EnvelopeEncryptedData {
             encrypted_data,
             network_id: Some(network_id),
             network_encrypted_key: encrypted_envelope_key,
@@ -331,7 +333,7 @@ impl NodeKeyManager {
     fn generate_envelope_key(&self) -> Result<Vec<u8>> {
         use rand::RngCore;
         let mut envelope_key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut envelope_key);
+        thread_rng().fill_bytes(&mut envelope_key);
         log_debug!(self.logger, "Ephemeral envelope key generated");
         Ok(envelope_key.to_vec())
     }
@@ -397,8 +399,8 @@ impl NodeKeyManager {
         use p256::ecdh::EphemeralSecret;
         use p256::elliptic_curve::sec1::ToEncodedPoint;
         use p256::PublicKey;
-        use rand::thread_rng;
         use sha2::Sha256;
+        use thread_rng;
 
         // Generate ephemeral key pair for ECDH
         let ephemeral_secret = EphemeralSecret::random(&mut thread_rng());
@@ -525,7 +527,7 @@ impl NodeKeyManager {
         self.certificate_status = CertificateStatus::Pending;
 
         // Derive agreement from node master and include public part in token
-        let agreement = crate::derivation::derive_agreement_from_master(
+        let agreement = derivation::derive_agreement_from_master(
             &self.node_key_pair.signing_key().to_bytes(),
             b"runar-v1:node-identity:agreement",
         )?;
@@ -607,7 +609,7 @@ impl NodeKeyManager {
 
     /// Get the node ECIES agreement public key (P-256) derived from the node master key
     pub fn get_node_agreement_public_key(&self) -> Result<Vec<u8>> {
-        let agreement = crate::derivation::derive_agreement_from_master(
+        let agreement = derivation::derive_agreement_from_master(
             &self.node_key_pair.signing_key().to_bytes(),
             b"runar-v1:node-identity:agreement",
         )?;
@@ -866,7 +868,7 @@ impl NodeKeyManager {
         data: &[u8],
         network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
-    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
+    ) -> Result<EnvelopeEncryptedData> {
         let envelope_key = self.generate_envelope_key()?;
 
         // Encrypt data with envelope key
@@ -891,7 +893,7 @@ impl NodeKeyManager {
             profile_encrypted_keys.insert(profile_id, encrypted_key);
         }
 
-        Ok(crate::mobile::EnvelopeEncryptedData {
+        Ok(EnvelopeEncryptedData {
             encrypted_data,
             network_id,
             network_encrypted_key,
@@ -904,7 +906,7 @@ impl NodeKeyManager {
         &self,
         data: &[u8],
         public_key: &[u8],
-    ) -> Result<crate::mobile::EnvelopeEncryptedData> {
+    ) -> Result<EnvelopeEncryptedData> {
         // Call the public method directly, not the trait method
         NodeKeyManager::encrypt_with_envelope(self, data, Some(public_key), Vec::new())
     }
@@ -923,24 +925,21 @@ impl NodeKeyManager {
 }
 
 // Implementation of EnvelopeCrypto for NodeKeyManager
-impl crate::EnvelopeCrypto for NodeKeyManager {
+impl EnvelopeCrypto for NodeKeyManager {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
         network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         _profile_public_keys: Vec<Vec<u8>>,
-    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
+    ) -> Result<EnvelopeEncryptedData> {
         // Nodes only support network-wide encryption.
         self.create_envelope_for_network(data, network_public_key)
     }
 
-    fn decrypt_envelope_data(
-        &self,
-        env: &crate::mobile::EnvelopeEncryptedData,
-    ) -> crate::Result<Vec<u8>> {
+    fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
         // Guard: ensure the encrypted key is present
         if env.network_encrypted_key.is_empty() {
-            return Err(crate::error::KeyError::DecryptionError(
+            return Err(KeyError::DecryptionError(
                 "Envelope missing network_encrypted_key".into(),
             ));
         }
@@ -948,7 +947,7 @@ impl crate::EnvelopeCrypto for NodeKeyManager {
         NodeKeyManager::decrypt_envelope_data(self, env)
     }
 
-    fn get_network_public_key(&self, network_id: &str) -> crate::Result<Vec<u8>> {
+    fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
         NodeKeyManager::get_network_public_key(self, network_id)
     }
 }
@@ -1030,7 +1029,7 @@ impl NodeKeyManager {
         ));
 
         // Re-derive node agreement on import
-        let node_agreement_secret = crate::derivation::derive_agreement_from_master(
+        let node_agreement_secret = derivation::derive_agreement_from_master(
             &state.node_key_pair.signing_key().to_bytes(),
             b"runar-v1:node-identity:agreement",
         )?;

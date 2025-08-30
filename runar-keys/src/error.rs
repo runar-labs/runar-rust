@@ -1,6 +1,10 @@
 //! Error types for the certificate system
 
+use p256::ecdsa::Error as EcdsaError;
+use pkcs8::Error as Pkcs8Error;
+use rcgen::Error as RcgenError;
 use thiserror::Error;
+use x509_parser::{error::X509Error, nom::Err as NomErr};
 
 /// Result type alias for certificate operations
 pub type Result<T> = std::result::Result<T, KeyError>;
@@ -33,10 +37,10 @@ pub enum KeyError {
     IoError(#[from] std::io::Error),
 
     #[error("PKCS8 error: {0}")]
-    Pkcs8Error(#[from] pkcs8::Error),
+    Pkcs8Error(#[from] Pkcs8Error),
 
     #[error("ECDSA error: {0}")]
-    EcdsaError(#[from] p256::ecdsa::Error),
+    EcdsaError(#[from] EcdsaError),
 
     // OpenSSL path removed
     #[error("X509 parser error: {0}")]
@@ -77,21 +81,21 @@ pub enum KeyError {
 }
 
 // Convert from rcgen errors
-impl From<rcgen::Error> for KeyError {
-    fn from(err: rcgen::Error) -> Self {
+impl From<RcgenError> for KeyError {
+    fn from(err: RcgenError) -> Self {
         KeyError::CertificateError(err.to_string())
     }
 }
 
 // Convert from x509-parser errors
-impl From<x509_parser::error::X509Error> for KeyError {
-    fn from(err: x509_parser::error::X509Error) -> Self {
+impl From<X509Error> for KeyError {
+    fn from(err: X509Error) -> Self {
         KeyError::X509ParserError(err.to_string())
     }
 }
 
-impl From<x509_parser::nom::Err<x509_parser::error::X509Error>> for KeyError {
-    fn from(err: x509_parser::nom::Err<x509_parser::error::X509Error>) -> Self {
+impl From<NomErr<X509Error>> for KeyError {
+    fn from(err: NomErr<X509Error>) -> Self {
         KeyError::X509ParserError(format!("Parse error: {err}"))
     }
 }

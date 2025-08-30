@@ -1,9 +1,10 @@
 use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Type};
+use syn::{parse_macro_input, Attribute, Data, DeriveInput, Error, Fields, Ident, LitStr, Type};
 
 fn parse_runar_labels(attr: &Attribute) -> Vec<String> {
     if !attr.path().is_ident("runar") {
@@ -26,13 +27,13 @@ fn label_to_camel_case(s: &str) -> String {
         .collect()
 }
 
-fn extract_wire_name(attrs: &[Attribute], default_ident: &Ident) -> proc_macro2::TokenStream {
+fn extract_wire_name(attrs: &[Attribute], default_ident: &Ident) -> TokenStream2 {
     let mut wire_name: Option<String> = None;
     for attr in attrs.iter() {
         if attr.path().is_ident("runar") {
             let _ = attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") {
-                    let lit: syn::LitStr = meta.value()?.parse()?;
+                    let lit: LitStr = meta.value()?.parse()?;
                     wire_name = Some(lit.value());
                 }
                 Ok(())
@@ -40,11 +41,11 @@ fn extract_wire_name(attrs: &[Attribute], default_ident: &Ident) -> proc_macro2:
         }
     }
     if let Some(s) = wire_name {
-        let lit = syn::LitStr::new(&s, proc_macro2::Span::call_site());
+        let lit = LitStr::new(&s, Span::call_site());
         quote! { #lit }
     } else {
         let simple = default_ident.to_string();
-        let lit = syn::LitStr::new(&simple, proc_macro2::Span::call_site());
+        let lit = LitStr::new(&simple, Span::call_site());
         quote! { #lit }
     }
 }
@@ -127,7 +128,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
                 }
             }
         } else {
-            return syn::Error::new_spanned(
+            return Error::new_spanned(
                 struct_name,
                 "Encrypt derive only supports structs with named fields",
             )
@@ -135,7 +136,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             .into();
         }
     } else {
-        return syn::Error::new_spanned(struct_name, "Encrypt derive only supports structs")
+        return Error::new_spanned(struct_name, "Encrypt derive only supports structs")
             .to_compile_error()
             .into();
     }
@@ -177,7 +178,7 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
             .iter()
             .map(|(id, _)| quote! { #id: self.#id.clone(), })
             .collect();
-        let label_lit = syn::LitStr::new(label, proc_macro2::Span::call_site());
+        let label_lit = LitStr::new(label, Span::call_site());
         encrypt_label_match_arms.push(quote! {
             #group_field_ident: if resolver.can_resolve(#label_lit) {
                 let group_struct = #substruct_ident { #(#substruct_build_fields)* };
