@@ -4,7 +4,6 @@
 //! created during the initialization process.
 
 use anyhow::{Context, Result};
-use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_keys::node::NodeKeyManager;
 use runar_macros_common::log_info;
@@ -13,7 +12,6 @@ use serde_cbor::from_slice;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::signal::ctrl_c;
-use uuid::Uuid;
 
 use crate::config::NodeConfig as CliNodeConfig;
 use crate::key_store::OsKeyStore;

@@ -14,7 +14,7 @@ use runar_common::logging::Logger;
 use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
 use runar_keys::node::{CertificateStatus, NodeKeyManager};
 use runar_macros_common::{log_debug, log_info};
-use serde::de::DeserializeOwned;
+
 use serde_cbor::to_vec;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -319,8 +319,6 @@ fn create_test_config() -> LabelResolverConfig {
     LabelResolverConfig { label_mappings }
 }
 
-
-
 /// Test cache statistics and metrics
 #[test]
 fn test_cache_statistics() -> Result<()> {

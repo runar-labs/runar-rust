@@ -15,7 +15,9 @@ use runar_keys::{
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
-use runar_serializer::traits::{LabelResolverConfig, LabelValue, ResolverCache, ConfigurableLabelResolver};
+use runar_serializer::traits::{
+    ConfigurableLabelResolver, LabelResolverConfig, LabelValue, ResolverCache,
+};
 use runar_serializer::{ArcValue, SerializationContext};
 use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
 use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
@@ -705,10 +707,8 @@ impl Node {
         &self,
         user_profile_keys: &[Vec<u8>],
     ) -> Result<Arc<ConfigurableLabelResolver>> {
-        self.label_resolver_cache.get_or_create(
-            &self.system_label_config,
-            user_profile_keys,
-        )
+        self.label_resolver_cache
+            .get_or_create(&self.system_label_config, user_profile_keys)
     }
 
     /// Add a service to this node.

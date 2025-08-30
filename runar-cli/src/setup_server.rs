@@ -11,7 +11,7 @@ use runar_macros_common::{log_debug, log_error, log_info};
 use serde::de::DeserializeOwned;
 use serde_cbor::from_slice;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::wrappers::TcpListenerStream;
 

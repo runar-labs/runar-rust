@@ -4,9 +4,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use env_logger;
 use log::LevelFilter;
-use runar_macros_common::{log_debug, log_error, log_info};
+use runar_macros_common::log_info;
 use runar_schemas::NodeInfo;
 use runar_serializer::ArcValue;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
@@ -103,10 +102,10 @@ async fn main() -> Result<()> {
 
     // Build and send request
     let topic = topic_echo();
-    let payload_bytes = b"hello from rust".to_vec();
+    let _payload_bytes = b"hello from rust".to_vec();
 
     // We need the destination id as the peer compact id; we used remote_id above.
-    let request = make_echo_request(&node_id, &peer_node_id, b"hello from rust client");
+    let _request = make_echo_request(&node_id, &peer_node_id, b"hello from rust client");
     // Use high-level request API by embedding payload into ArcValue and relying on transport serialization
     let av = ArcValue::new_json(serde_json::json!({ "msg": "hello" }));
     let correlation_id = Uuid::new_v4().to_string();
@@ -124,7 +123,7 @@ async fn main() -> Result<()> {
 
     // Also send a one-way event
     let event_correlation_id = Uuid::new_v4().to_string();
-    let event = make_echo_request(&node_id, &peer_node_id, b"event from rust client");
+    let _event = make_echo_request(&node_id, &peer_node_id, b"event from rust client");
     transport
         .publish(
             topic.as_str(),

@@ -18,8 +18,8 @@ use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::{
-    traits::{LabelResolverConfig, ResolverCache}, ArcValue, EnvelopeCrypto,
-    SerializationContext,
+    traits::{LabelResolverConfig, ResolverCache},
+    ArcValue, EnvelopeCrypto, SerializationContext,
 };
 use runar_transporter::transport::NetworkTransport;
 

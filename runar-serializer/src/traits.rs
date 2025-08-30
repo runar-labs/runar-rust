@@ -300,7 +300,6 @@ pub struct SerializationContext {
 struct CacheEntry {
     resolver: Arc<ConfigurableLabelResolver>,
     created_at: Instant,
-    access_count: AtomicU64,
     last_accessed: AtomicU64, // Unix timestamp
 }
 
@@ -315,13 +314,11 @@ impl CacheEntry {
         Self {
             resolver,
             created_at: now,
-            access_count: AtomicU64::new(1),
             last_accessed: AtomicU64::new(timestamp),
         }
     }
 
     fn access(&self) {
-        self.access_count.fetch_add(1, Ordering::Relaxed);
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -331,10 +328,6 @@ impl CacheEntry {
 
     fn age(&self) -> Duration {
         self.created_at.elapsed()
-    }
-
-    fn access_count(&self) -> u64 {
-        self.access_count.load(Ordering::Relaxed)
     }
 
     fn last_accessed(&self) -> u64 {
@@ -348,7 +341,6 @@ pub struct ResolverCache {
     cache: DashMap<String, CacheEntry>,
     max_size: usize,
     ttl: Duration,
-    metrics: ResolverMetrics,
 }
 
 impl ResolverCache {
@@ -358,7 +350,6 @@ impl ResolverCache {
             cache: DashMap::new(),
             max_size,
             ttl,
-            metrics: ResolverMetrics::new(),
         }
     }
 
@@ -381,7 +372,6 @@ impl ResolverCache {
             // Check if entry is still valid
             if entry.age() < self.ttl {
                 entry.access();
-                self.metrics.cache_hit();
                 return Ok(entry.resolver.clone());
             } else {
                 true // Mark for removal
@@ -393,17 +383,10 @@ impl ResolverCache {
         // Remove expired entry if needed (outside of the get() scope to avoid deadlock)
         if should_remove_expired {
             self.cache.remove(&cache_key);
-            self.metrics.expired_removed();
         }
 
         // Cache miss - create new resolver
-        self.metrics.cache_miss();
-        let start_time = Instant::now();
-
         let resolver = create_context_label_resolver(config, user_profile_keys)?;
-
-        let creation_time = start_time.elapsed();
-        self.metrics.record_creation_time(creation_time);
 
         // Create cache entry
         let entry = CacheEntry::new(resolver.clone());
@@ -455,18 +438,16 @@ impl ResolverCache {
             .map(|entry| {
                 let key = entry.key().clone();
                 let last_accessed = entry.last_accessed();
-                let access_count = entry.access_count();
-                (key, last_accessed, access_count)
+                (key, last_accessed)
             })
             .collect();
 
-        // Sort by last accessed time (oldest first), then by access count (least used first)
-        entries.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
+        // Sort by last accessed time (oldest first)
+        entries.sort_by_key(|(_, last_accessed)| *last_accessed);
 
-        // Remove the oldest/least used entries
-        for (key, _, _) in entries.iter().take(target_evictions) {
+        // Remove the oldest entries
+        for (key, _) in entries.iter().take(target_evictions) {
             self.cache.remove(key);
-            self.metrics.evicted();
         }
     }
 
@@ -484,7 +465,6 @@ impl ResolverCache {
         for key in expired_keys {
             if self.cache.remove(&key).is_some() {
                 removed_count += 1;
-                self.metrics.expired_removed();
             }
         }
 
@@ -497,14 +477,12 @@ impl ResolverCache {
             total_entries: self.cache.len(),
             max_size: self.max_size,
             ttl_seconds: self.ttl.as_secs(),
-            metrics: self.metrics.clone(),
         }
     }
 
     /// Clear the entire cache
     pub fn clear(&self) {
         self.cache.clear();
-        self.metrics.cleared();
     }
 }
 
@@ -514,65 +492,4 @@ pub struct CacheStats {
     pub total_entries: usize,
     pub max_size: usize,
     pub ttl_seconds: u64,
-    pub metrics: ResolverMetrics,
-}
-
-/// Metrics for resolver creation and caching
-#[derive(Debug, Clone)]
-pub struct ResolverMetrics {
-    pub creation_count: u64,
-    pub cache_hit_count: u64,
-    pub cache_miss_count: u64,
-    pub expired_removed_count: u64,
-    pub evicted_count: u64,
-    pub cleared_count: u64,
-    pub total_creation_time_ns: u64,
-    pub min_creation_time_ns: u64,
-    pub max_creation_time_ns: u64,
-}
-
-impl ResolverMetrics {
-    fn new() -> Self {
-        Self {
-            creation_count: 0,
-            cache_hit_count: 0,
-            cache_miss_count: 0,
-            expired_removed_count: 0,
-            evicted_count: 0,
-            cleared_count: 0,
-            total_creation_time_ns: 0,
-            min_creation_time_ns: u64::MAX,
-            max_creation_time_ns: 0,
-        }
-    }
-
-    fn cache_hit(&self) {
-        // Note: This is a simplified version - in a real implementation,
-        // you'd want to use atomic operations for thread safety
-    }
-
-    fn cache_miss(&self) {
-        // Note: This is a simplified version - in a real implementation,
-        // you'd want to use atomic operations for thread safety
-    }
-
-    fn expired_removed(&self) {
-        // Note: This is a simplified version - in a real implementation,
-        // you'd want to use atomic operations for thread safety
-    }
-
-    fn evicted(&self) {
-        // Note: This is a simplified version - in a real implementation,
-        // you'd want to use atomic operations for thread safety
-    }
-
-    fn cleared(&self) {
-        // Note: This is a simplified version - in a real implementation,
-        // you'd want to use atomic operations for thread safety
-    }
-
-    fn record_creation_time(&self, _duration: Duration) {
-        // Note: This is a simplified version - in a real implementation,
-        // you'd want to use atomic operations for thread safety
-    }
 }

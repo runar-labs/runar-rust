@@ -1,6 +1,6 @@
+use crate::replication::{ReplicationConfig, ReplicationManager};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use crate::replication::{ReplicationConfig, ReplicationManager};
 use hex::encode;
 use runar_common::logging::Logger;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};

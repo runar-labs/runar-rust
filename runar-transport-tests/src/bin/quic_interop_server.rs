@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use env_logger;
+
 use log::LevelFilter;
 use runar_macros_common::{log_debug, log_info};
 use runar_schemas::NodeInfo;
