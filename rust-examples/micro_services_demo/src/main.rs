@@ -11,7 +11,6 @@ use std::sync::Arc;
 // Declare modules
 mod account_service;
 mod db_services;
-mod encryption_demo;
 mod models;
 mod order_service;
 mod profile_service;
@@ -33,7 +32,7 @@ async fn main() -> Result<()> {
 
     // Setup encryption infrastructure using mobile simulator
     let (simulator, config) = create_test_environment()?;
-    let (mobile_resolver, node_resolver) = simulator.create_label_resolvers()?;
+    let (_mobile_resolver, _node_resolver) = simulator.create_label_resolvers()?;
 
     simulator.print_summary();
     logger.info("✅ Encryption infrastructure ready");
@@ -65,16 +64,6 @@ async fn main() -> Result<()> {
     node.start().await?;
     logger.info("✅ Node started successfully");
 
-    // Demonstrate encryption flow with database
-    encryption_demo::demonstrate_encryption_flow(
-        &mobile_resolver,
-        &node_resolver,
-        "crud_db",
-        &node,
-        &logger,
-    )
-    .await?;
-
     // Run some test operations
     logger.info("🧪 Running test operations...");
 
@@ -87,6 +76,7 @@ async fn main() -> Result<()> {
                 "email" => "test@example.com".to_string(),
                 "password_hash" => "hashed_password".to_string()
             }),
+            None,
         )
         .await?;
     let created_user: User = user_arc.as_type()?;
@@ -102,6 +92,7 @@ async fn main() -> Result<()> {
                 "bio" => "Test bio".to_string(),
                 "private_notes" => "Private notes".to_string()
             }),
+            None,
         )
         .await?;
     let created_profile: Profile = profile_arc.as_type()?;
@@ -116,6 +107,7 @@ async fn main() -> Result<()> {
                 "balance_cents" => 10000u64, // $100.00 in cents
                 "account_type" => "checking".to_string()
             }),
+            None,
         )
         .await?;
     let created_account: Account = account_arc.as_type()?;
@@ -136,6 +128,7 @@ async fn main() -> Result<()> {
                 "total_price_cents" => 1500u64, // $15.00 in cents
                 "status" => "pending".to_string()
             }),
+            None,
         )
         .await?;
     let created_order: Order = order_arc.as_type()?;

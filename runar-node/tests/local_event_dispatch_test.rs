@@ -59,7 +59,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
 
     // Publish an event
     let test_data = ArcValue::new_primitive(42.0);
-    node.publish("test/event", Some(test_data)).await?;
+    node.publish("test/event", Some(test_data), None).await?;
     println!("Event published");
 
     // Give handlers time to execute
@@ -84,7 +84,7 @@ async fn test_local_event_dispatch_multiple_subscribers() -> Result<()> {
 /// Test the exact scenario from the remote test - MathService + external subscription
 #[tokio::test]
 async fn test_math_service_plus_external_subscription() -> Result<()> {
-    use crate::fixtures::math_service::MathService;
+    use runar_test_utils::fixtures::math_service::MathService;
 
     // Create a node with NO networking
     let config = create_node_test_config()?;
@@ -125,6 +125,7 @@ async fn test_math_service_plus_external_subscription() -> Result<()> {
         .request(
             "math1/add",
             Some(runar_macros_common::params! { "a" => 5.0, "b" => 3.0 }),
+            None,
         )
         .await?;
     let result_value = result.as_type_ref::<f64>()?;

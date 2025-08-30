@@ -13,12 +13,14 @@ use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use serde::{Deserialize, Serialize};
+use serde_cbor::{from_slice, to_vec};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use std::vec;
 use tokio::net::UdpSocket;
+use tokio::spawn;
 use tokio::sync::{
     mpsc::{self, Sender},
     Mutex, RwLock,
@@ -229,7 +231,7 @@ impl MulticastDiscovery {
         let listeners = Arc::clone(&self.listeners);
         let logger = self.logger.clone();
 
-        tokio::spawn(async move {
+        spawn(async move {
             let mut buf = vec![0u8; 4096];
 
             // Get local node info once, outside the loop
@@ -251,7 +253,7 @@ impl MulticastDiscovery {
                         logger.debug(format!(
                             "Received multicast message from {src}, size: {len}",
                         ));
-                        match serde_cbor::from_slice::<MulticastMessage>(&buf[..len]) {
+                        match from_slice::<MulticastMessage>(&buf[..len]) {
                             Ok(message) => {
                                 // Use helper method to check sender ID
                                 let mut skip = false;
@@ -273,7 +275,7 @@ impl MulticastDiscovery {
                     Err(e) => {
                         log_error!(logger, "Failed to receive multicast message: {e}");
                         // Brief pause to avoid tight loop on error
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             }
@@ -287,7 +289,7 @@ impl MulticastDiscovery {
         let local_node = Arc::clone(&self.local_node);
         let logger = self.logger.clone();
 
-        tokio::spawn(async move {
+        spawn(async move {
             let mut interval_timer = time::interval(interval);
             loop {
                 interval_timer.tick().await;
@@ -312,7 +314,7 @@ impl MulticastDiscovery {
                     goodbye: None,
                 };
 
-                match serde_cbor::to_vec(&message) {
+                match to_vec(&message) {
                     Ok(data) => {
                         if let Err(e) = socket.send_to(&data, *multicast_addr.lock().await).await {
                             log_error!(logger, "Failed to send announcement: {e}");
@@ -332,7 +334,7 @@ impl MulticastDiscovery {
         let multicast_addr_arc = Arc::clone(&self.multicast_addr);
         let logger = self.logger.clone();
 
-        let task: JoinHandle<()> = tokio::spawn(async move {
+        let task: JoinHandle<()> = spawn(async move {
             let target_addr = *multicast_addr_arc.lock().await;
 
             // Get local node info once, outside the loop
@@ -357,7 +359,7 @@ impl MulticastDiscovery {
                     *id = compact_id(&local_node_info.public_key);
                 }
 
-                match serde_cbor::to_vec(&message) {
+                match to_vec(&message) {
                     Ok(data) => {
                         log_debug!(
                             logger,

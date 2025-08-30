@@ -147,7 +147,7 @@ pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                     // If the result is Ok, publish it
                     if let Ok(ref action_result) = &result {
                         // Publish the result to the specified topic
-                        match #ctx_ident.publish(#path, Some(#arc_value_creation)).await {
+                        match #ctx_ident.publish(#path, Some(#arc_value_creation), None).await {
                             Ok(_) => {},
                             Err(e) => {
                                 #ctx_ident.error(format!("Failed to publish result to {}: {}", #path, e));
@@ -169,7 +169,7 @@ pub fn publish_macro(attr: TokenStream, item: TokenStream) -> TokenStream {
                     // If the result is Ok, publish it
                     if let Ok(ref action_result) = &result {
                         // Publish the result to the specified topic
-                        match #ctx_ident.publish(#path, Some(#arc_value_creation)).await {
+                        match #ctx_ident.publish(#path, Some(#arc_value_creation), None).await {
                             Ok(_) => {},
                             Err(e) => {
                                 #ctx_ident.error(format!("Failed to publish result to {}: {}", #path, e));

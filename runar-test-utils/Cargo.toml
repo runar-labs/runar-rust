@@ -13,6 +13,7 @@ rust-version = "1.70"
 
 [dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 runar_common = { path = "../runar-common" }
 runar-keys = { path = "../runar-keys" }
 runar_node = { path = "../runar-node" }

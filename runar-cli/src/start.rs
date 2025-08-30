@@ -1,17 +1,17 @@
-//! Start command for running a Runar node
+//! Start command for Runar CLI
 //!
 //! This module handles starting a Runar node with the configuration and keys
-//! that were created during initialization.
+//! created during the initialization process.
 
 use anyhow::{Context, Result};
-
 use runar_common::logging::{Component, Logger};
 use runar_keys::node::NodeKeyManager;
 use runar_macros_common::log_info;
 use runar_node::{Node, NodeConfig};
+use serde_cbor::from_slice;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
+use tokio::signal::ctrl_c;
 
 use crate::config::NodeConfig as CliNodeConfig;
 use crate::key_store::OsKeyStore;
@@ -103,8 +103,8 @@ impl StartCommand {
             })?;
 
         // Deserialize the node state (CBOR)
-        let node_state = serde_cbor::from_slice(&serialized_state)
-            .context("Failed to deserialize node state")?;
+        let node_state =
+            from_slice(&serialized_state).context("Failed to deserialize node state")?;
 
         // Create logger for the key manager
         let key_logger = Arc::new(Logger::new_root(Component::Keys));
@@ -139,7 +139,7 @@ impl StartCommand {
 
     async fn wait_for_shutdown(&self, node: &Node) -> Result<()> {
         // Set up signal handling for graceful shutdown (cross-platform)
-        let ctrl_c = tokio::signal::ctrl_c();
+        let ctrl_c = ctrl_c();
         ctrl_c
             .await
             .context("Failed to create shutdown signal handler")?;

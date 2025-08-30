@@ -5,11 +5,11 @@ use runar_common::routing::TopicPath;
 use runar_schemas::NodeInfo;
 use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 // Intentionally not importing QuicTransportOptions here
+use runar_keys::{mobile::EnvelopeEncryptedData, Result as KeyResult};
 use runar_schemas::{ActionMetadata, NodeMetadata, ServiceMetadata};
-use runar_serializer::traits::{
-    ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, LabelResolver,
-};
+use runar_serializer::traits::{EnvelopeCrypto, LabelResolverConfig, LabelValue};
 use runar_transporter::transport::MESSAGE_TYPE_REQUEST;
+use rustls_pemfile::{read_all, Item};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer};
 use std::collections::HashMap;
 use std::fs::File;
@@ -17,6 +17,7 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 #[derive(Parser, Debug, Clone)]
 pub struct CommonArgs {
@@ -54,8 +55,8 @@ pub fn read_pem_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
     let mut certs = Vec::new();
-    for item in rustls_pemfile::read_all(&mut &buf[..])? {
-        if let rustls_pemfile::Item::X509Certificate(der) = item {
+    for item in read_all(&mut &buf[..])? {
+        if let Item::X509Certificate(der) = item {
             certs.push(CertificateDer::from(der));
         }
     }
@@ -69,12 +70,12 @@ pub fn read_pem_key(path: &str) -> Result<PrivateKeyDer<'static>> {
     let mut f = File::open(path).with_context(|| format!("open key: {path}"))?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf)?;
-    for item in rustls_pemfile::read_all(&mut &buf[..])? {
+    for item in read_all(&mut &buf[..])? {
         match item {
-            rustls_pemfile::Item::PKCS8Key(der) => {
+            Item::PKCS8Key(der) => {
                 return Ok(PrivateKeyDer::from(PrivatePkcs8KeyDer::from(der)));
             }
-            rustls_pemfile::Item::ECKey(der) => {
+            Item::ECKey(der) => {
                 return Ok(PrivateKeyDer::from(PrivateSec1KeyDer::from(der)));
             }
             _ => {}
@@ -94,38 +95,39 @@ impl EnvelopeCrypto for NoCrypto {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        _network_public_key: Option<&[u8]>,
         _profile_public_keys: Vec<Vec<u8>>,
-    ) -> runar_keys::Result<runar_keys::mobile::EnvelopeEncryptedData> {
+    ) -> KeyResult<EnvelopeEncryptedData> {
         use std::collections::HashMap;
-        Ok(runar_keys::mobile::EnvelopeEncryptedData {
+        Ok(EnvelopeEncryptedData {
             encrypted_data: data.to_vec(),
-            network_id: Some(network_id.unwrap_or("interop").to_string()),
+            network_id: Some("interop".to_string()), // For interop tests, use fixed network ID
             network_encrypted_key: vec![],
             profile_encrypted_keys: HashMap::new(),
         })
     }
 
-    fn decrypt_envelope_data(
-        &self,
-        env: &runar_keys::mobile::EnvelopeEncryptedData,
-    ) -> runar_keys::Result<Vec<u8>> {
+    fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> KeyResult<Vec<u8>> {
         Ok(env.encrypted_data.clone())
+    }
+
+    fn get_network_public_key(&self, _network_id: &str) -> KeyResult<Vec<u8>> {
+        Ok("interop".as_bytes().to_vec())
     }
 }
 
-pub fn default_label_resolver() -> Arc<dyn LabelResolver> {
+pub fn default_label_resolver() -> Arc<LabelResolverConfig> {
     let mut mappings = HashMap::new();
     mappings.insert(
         "interop".to_string(),
-        LabelKeyInfo {
-            profile_public_keys: vec![],
-            network_id: Some("interop".to_string()),
+        LabelValue {
+            network_public_key: Some("interop".as_bytes().to_vec()),
+            user_key_spec: None,
         },
     );
-    Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+    Arc::new(LabelResolverConfig {
         label_mappings: mappings,
-    }))
+    })
 }
 
 pub fn build_node_info(node_id: &str, bind_addr: &SocketAddr) -> NodeInfo {
@@ -177,8 +179,9 @@ pub fn make_echo_request(source_id: &str, dest_id: &str, payload: &[u8]) -> Netw
         payload: NetworkMessagePayloadItem {
             path: topic_echo().as_str().to_string(),
             payload_bytes: payload.to_vec(),
-            correlation_id: uuid::Uuid::new_v4().to_string(),
-            profile_public_key: vec![],
+            correlation_id: Uuid::new_v4().to_string(),
+            network_public_key: None,
+            profile_public_keys: vec![],
         },
     }
 }

@@ -3,11 +3,19 @@
 //! This module provides the core certificate authority functionality and
 //! certificate validation using standard X.509 certificates and ECDSA P-256.
 
-use serde::{Deserialize, Serialize};
+use rand::thread_rng;
+use serde::{
+    de::{Deserializer, Error as DeError},
+    ser::{Error as SerError, Serializer},
+    Deserialize, Serialize,
+};
 use std::time::SystemTime;
 
 // Certificate generation and parsing
-use rcgen::{Certificate as RcgenCertificate, CertificateParams, KeyPair};
+use rcgen::{
+    Certificate as RcgenCertificate, CertificateParams, DistinguishedName, DnType, KeyPair,
+    SanType, PKCS_ECDSA_P256_SHA256,
+};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use x509_parser::prelude::*;
 
@@ -33,7 +41,7 @@ pub struct EcdsaKeyPair {
 impl EcdsaKeyPair {
     /// Generate a new ECDSA P-256 key pair
     pub fn new() -> Result<Self> {
-        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let signing_key = SigningKey::random(&mut thread_rng());
         let verifying_key = VerifyingKey::from(&signing_key);
 
         Ok(Self {
@@ -102,11 +110,11 @@ impl EcdsaKeyPair {
 impl Serialize for EcdsaKeyPair {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
-        let private_key_der = self.private_key_der().map_err(|e| {
-            serde::ser::Error::custom(format!("Failed to serialize private key: {e}"))
-        })?;
+        let private_key_der = self
+            .private_key_der()
+            .map_err(|e| SerError::custom(format!("Failed to serialize private key: {e}")))?;
 
         private_key_der.serialize(serializer)
     }
@@ -115,13 +123,12 @@ impl Serialize for EcdsaKeyPair {
 impl<'de> Deserialize<'de> for EcdsaKeyPair {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         let private_key_der: Vec<u8> = Vec::deserialize(deserializer)?;
 
-        let signing_key = SigningKey::from_pkcs8_der(&private_key_der).map_err(|e| {
-            serde::de::Error::custom(format!("Failed to deserialize private key: {e}"))
-        })?;
+        let signing_key = SigningKey::from_pkcs8_der(&private_key_der)
+            .map_err(|e| DeError::custom(format!("Failed to deserialize private key: {e}")))?;
 
         Ok(Self::from_signing_key(signing_key))
     }
@@ -256,7 +263,7 @@ impl X509Certificate {
 impl Serialize for X509Certificate {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: Serializer,
     {
         self.der_bytes.serialize(serializer)
     }
@@ -265,12 +272,11 @@ impl Serialize for X509Certificate {
 impl<'de> Deserialize<'de> for X509Certificate {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: Deserializer<'de>,
     {
         let der_bytes: Vec<u8> = Vec::deserialize(deserializer)?;
-        Self::from_der(der_bytes).map_err(|e| {
-            serde::de::Error::custom(format!("Failed to deserialize certificate: {e}"))
-        })
+        Self::from_der(der_bytes)
+            .map_err(|e| DeError::custom(format!("Failed to deserialize certificate: {e}")))
     }
 }
 
@@ -461,10 +467,10 @@ impl CertificateRequest {
         let mut params = CertificateParams::new(vec![]);
 
         // Use ECDSA P-256 with SHA-256
-        params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
+        params.alg = &PKCS_ECDSA_P256_SHA256;
 
         // Parse subject DN properly
-        let mut distinguished_name = rcgen::DistinguishedName::new();
+        let mut distinguished_name = DistinguishedName::new();
         let mut cn_value: Option<String> = None;
 
         for component in subject.split(',') {
@@ -475,14 +481,14 @@ impl CertificateRequest {
 
                 match key {
                     "CN" => {
-                        distinguished_name.push(rcgen::DnType::CommonName, value);
+                        distinguished_name.push(DnType::CommonName, value);
                         cn_value = Some(value.to_string());
                     }
-                    "O" => distinguished_name.push(rcgen::DnType::OrganizationName, value),
-                    "C" => distinguished_name.push(rcgen::DnType::CountryName, value),
-                    "ST" => distinguished_name.push(rcgen::DnType::StateOrProvinceName, value),
-                    "L" => distinguished_name.push(rcgen::DnType::LocalityName, value),
-                    "OU" => distinguished_name.push(rcgen::DnType::OrganizationalUnitName, value),
+                    "O" => distinguished_name.push(DnType::OrganizationName, value),
+                    "C" => distinguished_name.push(DnType::CountryName, value),
+                    "ST" => distinguished_name.push(DnType::StateOrProvinceName, value),
+                    "L" => distinguished_name.push(DnType::LocalityName, value),
+                    "OU" => distinguished_name.push(DnType::OrganizationalUnitName, value),
                     _ => {
                         // Skipping unknown DN component in CSR - handled by caller if needed
                     }
@@ -493,7 +499,7 @@ impl CertificateRequest {
         params.distinguished_name = distinguished_name;
         // Ensure SAN present in CSR: include CN as DNS SAN for strict issuance policy
         if let Some(cn) = cn_value {
-            params.subject_alt_names = vec![rcgen::SanType::DnsName(cn)];
+            params.subject_alt_names = vec![SanType::DnsName(cn)];
         }
 
         let rcgen_key_pair = key_pair.to_rcgen_key_pair()?;

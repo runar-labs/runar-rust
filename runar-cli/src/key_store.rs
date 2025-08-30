@@ -4,7 +4,7 @@
 //! key store (Keychain on macOS, Credential Manager on Windows, Secret Service on Linux).
 
 use anyhow::{Context, Result};
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use keyring::Entry;
 use runar_common::logging::Logger;
 use runar_macros_common::log_info;
@@ -31,7 +31,7 @@ impl OsKeyStore {
             Entry::new("runar-node", keys_name).context("Failed to create keyring entry")?;
 
         entry
-            .set_password(&base64::engine::general_purpose::STANDARD.encode(serialized_state))
+            .set_password(&STANDARD.encode(serialized_state))
             .with_context(|| format!("Failed to store keys in OS key store: {keys_name}"))?;
 
         log_info!(
@@ -57,7 +57,7 @@ impl OsKeyStore {
             .get_password()
             .with_context(|| format!("Failed to retrieve keys from OS key store: {keys_name}"))?;
 
-        let serialized_state = base64::engine::general_purpose::STANDARD
+        let serialized_state = STANDARD
             .decode(&encoded_state)
             .with_context(|| format!("Failed to decode keys from OS key store: {keys_name}"))?;
 

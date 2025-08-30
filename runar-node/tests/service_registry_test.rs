@@ -20,7 +20,7 @@ use runar_node::services::service_registry::{ServiceEntry, ServiceRegistry};
 use runar_node::services::{ActionHandler, EventContext, EventRegistrationOptions, RequestContext};
 use runar_serializer::ArcValue;
 
-use crate::fixtures::math_service::MathService;
+use runar_test_utils::fixtures::math_service::MathService;
 
 /// Create a test handler that validates its network ID
 fn create_test_handler(name: &str, expected_network_id: &str) -> ActionHandler {

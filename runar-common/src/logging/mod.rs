@@ -7,7 +7,7 @@
 // - Node ID tracking through logger inheritance
 // - Support for action and event path tracing
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info, warn, Level};
 use once_cell::sync::OnceCell;
 use std::fmt::{self, Arguments, Display, Formatter};
 
@@ -209,7 +209,7 @@ impl Logger {
 
     /// Log a debug message
     pub fn debug(&self, message: impl Into<String>) {
-        if log::log_enabled!(log::Level::Debug) {
+        if log::log_enabled!(Level::Debug) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
                 debug!("[{}] {}", self.node_id(), message.into());
@@ -226,7 +226,7 @@ impl Logger {
 
     /// Log a debug message using fmt::Arguments (avoids allocating message String)
     pub fn debug_args(&self, args: Arguments) {
-        if log::log_enabled!(log::Level::Debug) {
+        if log::log_enabled!(Level::Debug) {
             if self.component == Component::Node && self.parent_component.is_none() {
                 debug!("[{}] {}", self.node_id(), args);
             } else {
@@ -247,7 +247,7 @@ impl Logger {
 
     /// Log an info message
     pub fn info(&self, message: impl Into<String>) {
-        if log::log_enabled!(log::Level::Info) {
+        if log::log_enabled!(Level::Info) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
                 info!("[{}] {}", self.node_id(), message.into());
@@ -264,7 +264,7 @@ impl Logger {
 
     /// Log an info message using fmt::Arguments (avoids allocating message String)
     pub fn info_args(&self, args: Arguments) {
-        if log::log_enabled!(log::Level::Info) {
+        if log::log_enabled!(Level::Info) {
             if self.component == Component::Node && self.parent_component.is_none() {
                 info!("[{}] {}", self.node_id(), args);
             } else {
@@ -285,7 +285,7 @@ impl Logger {
 
     /// Log a static info message without allocation
     pub fn info_static(&self, msg: &'static str) {
-        if log::log_enabled!(log::Level::Info) {
+        if log::log_enabled!(Level::Info) {
             if self.component == Component::Node && self.parent_component.is_none() {
                 info!("[{}] {}", self.node_id(), msg);
             } else {
@@ -306,7 +306,7 @@ impl Logger {
 
     /// Log a warning message
     pub fn warn(&self, message: impl Into<String>) {
-        if log::log_enabled!(log::Level::Warn) {
+        if log::log_enabled!(Level::Warn) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
                 warn!("[{}] {}", self.node_id(), message.into());
@@ -323,7 +323,7 @@ impl Logger {
 
     /// Log a warning using fmt::Arguments
     pub fn warn_args(&self, args: Arguments) {
-        if log::log_enabled!(log::Level::Warn) {
+        if log::log_enabled!(Level::Warn) {
             if self.component == Component::Node && self.parent_component.is_none() {
                 warn!("[{}] {}", self.node_id(), args);
             } else {
@@ -344,7 +344,7 @@ impl Logger {
 
     /// Log an error message
     pub fn error(&self, message: impl Into<String>) {
-        if log::log_enabled!(log::Level::Error) {
+        if log::log_enabled!(Level::Error) {
             // Skip displaying the component if it's Node to avoid redundancy
             if self.component == Component::Node && self.parent_component.is_none() {
                 error!("[{}] {}", self.node_id(), message.into());
@@ -361,7 +361,7 @@ impl Logger {
 
     /// Log an error using fmt::Arguments
     pub fn error_args(&self, args: Arguments) {
-        if log::log_enabled!(log::Level::Error) {
+        if log::log_enabled!(Level::Error) {
             if self.component == Component::Node && self.parent_component.is_none() {
                 error!("[{}] {}", self.node_id(), args);
             } else {
@@ -404,7 +404,7 @@ pub trait LoggingContext {
 
     /// Log at debug level
     fn log_debug(&self, message: String) {
-        if log::log_enabled!(log::Level::Debug) {
+        if log::log_enabled!(Level::Debug) {
             let prefix = self.log_prefix();
             let logger = self.logger();
 
@@ -419,7 +419,7 @@ pub trait LoggingContext {
 
     /// Log at info level
     fn log_info(&self, message: String) {
-        if log::log_enabled!(log::Level::Info) {
+        if log::log_enabled!(Level::Info) {
             let prefix = self.log_prefix();
             let logger = self.logger();
 
@@ -434,7 +434,7 @@ pub trait LoggingContext {
 
     /// Log at warning level
     fn log_warn(&self, message: String) {
-        if log::log_enabled!(log::Level::Warn) {
+        if log::log_enabled!(Level::Warn) {
             let prefix = self.log_prefix();
             let logger = self.logger();
 
@@ -449,7 +449,7 @@ pub trait LoggingContext {
 
     /// Log at error level
     fn log_error(&self, message: String) {
-        if log::log_enabled!(log::Level::Error) {
+        if log::log_enabled!(Level::Error) {
             let prefix = self.log_prefix();
             let logger = self.logger();
 

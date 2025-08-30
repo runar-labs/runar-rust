@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{from_str, to_string_pretty};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -86,7 +87,7 @@ impl NodeConfig {
         let config_content = std::fs::read_to_string(&config_file)
             .with_context(|| format!("Failed to read config file: {config_file:?}"))?;
 
-        let config: NodeConfig = serde_json::from_str(&config_content)
+        let config: NodeConfig = from_str(&config_content)
             .with_context(|| format!("Failed to parse config file: {config_file:?}"))?;
 
         Ok(config)
@@ -96,8 +97,7 @@ impl NodeConfig {
     pub fn save(&self, config_dir: &Path) -> Result<()> {
         let config_file = config_dir.join("config.json");
 
-        let config_content =
-            serde_json::to_string_pretty(self).context("Failed to serialize config")?;
+        let config_content = to_string_pretty(self).context("Failed to serialize config")?;
 
         std::fs::write(&config_file, config_content)
             .with_context(|| format!("Failed to write config file: {config_file:?}"))?;

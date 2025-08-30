@@ -54,3 +54,6 @@ rustc-hash = "1.1"
 sha2 = "0.10"
 prost = "0.12"
 prost-derive = "0.12"
+
+[dev-dependencies]
+tokio-test = "0.4"

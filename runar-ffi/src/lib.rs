@@ -17,7 +17,7 @@ use runar_keys::{
     EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
-use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
+use runar_serializer::traits::LabelResolverConfig;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
@@ -76,8 +76,8 @@ struct KeysInner {
     mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
     node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
 
-    // Optional platform-provided label resolver
-    label_resolver: Option<Arc<dyn LabelResolver>>,
+    // Optional platform-provided label resolver config
+    label_resolver_config: Option<Arc<LabelResolverConfig>>,
     // Local NodeInfo holder (push-updated from FFI)
     local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
     // Shared device keystore registered at FFI level
@@ -279,7 +279,7 @@ struct TransportInner {
         Mutex<
             std::collections::HashMap<
                 String,
-                oneshot::Sender<runar_transporter::transport::ResponseMessage>,
+                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
             >,
         >,
     >,
@@ -362,7 +362,7 @@ pub unsafe extern "C" fn rn_keys_set_label_mapping(
         return 1;
     }
     let slice = std::slice::from_raw_parts(mapping_cbor, len);
-    let mapping: std::collections::HashMap<String, LabelKeyInfo> =
+    let mapping: std::collections::HashMap<String, runar_serializer::traits::LabelValue> =
         match serde_cbor::from_slice(slice) {
             Ok(m) => m,
             Err(e) => {
@@ -374,8 +374,10 @@ pub unsafe extern "C" fn rn_keys_set_label_mapping(
                 return 2;
             }
         };
-    let resolver = runar_serializer::traits::ConfigurableLabelResolver::from_map(mapping);
-    inner.label_resolver = Some(Arc::new(resolver));
+    let resolver_config = runar_serializer::traits::LabelResolverConfig {
+        label_mappings: mapping,
+    };
+    inner.label_resolver_config = Some(Arc::new(resolver_config));
     0
 }
 
@@ -851,7 +853,8 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
     keys: *mut c_void,
     data: *const u8,
     data_len: usize,
-    network_id: *const c_char,
+    network_public_key: *const u8, // ← NETWORK PUBLIC KEY BYTES
+    network_public_key_len: usize,
     profile_pks: *const *const u8,
     profile_lens: *const usize,
     profiles_count: usize,
@@ -921,16 +924,10 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
 
     // Main logic - manager is guaranteed to exist
     let data_slice = std::slice::from_raw_parts(data, data_len);
-    let network_id_opt = if network_id.is_null() {
+    let network_public_key_opt = if network_public_key.is_null() {
         None
     } else {
-        match std::ffi::CStr::from_ptr(network_id).to_str() {
-            Ok(s) => Some(s.to_string()),
-            Err(_) => {
-                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
-                return RN_ERROR_INVALID_UTF8;
-            }
-        }
+        Some(std::slice::from_raw_parts(network_public_key, network_public_key_len).to_vec())
     };
 
     // Process profile keys
@@ -954,7 +951,11 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
         }
     };
 
-    match node_manager.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
+    match node_manager.encrypt_with_envelope(
+        data_slice,
+        network_public_key_opt.as_deref(),
+        profiles,
+    ) {
         Ok(eed) => {
             let cbor = match serde_cbor::to_vec(&eed) {
                 Ok(v) => v,
@@ -990,7 +991,8 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
     keys: *mut c_void,
     data: *const u8,
     data_len: usize,
-    network_id: *const c_char,
+    network_public_key: *const u8, // ← NETWORK PUBLIC KEY BYTES
+    network_public_key_len: usize,
     profile_pks: *const *const u8,
     profile_lens: *const usize,
     profiles_count: usize,
@@ -1060,16 +1062,10 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
 
     // Main logic - manager is guaranteed to exist
     let data_slice = std::slice::from_raw_parts(data, data_len);
-    let network_id_opt = if network_id.is_null() {
+    let network_public_key_opt = if network_public_key.is_null() {
         None
     } else {
-        match std::ffi::CStr::from_ptr(network_id).to_str() {
-            Ok(s) => Some(s.to_string()),
-            Err(_) => {
-                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
-                return RN_ERROR_INVALID_UTF8;
-            }
-        }
+        Some(std::slice::from_raw_parts(network_public_key, network_public_key_len).to_vec())
     };
 
     // Process profile keys
@@ -1093,7 +1089,11 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
         }
     };
 
-    match mobile_manager.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+    match mobile_manager.encrypt_with_envelope(
+        data_slice,
+        network_public_key_opt.as_deref(),
+        profiles,
+    ) {
         Ok(eed) => {
             let cbor = match serde_cbor::to_vec(&eed) {
                 Ok(v) => v,
@@ -2931,7 +2931,7 @@ fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
         logger,
         mobile_key_manager: None,
         node_key_manager: None,
-        label_resolver: None,
+        label_resolver_config: None,
         local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
         persistence_dir: None,
@@ -3575,7 +3575,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         Mutex<
             std::collections::HashMap<
                 String,
-                oneshot::Sender<runar_transporter::transport::ResponseMessage>,
+                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
             >,
         >,
     > = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -3604,19 +3604,25 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             );
             map.insert(
                 serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(req.path),
+                serde_cbor::Value::Text(req.payload.path.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(req.correlation_id),
+                serde_cbor::Value::Text(req.payload.correlation_id.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(req.payload_bytes),
+                serde_cbor::Value::Bytes(req.payload.payload_bytes.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("profile_public_key".into()),
-                serde_cbor::Value::Bytes(req.profile_public_key),
+                serde_cbor::Value::Bytes(
+                    req.payload
+                        .profile_public_keys
+                        .first()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
             );
             let _ = req_tx
                 .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
@@ -3624,10 +3630,17 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
 
             match rx_resp.await {
                 Ok(resp) => Ok(resp),
-                Err(_) => Ok(runar_transporter::transport::ResponseMessage {
-                    correlation_id: String::new(),
-                    payload_bytes: Vec::new(),
-                    profile_public_key: Vec::new(),
+                Err(_) => Ok(runar_transporter::transport::NetworkMessage {
+                    source_node_id: String::new(),
+                    destination_node_id: String::new(),
+                    message_type: 5, // MESSAGE_TYPE_RESPONSE
+                    payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                        path: String::new(),
+                        payload_bytes: Vec::new(),
+                        correlation_id: String::new(),
+                        network_public_key: None,
+                        profile_public_keys: Vec::new(),
+                    },
                 }),
             }
         })
@@ -3649,15 +3662,15 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             );
             map.insert(
                 serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(ev.path),
+                serde_cbor::Value::Text(ev.payload.path.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(ev.correlation_id),
+                serde_cbor::Value::Text(ev.payload.correlation_id.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(ev.payload_bytes),
+                serde_cbor::Value::Bytes(ev.payload.payload_bytes.clone()),
             );
             let _ = ev_tx
                 .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
@@ -3666,10 +3679,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
-    // Attach platform-provided LabelResolver if present
-    if let Some(resolver) = keys_inner.label_resolver.clone() {
-        let _ = options.with_label_resolver(resolver);
-    }
     // Require local NodeInfo to be set before initializing transport
     if keys_inner.local_node_info.load().as_ref().is_none() {
         set_error(
@@ -4013,7 +4022,7 @@ pub unsafe extern "C" fn rn_transport_request(
     let t = (&*handle.inner).transport.clone();
     let events = (&*handle.inner).events_tx.clone();
     runtime().spawn(async move {
-        match t.request(&path, &cid, data, &peer, pk).await {
+        match t.request(&path, &cid, data, &peer, None, vec![pk]).await {
             Ok(resp) => {
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(
@@ -4090,7 +4099,7 @@ pub unsafe extern "C" fn rn_transport_publish(
     let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
     let t = (&*handle.inner).transport.clone();
     runtime().spawn(async move {
-        let _ = t.publish(&path, &cid, data, &peer).await;
+        let _ = t.publish(&path, &cid, data, &peer, None).await;
     });
     0
 }
@@ -4129,10 +4138,17 @@ pub unsafe extern "C" fn rn_transport_complete_request(
     let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
     let mut map = runtime().block_on((&*handle.inner).pending.lock());
     if let Some(sender) = map.remove(&req_id) {
-        let _ = sender.send(runar_transporter::transport::ResponseMessage {
-            correlation_id: String::new(),
-            payload_bytes: data,
-            profile_public_key: pk,
+        let _ = sender.send(runar_transporter::transport::NetworkMessage {
+            source_node_id: String::new(),
+            destination_node_id: String::new(),
+            message_type: 5, // MESSAGE_TYPE_RESPONSE
+            payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                path: String::new(),
+                payload_bytes: data,
+                correlation_id: String::new(),
+                network_public_key: None,
+                profile_public_keys: vec![pk],
+            },
         });
         0
     } else {

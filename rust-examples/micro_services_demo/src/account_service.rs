@@ -83,7 +83,11 @@ impl AccountService {
         };
 
         let _insert_resp: ArcValue = ctx
-            .request("crud_db/insertOne", Some(ArcValue::new_struct(insert_req)))
+            .request(
+                "crud_db/insertOne",
+                Some(ArcValue::new_struct(insert_req)),
+                None,
+            )
             .await?;
 
         ctx.info(format!(
@@ -108,7 +112,11 @@ impl AccountService {
         };
 
         let find_resp: ArcValue = ctx
-            .request("crud_db/findOne", Some(ArcValue::new_struct(find_req)))
+            .request(
+                "crud_db/findOne",
+                Some(ArcValue::new_struct(find_req)),
+                None,
+            )
             .await?;
 
         // Extract the document from response

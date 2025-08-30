@@ -77,6 +77,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'",
             ))),
+            None,
         )
         .await?;
 
@@ -90,6 +91,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "INSERT INTO users (name, email) VALUES ('John Doe', 'john@example.com')",
             ))),
+            None,
         )
         .await?;
 
@@ -103,6 +105,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM users WHERE name = 'John Doe'",
             ))),
+            None,
         )
         .await?;
 
@@ -116,6 +119,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM users_Events WHERE operation_type = 'create'",
             ))),
+            None,
         )
         .await?;
 
@@ -133,6 +137,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM users_Events WHERE processed = 1",
             ))),
+            None,
         )
         .await?;
 
@@ -159,6 +164,7 @@ async fn test_sqlite_service_with_replication_single_node() -> Result<()> {
                     from_by_origin: Vec::new(),
                 },
             )),
+            None,
         )
         .await?;
 
@@ -234,6 +240,7 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "INSERT INTO users (name) VALUES ('Jane Doe')",
             ))),
+            None,
         )
         .await?;
 
@@ -247,6 +254,7 @@ async fn test_sqlite_service_without_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'",
             ))),
+            None,
         )
         .await?;
 
@@ -327,6 +335,7 @@ async fn test_replication_event_database_application() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
 
@@ -360,6 +369,7 @@ async fn test_replication_event_database_application() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='users_Events'",
             ))),
+            None,
         )
         .await?;
 
@@ -381,6 +391,7 @@ async fn test_replication_event_database_application() -> Result<()> {
                     from_by_origin: Vec::new(),
                 },
             )),
+            None,
         )
         .await?;
 
@@ -404,6 +415,7 @@ async fn test_replication_event_database_application() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "INSERT INTO users (name, email) VALUES ('Local User', 'local@example.com')",
             ))),
+            None,
         )
         .await?;
 
@@ -417,6 +429,7 @@ async fn test_replication_event_database_application() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users_Events",
             ))),
+            None,
         )
         .await?;
 
@@ -445,6 +458,7 @@ async fn test_replication_event_database_application() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM users WHERE name = 'Local User'",
             ))),
+            None,
         )
         .await?;
 
@@ -546,7 +560,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
                 .with_value(runar_services::sqlite::Value::Text(replication_event.source_node_id.clone()))
                 .with_value(runar_services::sqlite::Value::Boolean(false)) // Mark as unprocessed
             )
-        )))
+        ))  , None)
         .await?;
 
     let affected_rows: i64 = *store_result.as_type_ref::<i64>().unwrap();
@@ -559,6 +573,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'",
             ))),
+            None,
         )
         .await?;
 
@@ -597,6 +612,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "UPDATE users_Events SET processed = TRUE WHERE id = 'test-event-processed-1'",
             ))),
+            None,
         )
         .await?;
 
@@ -610,6 +626,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'",
             ))),
+            None,
         )
         .await?;
 
@@ -649,6 +666,7 @@ async fn test_mark_event_processed_functionality() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT processed FROM users_Events WHERE id = 'test-event-processed-1'",
             ))),
+            None,
         )
         .await?;
 

@@ -16,12 +16,24 @@ run cargo clippy -p runar_node --all-targets --all-features -- -D warnings
 ## 📝 **Code Quality Standards**
 - **Compilation**: `cargo check` must pass
 - **Clippy**: `cargo clippy --all-targets --all-features -- -D warnings` must pass
+- **Absolute Paths Check**: `cargo clippy --workspace -- -W clippy::absolute_paths` must pass
 - **Tests**: `cargo test --all` must pass
 - **Formatting**: 
  - Use `format!("Error: {e}")` not `format!("Error: {}", e)` -  run cargo fmt --all at the end of every task.
- - Use proper inmports, do not do let context = runar_serializer::SerializationContext {...} import the type and use  let context = SerializationContext{...}
+ - Use proper imports, do not do `let context = runar_serializer::SerializationContext {...}` import the type and use `let context = SerializationContext{...}`
 
-ALWAYS RUN  cargo fmt --all before u run cargo clippy --all-targets --all-features -- -D warnings  .. to make sure code is properlyformated.
+**IMPORTANT: Use ONLY IDE tools for code changes**
+- **NO command line tools** (sed, grep, etc.)
+- **NO Python scripts**
+- **NO bulk find/replace operations**
+- **Change line by line** using IDE features
+- **If IDE tools fail repeatedly, stop and notify user to restart IDE**
+
+ALWAYS RUN `cargo fmt --all` before running Clippy commands to ensure code is properly formatted.
+
+**After implementing features, run BOTH Clippy commands:**
+1. `cargo clippy --workspace --all-targets --all-features -- -D warnings` (critical issues)
+2. `cargo clippy --workspace -- -W clippy::absolute_paths` (qualified path violations)
 
 Always add timeout to test commands to make sure it does not run foerever incase of race conditionsn that makes teh code run indefinitvely.
 

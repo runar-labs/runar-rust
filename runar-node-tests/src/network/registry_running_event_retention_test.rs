@@ -4,7 +4,7 @@ use runar_node::{node::Node, DiscoveryOptions};
 use runar_test_utils::create_networked_node_test_config;
 use std::time::Duration;
 
-use crate::fixtures::math_service::MathService;
+use runar_test_utils::fixtures::math_service::MathService;
 
 #[tokio::test]
 async fn test_remote_service_running_event_include_past() -> Result<()> {

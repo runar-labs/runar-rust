@@ -3812,6 +3812,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-test",
  "tracing",
  "uuid",
 ]
@@ -4024,6 +4025,7 @@ name = "runar_test_utils"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bincode",
  "rand 0.8.5",
  "runar-keys",

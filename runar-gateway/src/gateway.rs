@@ -5,9 +5,9 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router,
+    serve, Router,
 };
-use runar_node::services::{EventContext, LifecycleContext};
+use runar_node::services::{EventContext, EventRegistrationOptions, LifecycleContext};
 use runar_node::AbstractService;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::ArcValue;
@@ -15,7 +15,7 @@ use serde_json::{json, Value as JsonValue};
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex}; // Renamed to avoid conflict if any
-use tokio::sync::oneshot;
+use tokio::{net::TcpListener, spawn, sync::oneshot};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
@@ -91,7 +91,7 @@ impl GatwayService {
                 get(move |State(ctx): State<LifecycleContext>| async move {
                     let req_path = format!("{service_path_clone}/{action_name_clone}");
                     let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
-                    match ctx.request(req_path, None::<ArcValue>).await {
+                    match ctx.request(req_path, None::<ArcValue>, None).await {
                         Ok(arc_value) => {
                             let json_value = arc_value
                                 .to_json()
@@ -128,7 +128,7 @@ impl GatwayService {
 
                         let req_path_for_json_err = req_path.clone(); // Clone for use in error handling closure
                         match ctx
-                            .request(req_path, Some(request_arc_value))
+                            .request(req_path, Some(request_arc_value), None)
                             .await
                         {
                             Ok(arc_value) => {
@@ -225,7 +225,7 @@ impl AbstractService for GatwayService {
                         })
                     },
                 ),
-                Some(runar_node::services::EventRegistrationOptions::default()),
+                Some(EventRegistrationOptions::default()),
             )
             .await
             .map_err(|e| anyhow!("Failed to subscribe to $registry/service/added: {}", e))?;
@@ -257,7 +257,7 @@ impl AbstractService for GatwayService {
         ));
 
         match context
-            .request("$registry/services/list", None::<ArcValue>)
+            .request("$registry/services/list", None::<ArcValue>, None)
             .await
         {
             Ok(services_arc_value) => {
@@ -312,9 +312,9 @@ impl AbstractService for GatwayService {
 
         let server_name_for_shutdown = self.name.clone();
         let server_name_for_error = self.name.clone();
-        tokio::spawn(async move {
-            axum::serve(
-                tokio::net::TcpListener::bind(addr).await.unwrap(),
+        spawn(async move {
+            serve(
+                TcpListener::bind(addr).await.unwrap(),
                 app.into_make_service(),
             )
             .with_graceful_shutdown(async move {

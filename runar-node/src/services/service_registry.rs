@@ -29,7 +29,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::services::abstract_service::{AbstractService, ServiceState};
-use crate::services::{ActionHandler, EventContext, EventRegistrationOptions, RemoteService};
+use crate::services::{
+    ActionHandler, EventContext, EventRegistrationOptions, RegistryDelegate, RemoteService,
+};
 use runar_common::logging::Logger;
 use runar_common::routing::{PathTrie, TopicPath};
 use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
@@ -1154,7 +1156,7 @@ impl ServiceRegistry {
 }
 
 #[async_trait::async_trait]
-impl crate::services::RegistryDelegate for ServiceRegistry {
+impl RegistryDelegate for ServiceRegistry {
     async fn get_local_service_state(&self, service_path: &TopicPath) -> Option<ServiceState> {
         self.get_local_service_state(service_path).await
     }

@@ -2,8 +2,7 @@
 mod tests {
     use std::collections::HashMap;
 
-    use runar_common::routing::PathTrie;
-    use runar_node::TopicPath;
+    use runar_common::routing::{PathTrie, TopicPath};
 
     #[test]
     fn test_path_trie_template_match() {

@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(chrono::Utc::now().timestamp()))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *insert_user_result.as_type_ref::<i64>().unwrap();
@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(chrono::Utc::now().timestamp()))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *insert_post_result.as_type_ref::<i64>().unwrap();
@@ -163,6 +163,7 @@ async fn main() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM users",
             ))),
+            None,
         )
         .await?;
 
@@ -192,6 +193,7 @@ async fn main() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM posts",
             ))),
+            None,
         )
         .await?;
 
@@ -220,7 +222,7 @@ async fn main() -> Result<()> {
     let users_events_result = node
         .request("sqlite/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT operation_type, record_id, timestamp FROM users_Events ORDER BY sequence_number")
-        )))
+        )), None)
         .await?;
 
     let users_events: Vec<ArcValue> =
@@ -257,7 +259,7 @@ async fn main() -> Result<()> {
     let posts_events_result = node
         .request("sqlite/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT operation_type, record_id, timestamp FROM posts_Events ORDER BY sequence_number")
-        )))
+        )), None)
         .await?;
 
     let posts_events: Vec<ArcValue> =
@@ -300,6 +302,7 @@ async fn main() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "UPDATE users SET email = 'john.doe@example.com' WHERE username = 'john_doe'",
             ))),
+            None,
         )
         .await?;
 
@@ -310,7 +313,7 @@ async fn main() -> Result<()> {
     let updated_users_events_result = node
         .request("sqlite/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT operation_type, record_id, timestamp FROM users_Events ORDER BY sequence_number")
-        )))
+        )), None)
         .await?;
 
     let updated_users_events: Vec<ArcValue> = (*updated_users_events_result
