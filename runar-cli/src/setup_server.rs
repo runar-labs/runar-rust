@@ -1,14 +1,17 @@
-//! Setup server for mobile device communication
+//! Setup server for mobile device certificate exchange
 //!
-//! This module implements a simple TCP server that waits for mobile devices
-//! to send certificate messages and network key messages during the node initialization process.
+//! This module provides a simple TCP server that waits for mobile devices to
+//! send certificate and network key messages during the node initialization process.
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use runar_common::logging::Logger;
 use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage};
 use runar_macros_common::{log_debug, log_error, log_info};
+use serde::de::DeserializeOwned;
+use serde_cbor::from_slice;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::wrappers::TcpListenerStream;
 
@@ -105,7 +108,7 @@ impl SetupServer {
 
     async fn read_message<T>(&self, socket: &TcpStream) -> Result<T>
     where
-        T: serde::de::DeserializeOwned,
+        T: DeserializeOwned,
     {
         const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB limit to prevent DoS
 
@@ -193,7 +196,7 @@ impl SetupServer {
 
         // Deserialize the message (CBOR)
         let message: T =
-            serde_cbor::from_slice(&message_bytes).context("Failed to deserialize CBOR message")?;
+            from_slice(&message_bytes).context("Failed to deserialize CBOR message")?;
 
         log_debug!(self.logger, "Message deserialized successfully");
 

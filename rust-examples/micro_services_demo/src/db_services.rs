@@ -1,3 +1,4 @@
+use runar_services::crud_sqlite::CrudSqliteService;
 use runar_services::sqlite::{
     ColumnDefinition, DataType, Schema as SqliteSchema, SqliteConfig, SqliteService,
     TableDefinition,
@@ -191,10 +192,7 @@ pub fn create_database_schema() -> SqliteSchema {
 }
 
 /// Setup database services for the microservices demo
-pub fn setup_database_services() -> (
-    SqliteService,
-    runar_services::crud_sqlite::CrudSqliteService,
-) {
+pub fn setup_database_services() -> (SqliteService, CrudSqliteService) {
     // Create database schema
     let schema = create_database_schema();
 
@@ -203,12 +201,7 @@ pub fn setup_database_services() -> (
     let sqlite_service = SqliteService::new("sqlite_service", "internal_db", sqlite_config);
 
     // Setup CrudSqliteService
-    let crud_service = runar_services::crud_sqlite::CrudSqliteService::new(
-        "crud_service",
-        "crud_db",
-        "internal_db",
-        schema,
-    );
+    let crud_service = CrudSqliteService::new("crud_service", "crud_db", "internal_db", schema);
 
     (sqlite_service, crud_service)
 }

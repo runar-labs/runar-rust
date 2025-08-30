@@ -4,11 +4,15 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use env_logger;
 use log::LevelFilter;
 use runar_macros_common::{log_debug, log_info};
 use runar_schemas::NodeInfo;
 use runar_transporter::transport::{EventCallback, NetworkTransport, RequestCallback};
-use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
+use runar_transporter::transport::{
+    NetworkMessage, NetworkMessagePayloadItem, QuicTransport, QuicTransportOptions,
+    MESSAGE_TYPE_RESPONSE,
+};
 // no-op
 
 use runar_transport_tests::quic_interop_common::{
@@ -51,11 +55,11 @@ async fn main() -> Result<()> {
                 "server received request from {}",
                 req.payload.correlation_id
             );
-            Ok(runar_transporter::transport::NetworkMessage {
+            Ok(NetworkMessage {
                 source_node_id: String::new(),
                 destination_node_id: req.source_node_id,
-                message_type: 5, // MESSAGE_TYPE_RESPONSE
-                payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
                     path: req.payload.path.clone(),
                     payload_bytes: req.payload.payload_bytes.clone(),
                     correlation_id: req.payload.correlation_id.clone(),
@@ -97,14 +101,8 @@ async fn main() -> Result<()> {
 
     let transport = Arc::new(QuicTransport::new(opts).map_err(|e| anyhow::anyhow!("{e}"))?);
     transport.clone().start().await?;
-    log_info!(
-        logger,
-        "quic_interop_server listening on {}",
-        transport.get_local_address()
-    );
-
-    // Run until SIGINT/SIGTERM; for simplicity sleep forever
-    loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-    }
+    log_info!(logger, "server started on {}", bind_addr);
+    // Keep server running
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    Ok(())
 }

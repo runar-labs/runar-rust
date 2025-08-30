@@ -6,6 +6,8 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use dirs::home_dir;
+use env_logger::init;
 use runar_common::logging::{Component, Logger};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -57,7 +59,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    env_logger::init();
+    init();
 
     let cli = Cli::parse();
 
@@ -66,7 +68,7 @@ async fn main() -> Result<()> {
 
     // Determine config directory
     let config_dir = cli.config_dir.unwrap_or_else(|| {
-        dirs::home_dir()
+        home_dir()
             .expect("Could not determine home directory")
             .join(".runar")
     });

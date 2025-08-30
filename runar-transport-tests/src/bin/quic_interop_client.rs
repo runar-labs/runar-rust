@@ -4,13 +4,18 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use env_logger;
 use log::LevelFilter;
-use runar_macros_common::log_info;
+use runar_macros_common::{log_debug, log_error, log_info};
 use runar_schemas::NodeInfo;
 use runar_serializer::ArcValue;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::transport::{EventCallback, NetworkTransport, RequestCallback};
-use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
+use runar_transporter::transport::{
+    NetworkMessage, NetworkMessagePayloadItem, QuicTransport, QuicTransportOptions,
+    MESSAGE_TYPE_RESPONSE,
+};
+use uuid::Uuid;
 
 use runar_transport_tests::quic_interop_common::{
     build_node_info, default_logger, make_echo_request, read_pem_certs, read_pem_key, topic_echo,
@@ -49,11 +54,11 @@ async fn main() -> Result<()> {
     // Simple handlers; client mostly initiates request and event
     let request_handler: RequestCallback = Arc::new(move |_req| {
         Box::pin(async move {
-            Ok(runar_transporter::transport::NetworkMessage {
+            Ok(NetworkMessage {
                 source_node_id: String::new(),
                 destination_node_id: String::new(),
-                message_type: runar_transporter::transport::MESSAGE_TYPE_RESPONSE,
-                payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                message_type: MESSAGE_TYPE_RESPONSE,
+                payload: NetworkMessagePayloadItem {
                     path: String::new(),
                     correlation_id: "".to_string(),
                     payload_bytes: vec![],
@@ -86,7 +91,7 @@ async fn main() -> Result<()> {
 
     // Connect to peer using its node_id DNS-safe via SNI. For interop, we derive peer node id from SNI host expectation
     // Here we synthesize PeerInfo with peer address and a dummy public key bytes representing peer id string.
-    let _peer_node_id = args.peer.as_ref().unwrap().to_string();
+    let peer_node_id = args.peer.as_ref().unwrap().to_string();
     // In real flow, peer id is compact_id(pubkey). For interop, use provided --node-id if present for peer via env? For now, use "swift-server".
     let remote_id = "swift-server".to_string();
     let peer_info = PeerInfo {
@@ -101,10 +106,10 @@ async fn main() -> Result<()> {
     let payload_bytes = b"hello from rust".to_vec();
 
     // We need the destination id as the peer compact id; we used remote_id above.
-    let _ = make_echo_request(&node_id, &remote_id, &payload_bytes);
+    let request = make_echo_request(&node_id, &peer_node_id, b"hello from rust client");
     // Use high-level request API by embedding payload into ArcValue and relying on transport serialization
     let av = ArcValue::new_json(serde_json::json!({ "msg": "hello" }));
-    let correlation_id = uuid::Uuid::new_v4().to_string();
+    let correlation_id = Uuid::new_v4().to_string();
     let _ = transport
         .request(
             topic.as_str(),
@@ -118,7 +123,8 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow!("request failed: {e}"))?;
 
     // Also send a one-way event
-    let event_correlation_id = uuid::Uuid::new_v4().to_string();
+    let event_correlation_id = Uuid::new_v4().to_string();
+    let event = make_echo_request(&node_id, &peer_node_id, b"event from rust client");
     transport
         .publish(
             topic.as_str(),

@@ -3,8 +3,8 @@
 // This module provides configuration options for logging in the Runar system.
 
 use super::Component;
-use log::LevelFilter;
 use env_logger::{Builder, TimestampPrecision};
+use log::LevelFilter;
 use std::collections::HashMap;
 
 /// Logging configuration options

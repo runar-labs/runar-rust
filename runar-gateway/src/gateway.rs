@@ -5,9 +5,9 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router,
+    serve, Router,
 };
-use runar_node::services::{EventContext, LifecycleContext};
+use runar_node::services::{EventContext, EventRegistrationOptions, LifecycleContext};
 use runar_node::AbstractService;
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::ArcValue;
@@ -15,7 +15,7 @@ use serde_json::{json, Value as JsonValue};
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex}; // Renamed to avoid conflict if any
-use tokio::sync::oneshot;
+use tokio::{net::TcpListener, spawn, sync::oneshot};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 
@@ -225,7 +225,7 @@ impl AbstractService for GatwayService {
                         })
                     },
                 ),
-                Some(runar_node::services::EventRegistrationOptions::default()),
+                Some(EventRegistrationOptions::default()),
             )
             .await
             .map_err(|e| anyhow!("Failed to subscribe to $registry/service/added: {}", e))?;
@@ -312,9 +312,9 @@ impl AbstractService for GatwayService {
 
         let server_name_for_shutdown = self.name.clone();
         let server_name_for_error = self.name.clone();
-        tokio::spawn(async move {
-            axum::serve(
-                tokio::net::TcpListener::bind(addr).await.unwrap(),
+        spawn(async move {
+            serve(
+                TcpListener::bind(addr).await.unwrap(),
                 app.into_make_service(),
             )
             .with_graceful_shutdown(async move {

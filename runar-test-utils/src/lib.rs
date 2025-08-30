@@ -4,13 +4,14 @@
 // in production builds. All functions in this crate are for testing only.
 
 use anyhow::Result;
+use rand::{thread_rng, Rng};
 use runar_common::compact_ids;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
 use runar_node::NodeConfig;
 use runar_serializer::traits::{
-    create_context_label_resolver, ConfigurableLabelResolver, LabelKeyword, LabelResolverConfig,
-    LabelValue,
+    create_context_label_resolver, ConfigurableLabelResolver, EnvelopeCrypto, LabelKeyword,
+    LabelResolverConfig, LabelValue, SerializationContext,
 };
 use runar_transporter::{
     discovery::DiscoveryOptions,
@@ -88,14 +89,14 @@ pub fn create_test_label_resolver(
 
 /// Create a test SerializationContext with dynamic resolver
 pub fn create_test_serialization_context(
-    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
+    keystore: Arc<dyn EnvelopeCrypto>,
     network_public_key: Vec<u8>,
     user_profile_keys: Option<Vec<Vec<u8>>>,
-) -> Result<runar_serializer::traits::SerializationContext> {
+) -> Result<SerializationContext> {
     let resolver =
         create_test_label_resolver(network_public_key.clone(), user_profile_keys.clone())?;
 
-    Ok(runar_serializer::traits::SerializationContext {
+    Ok(SerializationContext {
         keystore,
         resolver,
         network_public_key,
@@ -193,7 +194,7 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
         .get_ca_certificate()
         .to_rustls_certificate();
     // Assign a unique multicast port for this test instance to isolate from other tests
-    let unique_port: u16 = 47000 + (rand::random::<u16>() % 1000);
+    let unique_port: u16 = 47000 + (thread_rng().gen::<u16>() % 1000);
     let unique_group = format!("239.255.42.98:{unique_port}");
 
     let mut configs = Vec::new();
