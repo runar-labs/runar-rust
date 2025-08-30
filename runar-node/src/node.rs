@@ -15,7 +15,7 @@ use runar_keys::{
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
-use runar_serializer::traits::{create_context_label_resolver, LabelResolverConfig, LabelValue};
+use runar_serializer::traits::{LabelResolverConfig, LabelValue, ResolverCache, ConfigurableLabelResolver};
 use runar_serializer::{ArcValue, SerializationContext};
 use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
 use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
@@ -527,6 +527,9 @@ pub struct Node {
     /// System label configuration for dynamic resolver creation
     system_label_config: Arc<LabelResolverConfig>,
 
+    /// Per-node label resolver cache for better concurrency and isolation
+    label_resolver_cache: Arc<ResolverCache>,
+
     registry_version: Arc<AtomicI64>,
 
     keys_manager: Arc<StdRwLock<NodeKeyManager>>,
@@ -673,6 +676,7 @@ impl Node {
             load_balancer: Arc::new(RwLock::new(RoundRobinLoadBalancer::new())),
             // pending_requests: Arc::new(DashMap::new()),
             system_label_config: Arc::new(config.label_resolver_config),
+            label_resolver_cache: Arc::new(ResolverCache::new(1000, Duration::from_secs(300))),
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager,
             service_tasks: Arc::new(RwLock::new(Vec::new())),
@@ -694,6 +698,17 @@ impl Node {
         node.add_service(keys_service).await?;
 
         Ok(node)
+    }
+
+    /// Get or create resolver using node's cache instance
+    fn get_or_create_resolver(
+        &self,
+        user_profile_keys: &[Vec<u8>],
+    ) -> Result<Arc<ConfigurableLabelResolver>> {
+        self.label_resolver_cache.get_or_create(
+            &self.system_label_config,
+            user_profile_keys,
+        )
     }
 
     /// Add a service to this node.
@@ -1854,10 +1869,7 @@ impl Node {
 
                 // Create dynamic resolver with user context for response serialization
                 // For response serialization, we can use a system-only resolver since we're not encrypting new data
-                let resolver = create_context_label_resolver(
-                    &self.system_label_config,
-                    &profile_public_keys, // Empty vec is fine for system-only resolver
-                )?;
+                let resolver = self.get_or_create_resolver(&profile_public_keys)?;
 
                 let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
@@ -1888,10 +1900,7 @@ impl Node {
 
                 // Create dynamic resolver with user context for error response serialization
                 // For error response serialization, we can use a system-only resolver since we're not encrypting new data
-                let resolver = create_context_label_resolver(
-                    &self.system_label_config,
-                    &profile_public_keys, // Empty vec is fine for system-only resolver
-                )?;
+                let resolver = self.get_or_create_resolver(&profile_public_keys)?;
 
                 let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
@@ -2420,6 +2429,7 @@ impl Node {
                     logger: self.logger.clone(),
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
                     label_resolver_config: self.system_label_config.clone(),
+                    label_resolver_cache: self.label_resolver_cache.clone(),
                 };
 
                 if let Ok(remote_services) =
@@ -2561,10 +2571,7 @@ impl Node {
                 .get_network_public_key(&network_id)?;
             // Create dynamic resolver for remote subscription (system context)
             let empty_profile_keys = vec![];
-            let resolver = create_context_label_resolver(
-                &self.system_label_config,
-                &empty_profile_keys, // No user context for system operations
-            )?;
+            let resolver = self.get_or_create_resolver(&empty_profile_keys)?;
 
             let serialization_context = SerializationContext {
                 keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
@@ -2662,6 +2669,7 @@ impl Node {
             logger: self.logger.clone(),
             keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
             label_resolver_config: self.system_label_config.clone(),
+            label_resolver_cache: self.label_resolver_cache.clone(),
         };
 
         let remote_services =
@@ -2779,10 +2787,7 @@ impl Node {
                     .get_network_public_key(&network_id)?;
                 // Create dynamic resolver for remote subscription (system context)
                 let empty_profile_keys = vec![];
-                let resolver = create_context_label_resolver(
-                    &self.system_label_config,
-                    &empty_profile_keys, // No user context for system operations
-                )?;
+                let resolver = self.get_or_create_resolver(&empty_profile_keys)?;
 
                 let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
@@ -3475,6 +3480,7 @@ impl Clone for Node {
             load_balancer: self.load_balancer.clone(),
             // pending_requests: self.pending_requests.clone(),
             system_label_config: self.system_label_config.clone(),
+            label_resolver_cache: self.label_resolver_cache.clone(),
             registry_version: self.registry_version.clone(),
             keys_manager: self.keys_manager.clone(),
 

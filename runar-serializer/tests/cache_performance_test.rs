@@ -319,47 +319,10 @@ fn create_test_config() -> LabelResolverConfig {
     LabelResolverConfig { label_mappings }
 }
 
-/// Test the global cache functionality
-#[test]
-#[ignore] // Temporarily disabled - cache implementation removed for now
-fn test_global_cache_functionality() -> Result<()> {
-    println!("🧪 Testing Global Cache Functionality");
 
-    // Test 1: Get global cache
-    let cache1 = get_global_cache();
-    let cache2 = get_global_cache();
-    assert!(
-        std::ptr::eq(cache1.as_ref(), cache2.as_ref()),
-        "Global cache should be singleton"
-    );
-    println!("   ✅ Global cache singleton working");
-
-    // Test 2: Set custom cache
-    let custom_cache = ResolverCache::new(50, Duration::from_secs(60));
-    set_global_cache(custom_cache);
-    let _custom_cache_instance = get_global_cache();
-    println!("   ✅ Custom cache set successfully");
-
-    // Test 3: Clear cache
-    clear_global_cache();
-    let stats_after_clear = get_cache_stats();
-    assert!(
-        stats_after_clear.is_none() || stats_after_clear.unwrap().total_entries == 0,
-        "Cache should be empty after clear"
-    );
-    println!("   ✅ Cache clear working");
-
-    // Test 4: Cleanup expired
-    let cleanup_count = cleanup_global_cache();
-    println!("   ✅ Cleanup expired returned: {cleanup_count}");
-
-    println!("✅ Global cache functionality tests completed!");
-    Ok(())
-}
 
 /// Test cache statistics and metrics
 #[test]
-#[ignore] // Temporarily disabled - cache implementation removed for now
 fn test_cache_statistics() -> Result<()> {
     println!("📊 Testing Cache Statistics");
 

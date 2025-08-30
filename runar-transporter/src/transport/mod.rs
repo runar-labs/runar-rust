@@ -70,8 +70,8 @@ impl TransportOptions {
 
 /// Find a free port in the given range using a randomized approach
 pub fn pick_free_port(port_range: Range<u16>) -> Option<u16> {
-    use rand::Rng;
-    let mut rng = rand::rng();
+    use rand::{rngs::ThreadRng, Rng};
+    let mut rng = ThreadRng::default();
     let range_size = port_range.end - port_range.start;
 
     // Limit number of attempts to avoid infinite loops

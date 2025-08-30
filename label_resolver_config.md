@@ -1103,14 +1103,7 @@ encrypt_key_with_ecdsa(envelope_key, network_public_key_bytes)
 
 #### **Current encrypt_with_envelope API:**
 ```rust
-pub trait EnvelopeCrypto: Send + Sync {
-    fn encrypt_with_envelope(
-        &self,
-        data: &[u8],
-        network_id: Option<&str>,           // ← NETWORK ID
-        profile_public_keys: Vec<Vec<u8>>,
-    ) -> Result<EnvelopeEncryptedData>;
-}
+pub trait EnvelopeCrypto: Send + Sync { ... }
 ```
 
 ### **Proposed Architecture (Network Public Key in API)**
@@ -1132,14 +1125,7 @@ DIRECT: encrypt_key_with_ecdsa(envelope_key, network_public_key_bytes)
 
 #### **Proposed encrypt_with_envelope API:**
 ```rust
-pub trait EnvelopeCrypto: Send + Sync {
-    fn encrypt_with_envelope(
-        &self,
-        data: &[u8],
-        network_public_key: Option<&[u8]>,  // ← NETWORK PUBLIC KEY
-        profile_public_keys: Vec<Vec<u8>>,
-    ) -> Result<EnvelopeEncryptedData>;
-}
+pub trait EnvelopeCrypto: Send + Sync { ... }
 ```
 
 ### **Breaking Changes Impact Analysis**
@@ -2679,3 +2665,812 @@ pub struct SerializationContext {
 2. **Simplicity**: No trait objects, easier to understand and debug
 3. **Memory**: No vtable overhead, better cache efficiency
 4. **Maintainability**: Simpler codebase with fewer abstractions
+
+## 🚀 **Phase 10: Cache Integration Implementation Plan - COMPREHENSIVE ANALYSIS**
+
+### **Executive Summary**
+
+**GOAL**: Integrate the existing label resolver cache throughout the entire codebase to replace all direct calls to `create_context_label_resolver()` with cached resolver retrieval.
+
+**CURRENT STATUS**: 
+- ✅ **Cache Implementation Complete** - `ResolverCache` with global instance implemented in `runar-serializer/src/traits.rs`
+- ✅ **Cache Performance Verified** - 31.3x speedup for cache hits, TTL expiration, LRU eviction working
+- ❌ **Cache NOT USED** - All code still calls `create_context_label_resolver()` directly
+- ❌ **Performance Opportunity Lost** - No caching benefits in production code
+
+**IMPACT**: **HIGH** - Major performance improvement across all label resolver usage, affecting request processing, serialization, and transport operations.
+
+### **Cache Architecture Analysis**
+
+#### **Current Cache Implementation**
+
+**Location**: `runar-serializer/src/traits.rs` (lines 300-625)
+
+**Key Components**:
+1. **`ResolverCache`** - Main cache implementation with TTL and LRU eviction
+2. **`GLOBAL_CACHE`** - Singleton global cache instance using `OnceLock<Arc<ResolverCache>>`
+3. **`get_global_cache()`** - Accessor function for global cache
+4. **`get_or_create()`** - Main method that checks cache first, creates if needed
+
+**Cache Key Strategy**: 
+- **Simplified approach**: Only hash `user_profile_keys` (config changes are rare)
+- **Cache invalidation**: `clear_global_cache()` handles config changes
+- **Performance**: 31.3x speedup for cache hits vs. direct creation
+
+**Cache Features**:
+- ✅ **TTL-based expiration**: Automatic cleanup of expired entries
+- ✅ **LRU eviction**: Size limit enforcement with least-recently-used policy
+- ✅ **Concurrent access**: Thread-safe operations using DashMap
+- ✅ **Performance metrics**: Comprehensive statistics and monitoring
+- ✅ **Global singleton**: Easy access throughout the codebase
+
+### **Comprehensive Usage Analysis - All Files Requiring Updates**
+
+#### **1. Core Node Layer (runar-node) - HIGH IMPACT**
+
+**Files Affected**:
+- `runar-node/src/node.rs` - **4 locations** requiring cache integration
+
+**Specific Usage Locations**:
+
+**A. Network Request Handler (Line 1856)**
+```rust
+// CURRENT (NO CACHE):
+let resolver = create_context_label_resolver(
+    &self.system_label_config,
+    &profile_public_keys,
+)?;
+
+// REQUIRED CHANGE:
+let resolver = get_global_cache().get_or_create(
+    &self.system_label_config,
+    &profile_public_keys,
+)?;
+```
+
+**B. Error Response Handler (Line 1890)**
+```rust
+// CURRENT (NO CACHE):
+let resolver = create_context_label_resolver(
+    &self.system_label_config,
+    &profile_public_keys,
+)?;
+
+// REQUIRED CHANGE:
+let resolver = get_global_cache().get_or_create(
+    &self.system_label_config,
+    &profile_public_keys,
+)?;
+```
+
+**C. Remote Subscription Handler (Line 2563)**
+```rust
+// CURRENT (NO CACHE):
+let resolver = create_context_label_resolver(
+    &self.system_label_config,
+    &empty_profile_keys,
+)?;
+
+// REQUIRED CHANGE:
+let resolver = get_global_cache().get_or_create(
+    &self.system_label_config,
+    &empty_profile_keys,
+)?;
+```
+
+**D. Event Forwarding Handler (Line 2781)**
+```rust
+// CURRENT (NO CACHE):
+let resolver = create_context_label_resolver(
+    &self.system_label_config,
+    &profile_public_keys,
+)?;
+
+// REQUIRED CHANGE:
+let resolver = get_global_cache().get_or_create(
+    &self.system_label_config,
+    &profile_public_keys,
+)?;
+```
+
+**Required Changes**:
+1. **Add import**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace all 4 calls** with `get_global_cache().get_or_create()`
+3. **Update error handling** to handle cache errors gracefully
+
+#### **2. Remote Service Layer (runar-node) - HIGH IMPACT**
+
+**Files Affected**:
+- `runar-node/src/services/remote_service.rs` - **1 location** requiring cache integration
+
+**Specific Usage Location**:
+
+**A. Action Handler Creation (Line 250)**
+```rust
+// CURRENT (NO CACHE):
+let resolver = create_context_label_resolver(
+    &label_resolver_config,
+    &profile_public_keys,
+)
+.map_err(|e| anyhow::anyhow!("Failed to create label resolver: {e}"))?;
+
+// REQUIRED CHANGE:
+let resolver = get_global_cache()
+    .get_or_create(&label_resolver_config, &profile_public_keys)
+    .map_err(|e| anyhow::anyhow!("Failed to get or create label resolver: {e}"))?;
+```
+
+**Required Changes**:
+1. **Add import**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace resolver creation** with cache retrieval
+3. **Update error message** to reflect cache operation
+
+#### **3. Transport Layer (runar-transporter) - MEDIUM IMPACT**
+
+**Files Affected**:
+- `runar-transporter/src/transport/quic_transport.rs` - **0 locations** (already updated)
+- `runar-transporter/src/transport/mod.rs` - **0 locations** (already updated)
+
+**Current Status**: ✅ **ALREADY UPDATED** - Transport layer was updated in previous phases to use dynamic resolver creation, but **NOT using cache yet**.
+
+**Required Changes**:
+1. **Add cache integration** to all dynamic resolver creation points
+2. **Update resolver creation** to use `get_global_cache().get_or_create()`
+3. **Ensure cache is available** during transport initialization
+
+#### **4. Test Utilities (runar-test-utils) - MEDIUM IMPACT**
+
+**Files Affected**:
+- `runar-test-utils/src/lib.rs` - **3 locations** requiring cache integration
+
+**Specific Usage Locations**:
+
+**A. Label Resolver Creation (Line 86)**
+```rust
+// CURRENT (NO CACHE):
+create_context_label_resolver(&config, &profile_keys)
+
+// REQUIRED CHANGE:
+get_global_cache().get_or_create(&config, &profile_keys)?
+```
+
+**B. Mobile Resolver Creation (Line 442)**
+```rust
+// CURRENT (NO CACHE):
+let mobile_resolver = create_context_label_resolver(&system_config, &profile_keys_vec)?;
+
+// REQUIRED CHANGE:
+let mobile_resolver = get_global_cache().get_or_create(&system_config, &profile_keys_vec)?;
+```
+
+**C. Node Resolver Creation (Line 446)**
+```rust
+// CURRENT (NO CACHE):
+let node_resolver = create_context_label_resolver(
+    &system_config,
+    None,
+)?;
+
+// REQUIRED CHANGE:
+let node_resolver = get_global_cache().get_or_create(&system_config, &[])?;
+```
+
+**Required Changes**:
+1. **Add import**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace all 3 calls** with cache retrieval
+3. **Update error handling** to handle cache errors
+4. **Ensure cache is initialized** before test execution
+
+#### **5. Examples and Documentation - LOW IMPACT**
+
+**Files Affected**:
+- `examples/label_resolver_example.rs` - **2 locations** requiring cache integration
+- `rust-examples/label_resolver_example.rs` - **2 locations** requiring cache integration
+
+**Specific Usage Locations**:
+
+**A. System Resolver Creation (Line 51/62)**
+```rust
+// CURRENT (NO CACHE):
+let system_resolver = create_context_label_resolver(&system_config, &empty_profile_keys)?;
+
+// REQUIRED CHANGE:
+let system_resolver = get_global_cache().get_or_create(&system_config, &empty_profile_keys)?;
+```
+
+**B. User Resolver Creation (Line 72/89)**
+```rust
+// CURRENT (NO CACHE):
+let user_resolver = create_context_label_resolver(&system_config, &user_profile_keys)?;
+
+// REQUIRED CHANGE:
+let user_resolver = get_global_cache().get_or_create(&system_config, &user_profile_keys)?;
+```
+
+**Required Changes**:
+1. **Add import**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace both calls** with cache retrieval
+3. **Update error handling** to handle cache errors
+4. **Ensure cache is initialized** before example execution
+
+#### **6. Node.js API Layer - MEDIUM IMPACT**
+
+**Files Affected**:
+- `runar-nodejs-api/src/lib.rs` - **Import only** (no direct usage found)
+
+**Current Status**: ✅ **ALREADY IMPORTS** - Only imports the function, no direct calls found.
+
+**Required Changes**:
+1. **Add cache import**: `use runar_serializer::traits::get_global_cache;`
+2. **Ensure cache is available** for any future usage
+3. **No immediate code changes** required
+
+#### **7. Test Files - MEDIUM IMPACT**
+
+**Files Affected**:
+- `runar-serializer/tests/cache_performance_test.rs` - **1 location** (already using cache)
+- `runar-serializer/tests/label_resolver_test.rs` - **2 locations** requiring cache integration
+
+**Specific Usage Locations**:
+
+**A. Cache Performance Test (Line 57)**
+```rust
+// CURRENT (NO CACHE):
+let _resolver = create_context_label_resolver(config, user_keys)?;
+
+// REQUIRED CHANGE:
+let _resolver = get_global_cache().get_or_create(config, user_keys)?;
+```
+
+**B. Label Resolver Tests (Lines 33, 39)**
+```rust
+// CURRENT (NO CACHE):
+let resolver = create_context_label_resolver(&config, &empty_profile_keys).unwrap();
+let resolver_with_user = create_context_label_resolver(&config, &user_keys).unwrap();
+
+// REQUIRED CHANGE:
+let resolver = get_global_cache().get_or_create(&config, &empty_profile_keys).unwrap();
+let resolver_with_user = get_global_cache().get_or_create(&config, &user_keys).unwrap();
+```
+
+**Required Changes**:
+1. **Add import**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace all calls** with cache retrieval
+3. **Ensure cache is initialized** before test execution
+4. **Update test setup** to initialize global cache
+
+### **Implementation Plan - Phase-by-Phase Approach**
+
+#### **Phase 1: Core Node Layer Integration (Day 1) - HIGH PRIORITY**
+
+**Files to Update**:
+1. `runar-node/src/node.rs` - **4 resolver creation calls**
+2. `runar-node/src/services/remote_service.rs` - **1 resolver creation call**
+
+**Changes Required**:
+1. **Add imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace resolver creation**: All `create_context_label_resolver()` calls → `get_global_cache().get_or_create()`
+3. **Update error handling**: Handle cache errors gracefully
+4. **Test compilation**: Ensure all changes compile successfully
+
+**Expected Impact**:
+- **Performance improvement**: 31.3x speedup for cache hits in production node operations
+- **Memory efficiency**: Reduced resolver recreation overhead
+- **User experience**: Faster request processing for repeated user contexts
+
+#### **Phase 2: Test Utilities Integration (Day 2) - MEDIUM PRIORITY**
+
+**Files to Update**:
+1. `runar-test-utils/src/lib.rs` - **3 resolver creation calls**
+
+**Changes Required**:
+1. **Add imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace resolver creation**: All test utility calls use cache
+3. **Update test helpers**: Ensure cache is initialized for tests
+4. **Validate test functionality**: All tests continue to work with cache
+
+**Expected Impact**:
+- **Test performance**: Faster test execution for repeated resolver configurations
+- **Consistency**: Test utilities use same caching as production code
+- **Maintainability**: Unified resolver creation approach
+
+#### **Phase 3: Examples and Documentation Integration (Day 3) - LOW PRIORITY**
+
+**Files to Update**:
+1. `examples/label_resolver_example.rs` - **2 resolver creation calls**
+2. `rust-examples/label_resolver_example.rs` - **2 resolver creation calls**
+
+**Changes Required**:
+1. **Add imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace resolver creation**: All example calls use cache
+3. **Update documentation**: Reflect cache usage in examples
+4. **Validate examples**: Ensure examples work correctly with cache
+
+**Expected Impact**:
+- **Documentation accuracy**: Examples reflect actual production usage
+- **Learning value**: Developers learn cache-aware resolver creation
+- **Consistency**: Examples use same patterns as production code
+
+#### **Phase 4: Test Files Integration (Day 4) - MEDIUM PRIORITY**
+
+**Files to Update**:
+1. `runar-serializer/tests/label_resolver_test.rs` - **2 resolver creation calls**
+2. **Ensure cache initialization** in all test files
+
+**Changes Required**:
+1. **Add imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace resolver creation**: All test calls use cache
+3. **Update test setup**: Initialize global cache before tests
+4. **Validate test coverage**: Ensure all test scenarios work with cache
+
+**Expected Impact**:
+- **Test performance**: Faster test execution
+- **Test accuracy**: Tests validate actual production behavior
+- **Coverage**: Cache functionality is properly tested
+
+#### **Phase 5: Transport Layer Cache Integration (Day 5) - HIGH PRIORITY**
+
+**Files to Update**:
+1. `runar-transporter/src/transport/quic_transport.rs` - **Add cache to dynamic resolver creation**
+2. **Ensure cache is available** during transport operations
+
+**Changes Required**:
+1. **Add cache imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Update dynamic resolver creation**: Use cache for all resolver creation
+3. **Handle cache errors**: Graceful fallback if cache is unavailable
+4. **Performance validation**: Ensure transport operations benefit from caching
+
+**Expected Impact**:
+- **Transport performance**: Faster resolver creation for network operations
+- **Scalability**: Better performance under high network load
+- **User experience**: Faster network request processing
+
+### **Cache Initialization Strategy**
+
+#### **Global Cache Initialization**
+
+**Current Status**: ✅ **Already implemented** - `GLOBAL_CACHE` uses `OnceLock` for lazy initialization.
+
+**Initialization Points**:
+1. **First cache access**: Automatically initialized on first `get_global_cache()` call
+2. **Default configuration**: Uses `ResolverCache::new_default()` (1000 entries, 5 minutes TTL)
+3. **Custom configuration**: Can be set with `set_global_cache()` for specific requirements
+
+**Required Changes**:
+1. **Ensure cache is initialized** before any resolver creation
+2. **Add cache initialization** to node startup process
+3. **Add cache initialization** to test setup procedures
+
+#### **Cache Configuration Options**
+
+**Default Configuration**:
+- **Max size**: 1000 entries
+- **TTL**: 5 minutes (300 seconds)
+- **Eviction policy**: LRU with 25% batch eviction
+
+**Custom Configuration Options**:
+```rust
+// For high-performance nodes
+let high_perf_cache = ResolverCache::new(5000, Duration::from_secs(600)); // 5000 entries, 10 minutes
+
+// For memory-constrained environments
+let memory_cache = ResolverCache::new(100, Duration::from_secs(180)); // 100 entries, 3 minutes
+
+// For development/testing
+let dev_cache = ResolverCache::new(100, Duration::from_secs(60)); // 100 entries, 1 minute
+```
+
+### **Error Handling and Fallback Strategy**
+
+#### **Cache Error Scenarios**
+
+**1. Cache Unavailable**
+```rust
+// Graceful fallback to direct creation
+let resolver = get_global_cache()
+    .get_or_create(&config, &profile_keys)
+    .unwrap_or_else(|_| {
+        // Fallback to direct creation if cache fails
+        create_context_label_resolver(&config, &profile_keys)
+            .expect("Failed to create resolver even with fallback")
+    });
+```
+
+**2. Cache Initialization Failure**
+```rust
+// Ensure cache is available before use
+if GLOBAL_CACHE.get().is_none() {
+    // Initialize with default configuration
+    set_global_cache(ResolverCache::new_default());
+}
+```
+
+**3. Cache Corruption/Invalid State**
+```rust
+// Clear and reinitialize cache
+clear_global_cache();
+set_global_cache(ResolverCache::new_default());
+```
+
+#### **Required Error Handling Updates**
+
+**All resolver creation calls** must handle cache errors gracefully:
+1. **Cache hit**: Use cached resolver (fast path)
+2. **Cache miss**: Create new resolver and cache it
+3. **Cache error**: Fallback to direct creation
+4. **Cache unavailable**: Direct creation with warning
+
+### **Performance Impact Analysis**
+
+#### **Expected Performance Improvements**
+
+**Cache Hit Scenarios**:
+- **User context reuse**: 31.3x speedup for repeated user profile keys
+- **System context reuse**: 31.3x speedup for system operations
+- **Mixed context reuse**: 31.3x speedup for repeated label configurations
+
+**Cache Miss Scenarios**:
+- **New user context**: No performance penalty (creates and caches)
+- **Config changes**: No performance penalty (cache invalidation)
+- **Cache eviction**: Minimal penalty (recreation and caching)
+
+**Memory Impact**:
+- **Cache storage**: ~1000 resolver instances (configurable)
+- **Memory per resolver**: ~1-5KB per resolver (depending on label count)
+- **Total cache memory**: ~1-5MB (configurable)
+
+#### **Performance Monitoring**
+
+**Cache Metrics Available**:
+- **Cache hits/misses**: Performance ratio tracking
+- **Creation times**: Average resolver creation time
+- **Cache size**: Current cache utilization
+- **Eviction rates**: Cache efficiency metrics
+
+**Monitoring Integration**:
+```rust
+// Get cache statistics
+let stats = get_global_cache().stats();
+println!("Cache hit rate: {:.2}%", stats.hit_rate() * 100.0);
+println!("Average creation time: {:?}", stats.average_creation_time());
+println!("Cache size: {}/{}", stats.current_size(), stats.max_size());
+```
+
+### **Testing Strategy for Cache Integration**
+
+#### **Unit Tests - Cache Functionality**
+
+**Required Test Coverage**:
+1. **Cache hit scenarios**: Verify cached resolvers are returned
+2. **Cache miss scenarios**: Verify new resolvers are created and cached
+3. **Cache eviction**: Verify LRU eviction works correctly
+4. **TTL expiration**: Verify expired entries are removed
+5. **Error handling**: Verify graceful fallback on cache errors
+
+#### **Integration Tests - End-to-End Cache Usage**
+
+**Required Test Coverage**:
+1. **Node operations**: Verify cache is used in all resolver creation
+2. **Remote service calls**: Verify cache is used in service operations
+3. **Transport operations**: Verify cache is used in network operations
+4. **Performance validation**: Verify cache provides expected speedup
+
+#### **Performance Tests - Cache Effectiveness**
+
+**Required Test Coverage**:
+1. **Cache hit performance**: Verify 31.3x speedup is maintained
+2. **Cache miss performance**: Verify no performance regression
+3. **Memory usage**: Verify cache memory usage is reasonable
+4. **Concurrent access**: Verify cache performance under load
+
+### **Migration Checklist - Complete Implementation**
+
+#### **Phase 1: Core Node Layer ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update runar-node/src/node.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 1856: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 1890: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 2563: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 2781: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test compilation and basic functionality
+
+- [ ] **Update runar-node/src/services/remote_service.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 250: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test compilation and basic functionality
+
+#### **Phase 2: Test Utilities ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update runar-test-utils/src/lib.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 86: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 442: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 446: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test compilation and test utility functionality
+
+#### **Phase 3: Examples and Documentation ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update examples/label_resolver_example.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 51: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 72: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test example execution
+
+- [ ] **Update rust-examples/label_resolver_example.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 62: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 89: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test example execution
+
+#### **Phase 4: Test Files ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update runar-serializer/tests/label_resolver_test.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 33: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 39: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Ensure cache is initialized before tests
+  - [ ] Test all test scenarios
+
+#### **Phase 5: Transport Layer ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update runar-transporter/src/transport/quic_transport.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Identify all dynamic resolver creation points
+  - [ ] Replace with `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test transport functionality with cache
+
+#### **Phase 6: Validation and Performance Testing ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Compilation Testing**
+  - [ ] All crates compile successfully
+  - [ ] No import errors
+  - [ ] No function signature mismatches
+
+- [ ] **Functional Testing**
+  - [ ] All existing tests pass
+  - [ ] Cache is used in all resolver creation
+  - [ ] No functional regressions
+
+- [ ] **Performance Testing**
+  - [ ] Cache hit performance: 31.3x speedup maintained
+  - [ ] Cache miss performance: No regression
+  - [ ] Memory usage: Within acceptable bounds
+
+- [ ] **Integration Testing**
+  - [ ] End-to-end request flows work with cache
+  - [ ] Remote service calls use cache
+  - [ ] Transport operations use cache
+
+### **Success Metrics - Cache Integration**
+
+#### **Functional Metrics**
+- ✅ **100% cache usage**: All resolver creation goes through cache
+- ✅ **No direct calls**: No `create_context_label_resolver()` calls remain
+- ✅ **Error handling**: Graceful fallback on cache errors
+- ✅ **Performance improvement**: 31.3x speedup for cache hits maintained
+
+#### **Performance Metrics**
+- ✅ **Cache hit rate**: >80% for typical workloads
+- ✅ **Response time**: No regression on cache misses
+- ✅ **Memory usage**: Cache memory usage within 1-5MB range
+- ✅ **Concurrent performance**: Cache performance under load maintained
+
+#### **Code Quality Metrics**
+- ✅ **Consistent patterns**: All resolver creation uses same cache approach
+- ✅ **Error handling**: Comprehensive error handling for cache operations
+- ✅ **Maintainability**: Single point of control for resolver caching
+- ✅ **Documentation**: All examples and tests reflect cache usage
+
+### **Risk Assessment and Mitigation**
+
+#### **HIGH RISK: Breaking Changes**
+- **Risk**: Cache integration could break existing functionality
+- **Mitigation**: Phase-by-phase implementation with comprehensive testing
+- **Fallback**: Graceful fallback to direct creation on cache errors
+
+#### **MEDIUM RISK: Performance Regression**
+- **Risk**: Cache overhead could slow down cache miss scenarios
+- **Mitigation**: Performance testing at each phase
+- **Monitoring**: Cache metrics to identify performance issues
+
+#### **LOW RISK: Memory Usage**
+- **Risk**: Cache could consume excessive memory
+- **Mitigation**: Configurable cache size and TTL
+- **Monitoring**: Memory usage tracking and limits
+
+### **Conclusion - Cache Integration Imperative**
+
+**The label resolver cache is a critical performance optimization** that is currently implemented but completely unused. Integrating it throughout the codebase will provide:
+
+1. **31.3x performance improvement** for cache hits (repeated user contexts)
+2. **Reduced memory allocation** from resolver recreation
+3. **Better scalability** under high request loads
+4. **Consistent performance** across all resolver usage patterns
+
+**Implementation is straightforward** - simply replace all `create_context_label_resolver()` calls with `get_global_cache().get_or_create()` calls. The cache is already implemented, tested, and performing excellently.
+
+**This represents a significant missed opportunity** - the cache is ready to provide immediate performance benefits but is not being used anywhere in the production code.
+
+**Immediate action is required** to unlock the performance benefits that have already been built and tested.
+
+### **Updated Implementation Plan - Focused on Production Code Only**
+
+#### **Phase 1: Core Node Layer Integration (Day 1) - HIGH PRIORITY**
+
+**Files to Update**:
+1. `runar-node/src/node.rs` - **4 resolver creation calls**
+2. `runar-node/src/services/remote_service.rs` - **1 resolver creation call**
+
+**Changes Required**:
+1. **Add imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace resolver creation**: All `create_context_label_resolver()` calls → `get_global_cache().get_or_create()`
+3. **Update error handling**: Handle cache errors gracefully
+4. **Test compilation**: Ensure all changes compile successfully
+
+**Expected Impact**:
+- **Performance improvement**: 31.3x speedup for cache hits in production node operations
+- **Memory efficiency**: Reduced resolver recreation overhead
+- **User experience**: Faster request processing for repeated user contexts
+
+#### **Phase 2: Examples and Documentation Integration (Day 2) - MEDIUM PRIORITY**
+
+**Files to Update**:
+1. `examples/label_resolver_example.rs` - **2 resolver creation calls**
+2. `rust-examples/label_resolver_example.rs` - **2 resolver creation calls**
+
+**Changes Required**:
+1. **Add imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Replace resolver creation**: All example calls use cache
+3. **Update documentation**: Reflect cache usage in examples
+4. **Validate examples**: Ensure examples work correctly with cache
+
+**Expected Impact**:
+- **Documentation accuracy**: Examples reflect actual production usage
+- **Learning value**: Developers learn cache-aware resolver creation
+- **Consistency**: Examples use same patterns as production code
+
+#### **Phase 3: Transport Layer Cache Integration (Day 3) - HIGH PRIORITY**
+
+**Files to Update**:
+1. `runar-transporter/src/transport/quic_transport.rs` - **Add cache to dynamic resolver creation**
+2. **Ensure cache is available** during transport operations
+
+**Changes Required**:
+1. **Add cache imports**: `use runar_serializer::traits::get_global_cache;`
+2. **Update dynamic resolver creation**: Use cache for all resolver creation
+3. **Handle cache errors**: Graceful fallback if cache is unavailable
+4. **Performance validation**: Ensure transport operations benefit from caching
+
+**Expected Impact**:
+- **Transport performance**: Faster resolver creation for network operations
+- **Scalability**: Better performance under high network load
+- **User experience**: Faster network request processing
+
+### **Updated Migration Checklist - Production Code Only**
+
+#### **Phase 1: Core Node Layer ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update runar-node/src/node.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 1856: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 1890: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 2563: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 2781: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test compilation and basic functionality
+
+- [ ] **Update runar-node/src/services/remote_service.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 250: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test compilation and basic functionality
+
+#### **Phase 2: Examples and Documentation ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update examples/label_resolver_example.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 51: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 72: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test example execution
+
+- [ ] **Update rust-examples/label_resolver_example.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Replace Line 62: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Replace Line 89: `create_context_label_resolver` → `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test example execution
+
+#### **Phase 3: Transport Layer ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Update runar-transporter/src/transport/quic_transport.rs**
+  - [ ] Add `use runar_serializer::traits::get_global_cache;`
+  - [ ] Identify all dynamic resolver creation points
+  - [ ] Replace with `get_global_cache().get_or_create`
+  - [ ] Update error handling for cache operations
+  - [ ] Test transport functionality with cache
+
+#### **Phase 4: Validation and Performance Testing ✅ READY FOR IMPLEMENTATION**
+
+- [ ] **Compilation Testing**
+  - [ ] All crates compile successfully
+  - [ ] No import errors
+  - [ ] No function signature mismatches
+
+- [ ] **Functional Testing**
+  - [ ] All existing tests pass
+  - [ ] Cache is used in all resolver creation
+  - [ ] No functional regressions
+
+- [ ] **Performance Testing**
+  - [ ] Cache hit performance: 31.3x speedup maintained
+  - [ ] Cache miss performance: No regression
+  - [ ] Memory usage: Within acceptable bounds
+
+- [ ] **Integration Testing**
+  - [ ] End-to-end request flows work with cache
+  - [ ] Remote service calls use cache
+  - [ ] Transport operations use cache
+
+### **Updated Success Metrics - Production Code Focus**
+
+#### **Functional Metrics**
+- ✅ **100% cache usage**: All production resolver creation goes through cache
+- ✅ **No direct calls**: No `create_context_label_resolver()` calls remain in production code
+- ✅ **Error handling**: Graceful fallback on cache errors
+- ✅ **Performance improvement**: 31.3x speedup for cache hits maintained
+
+#### **Performance Metrics**
+- ✅ **Cache hit rate**: >80% for typical workloads
+- ✅ **Response time**: No regression on cache misses
+- ✅ **Memory usage**: Cache memory usage within 1-5MB range
+- ✅ **Concurrent performance**: Cache performance under load maintained
+
+#### **Code Quality Metrics**
+- ✅ **Consistent patterns**: All production resolver creation uses same cache approach
+- ✅ **Error handling**: Comprehensive error handling for cache operations
+- ✅ **Maintainability**: Single point of control for resolver caching
+- ✅ **Documentation**: All examples reflect cache usage
+
+### **Updated Risk Assessment and Mitigation**
+
+#### **HIGH RISK: Breaking Changes**
+- **Risk**: Cache integration could break existing functionality
+- **Mitigation**: Phase-by-phase implementation with comprehensive testing
+- **Fallback**: Graceful fallback to direct creation on cache errors
+
+#### **MEDIUM RISK: Performance Regression**
+- **Risk**: Cache overhead could slow down cache miss scenarios
+- **Mitigation**: Performance testing at each phase
+- **Monitoring**: Cache metrics to identify performance issues
+
+#### **LOW RISK: Memory Usage**
+- **Risk**: Cache could consume excessive memory
+- **Mitigation**: Configurable cache size and TTL
+- **Monitoring**: Memory usage tracking and limits
+
+### **Updated Conclusion - Focused Cache Integration**
+
+**The label resolver cache integration is now focused on production code only**:
+
+1. **Core Node Layer** (2 files) - **HIGH IMPACT** performance improvement
+2. **Examples** (2 files) - **MEDIUM IMPACT** documentation consistency
+3. **Transport Layer** (1 file) - **HIGH IMPACT** network performance
+
+**Test files are excluded** from cache integration since they don't represent production usage patterns and don't need the performance optimization.
+
+**This focused approach provides**:
+- **Maximum impact** on production performance
+- **Minimal risk** from unnecessary changes
+- **Faster implementation** with fewer files to update
+- **Clear separation** between production optimization and test maintenance
+
+**The cache is ready to provide immediate performance benefits** to the core node operations that actually matter for production workloads.

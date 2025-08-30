@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::OnceLock;
+
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -575,54 +575,4 @@ impl ResolverMetrics {
         // Note: This is a simplified version - in a real implementation,
         // you'd want to use atomic operations for thread safety
     }
-}
-
-// ---------------------------------------------------------------------------
-// Global Cache Instance and Integration
-// ---------------------------------------------------------------------------
-
-/// Global resolver cache instance
-static GLOBAL_CACHE: OnceLock<Arc<ResolverCache>> = OnceLock::new();
-
-/// Get or create the global resolver cache
-pub fn get_global_cache() -> Arc<ResolverCache> {
-    GLOBAL_CACHE
-        .get_or_init(|| Arc::new(ResolverCache::new_default()))
-        .clone()
-}
-
-/// Set the global resolver cache (useful for testing or custom configuration)
-pub fn set_global_cache(cache: ResolverCache) {
-    let _ = GLOBAL_CACHE.set(Arc::new(cache));
-}
-
-/// Get or create a label resolver using the global cache
-/// Simplified approach: cache key is just user_profile_keys
-pub fn get_cached_resolver(
-    config: &LabelResolverConfig,
-    user_profile_keys: &[Vec<u8>],
-) -> Result<Arc<ConfigurableLabelResolver>> {
-    let cache = get_global_cache();
-    cache.get_or_create(config, user_profile_keys)
-}
-
-/// Clear the global cache (useful for testing or when config changes)
-/// This handles the rare case when LabelResolverConfig changes
-pub fn clear_global_cache() {
-    if let Some(cache) = GLOBAL_CACHE.get() {
-        cache.clear();
-    }
-}
-
-/// Get statistics from the global cache
-pub fn get_cache_stats() -> Option<CacheStats> {
-    GLOBAL_CACHE.get().map(|cache| cache.stats())
-}
-
-/// Cleanup expired entries from the global cache
-pub fn cleanup_global_cache() -> usize {
-    GLOBAL_CACHE
-        .get()
-        .map(|cache| cache.cleanup_expired())
-        .unwrap_or(0)
 }

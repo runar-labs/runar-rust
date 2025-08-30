@@ -18,7 +18,7 @@ use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::{
-    traits::create_context_label_resolver, ArcValue, EnvelopeCrypto, LabelResolverConfig,
+    traits::{LabelResolverConfig, ResolverCache}, ArcValue, EnvelopeCrypto,
     SerializationContext,
 };
 use runar_transporter::transport::NetworkTransport;
@@ -51,6 +51,8 @@ pub struct RemoteService {
     keystore: Arc<dyn EnvelopeCrypto>,
     /// Label resolver configuration for dynamic resolver creation
     label_resolver_config: Arc<LabelResolverConfig>,
+    /// Share the node's cache instance for better concurrency
+    label_resolver_cache: Arc<ResolverCache>,
 }
 
 /// Configuration for creating a RemoteService instance.
@@ -70,6 +72,8 @@ pub struct RemoteServiceDependencies {
     pub logger: Arc<Logger>,
     pub keystore: Arc<dyn EnvelopeCrypto>,
     pub label_resolver_config: Arc<LabelResolverConfig>,
+    /// Share the node's cache instance for better concurrency
+    pub label_resolver_cache: Arc<ResolverCache>,
 }
 
 /// Configuration for creating multiple RemoteService instances from capabilities.
@@ -98,6 +102,7 @@ impl RemoteService {
             logger: dependencies.logger,
             keystore: dependencies.keystore.clone(),
             label_resolver_config: dependencies.label_resolver_config.clone(),
+            label_resolver_cache: dependencies.label_resolver_cache.clone(),
         }
     }
 
@@ -156,6 +161,7 @@ impl RemoteService {
                 logger: dependencies.logger.clone(),
                 keystore: dependencies.keystore.clone(),
                 label_resolver_config: dependencies.label_resolver_config.clone(),
+                label_resolver_cache: dependencies.label_resolver_cache.clone(),
             };
 
             // Create the remote service
@@ -220,6 +226,7 @@ impl RemoteService {
             let logger = service.logger.clone();
             let keystore = service.keystore.clone();
             let label_resolver_config = service.label_resolver_config.clone();
+            let label_resolver_cache = service.label_resolver_cache.clone();
             //let network_public_key = service.network_public_key.clone();
             let network_id = service.service_topic.network_id();
             let network_public_key = match keystore.get_network_public_key(&network_id) {
@@ -246,13 +253,11 @@ impl RemoteService {
                 // Send the request
                 let topic_path_str = action_topic_path.as_str();
 
-                // Create dynamic resolver with user context
+                // Create dynamic resolver with user context using cache
                 // For request serialization, we can use a system-only resolver if no user keys are provided
-                let resolver = create_context_label_resolver(
-                    &label_resolver_config,
-                    &profile_public_keys, // Empty vec is fine for system-only resolver
-                )
-                .map_err(|e| anyhow::anyhow!("Failed to create label resolver: {e}"))?;
+                let resolver = label_resolver_cache
+                    .get_or_create(&label_resolver_config, &profile_public_keys)
+                    .map_err(|e| anyhow::anyhow!("Failed to create label resolver: {e}"))?;
 
                 // Create serialization context with dynamic resolver
                 let serialization_context = SerializationContext {
