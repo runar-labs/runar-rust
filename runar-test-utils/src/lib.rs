@@ -10,7 +10,7 @@ use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
 use runar_node::NodeConfig;
 use runar_serializer::traits::{
-    create_context_label_resolver, ConfigurableLabelResolver, EnvelopeCrypto, LabelKeyword,
+    create_context_label_resolver, EnvelopeCrypto, LabelKeyword, LabelResolver,
     LabelResolverConfig, LabelValue, SerializationContext,
 };
 use runar_transporter::{
@@ -81,7 +81,7 @@ pub fn create_test_label_resolver_config(network_public_key: Vec<u8>) -> LabelRe
 pub fn create_test_label_resolver(
     network_public_key: Vec<u8>,
     user_profile_keys: Option<Vec<Vec<u8>>>,
-) -> Result<Arc<ConfigurableLabelResolver>> {
+) -> Result<Arc<LabelResolver>> {
     let config = create_test_label_resolver_config(network_public_key);
     let profile_keys = user_profile_keys.unwrap_or_default();
     create_context_label_resolver(&config, &profile_keys)
@@ -415,12 +415,7 @@ impl MobileSimulator {
     }
 
     /// Create label resolvers for encryption/decryption scenarios
-    pub fn create_label_resolvers(
-        &self,
-    ) -> Result<(
-        Arc<ConfigurableLabelResolver>,
-        Arc<ConfigurableLabelResolver>,
-    )> {
+    pub fn create_label_resolvers(&self) -> Result<(Arc<LabelResolver>, Arc<LabelResolver>)> {
         self.logger.info("🔑 Creating label resolvers...");
 
         // Get profile keys from first user (or create default if none)

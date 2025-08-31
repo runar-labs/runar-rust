@@ -17,10 +17,10 @@ use super::encryption::decrypt_bytes;
 use super::encryption;
 use super::erased_arc::ErasedArc;
 use super::registry;
-use super::traits::{ConfigurableLabelResolver, KeyStore, SerializationContext};
+use super::traits::{KeyStore, LabelResolver, SerializationContext};
 
 // Type alias to simplify very complex function pointer type used for serialization functions.
-type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&ConfigurableLabelResolver>) -> Result<Vec<u8>>
+type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&LabelResolver>) -> Result<Vec<u8>>
     + Send
     + Sync;
 

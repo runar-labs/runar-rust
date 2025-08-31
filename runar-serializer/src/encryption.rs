@@ -1,4 +1,4 @@
-use crate::traits::{ConfigurableLabelResolver, EnvelopeEncryptedData, KeyStore};
+use crate::traits::{EnvelopeEncryptedData, KeyStore, LabelResolver};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
@@ -27,7 +27,7 @@ pub fn encrypt_label_group<T: Serialize>(
     label: &str,
     fields_struct: &T,
     keystore: &KeyStore,
-    resolver: &ConfigurableLabelResolver,
+    resolver: &LabelResolver,
 ) -> Result<EncryptedLabelGroup> {
     // Serialize the fields within this label group using serde_cbor
     let plain_bytes = to_vec(fields_struct)?;

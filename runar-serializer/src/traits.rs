@@ -50,7 +50,7 @@ pub struct KeyMappingConfig {
 }
 
 // /// Simple trait for LabelResolver to maintain macro compatibility
-// /// This delegates to the concrete ConfigurableLabelResolver struct
+// /// This delegates to the concrete LabelResolver struct
 // pub trait LabelResolver: Send + Sync {
 //     /// Resolve a label to key-info (public key + scope).
 //     fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>>;
@@ -62,7 +62,7 @@ pub struct KeyMappingConfig {
 //     fn can_resolve(&self, label: &str) -> bool;
 // }
 
-// impl LabelResolver for ConfigurableLabelResolver {
+// impl LabelResolver for LabelResolver {
 //     fn resolve_label_info(&self, label: &str) -> Result<Option<LabelKeyInfo>> {
 //         self.resolve_label_info(label)
 //     }
@@ -105,12 +105,12 @@ pub enum LabelKeyword {
 }
 
 /// Label resolver implementation
-pub struct ConfigurableLabelResolver {
+pub struct LabelResolver {
     /// Concurrent mapping used heavily on read path
     mapping: DashMap<String, LabelKeyInfo>,
 }
 
-impl ConfigurableLabelResolver {
+impl LabelResolver {
     pub fn new(config: KeyMappingConfig) -> Self {
         let dm = DashMap::new();
         for (k, v) in config.label_mappings {
@@ -139,7 +139,7 @@ impl ConfigurableLabelResolver {
     pub fn create_context_label_resolver(
         system_config: &LabelResolverConfig,
         user_profile_keys: &[Vec<u8>], // From request context - empty vec means no profile keys
-    ) -> Result<Arc<ConfigurableLabelResolver>> {
+    ) -> Result<Arc<LabelResolver>> {
         let mut mappings = HashMap::new();
 
         // Process system label mappings
@@ -186,7 +186,7 @@ impl ConfigurableLabelResolver {
             );
         }
 
-        Ok(Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+        Ok(Arc::new(LabelResolver::new(KeyMappingConfig {
             label_mappings: mappings,
         })))
     }
@@ -251,8 +251,8 @@ impl ConfigurableLabelResolver {
 pub fn create_context_label_resolver(
     system_config: &LabelResolverConfig,
     user_profile_keys: &[Vec<u8>], // From request context - empty vec means no profile keys
-) -> Result<Arc<ConfigurableLabelResolver>> {
-    ConfigurableLabelResolver::create_context_label_resolver(system_config, user_profile_keys)
+) -> Result<Arc<LabelResolver>> {
+    LabelResolver::create_context_label_resolver(system_config, user_profile_keys)
 }
 
 /// Marker trait for detecting encryption capability at runtime
@@ -265,7 +265,7 @@ pub trait RunarEncrypt: RunarEncryptable {
     fn encrypt_with_keystore(
         &self,
         keystore: &Arc<KeyStore>,
-        resolver: &ConfigurableLabelResolver,
+        resolver: &LabelResolver,
     ) -> Result<Self::Encrypted>;
 }
 
@@ -287,7 +287,7 @@ pub trait RunarDecrypt {
 #[derive(Clone)]
 pub struct SerializationContext {
     pub keystore: Arc<KeyStore>,
-    pub resolver: Arc<ConfigurableLabelResolver>,
+    pub resolver: Arc<LabelResolver>,
     pub network_public_key: Vec<u8>, // ← PRE-RESOLVED PUBLIC KEY
     pub profile_public_keys: Vec<Vec<u8>>, // ← MULTIPLE PROFILE KEYS
 }
@@ -298,13 +298,13 @@ pub struct SerializationContext {
 
 /// Cache entry for a label resolver with metadata
 struct CacheEntry {
-    resolver: Arc<ConfigurableLabelResolver>,
+    resolver: Arc<LabelResolver>,
     created_at: Instant,
     last_accessed: AtomicU64, // Unix timestamp
 }
 
 impl CacheEntry {
-    fn new(resolver: Arc<ConfigurableLabelResolver>) -> Self {
+    fn new(resolver: Arc<LabelResolver>) -> Self {
         let now = Instant::now();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -364,7 +364,7 @@ impl ResolverCache {
         &self,
         config: &LabelResolverConfig,
         user_profile_keys: &[Vec<u8>],
-    ) -> Result<Arc<ConfigurableLabelResolver>> {
+    ) -> Result<Arc<LabelResolver>> {
         let cache_key = self.generate_cache_key(user_profile_keys);
 
         // Try to get from cache first

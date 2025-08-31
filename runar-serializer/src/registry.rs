@@ -10,7 +10,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use serde_json::{to_value, Map, Value as JsonValue};
 
-use crate::traits::{ConfigurableLabelResolver, KeyStore, RunarDecrypt, RunarEncrypt};
+use crate::traits::{KeyStore, LabelResolver, RunarDecrypt, RunarEncrypt};
 use crate::ArcValue;
 
 /// Function pointer stored in the registry.
@@ -24,7 +24,7 @@ static STRUCT_REGISTRY: Lazy<DashMap<TypeId, DecryptFn>> = Lazy::new(DashMap::ne
 
 /// Function pointer for element encryption stored in the registry.
 /// Receives a reference to a Plain value erased as &dyn Any, and returns CBOR bytes of Enc.
-pub type EncryptFn = fn(&dyn Any, &Arc<KeyStore>, &ConfigurableLabelResolver) -> Result<Vec<u8>>;
+pub type EncryptFn = fn(&dyn Any, &Arc<KeyStore>, &LabelResolver) -> Result<Vec<u8>>;
 
 /// Global, thread-safe map: PlainTypeId -> encrypt function.
 static ENCRYPT_REGISTRY: Lazy<DashMap<TypeId, EncryptFn>> = Lazy::new(DashMap::new);
@@ -86,7 +86,7 @@ where
     fn encrypt_impl<Plain, Enc>(
         value_any: &dyn Any,
         ks: &Arc<KeyStore>,
-        resolver: &ConfigurableLabelResolver,
+        resolver: &LabelResolver,
     ) -> Result<Vec<u8>>
     where
         Plain: 'static + RunarEncrypt<Encrypted = Enc>,

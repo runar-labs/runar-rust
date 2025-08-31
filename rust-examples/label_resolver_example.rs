@@ -1,5 +1,5 @@
 use runar_serializer::traits::{
-    ConfigurableLabelResolver, LabelKeyword, LabelResolverConfig, LabelValue, ResolverCache,
+    LabelKeyword, LabelResolver, LabelResolverConfig, LabelValue, ResolverCache,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
 
     // 2. Validate the configuration
     println!("Validating system label configuration...");
-    ConfigurableLabelResolver::validate_label_config(&system_config)?;
+    LabelResolver::validate_label_config(&system_config)?;
     println!("✅ Configuration is valid\n");
 
     // 3. Create cache for resolver reuse

@@ -5,7 +5,7 @@ use anyhow::Result;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_serializer::traits::{
-    ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, SerializationContext,
+    EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, LabelResolver, SerializationContext,
 };
 use runar_serializer::ArcValue;
 use runar_serializer_macros::Encrypt;
@@ -25,7 +25,7 @@ pub struct WrongPlain {
 type TestContext = (
     Arc<dyn EnvelopeCrypto>,
     Arc<dyn EnvelopeCrypto>,
-    Arc<runar_serializer::traits::ConfigurableLabelResolver>,
+    Arc<runar_serializer::traits::LabelResolver>,
     String,
     Vec<u8>,
 );
@@ -50,7 +50,7 @@ fn build_test_context() -> Result<TestContext> {
     let user_mobile_ks = Arc::new(user_mobile) as Arc<dyn EnvelopeCrypto>;
     let node_ks = Arc::new(node_keys) as Arc<dyn EnvelopeCrypto>;
 
-    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+    let resolver = Arc::new(LabelResolver::new(KeyMappingConfig {
         label_mappings: HashMap::from([(
             "system".to_string(),
             LabelKeyInfo {
