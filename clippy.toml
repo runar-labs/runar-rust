@@ -1,8 +1,0 @@
-# Clippy configuration for qualified path detection
-# This will flag uses of absolute paths when they exceed the configured number of segments
-
-# Enable absolute_paths lint (default is 2 segments)
-absolute-paths-max-segments = 1
-
-# Allow some common standard library paths that are typically acceptable
-absolute-paths-allowed-crates = ["std", "core", "alloc"]
