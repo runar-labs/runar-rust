@@ -61,8 +61,10 @@ describe('Transport Basic Tests', () => {
     const isConn = await withTimeout(ta.isConnectedToPublicKey(bPk), 1500, 'isConnectedToPublicKey');
     
     if (isConn) {
+      // Use node A's public key as the profile public key for the request
+      const aPk = a.keys.nodeGetPublicKey();
       const resp = await withTimeout(
-        ta.requestToPublicKey('test:path', 'corr', Buffer.from([]), bPk, Buffer.from([])),
+        ta.requestToPublicKey('test:path', 'corr', Buffer.from([]), bPk, undefined, [aPk]),
         2000,
         'requestToPublicKey'
       );

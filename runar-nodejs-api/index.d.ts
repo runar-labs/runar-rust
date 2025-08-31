@@ -80,16 +80,16 @@ export declare class Keys {
 
 export declare class Transport {
   constructor(keys: Keys, optionsCbor: Buffer)
-  completeRequest(requestId: string, responsePayload: Buffer, profilePk: Buffer): Promise<void>
+  completeRequest(requestId: string, responsePayload: Buffer, profilePublicKeys: Array<Buffer>): Promise<void>
   start(): Promise<void>
   stop(): Promise<void>
   connectPeer(peerInfoCbor: Buffer): Promise<void>
   isConnected(peerId: string): Promise<boolean>
   isConnectedToPublicKey(peerPublicKey: Buffer): Promise<boolean>
-  request(path: string, correlationId: string, payload: Buffer, destPeerId: string, profilePk: Buffer): Promise<Buffer>
-  requestToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer, profilePk: Buffer): Promise<Buffer>
-  publish(path: string, correlationId: string, payload: Buffer, destPeerId: string): Promise<void>
-  publishToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer): Promise<void>
+  request(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey?: Buffer | undefined | null, profilePublicKeys?: Array<Buffer> | undefined | null): Promise<Buffer>
+  requestToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer, networkPublicKey?: Buffer | undefined | null, profilePublicKeys?: Array<Buffer> | undefined | null): Promise<Buffer>
+  publish(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey?: Buffer | undefined | null): Promise<void>
+  publishToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer, networkPublicKey?: Buffer | undefined | null): Promise<void>
   updatePeers(nodeInfoCbor: Buffer): Promise<void>
 }
 

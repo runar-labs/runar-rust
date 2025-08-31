@@ -921,11 +921,13 @@ impl Transport {
         &self,
         request_id: String,
         response_payload: Buffer,
-        profile_pk: Buffer,
+        profile_public_keys: Vec<Buffer>,
     ) -> Result<()> {
         let guard = self.inner.lock().unwrap();
         let mut map = guard.pending.blocking_lock();
         if let Some(sender) = map.remove(&request_id) {
+            let profile_pks: Vec<Vec<u8>> =
+                profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
             let _ = sender.send(runar_transporter::transport::NetworkMessage {
                 source_node_id: String::new(),
                 destination_node_id: String::new(),
@@ -935,7 +937,7 @@ impl Transport {
                     payload_bytes: response_payload.to_vec(),
                     correlation_id: String::new(),
                     network_public_key: None,
-                    profile_public_keys: vec![profile_pk.to_vec()],
+                    profile_public_keys: profile_pks,
                 },
             });
             Ok(())
@@ -994,17 +996,23 @@ impl Transport {
         correlation_id: String,
         payload: Buffer,
         dest_peer_id: String,
-        profile_pk: Buffer,
+        network_public_key: Option<Buffer>,
+        profile_public_keys: Option<Vec<Buffer>>,
     ) -> Result<Buffer> {
         let t = { self.inner.lock().unwrap().transport.clone() };
+        let network_pk = network_public_key.map(|b| b.to_vec());
+        let profile_pks = profile_public_keys
+            .map(|pks| pks.iter().map(|pk| pk.to_vec()).collect())
+            .unwrap_or_default();
+
         let res = t
             .request(
                 &path,
                 &correlation_id,
                 payload.to_vec(),
                 &dest_peer_id,
-                None,
-                vec![profile_pk.to_vec()],
+                network_pk,
+                profile_pks,
             )
             .await
             .map_err(|e| Error::from_reason(format!("request failed: {e}")))?;
@@ -1018,11 +1026,19 @@ impl Transport {
         correlation_id: String,
         payload: Buffer,
         dest_public_key: Buffer,
-        profile_pk: Buffer,
+        network_public_key: Option<Buffer>,
+        profile_public_keys: Option<Vec<Buffer>>,
     ) -> Result<Buffer> {
         let id = runar_common::compact_ids::compact_id(&dest_public_key);
-        self.request(path, correlation_id, payload, id, profile_pk)
-            .await
+        self.request(
+            path,
+            correlation_id,
+            payload,
+            id,
+            network_public_key,
+            profile_public_keys,
+        )
+        .await
     }
 
     #[napi]
@@ -1032,14 +1048,16 @@ impl Transport {
         correlation_id: String,
         payload: Buffer,
         dest_peer_id: String,
+        network_public_key: Option<Buffer>,
     ) -> Result<()> {
         let t = { self.inner.lock().unwrap().transport.clone() };
+        let network_pk = network_public_key.map(|b| b.to_vec());
         t.publish(
             &path,
             &correlation_id,
             payload.to_vec(),
             &dest_peer_id,
-            None,
+            network_pk,
         )
         .await
         .map_err(|e| Error::from_reason(format!("publish failed: {e}")))
@@ -1052,9 +1070,11 @@ impl Transport {
         correlation_id: String,
         payload: Buffer,
         dest_public_key: Buffer,
+        network_public_key: Option<Buffer>,
     ) -> Result<()> {
         let id = runar_common::compact_ids::compact_id(&dest_public_key);
-        self.publish(path, correlation_id, payload, id).await
+        self.publish(path, correlation_id, payload, id, network_public_key)
+            .await
     }
 
     #[napi]
