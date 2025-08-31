@@ -63,15 +63,6 @@ void rn_free(uint8_t *_p, size_t _len);
 void rn_string_free(const char *s);
 
 /**
- * Set label mapping from a CBOR-encoded HashMap<String, LabelKeyInfo>.
- *
- * Returns 0 on success.
- * Returns 1 on null/invalid arguments.
- * Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
- */
-int32_t rn_keys_set_label_mapping(void *keys, const uint8_t *mapping_cbor, size_t len);
-
-/**
  * Set local NodeInfo from a CBOR buffer.
  *
  * Returns 0 on success.
@@ -112,7 +103,8 @@ int32_t rn_keys_register_linux_device_keystore(void *keys,
 int32_t rn_keys_node_encrypt_with_envelope(void *keys,
                                            const uint8_t *data,
                                            size_t data_len,
-                                           const char *network_id,
+                                           const uint8_t *network_public_key,
+                                           size_t network_public_key_len,
                                            const uint8_t *const *profile_pks,
                                            const size_t *profile_lens,
                                            size_t profiles_count,
@@ -123,7 +115,8 @@ int32_t rn_keys_node_encrypt_with_envelope(void *keys,
 int32_t rn_keys_mobile_encrypt_with_envelope(void *keys,
                                              const uint8_t *data,
                                              size_t data_len,
-                                             const char *network_id,
+                                             const uint8_t *network_public_key,
+                                             size_t network_public_key_len,
                                              const uint8_t *const *profile_pks,
                                              const size_t *profile_lens,
                                              size_t profiles_count,
@@ -381,29 +374,18 @@ int32_t rn_transport_update_local_node_info(void *transport,
                                             struct RNAPIRnError *err);
 
 int32_t rn_transport_request(void *transport,
-                             const char *path,
-                             const char *correlation_id,
-                             const uint8_t *payload,
-                             size_t payload_len,
-                             const char *dest_peer_id,
-                             const uint8_t *profile_pk,
-                             size_t pk_len,
+                             const uint8_t *request_cbor,
+                             size_t request_len,
                              struct RNAPIRnError *err);
 
 int32_t rn_transport_publish(void *transport,
-                             const char *path,
-                             const char *correlation_id,
-                             const uint8_t *payload,
-                             size_t payload_len,
-                             const char *dest_peer_id,
+                             const uint8_t *publish_cbor,
+                             size_t publish_len,
                              struct RNAPIRnError *err);
 
 int32_t rn_transport_complete_request(void *transport,
-                                      const char *request_id,
-                                      const uint8_t *response_payload,
-                                      size_t len,
-                                      const uint8_t *profile_pk,
-                                      size_t pk_len,
+                                      const uint8_t *complete_cbor,
+                                      size_t complete_len,
                                       struct RNAPIRnError *err);
 
 int32_t rn_transport_stop(void *transport, struct RNAPIRnError *err);

@@ -293,7 +293,7 @@ describe('Comprehensive API Tests', () => {
     test('should throw error when trying to use wrong manager type', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsMobile();
-      expect(() => keys.nodeEncryptWithEnvelope(Buffer.from('test'), 'network', [])).toThrow('Node manager not initialized');
+      expect(() => keys.nodeEncryptWithEnvelope(Buffer.from('test'), null, [])).toThrow('Node manager not initialized');
     });
   });
 });

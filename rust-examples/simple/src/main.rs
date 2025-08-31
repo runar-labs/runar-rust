@@ -52,7 +52,7 @@ impl StatsService {
     /// React to math/added events
     #[subscribe(path = "math/added")]
     async fn on_math_added(&self, total: f64, ctx: &EventContext) -> Result<()> {
-        ctx.request("stats/record", Some(ArcValue::new_primitive(total)))
+        ctx.request("stats/record", Some(ArcValue::new_primitive(total)), None)
             .await
             .expect("Call to stats/record failed");
         Ok(())
@@ -75,13 +75,13 @@ async fn main() -> Result<()> {
 
     // call math/add
     let sum_arc: ArcValue = node
-        .request("math/add", Some(params! { "a" => 1.0, "b" => 2.0 }))
+        .request("math/add", Some(params! { "a" => 1.0, "b" => 2.0 }), None)
         .await?;
     let sum: f64 = sum_arc.as_type()?;
     assert_eq!(sum, 3.0);
 
     // Query stats count
-    let count_arc: ArcValue = node.request("stats/count", None::<ArcValue>).await?;
+    let count_arc: ArcValue = node.request("stats/count", None::<ArcValue>, None).await?;
     let count: usize = count_arc.as_type()?;
     assert_eq!(count, 1);
     logger.info(format!("All good – stats recorded {count} value(s)"));

@@ -5,7 +5,7 @@ use anyhow::Result;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_serializer::traits::{
-    ConfigurableLabelResolver, EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, SerializationContext,
+    EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, LabelResolver, SerializationContext,
 };
 use runar_serializer::ArcValue;
 use runar_serializer_macros::Encrypt;
@@ -25,7 +25,7 @@ pub struct WrongPlain {
 type TestContext = (
     Arc<dyn EnvelopeCrypto>,
     Arc<dyn EnvelopeCrypto>,
-    Arc<dyn runar_serializer::traits::LabelResolver>,
+    Arc<runar_serializer::traits::LabelResolver>,
     String,
     Vec<u8>,
 );
@@ -50,12 +50,12 @@ fn build_test_context() -> Result<TestContext> {
     let user_mobile_ks = Arc::new(user_mobile) as Arc<dyn EnvelopeCrypto>;
     let node_ks = Arc::new(node_keys) as Arc<dyn EnvelopeCrypto>;
 
-    let resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
+    let resolver = Arc::new(LabelResolver::new(KeyMappingConfig {
         label_mappings: HashMap::from([(
             "system".to_string(),
             LabelKeyInfo {
                 profile_public_keys: vec![profile_pk.clone()],
-                network_id: Some(network_id.clone()),
+                network_public_key: Some(network_pub.clone()),
             },
         )]),
     }));
@@ -65,7 +65,7 @@ fn build_test_context() -> Result<TestContext> {
 
 #[test]
 fn negative_typed_list_missing_keystore() -> Result<()> {
-    let (mobile_ks, _node_ks, resolver, network_id, profile_pk) = build_test_context()?;
+    let (mobile_ks, _node_ks, resolver, _network_id, profile_pk) = build_test_context()?;
 
     let items = vec![TestProfile {
         id: "1".into(),
@@ -73,11 +73,13 @@ fn negative_typed_list_missing_keystore() -> Result<()> {
     }];
     let val = ArcValue::new_list(items);
 
+    // Resolve network_public_key from resolver
+    let system_info = resolver.resolve_label_info("system")?.unwrap();
     let ctx = SerializationContext {
         keystore: mobile_ks.clone(),
         resolver: resolver.clone(),
-        network_id: network_id.clone(),
-        profile_public_key: Some(profile_pk.clone()),
+        network_public_key: system_info.network_public_key.unwrap(),
+        profile_public_keys: vec![profile_pk.clone()],
     };
 
     // Serialize with context so element-level encryption is applied (bytes container)
@@ -212,7 +214,7 @@ fn negative_unknown_category_byte() {
 
 #[test]
 fn negative_missing_decryptor_for_t() -> Result<()> {
-    let (mobile_ks, node_ks, resolver, network_id, profile_pk) = build_test_context()?;
+    let (mobile_ks, node_ks, resolver, _network_id, profile_pk) = build_test_context()?;
 
     let items = vec![TestProfile {
         id: "1".into(),
@@ -220,11 +222,13 @@ fn negative_missing_decryptor_for_t() -> Result<()> {
     }];
     let val = ArcValue::new_list(items);
 
+    // Resolve network_public_key from resolver
+    let system_info = resolver.resolve_label_info("system")?.unwrap();
     let ctx = SerializationContext {
         keystore: mobile_ks.clone(),
         resolver: resolver.clone(),
-        network_id: network_id.clone(),
-        profile_public_key: Some(profile_pk.clone()),
+        network_public_key: system_info.network_public_key.unwrap(),
+        profile_public_keys: vec![profile_pk.clone()],
     };
 
     // Serialize with element encryption

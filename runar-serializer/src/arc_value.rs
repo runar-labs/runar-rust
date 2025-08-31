@@ -3,20 +3,24 @@ use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Error as AnyhowError, Result};
+use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde::{de, de::DeserializeOwned, ser, Deserialize, Serialize};
+use serde_cbor::{from_slice, to_vec};
+use serde_json::{from_value, to_value, Number, Value as JsonValue};
 
 use crate::RunarEncrypt;
 
 use super::encryption::decrypt_bytes;
 
+use super::encryption;
 use super::erased_arc::ErasedArc;
+use super::registry;
 use super::traits::{KeyStore, LabelResolver, SerializationContext};
 
 // Type alias to simplify very complex function pointer type used for serialization functions.
-type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&dyn LabelResolver>) -> Result<Vec<u8>>
+type SerializeFn = dyn Fn(&ErasedArc, Option<&Arc<KeyStore>>, Option<&LabelResolver>) -> Result<Vec<u8>>
     + Send
     + Sync;
 
@@ -139,7 +143,7 @@ impl ArcValue {
                     if elem_rust.contains("ArcValue") {
                         return Ok("list<any>".to_string());
                     }
-                    if let Some(wire) = crate::registry::lookup_wire_name(elem_rust) {
+                    if let Some(wire) = registry::lookup_wire_name(elem_rust) {
                         return Ok(format!("list<{wire}>"));
                     }
                     // If primitive, registry must already have it; error otherwise
@@ -178,7 +182,7 @@ impl ArcValue {
                 if val_rust.contains("ArcValue") {
                     return Ok("map<string,any>".to_string());
                 }
-                if let Some(wire) = crate::registry::lookup_wire_name(val_rust) {
+                if let Some(wire) = registry::lookup_wire_name(val_rust) {
                     return Ok(format!("map<string,{wire}>"));
                 }
                 return Err(anyhow!(
@@ -232,7 +236,7 @@ impl ArcValue {
         let arc = Arc::new(value);
         let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
             let val = erased.as_arc::<T>()?;
-            serde_cbor::to_vec(&*val).map_err(anyhow::Error::from)
+            to_vec(&*val).map_err(AnyhowError::from)
         });
         Self {
             category: ValueCategory::Primitive,
@@ -252,22 +256,22 @@ impl ArcValue {
             if let (Some(ks), Some(res)) = (keystore, resolver) {
                 // Try element-level encryption via registry
                 if let Some(enc_fn) =
-                    crate::registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
+                    registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
                 {
                     let mut out: Vec<Vec<u8>> = Vec::with_capacity(list.len());
                     for item in list.iter() {
                         let bytes = enc_fn(item as &dyn std::any::Any, ks, res)?;
                         out.push(bytes);
                     }
-                    return serde_cbor::to_vec(&out).map_err(anyhow::Error::from);
+                    return to_vec(&out).map_err(AnyhowError::from);
                 }
             }
             // No context or no encryptor: plain encode
-            serde_cbor::to_vec(list.as_ref()).map_err(anyhow::Error::from)
+            to_vec(list.as_ref()).map_err(AnyhowError::from)
         });
         let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
             let list = erased.as_arc::<Vec<T>>()?;
-            serde_json::to_value(list.as_ref()).map_err(anyhow::Error::from)
+            to_value(list.as_ref()).map_err(AnyhowError::from)
         });
         Self {
             category: ValueCategory::List,
@@ -286,21 +290,21 @@ impl ArcValue {
             let map = erased.as_arc::<HashMap<String, T>>()?;
             if let (Some(ks), Some(res)) = (keystore, resolver) {
                 if let Some(enc_fn) =
-                    crate::registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
+                    registry::lookup_encryptor_by_typeid(std::any::TypeId::of::<T>())
                 {
                     let mut out: HashMap<String, Vec<u8>> = HashMap::with_capacity(map.len());
                     for (k, v) in map.iter() {
                         let bytes = enc_fn(v as &dyn std::any::Any, ks, res)?;
                         out.insert(k.clone(), bytes);
                     }
-                    return serde_cbor::to_vec(&out).map_err(anyhow::Error::from);
+                    return to_vec(&out).map_err(AnyhowError::from);
                 }
             }
-            serde_cbor::to_vec(map.as_ref()).map_err(anyhow::Error::from)
+            to_vec(map.as_ref()).map_err(AnyhowError::from)
         });
         let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
             let map = erased.as_arc::<HashMap<String, T>>()?;
-            serde_json::to_value(map.as_ref()).map_err(anyhow::Error::from)
+            to_value(map.as_ref()).map_err(AnyhowError::from)
         });
         Self {
             category: ValueCategory::Map,
@@ -319,14 +323,14 @@ impl ArcValue {
             let val = erased.as_arc::<T>()?;
             if let (Some(ks), Some(res)) = (keystore, resolver) {
                 let result = val.encrypt_with_keystore(ks, res)?;
-                serde_cbor::to_vec(&result).map_err(anyhow::Error::from)
+                to_vec(&result).map_err(AnyhowError::from)
             } else {
-                serde_cbor::to_vec(&*val).map_err(anyhow::Error::from)
+                to_vec(&*val).map_err(AnyhowError::from)
             }
         });
         let to_json_fn: Arc<ToJsonFn> = Arc::new(move |erased| {
             let val = erased.as_arc::<T>()?;
-            serde_json::to_value(val.as_ref().clone()).map_err(anyhow::Error::from)
+            to_value(val.as_ref().clone()).map_err(AnyhowError::from)
         });
         Self {
             category: ValueCategory::Struct,
@@ -354,7 +358,7 @@ impl ArcValue {
         let arc = Arc::new(json);
         let ser_fn: Arc<SerializeFn> = Arc::new(move |erased, _, _| {
             let json = erased.as_arc::<JsonValue>()?;
-            Ok(serde_cbor::to_vec(&*json)?)
+            Ok(to_vec(&*json)?)
         });
         Self {
             category: ValueCategory::Json,
@@ -417,55 +421,55 @@ impl ArcValue {
                 // Try to deserialize primitives using wire names
                 match type_name.as_str() {
                     "string" => {
-                        let value: String = serde_cbor::from_slice(bytes_cow.as_ref())?;
+                        let value: String = from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
                     "bool" => {
-                        let value: bool = serde_cbor::from_slice(bytes_cow.as_ref())?;
+                        let value: bool = from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
                     "bytes" => {
-                        let value: Vec<u8> = serde_cbor::from_slice(bytes_cow.as_ref())?;
+                        let value: Vec<u8> = from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_bytes(value))
                     }
                     "char" => {
-                        let value: char = serde_cbor::from_slice(bytes_cow.as_ref())?;
+                        let value: char = from_slice(bytes_cow.as_ref())?;
                         Ok(ArcValue::new_primitive(value))
                     }
-                    "i8" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i8>(
+                    "i8" => Ok(ArcValue::new_primitive(from_slice::<i8>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "i16" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i16>(
+                    "i16" => Ok(ArcValue::new_primitive(from_slice::<i16>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "i32" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i32>(
+                    "i32" => Ok(ArcValue::new_primitive(from_slice::<i32>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "i64" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i64>(
+                    "i64" => Ok(ArcValue::new_primitive(from_slice::<i64>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "i128" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<i128>(
+                    "i128" => Ok(ArcValue::new_primitive(from_slice::<i128>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "u8" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u8>(
+                    "u8" => Ok(ArcValue::new_primitive(from_slice::<u8>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "u16" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u16>(
+                    "u16" => Ok(ArcValue::new_primitive(from_slice::<u16>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "u32" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u32>(
+                    "u32" => Ok(ArcValue::new_primitive(from_slice::<u32>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "u64" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u64>(
+                    "u64" => Ok(ArcValue::new_primitive(from_slice::<u64>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "u128" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<u128>(
+                    "u128" => Ok(ArcValue::new_primitive(from_slice::<u128>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "f32" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<f32>(
+                    "f32" => Ok(ArcValue::new_primitive(from_slice::<f32>(
                         bytes_cow.as_ref(),
                     )?)),
-                    "f64" => Ok(ArcValue::new_primitive(serde_cbor::from_slice::<f64>(
+                    "f64" => Ok(ArcValue::new_primitive(from_slice::<f64>(
                         bytes_cow.as_ref(),
                     )?)),
                     other => Err(anyhow!("Unknown primitive wire type: {}", other)),
@@ -533,7 +537,7 @@ impl ArcValue {
         let wire_name: String = match self.category {
             ValueCategory::Primitive => {
                 let rust_name = type_name;
-                let Some(wire) = crate::registry::lookup_wire_name(rust_name) else {
+                let Some(wire) = registry::lookup_wire_name(rust_name) else {
                     return Err(anyhow!(
                         "Missing wire-name registration for primitive: {}",
                         rust_name
@@ -546,7 +550,7 @@ impl ArcValue {
             ValueCategory::Json => "json".to_string(),
             ValueCategory::Bytes => "bytes".to_string(),
             ValueCategory::Struct => {
-                if let Some(wire) = crate::registry::lookup_wire_name(type_name) {
+                if let Some(wire) = registry::lookup_wire_name(type_name) {
                     wire.to_string()
                 } else {
                     return Err(anyhow!(
@@ -565,27 +569,22 @@ impl ArcValue {
 
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
-            let network_id = &ctx.network_id;
-            let profile_public_key = &ctx.profile_public_key;
-            let resolver = &ctx.resolver;
+            let network_public_key = &ctx.network_public_key; // ← PRE-RESOLVED KEY
+            let recipients = ctx.profile_public_keys.clone(); // ← ALL PROFILE KEYS
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
                 // Container-aware encryption for list/map: delegate to ser_fn with context
-                ser_fn(inner, Some(ks), Some(resolver.as_ref()))
+                ser_fn(inner, Some(ks), Some(ctx.resolver.as_ref()))
             } else {
                 return Err(anyhow!("No serialize function available"));
             }?;
 
-            let recipients: Vec<Vec<u8>> = match profile_public_key.as_ref() {
-                Some(pk) => vec![pk.clone()],
-                None => Vec::new(),
-            };
-            let data = ks.encrypt_with_envelope(&bytes, Some(network_id.as_str()), recipients)?;
+            let data = ks.encrypt_with_envelope(&bytes, Some(network_public_key), recipients)?;
             let is_encrypted_byte = 0x01;
             buf.push(is_encrypted_byte);
             buf.push(type_name_bytes.len() as u8);
             buf.extend_from_slice(type_name_bytes);
-            buf.extend(serde_cbor::to_vec(&data).map_err(|e| anyhow!(e))?);
+            buf.extend(to_vec(&data).map_err(|e| anyhow!(e))?);
         } else {
             let bytes = if let Some(ser_fn) = &self.serialize_fn {
                 ser_fn(inner, None, None)
@@ -627,13 +626,13 @@ impl ArcValue {
         if !inner.is_lazy {
             // if is not lazy.. and is of categoty JSON and the requested type is not JSON..
             // then we need to convert from the json to ArcValue and then to the requested type
-            if self.category == ValueCategory::Json && target_name != "serde_json::value::Value" {
+            if self.category == ValueCategory::Json && target_name != "Value" {
                 let json_value = inner.as_arc::<JsonValue>()?;
                 if target_name.contains("ArcValue") {
                     let converted_arc = Self::json_to_arc_value(json_value.as_ref());
                     return converted_arc.as_type_ref::<T>();
                 } else {
-                    let result: T = serde_json::from_value::<T>(json_value.as_ref().clone())?;
+                    let result: T = from_value::<T>(json_value.as_ref().clone())?;
                     return Ok(Arc::new(result));
                 }
             }
@@ -644,14 +643,13 @@ impl ArcValue {
         // Use unified lazy data handling
         self.handle_lazy_data(|payload, type_name| {
             //handle the case when the serialized type is JSON and the requested type is not JSON
-            if type_name == "serde_json::value::Value" && target_name != type_name {
-                if let Ok(json_value) = serde_cbor::from_slice::<serde_json::value::Value>(payload)
-                {
+            if type_name == "Value" && target_name != type_name {
+                if let Ok(json_value) = from_slice::<JsonValue>(payload) {
                     if target_name.contains("ArcValue") {
                         let converted_arc = Self::json_to_arc_value(&json_value);
                         return converted_arc.as_type_ref::<T>();
                     } else {
-                        let result: T = serde_json::from_value::<T>(json_value)?;
+                        let result: T = from_value::<T>(json_value)?;
                         return Ok(Arc::new(result));
                     }
                 } else {
@@ -661,7 +659,7 @@ impl ArcValue {
 
             // Attempt direct deserialisation (primitives, Plain structs, or when
             // the caller asked for the *encrypted* representation itself).
-            if let Ok(val) = serde_cbor::from_slice::<T>(payload) {
+            if let Ok(val) = from_slice::<T>(payload) {
                 return Ok(Arc::new(val));
             }
 
@@ -672,7 +670,7 @@ impl ArcValue {
                 .keystore
                 .as_ref()
                 .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
-            let plain: T = crate::registry::try_decrypt_into::<T>(payload, ks)?;
+            let plain: T = registry::try_decrypt_into::<T>(payload, ks)?;
             Ok(Arc::new(plain))
         })
     }
@@ -694,24 +692,24 @@ impl ArcValue {
             return self.handle_lazy_data(|payload, type_name| {
                 if type_name.starts_with("list<") {
                     // Try encrypted-bytes element container
-                    if let Ok(vec_bytes) = serde_cbor::from_slice::<Vec<Vec<u8>>>(payload) {
+                    if let Ok(vec_bytes) = from_slice::<Vec<Vec<u8>>>(payload) {
                         let ks = ks_opt
                             .as_ref()
                             .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
                         let mut out: Vec<Arc<T>> = Vec::with_capacity(vec_bytes.len());
                         for b in vec_bytes.iter() {
-                            let plain: T = crate::registry::try_decrypt_into::<T>(b, ks)?;
+                            let plain: T = registry::try_decrypt_into::<T>(b, ks)?;
                             out.push(Arc::new(plain));
                         }
                         return Ok(out);
                     }
                     // Try plain Vec<T>
-                    if let Ok(vec_plain) = serde_cbor::from_slice::<Vec<T>>(payload) {
+                    if let Ok(vec_plain) = from_slice::<Vec<T>>(payload) {
                         let out: Vec<Arc<T>> = vec_plain.into_iter().map(|v| Arc::new(v)).collect();
                         return Ok(out);
                     }
                     // Try heterogeneous Vec<ArcValue> then map to T
-                    if let Ok(vec_av) = serde_cbor::from_slice::<Vec<ArcValue>>(payload) {
+                    if let Ok(vec_av) = from_slice::<Vec<ArcValue>>(payload) {
                         let mut out: Vec<Arc<T>> = Vec::with_capacity(vec_av.len());
                         for v in vec_av.iter() {
                             out.push(v.as_type_ref::<T>()?);
@@ -762,22 +760,20 @@ impl ArcValue {
             return self.handle_lazy_data(|payload, type_name| {
                 if type_name.starts_with("map<") {
                     // Try encrypted-bytes values
-                    if let Ok(map_bytes) =
-                        serde_cbor::from_slice::<HashMap<String, Vec<u8>>>(payload)
-                    {
+                    if let Ok(map_bytes) = from_slice::<HashMap<String, Vec<u8>>>(payload) {
                         let ks = ks_opt
                             .as_ref()
                             .ok_or_else(|| anyhow!("Keystore required for decryptor"))?;
                         let mut out: HashMap<String, Arc<T>> =
                             HashMap::with_capacity(map_bytes.len());
                         for (k, vbytes) in map_bytes.iter() {
-                            let plain: T = crate::registry::try_decrypt_into::<T>(vbytes, ks)?;
+                            let plain: T = registry::try_decrypt_into::<T>(vbytes, ks)?;
                             out.insert(k.clone(), Arc::new(plain));
                         }
                         return Ok(out);
                     }
                     // Try plain map<String, T>
-                    if let Ok(map_plain) = serde_cbor::from_slice::<HashMap<String, T>>(payload) {
+                    if let Ok(map_plain) = from_slice::<HashMap<String, T>>(payload) {
                         let out: HashMap<String, Arc<T>> = map_plain
                             .into_iter()
                             .map(|(k, v)| (k, Arc::new(v)))
@@ -785,8 +781,7 @@ impl ArcValue {
                         return Ok(out);
                     }
                     // Try heterogeneous map<String, ArcValue>
-                    if let Ok(map_av) = serde_cbor::from_slice::<HashMap<String, ArcValue>>(payload)
-                    {
+                    if let Ok(map_av) = from_slice::<HashMap<String, ArcValue>>(payload) {
                         let mut out: HashMap<String, Arc<T>> = HashMap::with_capacity(map_av.len());
                         for (k, v) in map_av.iter() {
                             out.insert(k.clone(), v.as_type_ref::<T>()?);
@@ -877,7 +872,7 @@ impl ArcValue {
                 .keystore
                 .as_ref()
                 .ok_or_else(|| anyhow!("Keystore required for outer decryption"))?;
-            payload = crate::encryption::decrypt_bytes(&payload, ks)?;
+            payload = encryption::decrypt_bytes(&payload, ks)?;
         }
 
         // Process the payload using the provided function
@@ -930,9 +925,7 @@ impl ArcValue {
                     Ok(JsonValue::String(value.to_string()))
                 } else if is_bytes(type_name) {
                     let value = inner.as_arc::<Vec<u8>>()?;
-                    Ok(JsonValue::String(
-                        base64::engine::general_purpose::STANDARD.encode(value.as_ref()),
-                    ))
+                    Ok(JsonValue::String(STANDARD.encode(value.as_ref())))
                 } else {
                     Err(anyhow!(
                         "Unsupported primitive type for JSON conversion: {}",
@@ -954,14 +947,13 @@ impl ArcValue {
                 if inner.is_lazy {
                     self.handle_lazy_data(|payload, type_name| {
                         // Try wire-name keyed converters first (list/map/json/struct wire names)
-                        if let Some(json_fn) =
-                            crate::registry::get_json_converter_by_wire_name(type_name)
+                        if let Some(json_fn) = registry::get_json_converter_by_wire_name(type_name)
                         {
                             return json_fn(payload);
                         }
                         // No rust-name fallback: only wire-name converters are supported
                         // Final fallback: attempt generic CBOR -> JSON value
-                        if let Ok(value) = serde_cbor::from_slice::<serde_json::Value>(payload) {
+                        if let Ok(value) = from_slice::<JsonValue>(payload) {
                             return Ok(value);
                         }
                         // If everything fails, return a specific error
@@ -982,7 +974,7 @@ impl ArcValue {
 
     pub fn serialize_serde<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: ser::Serializer,
     {
         // Check if this is JSON serialization by checking the serializer type
         let is_json = std::any::type_name::<S>().contains("serde_json");
@@ -991,9 +983,7 @@ impl ArcValue {
             // For JSON, use the to_json() method to get proper JSON representation
             match self.to_json() {
                 Ok(json_value) => json_value.serialize(serializer),
-                Err(e) => Err(serde::ser::Error::custom(format!(
-                    "JSON conversion failed: {e}",
-                ))),
+                Err(e) => Err(ser::Error::custom(format!("JSON conversion failed: {e}",))),
             }
         } else {
             // For CBOR and other formats, use the original struct-based serialization
@@ -1008,15 +998,15 @@ impl ArcValue {
             let inner = self
                 .value
                 .as_ref()
-                .ok_or(serde::ser::Error::custom("No value to serialize"))?;
+                .ok_or(ser::Error::custom("No value to serialize"))?;
             let rust_type_name = inner.type_name();
 
             // Use the same wire-name resolution as the top-level header
             let wire_name: String = match self.category {
                 ValueCategory::Primitive => {
                     // For primitives we rely on pre-registered mappings
-                    let Some(wire) = crate::registry::lookup_wire_name(rust_type_name) else {
-                        return Err(serde::ser::Error::custom(format!(
+                    let Some(wire) = registry::lookup_wire_name(rust_type_name) else {
+                        return Err(ser::Error::custom(format!(
                             "Missing wire-name registration for primitive: {rust_type_name}",
                         )));
                     };
@@ -1028,7 +1018,7 @@ impl ArcValue {
                 ValueCategory::Bytes => "bytes".to_string(),
                 ValueCategory::Struct => {
                     // Prefer registry mapping; if absent, use simple ident of the Rust type as default
-                    if let Some(wire) = crate::registry::lookup_wire_name(rust_type_name) {
+                    if let Some(wire) = registry::lookup_wire_name(rust_type_name) {
                         wire.to_string()
                     } else {
                         rust_type_name
@@ -1046,15 +1036,14 @@ impl ArcValue {
             // Serialize the actual value using the existing serialize_fn
             if let Some(inner) = &self.value {
                 if let Some(ser_fn) = &self.serialize_fn {
-                    let serialized_data =
-                        ser_fn(inner, None, None).map_err(serde::ser::Error::custom)?;
+                    let serialized_data = ser_fn(inner, None, None).map_err(ser::Error::custom)?;
                     state.serialize_field("value", &serialized_data)?;
                 } else {
-                    return Err(serde::ser::Error::custom("No serialize function available"));
+                    return Err(ser::Error::custom("No serialize function available"));
                 }
             } else {
                 // For null values
-                state.serialize_field("value", &serde_json::Value::Null)?;
+                state.serialize_field("value", &JsonValue::Null)?;
             }
 
             state.end()
@@ -1063,7 +1052,7 @@ impl ArcValue {
 
     pub fn deserialize_serde<'de, D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: de::Deserializer<'de>,
     {
         // Check if this is JSON deserialization by checking the deserializer type
         let is_json = std::any::type_name::<D>().contains("serde_json");
@@ -1144,52 +1133,52 @@ impl ArcValue {
                                 value.ok_or_else(|| de::Error::missing_field("value"))?;
 
                             match type_name.as_str() {
-                                "string" => serde_cbor::from_slice::<String>(&value)
+                                "string" => from_slice::<String>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "bool" => serde_cbor::from_slice::<bool>(&value)
+                                "bool" => from_slice::<bool>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "bytes" => serde_cbor::from_slice::<Vec<u8>>(&value)
+                                "bytes" => from_slice::<Vec<u8>>(&value)
                                     .map(ArcValue::new_bytes)
                                     .map_err(de::Error::custom),
-                                "char" => serde_cbor::from_slice::<char>(&value)
+                                "char" => from_slice::<char>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "i8" => serde_cbor::from_slice::<i8>(&value)
+                                "i8" => from_slice::<i8>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "i16" => serde_cbor::from_slice::<i16>(&value)
+                                "i16" => from_slice::<i16>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "i32" => serde_cbor::from_slice::<i32>(&value)
+                                "i32" => from_slice::<i32>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "i64" => serde_cbor::from_slice::<i64>(&value)
+                                "i64" => from_slice::<i64>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "i128" => serde_cbor::from_slice::<i128>(&value)
+                                "i128" => from_slice::<i128>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "u8" => serde_cbor::from_slice::<u8>(&value)
+                                "u8" => from_slice::<u8>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "u16" => serde_cbor::from_slice::<u16>(&value)
+                                "u16" => from_slice::<u16>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "u32" => serde_cbor::from_slice::<u32>(&value)
+                                "u32" => from_slice::<u32>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "u64" => serde_cbor::from_slice::<u64>(&value)
+                                "u64" => from_slice::<u64>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "u128" => serde_cbor::from_slice::<u128>(&value)
+                                "u128" => from_slice::<u128>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "f32" => serde_cbor::from_slice::<f32>(&value)
+                                "f32" => from_slice::<f32>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
-                                "f64" => serde_cbor::from_slice::<f64>(&value)
+                                "f64" => from_slice::<f64>(&value)
                                     .map(ArcValue::new_primitive)
                                     .map_err(de::Error::custom),
                                 // No legacy fallback
@@ -1237,19 +1226,19 @@ impl ArcValue {
     }
 }
 
-impl serde::Serialize for ArcValue {
+impl Serialize for ArcValue {
     fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
     where
-        S: serde::Serializer,
+        S: ser::Serializer,
     {
         self.serialize_serde(serializer)
     }
 }
 
-impl<'de> serde::Deserialize<'de> for ArcValue {
+impl<'de> Deserialize<'de> for ArcValue {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de>,
+        D: de::Deserializer<'de>,
     {
         Self::deserialize_serde(deserializer)
     }
@@ -1383,16 +1372,15 @@ fn to_json_number(inner: &ErasedArc, type_name: &str) -> Result<JsonValue> {
         "f32" => {
             let value = inner.as_arc::<f32>()?;
             Ok(JsonValue::Number(
-                serde_json::Number::from_f64(*value as f64)
+                Number::from_f64(*value as f64)
                     .ok_or_else(|| anyhow!("Invalid f32 value for JSON: {value}"))?,
             ))
         }
         "f64" => {
             let value = inner.as_arc::<f64>()?;
-            Ok(JsonValue::Number(
-                serde_json::Number::from_f64(*value)
-                    .ok_or_else(|| anyhow!("Invalid f64 value for JSON: {value}"))?,
-            ))
+            Ok(JsonValue::Number(Number::from_f64(*value).ok_or_else(
+                || anyhow!("Invalid f64 value for JSON: {value}"),
+            )?))
         }
         _ => Err(anyhow!("Unsupported number type: {}", type_name)),
     }

@@ -3,6 +3,8 @@
 // This module provides configuration options for logging in the Runar system.
 
 use super::Component;
+use env_logger::{Builder, TimestampPrecision};
+use log::LevelFilter;
 use std::collections::HashMap;
 
 /// Logging configuration options
@@ -56,15 +58,15 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    /// Convert to log::LevelFilter
-    pub fn to_level_filter(&self) -> log::LevelFilter {
+    /// Convert to LevelFilter
+    pub fn to_level_filter(&self) -> LevelFilter {
         match self {
-            LogLevel::Error => log::LevelFilter::Error,
-            LogLevel::Warn => log::LevelFilter::Warn,
-            LogLevel::Info => log::LevelFilter::Info,
-            LogLevel::Debug => log::LevelFilter::Debug,
-            LogLevel::Trace => log::LevelFilter::Trace,
-            LogLevel::Off => log::LevelFilter::Off,
+            LogLevel::Error => LevelFilter::Error,
+            LogLevel::Warn => LevelFilter::Warn,
+            LogLevel::Info => LevelFilter::Info,
+            LogLevel::Debug => LevelFilter::Debug,
+            LogLevel::Trace => LevelFilter::Trace,
+            LogLevel::Off => LevelFilter::Off,
         }
     }
 }
@@ -111,7 +113,7 @@ impl LoggingConfig {
     /// tests might try to initialize the logger.
     pub fn apply(&self) {
         // Create a new env_logger builder
-        let mut builder = env_logger::Builder::new();
+        let mut builder = Builder::new();
 
         // Disable reading from environment variables
         builder.parse_default_env();
@@ -119,7 +121,7 @@ impl LoggingConfig {
         // Customize the log format to remove module path and simplify output
         builder.format_module_path(false);
         builder.format_target(false);
-        builder.format_timestamp(Some(env_logger::TimestampPrecision::Millis));
+        builder.format_timestamp(Some(TimestampPrecision::Millis));
 
         // Set the default level
         builder.filter_level(self.default_level.to_level_filter());

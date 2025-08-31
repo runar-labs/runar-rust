@@ -1,24 +1,39 @@
 use runar_schemas::NodeInfo;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{net::SocketAddr, sync::Arc};
-use tokio::sync::watch;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::{
+    cmp::Ordering,
+    error::Error,
+    fmt::{Debug, Formatter, Result as FmtResult},
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use async_trait::async_trait;
-use quinn::{ClientConfig, Endpoint, ServerConfig};
-use runar_common::compact_ids::compact_id;
-use runar_common::logging::Logger;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
-use serde::{Deserialize, Serialize};
-
 use dashmap::DashMap;
+use quinn::{
+    crypto::rustls::QuicClientConfig, ClientConfig, Connection, Endpoint, IdleTimeout, RecvStream,
+    SendStream, ServerConfig, TransportConfig, VarInt,
+};
+use rand::{rngs::ThreadRng, Rng};
+use runar_common::{compact_ids::compact_id, logging::Logger, Component};
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use rustls::crypto::ring;
+use rustls::{crypto::CryptoProvider, ClientConfig as RustlsClientConfig, RootCertStore};
+use serde::{Deserialize, Serialize};
+use serde_cbor::{from_slice, to_vec};
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
-use tokio::sync::Notify;
-use tokio::sync::RwLock;
+use tokio::{
+    io::{AsyncWrite, AsyncWriteExt},
+    select, spawn,
+    sync::{watch, Mutex, Notify, RwLock},
+    task::JoinHandle,
+    time::{sleep, timeout},
+};
+use uuid::Uuid;
 // Removed custom certificate parsing; rely on rustls standard verification.
 
 use crate::discovery::multicast_discovery::PeerInfo;
-use crate::transport::{EventMessage, NetworkMessagePayloadItem, RequestMessage, ResponseMessage};
+
 use crate::transport::{GetLocalNodeInfoCallback, NetworkError, NetworkMessage, NetworkTransport};
 use runar_keys::NodeKeyManager;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
@@ -45,8 +60,7 @@ pub struct QuicTransportOptions {
     get_local_node_info: Option<GetLocalNodeInfoCallback>,
     //connection_callback: Option<super::ConnectionCallback>,
     logger: Option<Arc<Logger>>,
-    keystore: Option<Arc<dyn runar_serializer::traits::EnvelopeCrypto>>,
-    label_resolver: Option<Arc<dyn runar_serializer::traits::LabelResolver>>,
+
     // Cache TTL for idempotent response replay
     response_cache_ttl: Duration,
     // Maximum number of retries for failed requests
@@ -61,8 +75,8 @@ pub struct QuicTransportOptions {
     key_manager: Option<Arc<NodeKeyManager>>,
 }
 
-impl std::fmt::Debug for QuicTransportOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for QuicTransportOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("QuicTransportOptions")
             .field(
                 "certificates",
@@ -90,22 +104,6 @@ impl std::fmt::Debug for QuicTransportOptions {
                 "logger",
                 &if self.logger.is_some() {
                     "Some(Logger)"
-                } else {
-                    "None"
-                },
-            )
-            .field(
-                "keystore",
-                &if self.keystore.is_some() {
-                    "Some(EnvelopeCrypto)"
-                } else {
-                    "None"
-                },
-            )
-            .field(
-                "label_resolver",
-                &if self.label_resolver.is_some() {
-                    "Some(LabelResolver)"
                 } else {
                     "None"
                 },
@@ -148,8 +146,6 @@ impl Default for QuicTransportOptions {
             event_callback: None,
             get_local_node_info: None,
             logger: None,
-            keystore: None,
-            label_resolver: None,
             response_cache_ttl: Duration::from_secs(5),
             max_request_retries: None,
             handshake_response_timeout: Duration::from_secs(2),
@@ -245,25 +241,9 @@ impl QuicTransportOptions {
     }
 
     pub fn with_logger_from_node_id(mut self, node_id: String) -> Self {
-        let logger = Arc::new(Logger::new_root(runar_common::Component::Transporter));
+        let logger = Arc::new(Logger::new_root(Component::Transporter));
         logger.set_node_id(node_id);
         self.logger = Some(logger);
-        self
-    }
-
-    pub fn with_keystore(
-        mut self,
-        keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
-    ) -> Self {
-        self.keystore = Some(keystore);
-        self
-    }
-
-    pub fn with_label_resolver(
-        mut self,
-        resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
-    ) -> Self {
-        self.label_resolver = Some(resolver);
         self
     }
 
@@ -323,14 +303,6 @@ impl QuicTransportOptions {
         self.logger.as_ref()
     }
 
-    pub fn keystore(&self) -> Option<&Arc<dyn runar_serializer::traits::EnvelopeCrypto>> {
-        self.keystore.as_ref()
-    }
-
-    pub fn label_resolver(&self) -> Option<&Arc<dyn runar_serializer::traits::LabelResolver>> {
-        self.label_resolver.as_ref()
-    }
-
     pub fn response_cache_ttl(&self) -> Duration {
         self.response_cache_ttl
     }
@@ -360,8 +332,6 @@ impl Clone for QuicTransportOptions {
             event_callback: self.event_callback.clone(),
             get_local_node_info: self.get_local_node_info.clone(),
             logger: self.logger.clone(),
-            keystore: self.keystore.clone(),
-            label_resolver: self.label_resolver.clone(),
             response_cache_ttl: self.response_cache_ttl,
             max_request_retries: self.max_request_retries,
             handshake_response_timeout: self.handshake_response_timeout,
@@ -375,7 +345,7 @@ impl Clone for QuicTransportOptions {
 /// Simple peer state used by the new transport.
 #[derive(Debug, Clone)]
 struct PeerState {
-    connection: Arc<quinn::Connection>,
+    connection: Arc<Connection>,
     connection_id: usize,
     node_info_version: i64,
     initiator_peer_id: String,
@@ -389,7 +359,7 @@ struct PeerState {
 
 impl PeerState {
     fn new(
-        connection: Arc<quinn::Connection>,
+        connection: Arc<Connection>,
         node_info_version: i64,
         initiator_peer_id: String,
         initiator_nonce: u64,
@@ -434,10 +404,12 @@ struct HandshakeData {
 
 /// Encode a `NetworkMessage` with a 4-byte BE length prefix.
 fn encode_message(msg: &NetworkMessage) -> Result<Vec<u8>, NetworkError> {
-    let mut buf = serde_cbor::to_vec(msg)
+    let mut buf = to_vec(msg)
         .map_err(|e| NetworkError::MessageError(format!("failed to encode cbor: {e}")))?;
+
     let mut framed = (buf.len() as u32).to_be_bytes().to_vec();
     framed.append(&mut buf);
+
     Ok(framed)
 }
 
@@ -464,34 +436,29 @@ pub struct QuicTransport {
     get_local_node_info: GetLocalNodeInfoCallback,
 
     // Per-peer connect guards to avoid concurrent connects
-    peer_connect_mutexes: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-
-    // crypto helpers
-    keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto>,
-    label_resolver: Arc<dyn runar_serializer::traits::LabelResolver>,
-
+    peer_connect_mutexes: Arc<DashMap<String, Arc<Mutex<()>>>>,
     // shared runtime state (peers + broadcast)
     state: SharedState,
 
     // short-lived cache to deduplicate REQUEST handling by correlation_id
-    response_cache: dashmap::DashMap<String, (Instant, Arc<NetworkMessage>)>,
+    response_cache: DashMap<String, (Instant, Arc<NetworkMessage>)>,
     response_cache_ttl: Duration,
 
     // background tasks
-    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    tasks: Mutex<Vec<JoinHandle<()>>>,
 
     running: AtomicBool,
 }
 
 impl QuicTransport {
     fn generate_nonce() -> u64 {
-        rand::random::<u64>()
+        ThreadRng::default().random::<u64>()
     }
 
-    async fn get_or_create_connect_mutex(&self, peer_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    async fn get_or_create_connect_mutex(&self, peer_id: &str) -> Arc<Mutex<()>> {
         self.peer_connect_mutexes
             .entry(peer_id.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
 
@@ -506,11 +473,11 @@ impl QuicTransport {
             a_nonce: u64,
             b_id: &'a str,
             b_nonce: u64,
-        ) -> (std::cmp::Ordering, &'a str, u64, &'a str, u64) {
+        ) -> (Ordering, &'a str, u64, &'a str, u64) {
             if a_id <= b_id {
-                (std::cmp::Ordering::Less, a_id, a_nonce, b_id, b_nonce)
+                (Ordering::Less, a_id, a_nonce, b_id, b_nonce)
             } else {
-                (std::cmp::Ordering::Greater, b_id, b_nonce, a_id, a_nonce)
+                (Ordering::Greater, b_id, b_nonce, a_id, a_nonce)
             }
         }
         let (_e_ord, e_low_id, e_low_nonce, e_high_id, e_high_nonce) =
@@ -524,7 +491,7 @@ impl QuicTransport {
     async fn replace_or_keep_connection(
         &self,
         peer_node_id: &str,
-        new_conn: Arc<quinn::Connection>,
+        new_conn: Arc<Connection>,
         initiator_peer_id: String,
         initiator_nonce: u64,
         responder_peer_id: String,
@@ -681,9 +648,7 @@ impl QuicTransport {
             true
         }
     }
-    pub fn new(
-        mut options: QuicTransportOptions,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(mut options: QuicTransportOptions) -> Result<Self, Box<dyn Error + Send + Sync>> {
         // Extract required parameters from options
         let local_node_public_key = options.local_node_public_key.take().ok_or_else(|| {
             NetworkError::ConfigurationError("local_node_public_key is required".into())
@@ -697,25 +662,10 @@ impl QuicTransport {
             .logger
             .take()
             .ok_or_else(|| NetworkError::ConfigurationError("logger is required".into()))?)
-        .with_component(runar_common::Component::Transporter);
-        // Prefer EnvelopeCrypto provided by the key manager. Fall back to explicit keystore only for
-        // legacy/tests that don't use a key manager.
-        let keystore: Arc<dyn runar_serializer::traits::EnvelopeCrypto> =
-            if let Some(km) = options.key_manager().cloned() {
-                // NodeKeyManager implements EnvelopeCrypto
-                km as Arc<dyn runar_serializer::traits::EnvelopeCrypto>
-            } else {
-                options.keystore.take().ok_or_else(|| {
-                    NetworkError::ConfigurationError("keystore or key_manager is required".into())
-                })?
-            };
-        let label_resolver = options
-            .label_resolver
-            .take()
-            .ok_or_else(|| NetworkError::ConfigurationError("label_resolver is required".into()))?;
+        .with_component(Component::Transporter);
 
-        if rustls::crypto::CryptoProvider::get_default().is_none() {
-            rustls::crypto::ring::default_provider()
+        if CryptoProvider::get_default().is_none() {
+            ring::default_provider()
                 .install_default()
                 .expect("Failed to install default crypto provider");
         }
@@ -775,12 +725,10 @@ impl QuicTransport {
             peer_connect_mutexes: Arc::new(DashMap::new()),
             get_local_node_info,
             local_node_id,
-            keystore,
-            label_resolver,
             state: Self::shared_state(),
             tasks: Mutex::new(Vec::new()),
             running: AtomicBool::new(false),
-            response_cache: dashmap::DashMap::new(),
+            response_cache: DashMap::new(),
             response_cache_ttl: cache_ttl,
             max_request_retries,
         })
@@ -810,12 +758,12 @@ impl QuicTransport {
                 (certs, key)
             };
 
-        let mut transport_config = quinn::TransportConfig::default();
+        let mut transport_config = TransportConfig::default();
 
         // Apply our connection idle timeout (convert Duration to milliseconds for VarInt)
         let idle_timeout_ms = self.options.connection_idle_timeout.as_millis() as u64;
-        transport_config.max_idle_timeout(Some(quinn::IdleTimeout::from(
-            quinn::VarInt::from_u64(idle_timeout_ms).unwrap(),
+        transport_config.max_idle_timeout(Some(IdleTimeout::from(
+            VarInt::from_u64(idle_timeout_ms).unwrap(),
         )));
 
         // Apply our keep-alive interval
@@ -839,7 +787,7 @@ impl QuicTransport {
 
         // Build a strict rustls client config with provided root certificates (or CA from key manager).
         // Server name verification is handled by rustls using SNI; certificates must match peer_id DNS name.
-        let mut root_store = rustls::RootCertStore::empty();
+        let mut root_store = RootCertStore::empty();
         if let Some(roots) = self.options.root_certificates() {
             for der in roots.iter() {
                 root_store.add(der.clone()).map_err(|e| {
@@ -861,18 +809,14 @@ impl QuicTransport {
                 "no root certificates configured".into(),
             ));
         }
-        let rustls_client_config = rustls::ClientConfig::builder()
+        let rustls_client_config = RustlsClientConfig::builder()
             .with_root_certificates(root_store)
             .with_no_client_auth();
 
         let mut client_config = ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config).map_err(
-                |e| {
-                    NetworkError::ConfigurationError(format!(
-                        "Failed to convert rustls config: {e}"
-                    ))
-                },
-            )?,
+            QuicClientConfig::try_from(rustls_client_config).map_err(|e| {
+                NetworkError::ConfigurationError(format!("Failed to convert rustls config: {e}"))
+            })?,
         ));
 
         // Apply the transport config to client
@@ -886,12 +830,12 @@ impl QuicTransport {
         Ok((server_config, client_config))
     }
 
-    fn spawn_accept_loop(self: Arc<Self>, _endpoint: Endpoint) -> tokio::task::JoinHandle<()> {
+    fn spawn_accept_loop(self: Arc<Self>, _endpoint: Endpoint) -> JoinHandle<()> {
         let self_clone = self.clone();
-        tokio::spawn(async move {
+        spawn(async move {
             loop {
                 // If transport is no longer running, break the loop
-                if !self_clone.running.load(Ordering::SeqCst) {
+                if !self_clone.running.load(AtomicOrdering::SeqCst) {
                     break;
                 }
                 // Snapshot endpoint without holding the lock across await points
@@ -918,13 +862,13 @@ impl QuicTransport {
     fn spawn_connection_tasks(
         self: Arc<Self>,
         peer_id: String,
-        conn: Arc<quinn::Connection>,
-    ) -> tokio::task::JoinHandle<()> {
+        conn: Arc<Connection>,
+    ) -> JoinHandle<()> {
         let self_clone = self.clone();
 
-        tokio::spawn(async move {
+        spawn(async move {
             let needs_to_correlate_peer_id = peer_id == "inbound";
-            tokio::select! {
+            select! {
                 res = self_clone.uni_accept_loop(conn.clone(), needs_to_correlate_peer_id) => if let Err(e) = res { log_error!(self_clone.logger, "uni loop failed: {e}") },
                 res = self_clone.bi_accept_loop(conn.clone(), needs_to_correlate_peer_id) => if let Err(e) = res { log_error!(self_clone.logger, "bi loop failed: {e}") },
             }
@@ -952,7 +896,7 @@ impl QuicTransport {
                 matches!(self_clone.state.peers.get(&resolved_peer_id), Some(entry) if entry.value().connection_id == connection_id)
             };
             if should_remove {
-                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                sleep(Duration::from_millis(80)).await;
                 if let Some((_, current)) = self_clone.state.peers.remove(&resolved_peer_id) {
                     let current_conn_id = current.connection_id;
                     if current_conn_id == connection_id {
@@ -987,8 +931,8 @@ impl QuicTransport {
                     let disconnected_callback = disconnected_callback.clone();
                     let self_check = self_clone.clone();
                     let peer_for_check = resolved_peer_id.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    spawn(async move {
+                        sleep(Duration::from_millis(150)).await;
                         let still_disconnected =
                             !self_check.state.peers.contains_key(&peer_for_check);
                         if still_disconnected {
@@ -1004,7 +948,7 @@ impl QuicTransport {
 
     async fn uni_accept_loop(
         &self,
-        conn: Arc<quinn::Connection>,
+        conn: Arc<Connection>,
         needs_to_correlate_peer_id: bool,
     ) -> Result<(), NetworkError> {
         loop {
@@ -1029,13 +973,11 @@ impl QuicTransport {
         }
     }
 
-    async fn write_message<S: tokio::io::AsyncWrite + Unpin>(
+    async fn write_message<S: AsyncWrite + Unpin>(
         &self,
         stream: &mut S,
         msg: &NetworkMessage,
     ) -> Result<(), NetworkError> {
-        use tokio::io::AsyncWriteExt;
-
         log_debug!(
             self.logger,
             "[write_message] Encoding message: type={}, source={}, dest={}",
@@ -1069,11 +1011,8 @@ impl QuicTransport {
     }
 
     // Read a length-prefixed `NetworkMessage` fully from a RecvStream.
-    async fn read_message(
-        &self,
-        recv: &mut quinn::RecvStream,
-    ) -> Result<NetworkMessage, NetworkError> {
-        log_debug!(self.logger, "[read_message] Reading message from stream");
+    async fn read_message(&self, recv: &mut RecvStream) -> Result<NetworkMessage, NetworkError> {
+        // log_debug!(self.logger, "[read_message] Reading message from stream");
 
         let mut len_buf = [0u8; 4];
 
@@ -1096,10 +1035,10 @@ impl QuicTransport {
 
         let mut msg_buf = vec![0u8; len];
 
-        log_debug!(
-            self.logger,
-            "[read_message] Reading message payload of length {len}"
-        );
+        // log_debug!(
+        //     self.logger,
+        //     "[read_message] Reading message payload of length {len}"
+        // );
 
         match recv.read_exact(&mut msg_buf).await {
             Ok(_) => {}
@@ -1110,7 +1049,7 @@ impl QuicTransport {
             }
         }
 
-        match serde_cbor::from_slice::<NetworkMessage>(&msg_buf) {
+        match from_slice::<NetworkMessage>(&msg_buf) {
             Ok(msg) => {
                 log_debug!(self.logger, "[read_message] Decoded message: type={type}, source={source}, dest={dest}", 
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
@@ -1123,21 +1062,14 @@ impl QuicTransport {
     }
 
     async fn handle_event(&self, msg: NetworkMessage) -> Result<(), NetworkError> {
-        let payload = msg.payload;
-        let event_msg = EventMessage {
-            path: payload.path,
-            correlation_id: payload.correlation_id,
-            payload_bytes: payload.payload_bytes,
-        };
-
         log_debug!(
             self.logger,
             "[handle_event] Processing event message correlation id: {correlation_id}",
-            correlation_id = event_msg.correlation_id
+            correlation_id = msg.payload.correlation_id
         );
 
-        let correlation_id = event_msg.correlation_id.clone();
-        (self.event_callback)(event_msg).await.map_err(|e| {
+        let correlation_id = msg.payload.correlation_id.clone();
+        (self.event_callback)(msg).await.map_err(|e| {
             log_error!(
                 self.logger,
                 "failed to handle event correlation id: {correlation_id } error: {e}"
@@ -1148,24 +1080,14 @@ impl QuicTransport {
         Ok(())
     }
 
-    async fn handle_request(
-        &self,
-        payload: NetworkMessagePayloadItem,
-    ) -> Result<ResponseMessage, NetworkError> {
-        let request_msg = RequestMessage {
-            path: payload.path,
-            correlation_id: payload.correlation_id,
-            payload_bytes: payload.payload_bytes,
-            profile_public_key: payload.profile_public_key,
-        };
-
+    async fn handle_request(&self, msg: NetworkMessage) -> Result<NetworkMessage, NetworkError> {
         log_debug!(
             self.logger,
             "[handle_request] Processing request message correlation id: {correlation_id}",
-            correlation_id = request_msg.correlation_id
+            correlation_id = msg.payload.correlation_id
         );
-        let correlation_id = request_msg.correlation_id.clone();
-        let response = (self.request_callback)(request_msg).await.map_err(|e| {
+        let correlation_id = msg.payload.correlation_id.clone();
+        let response = (self.request_callback)(msg).await.map_err(|e| {
             log_error!(
                 self.logger,
                 "failed to handle request correlation id: {correlation_id } error: {e}"
@@ -1178,8 +1100,8 @@ impl QuicTransport {
 
     async fn handle_handshake(
         &self,
-        conn: Arc<quinn::Connection>,
-        send: Option<&mut quinn::SendStream>,
+        conn: Arc<Connection>,
+        send: Option<&mut SendStream>,
         msg: NetworkMessage,
         needs_to_correlate_peer_id: bool,
     ) -> Result<(), NetworkError> {
@@ -1189,7 +1111,7 @@ impl QuicTransport {
         let should_send_response = send.is_some();
         let local_node_id = self.local_node_id.clone();
         let payload = &msg.payload;
-        let hs: HandshakeData = serde_cbor::from_slice(&payload.payload_bytes)
+        let hs: HandshakeData = from_slice(&payload.payload_bytes)
             .map_err(|e| NetworkError::MessageError(format!("failed to decode cbor: {e}")))?;
 
         let peer_node_id = msg.source_node_id.clone();
@@ -1302,9 +1224,10 @@ impl QuicTransport {
                 message_type: super::MESSAGE_TYPE_HANDSHAKE,
                 payload: super::NetworkMessagePayloadItem {
                     path: "handshake".to_string(),
-                    payload_bytes: serde_cbor::to_vec(&response_hs).unwrap_or_default(),
+                    payload_bytes: to_vec(&response_hs).unwrap_or_default(),
                     correlation_id: msg.payload.correlation_id,
-                    profile_public_key: msg.payload.profile_public_key,
+                    profile_public_keys: msg.payload.profile_public_keys.clone(),
+                    network_public_key: None, // Handshake doesn't need network context
                 },
             };
 
@@ -1323,7 +1246,7 @@ impl QuicTransport {
 
     async fn bi_accept_loop(
         &self,
-        conn: Arc<quinn::Connection>,
+        conn: Arc<Connection>,
         needs_to_correlate_peer_id: bool,
     ) -> Result<(), NetworkError> {
         loop {
@@ -1336,8 +1259,11 @@ impl QuicTransport {
             };
             let msg = self.read_message(&mut recv).await?;
 
-            log_debug!(self.logger, "[bi_accept_loop] Received message: type={type}, source={source}, dest={dest}", 
-                     type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
+            log_debug!(self.logger, "[bi_accept_loop] Received message: type={type}, source={source}, dest={dest}",
+            type=msg.message_type,
+            source=msg.source_node_id,
+            dest=msg.destination_node_id
+            );
 
             if msg.message_type == super::MESSAGE_TYPE_HANDSHAKE {
                 self.handle_handshake(
@@ -1375,24 +1301,33 @@ impl QuicTransport {
 
                 //if not cached, handle the request and send the response
                 let correlation_id = msg.payload.correlation_id.clone();
-                let profile_public_key = msg.payload.profile_public_key.clone();
-                let path = msg.payload.path.clone();
-                let response = self.handle_request(msg.payload).await?;
+                log_debug!(
+                    self.logger,
+                    "[bi_accept_loop] Handling request correlation_id: {correlation_id}",
+                    correlation_id = correlation_id
+                );
+                let response = self.handle_request(msg.clone()).await?;
+                // response is already NetworkMessage, just update destination
                 let response_msg = NetworkMessage {
                     source_node_id: self.local_node_id.clone(),
                     destination_node_id: msg.source_node_id,
                     message_type: super::MESSAGE_TYPE_RESPONSE,
-                    payload: NetworkMessagePayloadItem {
-                        path,
-                        payload_bytes: response.payload_bytes,
-                        correlation_id: correlation_id.clone(),
-                        profile_public_key,
-                    },
+                    payload: response.payload, // response.payload is NetworkMessagePayloadItem
                 };
+
+                log_debug!(self.logger, "[bi_accept_loop] Built response message correlation_id: {correlation_id} response_payload_bytes: {response_len}",
+                    correlation_id=correlation_id,
+                    response_len=response_msg.payload.payload_bytes.len()
+                );
                 let now = Instant::now();
                 let response_msg_arc = Arc::new(response_msg);
                 self.response_cache
-                    .insert(correlation_id, (now, response_msg_arc.clone()));
+                    .insert(correlation_id.clone(), (now, response_msg_arc.clone()));
+
+                log_debug!(self.logger, "[bi_accept_loop] Writing response message correlation_id: {correlation_id} response_payload_bytes: {response_len}",
+                    correlation_id=correlation_id,
+                    response_len=response_msg_arc.payload.payload_bytes.len()
+                );
                 self.write_message(&mut send, &response_msg_arc).await?;
                 send.finish()
                     .map_err(|e| {
@@ -1409,7 +1344,7 @@ impl QuicTransport {
     async fn handshake_outbound(
         &self,
         peer_id: &str,
-        conn: &quinn::Connection,
+        conn: &Connection,
         local_nonce: u64,
     ) -> Result<u64, NetworkError> {
         log_debug!(
@@ -1426,7 +1361,7 @@ impl QuicTransport {
             nonce: local_nonce,
             role: ConnectionRole::Initiator,
         };
-        let payload_bytes = serde_cbor::to_vec(&hs).map_err(|e| {
+        let payload_bytes = to_vec(&hs).map_err(|e| {
             log_error!(
                 self.logger,
                 "[handshake_outbound] Failed to serialize HandshakeData: {e}"
@@ -1437,8 +1372,9 @@ impl QuicTransport {
         let payload = super::NetworkMessagePayloadItem {
             path: "handshake".to_string(),
             payload_bytes,
-            correlation_id: uuid::Uuid::new_v4().to_string(),
-            profile_public_key: vec![],
+            correlation_id: Uuid::new_v4().to_string(),
+            profile_public_keys: vec![],
+            network_public_key: None, // Handshake doesn't need network context
         };
 
         let msg = NetworkMessage {
@@ -1478,7 +1414,7 @@ impl QuicTransport {
             self.logger,
             "[handshake_outbound] Waiting for handshake response with timeout"
         );
-        let reply = tokio::time::timeout(
+        let reply = timeout(
             self.options.handshake_response_timeout,
             self.read_message(&mut recv),
         )
@@ -1491,14 +1427,13 @@ impl QuicTransport {
         );
 
         // Parse responder handshake (prefer v2), fall back to v1 NodeInfo
-        let hs =
-            serde_cbor::from_slice::<HandshakeData>(&reply.payload.payload_bytes).map_err(|e| {
-                log_error!(
-                    self.logger,
-                    "[handshake_outbound] Failed to parse HandshakeData: {e}"
-                );
-                NetworkError::MessageError(e.to_string())
-            })?;
+        let hs = from_slice::<HandshakeData>(&reply.payload.payload_bytes).map_err(|e| {
+            log_error!(
+                self.logger,
+                "[handshake_outbound] Failed to parse HandshakeData: {e}"
+            );
+            NetworkError::MessageError(e.to_string())
+        })?;
         let responder_nonce = hs.nonce;
         if let Some(connected_callback) = &self.peer_connected_callback {
             (connected_callback)(peer_id.to_string(), hs.node_info).await;
@@ -1528,7 +1463,7 @@ impl QuicTransport {
                 None => {
                     if attempt < max_attempts {
                         attempt = attempt.saturating_add(1);
-                        tokio::time::sleep(Duration::from_millis(80)).await;
+                        sleep(Duration::from_millis(80)).await;
                         continue;
                     }
                     return Err(NetworkError::ConnectionError(format!(
@@ -1548,7 +1483,7 @@ impl QuicTransport {
     async fn open_bi_active(
         &self,
         peer_node_id: &str,
-    ) -> Result<(quinn::SendStream, quinn::RecvStream), NetworkError> {
+    ) -> Result<(SendStream, RecvStream), NetworkError> {
         let mut attempt: u8 = 0;
         let max_attempts: u8 = 3;
         loop {
@@ -1560,7 +1495,7 @@ impl QuicTransport {
                 Err(e) => {
                     if attempt < max_attempts {
                         attempt = attempt.saturating_add(1);
-                        tokio::time::sleep(Duration::from_millis(70)).await;
+                        sleep(Duration::from_millis(70)).await;
                         continue;
                     }
                     return Err(NetworkError::TransportError(format!("open_bi failed: {e}")));
@@ -1570,7 +1505,7 @@ impl QuicTransport {
     }
 
     // Helper: open a uni-directional stream to an active peer with limited retries
-    async fn open_uni_active(&self, peer_node_id: &str) -> Result<quinn::SendStream, NetworkError> {
+    async fn open_uni_active(&self, peer_node_id: &str) -> Result<SendStream, NetworkError> {
         let mut attempt: u8 = 0;
         let max_attempts: u8 = 3;
         loop {
@@ -1582,7 +1517,7 @@ impl QuicTransport {
                 Err(e) => {
                     if attempt < max_attempts {
                         attempt = attempt.saturating_add(1);
-                        tokio::time::sleep(Duration::from_millis(70)).await;
+                        sleep(Duration::from_millis(70)).await;
                         continue;
                     }
                     return Err(NetworkError::TransportError(format!(
@@ -1596,7 +1531,7 @@ impl QuicTransport {
     #[allow(dead_code)]
     async fn request_inner(
         &self,
-        conn: &quinn::Connection,
+        conn: &Connection,
         msg: &NetworkMessage,
     ) -> Result<NetworkMessage, NetworkError> {
         self.logger
@@ -1637,8 +1572,7 @@ impl QuicTransport {
         );
 
         // Then spawn a task to drain any remaining data from the stream
-        let drain_task =
-            tokio::spawn(async move { while recv.read(&mut [0u8; 0]).await.is_ok() {} });
+        let drain_task = spawn(async move { while recv.read(&mut [0u8; 0]).await.is_ok() {} });
 
         // Abort the drain task since we've already read what we need
         drain_task.abort();
@@ -1664,7 +1598,7 @@ impl NetworkTransport for QuicTransport {
     async fn start(self: Arc<Self>) -> Result<(), NetworkError> {
         log_info!(self.logger, "Starting QUIC transport");
 
-        if self.running.load(Ordering::SeqCst) {
+        if self.running.load(AtomicOrdering::SeqCst) {
             return Ok(());
         }
 
@@ -1689,7 +1623,7 @@ impl NetworkTransport for QuicTransport {
                             attempt + 1
                         );
                         attempt += 1;
-                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        sleep(Duration::from_millis(200)).await;
                         continue;
                     }
                     return Err(NetworkError::TransportError(format!(
@@ -1706,28 +1640,28 @@ impl NetworkTransport for QuicTransport {
         }
 
         // spawn accept loops
-        let accept_task: tokio::task::JoinHandle<()> = self.clone().spawn_accept_loop(endpoint);
+        let accept_task: JoinHandle<()> = self.clone().spawn_accept_loop(endpoint);
         self.tasks.lock().await.push(accept_task);
 
         // spawn periodic cache prune task
         let prune_self = self.clone();
         let ttl = self.response_cache_ttl;
-        let prune_task = tokio::spawn(async move {
+        let prune_task = spawn(async move {
             let interval = Duration::from_secs(1);
             loop {
-                if !prune_self.running.load(Ordering::SeqCst) {
+                if !prune_self.running.load(AtomicOrdering::SeqCst) {
                     break;
                 }
                 let now = Instant::now();
                 prune_self
                     .response_cache
                     .retain(|_, (ts, _)| now.saturating_duration_since(*ts) <= ttl);
-                tokio::time::sleep(interval).await;
+                sleep(interval).await;
             }
         });
         self.tasks.lock().await.push(prune_task);
 
-        self.running.store(true, Ordering::SeqCst);
+        self.running.store(true, AtomicOrdering::SeqCst);
         Ok(())
     }
 
@@ -1735,11 +1669,11 @@ impl NetworkTransport for QuicTransport {
         log_info!(self.logger, "Stopping QUIC transport",);
 
         {
-            if !self.running.load(Ordering::SeqCst) {
+            if !self.running.load(AtomicOrdering::SeqCst) {
                 log_debug!(self.logger, "QUIC transport is not running - skipping stop");
                 return Ok(());
             }
-            self.running.store(false, Ordering::SeqCst);
+            self.running.store(false, AtomicOrdering::SeqCst);
         }
 
         log_debug!(self.logger, "Closing endpoint");
@@ -1749,7 +1683,7 @@ impl NetworkTransport for QuicTransport {
 
         // Snapshot and clear peers under a write lock to avoid deadlocks
         log_debug!(self.logger, "Closing all connections");
-        let connections_to_close: Vec<quinn::Connection> = {
+        let connections_to_close: Vec<Connection> = {
             let conns = self
                 .state
                 .peers
@@ -1802,19 +1736,14 @@ impl NetworkTransport for QuicTransport {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
-        profile_public_key: Vec<u8>,
+        network_public_key: Option<Vec<u8>>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>, NetworkError> {
         log_debug!(
             self.logger,
-            "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id}"
+            "[request] to peer: {peer_node_id} topic: {topic_path} correlation_id: {correlation_id} payload_bytes: {payload_len}",
+            payload_len = payload.len()
         );
-
-        // let serialization_context = SerializationContext {
-        //     keystore: self.keystore.clone(),
-        //     resolver: self.label_resolver.clone(),
-        //     network_id: network_id.to_string(),
-        //     profile_public_key: Some(profile_public_key.clone()),
-        // };
 
         let local_node_id = self.local_node_id.clone();
 
@@ -1825,11 +1754,23 @@ impl NetworkTransport for QuicTransport {
             message_type: super::MESSAGE_TYPE_REQUEST,
             payload: super::NetworkMessagePayloadItem {
                 path: topic_path.to_string(),
-                payload_bytes: payload,
+                payload_bytes: payload.clone(),
                 correlation_id: correlation_id.to_string(),
-                profile_public_key,
+                profile_public_keys: profile_public_keys.clone(),
+                network_public_key: network_public_key.clone(),
             },
         };
+
+        log_debug!(
+            self.logger,
+            "[request] Built NetworkMessage - source: {source} dest: {dest} type: {msg_type} path: {path} payload_bytes: {payload_len} correlation_id: {corr_id}",
+            source = msg.source_node_id,
+            dest = msg.destination_node_id,
+            msg_type = msg.message_type,
+            path = msg.payload.path,
+            payload_len = msg.payload.payload_bytes.len(),
+            corr_id = msg.payload.correlation_id
+        );
 
         let mut retry_count = 0;
         let response_msg = loop {
@@ -1838,7 +1779,7 @@ impl NetworkTransport for QuicTransport {
                 "[request] Opening bidirectional stream correlation_id: {correlation_id}",
                 correlation_id = &msg.payload.correlation_id
             );
-            let (mut send, mut recv) = tokio::time::timeout(
+            let (mut send, mut recv) = timeout(
                 self.options.open_stream_timeout,
                 self.open_bi_active(peer_node_id),
             )
@@ -1870,7 +1811,7 @@ impl NetworkTransport for QuicTransport {
                     log_error!(self.logger, "[request] Failed to finish send stream correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id);
                     break Err(NetworkError::TransportError(format!("failed to finish send stream correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id)));
                 }
-                tokio::time::sleep(Duration::from_millis(70)).await;
+                sleep(Duration::from_millis(70)).await;
                 continue;
             }
 
@@ -1894,7 +1835,7 @@ impl NetworkTransport for QuicTransport {
                             log_error!(self.logger, "[request] Failed to read response message correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id);
                             break Err(NetworkError::TransportError(format!("failed to read response message correlation_id: {correlation_id} error: {e} - retry_count: {retry_count} - giving up", correlation_id=&msg.payload.correlation_id)));
                         }
-                        tokio::time::sleep(Duration::from_millis(70)).await;
+                        sleep(Duration::from_millis(70)).await;
                         continue;
                     }
                     log_error!(self.logger, "[request] Failed to read response message correlation_id: {correlation_id} error: {e} - non retryable error", correlation_id=&msg.payload.correlation_id);
@@ -1910,14 +1851,6 @@ impl NetworkTransport for QuicTransport {
             payload_bytes=response_msg.payload.payload_bytes.len()
         );
 
-        // let av = ArcValue::deserialize(bytes, Some(self.keystore.clone())).map_err(|e| {
-        //     log_error!(
-        //         self.logger,
-        //         "❌ [request] Failed to deserialize response: {e}"
-        //     );
-        //     NetworkError::MessageError(format!("deserialize response: {e}"))
-        // })?;
-
         Ok(response_msg.payload.payload_bytes)
     }
 
@@ -1927,6 +1860,7 @@ impl NetworkTransport for QuicTransport {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
+        network_public_key: Option<Vec<u8>>,
     ) -> Result<(), NetworkError> {
         let local_node_id = self.local_node_id.clone();
         // Create the NetworkMessage internally
@@ -1938,11 +1872,12 @@ impl NetworkTransport for QuicTransport {
                 path: topic_path.to_string(),
                 payload_bytes: payload,
                 correlation_id: correlation_id.to_string(),
-                profile_public_key: vec![],
+                profile_public_keys: vec![],
+                network_public_key,
             },
         };
 
-        let mut send = tokio::time::timeout(
+        let mut send = timeout(
             self.options.open_stream_timeout,
             self.open_uni_active(peer_node_id),
         )
@@ -1995,9 +1930,9 @@ impl NetworkTransport for QuicTransport {
         // Choose first valid address; try all if needed (for now pick first valid)
         // Iterate addresses with fallback and per-attempt backoff
         let mut last_err: Option<NetworkError> = None;
-        let mut addr: Option<std::net::SocketAddr> = None;
+        let mut addr: Option<SocketAddr> = None;
         for (idx, addr_str) in discovery_msg.addresses.iter().enumerate() {
-            match addr_str.parse::<std::net::SocketAddr>() {
+            match addr_str.parse::<SocketAddr>() {
                 Ok(sa) => {
                     addr = Some(sa);
                     break;
@@ -2042,14 +1977,13 @@ impl NetworkTransport for QuicTransport {
                     .get(&peer_node_id)
                     .map(|e| e.value().clone())
                 {
-                    let notified =
-                        tokio::time::timeout(Duration::from_millis(50), n.notified()).await;
+                    let notified = timeout(Duration::from_millis(50), n.notified()).await;
                     if notified.is_ok() {
                         log_debug!(self.logger, "[connect_peer] Prefer inbound; cancel signal received for {peer_node_id}");
                         return Ok(());
                     }
                 } else {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    sleep(Duration::from_millis(50)).await;
                 }
                 attempts = attempts.saturating_add(1);
             }
@@ -2087,8 +2021,8 @@ impl NetworkTransport for QuicTransport {
                     self.logger,
                     "[backoff] peer={peer_node_id} attempts={attempts} remaining_ms={wait_ms}"
                 );
-                tokio::select! {
-                    _ = tokio::time::sleep(until.saturating_duration_since(now)) => {},
+                select! {
+                    _ = sleep(until.saturating_duration_since(now)) => {},
                     _ = cancel_notify.notified() => {
                         log_debug!(self.logger, "[dial-cancel] peer={peer_node_id} reason=inbound-connected");
                         return Ok(());
@@ -2121,13 +2055,13 @@ impl NetworkTransport for QuicTransport {
                             log_debug!(self.logger, "[connect_peer] Detected existing inbound connection for {peer_node_id}; treating connect as success");
                             return Ok(());
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        sleep(Duration::from_millis(100)).await;
                         attempts += 1;
                     }
                 }
                 // Increase backoff for next time
                 // use local non-blocking random; avoid holding rng across await
-                let jitter: u64 = rand::random::<u64>() % 200;
+                let jitter: u64 = ThreadRng::default().random::<u64>() % 200;
                 let (mut attempts, _until) = self
                     .state
                     .dial_backoff
@@ -2211,12 +2145,12 @@ impl NetworkTransport for QuicTransport {
                         log_debug!(self.logger, "[connect_peer] Inbound connection detected after outbound handshake error for {peer_node_id}; keeping inbound");
                         return Ok(());
                     }
-                    tokio::time::sleep(Duration::from_millis(60)).await;
+                    sleep(Duration::from_millis(60)).await;
                     attempts = attempts.saturating_add(1);
                 }
                 // If still absent, remove the tentative placeholder and back off
                 self.state.peers.remove(&peer_node_id);
-                let jitter: u64 = rand::random::<u64>() % 200;
+                let jitter: u64 = ThreadRng::default().random::<u64>() % 200;
                 let (mut attempts, _until) = self
                     .state
                     .dial_backoff
@@ -2285,7 +2219,7 @@ impl NetworkTransport for QuicTransport {
             role: ConnectionRole::Initiator, // Use Initiator role for updates
         };
 
-        let payload_bytes = serde_cbor::to_vec(&handshake_data).map_err(|e| {
+        let payload_bytes = to_vec(&handshake_data).map_err(|e| {
             NetworkError::MessageError(format!("Failed to serialize handshake data: {e}"))
         })?;
 
@@ -2298,8 +2232,9 @@ impl NetworkTransport for QuicTransport {
             payload: super::NetworkMessagePayloadItem {
                 path: "handshake".to_string(),
                 payload_bytes,
-                correlation_id: uuid::Uuid::new_v4().to_string(),
-                profile_public_key: vec![],
+                correlation_id: Uuid::new_v4().to_string(),
+                profile_public_keys: vec![],
+                network_public_key: None, // Update message doesn't need network context
             },
         };
 
@@ -2313,7 +2248,7 @@ impl NetworkTransport for QuicTransport {
                 "🔍 [update_peers] Sending handshake to {peer_id}"
             );
 
-            let mut send = tokio::time::timeout(
+            let mut send = timeout(
                 self.options.open_stream_timeout,
                 self.open_uni_active(peer_id),
             )
@@ -2335,13 +2270,5 @@ impl NetworkTransport for QuicTransport {
             self.state.peers.len()
         );
         Ok(())
-    }
-
-    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto> {
-        self.keystore.clone()
-    }
-
-    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver> {
-        self.label_resolver.clone()
     }
 }

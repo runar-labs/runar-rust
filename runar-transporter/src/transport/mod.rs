@@ -70,8 +70,8 @@ impl TransportOptions {
 
 /// Find a free port in the given range using a randomized approach
 pub fn pick_free_port(port_range: Range<u16>) -> Option<u16> {
-    use rand::Rng;
-    let mut rng = rand::rng();
+    use rand::{rngs::ThreadRng, Rng};
+    let mut rng = ThreadRng::default();
     let range_size = port_range.end - port_range.start;
 
     // Limit number of attempts to avoid infinite loops
@@ -123,7 +123,10 @@ pub struct NetworkMessagePayloadItem {
     /// Correlation ID
     pub correlation_id: String,
 
-    pub profile_public_key: Vec<u8>,
+    /// Network public key for encryption context
+    pub network_public_key: Option<Vec<u8>>,
+
+    pub profile_public_keys: Vec<Vec<u8>>,
 }
 
 pub const MESSAGE_TYPE_DISCOVERY: u32 = 1;
@@ -189,32 +192,13 @@ pub type PeerDisconnectedCallback = Arc<dyn Fn(String) -> BoxFuture<'static, ()>
 pub type GetLocalNodeInfoCallback =
     Arc<dyn Fn() -> BoxFuture<'static, Result<NodeInfo>> + Send + Sync>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RequestMessage {
-    pub path: String,
-    pub correlation_id: String,
-    pub payload_bytes: Vec<u8>,
-    pub profile_public_key: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseMessage {
-    pub correlation_id: String,
-    pub payload_bytes: Vec<u8>,
-    pub profile_public_key: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventMessage {
-    pub path: String,
-    pub correlation_id: String,
-    pub payload_bytes: Vec<u8>,
-}
+// REMOVED: RequestMessage, ResponseMessage, EventMessage - using NetworkMessage directly
 
 pub type RequestCallback =
-    Arc<dyn Fn(RequestMessage) -> BoxFuture<'static, Result<ResponseMessage>> + Send + Sync>;
+    Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<NetworkMessage>> + Send + Sync>;
 
-pub type EventCallback = Arc<dyn Fn(EventMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+pub type EventCallback =
+    Arc<dyn Fn(NetworkMessage) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// Network transport interface
 #[async_trait]
@@ -242,7 +226,8 @@ pub trait NetworkTransport: Send + Sync {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
-        profile_public_key: Vec<u8>,
+        network_public_key: Option<Vec<u8>>,
+        profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>, NetworkError>;
 
     /// Fire-and-forget / broadcast message (pattern B)  
@@ -253,6 +238,7 @@ pub trait NetworkTransport: Send + Sync {
         correlation_id: &str,
         payload: Vec<u8>,
         peer_node_id: &str,
+        network_public_key: Option<Vec<u8>>,
     ) -> Result<(), NetworkError>;
 
     /// connect to a discovered node and perform the NodeInfo handshake.
@@ -264,11 +250,11 @@ pub trait NetworkTransport: Send + Sync {
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
 
-    /// Expose the transport-owned keystore (read-only).
-    fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
+    // / Expose the transport-owned keystore (read-only).
+    // fn keystore(&self) -> Arc<dyn runar_serializer::traits::EnvelopeCrypto>;
 
-    /// Expose the transport-owned label resolver.
-    fn label_resolver(&self) -> Arc<dyn runar_serializer::traits::LabelResolver>;
+    // / Expose the transport-owned label resolver.
+    // fn label_resolver(&self) -> Arc<runar_serializer::traits::LabelResolver>;
 }
 
 /// Error type for network operations

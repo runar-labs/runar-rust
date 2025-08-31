@@ -57,14 +57,17 @@ describe('Transport Basic Tests', () => {
     await new Promise((r) => setTimeout(r, 300));
 
     // Make a simple request if connected
-    const bId = require('crypto').createHash('sha1').update(bPk).digest('hex').slice(0, 8); // not actual id
     const isConn = await withTimeout(ta.isConnectedToPublicKey(bPk), 1500, 'isConnectedToPublicKey');
     
     if (isConn) {
+      // Use node A's public key as the profile public key for the request
+      const aPk = a.keys.nodeGetPublicKey();
+      // Use the node ID from the keys
+      const bId = b.keys.nodeGetNodeId();
       const resp = await withTimeout(
-        ta.requestToPublicKey('test:path', 'corr', Buffer.from([]), bPk, Buffer.from([])),
+        ta.request('test:path', 'corr', Buffer.from([]), bId, undefined, [aPk]),
         2000,
-        'requestToPublicKey'
+        'request'
       );
       expect(Buffer.isBuffer(resp)).toBe(true);
       console.log('   ✅ Transport request/response successful');

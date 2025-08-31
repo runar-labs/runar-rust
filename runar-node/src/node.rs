@@ -9,17 +9,19 @@ use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::{Component, Logger};
 use runar_common::routing::{PathTrie, TopicPath};
-use runar_keys::{EnvelopeCrypto, NodeKeyManager, Result as KeyResult};
+use runar_keys::{
+    mobile::EnvelopeEncryptedData, EnvelopeCrypto, NodeKeyManager, Result as KeyResult,
+};
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
-use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelResolver};
-use runar_serializer::{ArcValue, LabelKeyInfo, SerializationContext};
+use runar_serializer::traits::{LabelResolver, LabelResolverConfig, LabelValue, ResolverCache};
+use runar_serializer::{ArcValue, SerializationContext};
 use runar_transporter::discovery::{DiscoveryEvent, PeerInfo};
 use runar_transporter::network_config::{DiscoveryProviderConfig, NetworkConfig, TransportType};
 use runar_transporter::transport::{
-    EventCallback, EventMessage, GetLocalNodeInfoCallback, PeerConnectedCallback,
-    PeerDisconnectedCallback, RequestCallback, RequestMessage, ResponseMessage,
+    EventCallback, GetLocalNodeInfoCallback, NetworkMessage, NetworkMessagePayloadItem,
+    PeerConnectedCallback, PeerDisconnectedCallback, RequestCallback, MESSAGE_TYPE_RESPONSE,
 };
 use runar_transporter::{
     DiscoveryOptions, MulticastDiscovery, NetworkTransport, NodeDiscovery, QuicTransport,
@@ -27,8 +29,14 @@ use runar_transporter::{
 use socket2;
 use std::collections::HashMap;
 
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
+use tokio::{
+    spawn,
+    sync::{mpsc, Mutex},
+    task::JoinHandle,
+    time::timeout,
+};
 use uuid::Uuid;
 
 use dashmap::DashMap;
@@ -45,26 +53,27 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
-        _profile_public_keys: Vec<Vec<u8>>,
-    ) -> KeyResult<runar_keys::mobile::EnvelopeEncryptedData> {
+        network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
+        profile_public_keys: Vec<Vec<u8>>,
+    ) -> KeyResult<EnvelopeEncryptedData> {
         let keys_manager = self.0.read().unwrap();
-        // Use the original working approach: nodes only support network-wide encryption
-        keys_manager.create_envelope_for_network(data, network_id)
+        keys_manager.encrypt_with_envelope(data, network_public_key, profile_public_keys)
     }
 
-    fn decrypt_envelope_data(
-        &self,
-        env: &runar_keys::mobile::EnvelopeEncryptedData,
-    ) -> KeyResult<Vec<u8>> {
+    fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> KeyResult<Vec<u8>> {
         let keys_manager = self.0.read().unwrap();
         keys_manager.decrypt_envelope_data(env)
+    }
+
+    fn get_network_public_key(&self, network_id: &str) -> KeyResult<Vec<u8>> {
+        let keys_manager = self.0.read().unwrap();
+        keys_manager.get_network_public_key(network_id)
     }
 }
 
 pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
-type ServiceTask = (TopicPath, tokio::task::JoinHandle<()>);
+type ServiceTask = (TopicPath, JoinHandle<()>);
 // Certificate and PrivateKey types are now imported via the cert_utils module
 use runar_common::logging::LoggingConfig;
 
@@ -77,17 +86,17 @@ use crate::services::remote_service::{
 use crate::services::service_registry::{
     is_internal_service, EventHandler, RemoteEventHandler, ServiceEntry, ServiceRegistry,
 };
-use crate::services::NodeDelegate;
 use crate::services::{
-    ActionHandler, EventRegistrationOptions, PublishOptions, RegistryDelegate,
-    RemoteLifecycleContext, RequestContext,
+    ActionHandler, EventRegistrationOptions, LifecycleContext, OnOptions, PublishOptions,
+    RegistryDelegate, RemoteLifecycleContext, RequestContext,
 };
 use crate::services::{EventContext, KeysDelegate}; // Explicit import for EventContext
+use crate::services::{NodeDelegate, RequestOptions};
 use crate::{AbstractService, ServiceState};
 
 // Type aliases to reduce clippy type_complexity warnings
-type RetainedDeque = std::collections::VecDeque<(std::time::Instant, Option<ArcValue>)>;
-type RetainedEventsMap = dashmap::DashMap<String, RetainedDeque>;
+type RetainedDeque = std::collections::VecDeque<(Instant, Option<ArcValue>)>;
+type RetainedEventsMap = DashMap<String, RetainedDeque>;
 
 /// Configuration for a Runar Node instance.
 ///
@@ -164,6 +173,11 @@ pub struct NodeConfig {
     /// This timeout applies to both local and remote service calls.
     /// Default is 30 seconds (30000ms).
     pub request_timeout_ms: u64,
+
+    /// REQUIRED: Label resolver configuration for system labels
+    /// These are static mappings known at node startup
+    /// NO OPTION - This field is REQUIRED for all nodes
+    pub label_resolver_config: LabelResolverConfig,
 }
 
 impl NodeConfig {
@@ -197,14 +211,58 @@ impl NodeConfig {
     ///     .with_key_manager(Arc::new(RwLock::new(node_keys_manager)));
     /// ```
     pub fn new(default_network_id: impl Into<String>) -> Self {
+        // Create default label resolver config with system label
+        let default_network_id_str = default_network_id.into();
+        let label_resolver_config = LabelResolverConfig {
+            label_mappings: std::collections::HashMap::from([(
+                "system".to_string(),
+                LabelValue {
+                    network_public_key: None, // Will be resolved at runtime
+                    user_key_spec: None,
+                },
+            )]),
+        };
+
         Self {
-            default_network_id: default_network_id.into(),
+            default_network_id: default_network_id_str,
             network_ids: Vec::new(),
             network_config: None,
             logging_config: Some(LoggingConfig::default_info()), // Default to Info logging
             key_manager: None,         // Must be set via with_key_manager()
             request_timeout_ms: 30000, // 30 seconds
+            label_resolver_config,
         }
+    }
+
+    /// Set the label resolver configuration for system labels.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Label resolver configuration with system label mappings
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use runar_node::NodeConfig;
+    /// use runar_serializer::traits::{LabelResolverConfig, LabelValue, LabelKeyword};
+    ///
+    /// let config = NodeConfig::new("my-node")
+    ///     .with_label_resolver_config(LabelResolverConfig {
+    ///         label_mappings: std::collections::HashMap::from([
+    ///             ("system".to_string(), LabelValue {
+    ///                 network_public_key: Some(vec![1, 2, 3, 4]), // Example network key
+    ///                 user_key_spec: None,
+    ///             }),
+    ///             ("current_user".to_string(), LabelValue {
+    ///                 network_public_key: Some(vec![5, 6, 7, 8]), // Example network key
+    ///                 user_key_spec: Some(LabelKeyword::CurrentUser),
+    ///             }),
+    ///         ]),
+    ///     });
+    /// ```
+    pub fn with_label_resolver_config(mut self, config: LabelResolverConfig) -> Self {
+        self.label_resolver_config = config;
+        self
     }
 
     /// Add network configuration to enable peer-to-peer communication.
@@ -422,7 +480,7 @@ pub struct Node {
     /// INTENTION: Ensures that rapid successive calls to notify_node_change only trigger a single
     /// notification after a 1s debounce window. This prevents unnecessary network traffic and ensures
     /// only the latest node state is broadcast. Internal use only; not exposed outside Node.
-    debounce_notify_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    debounce_notify_task: std::sync::Arc<Mutex<Option<JoinHandle<()>>>>,
 
     /// Default network id to be used when service are added without a network ID
     network_id: String,
@@ -466,7 +524,11 @@ pub struct Node {
     /// Load balancer for selecting remote handlers
     load_balancer: Arc<RwLock<dyn LoadBalancingStrategy>>,
 
-    label_resolver: Arc<dyn LabelResolver>,
+    /// System label configuration for dynamic resolver creation
+    system_label_config: Arc<LabelResolverConfig>,
+
+    /// Per-node label resolver cache for better concurrency and isolation
+    label_resolver_cache: Arc<ResolverCache>,
 
     registry_version: Arc<AtomicI64>,
 
@@ -584,17 +646,6 @@ impl Node {
 
         log_info!(logger, "Successfully loaded existing node credentials.");
 
-        // TODO Create a mechanis for this mappint to be config driven
-        let label_resolver = Arc::new(ConfigurableLabelResolver::new(KeyMappingConfig {
-            label_mappings: HashMap::from([(
-                "system".to_string(),
-                LabelKeyInfo {
-                    profile_public_keys: vec![],
-                    network_id: Some(default_network_id.clone()),
-                },
-            )]),
-        }));
-
         let local_node_info = NodeInfo {
             node_public_key: node_public_key.clone(),
             network_ids: network_ids.clone(),
@@ -608,7 +659,7 @@ impl Node {
 
         let node = Self {
             local_node_info: Arc::new(RwLock::new(local_node_info)),
-            debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            debounce_notify_task: std::sync::Arc::new(Mutex::new(None)),
             network_id: default_network_id,
             network_ids,
             node_id,
@@ -624,7 +675,8 @@ impl Node {
             network_discovery_providers: Arc::new(RwLock::new(None)),
             load_balancer: Arc::new(RwLock::new(RoundRobinLoadBalancer::new())),
             // pending_requests: Arc::new(DashMap::new()),
-            label_resolver,
+            system_label_config: Arc::new(config.label_resolver_config),
+            label_resolver_cache: Arc::new(ResolverCache::new(1000, Duration::from_secs(300))),
             registry_version: Arc::new(AtomicI64::new(0)),
             keys_manager,
             service_tasks: Arc::new(RwLock::new(Vec::new())),
@@ -646,6 +698,12 @@ impl Node {
         node.add_service(keys_service).await?;
 
         Ok(node)
+    }
+
+    /// Get or create resolver using node's cache instance
+    fn get_or_create_resolver(&self, user_profile_keys: &[Vec<u8>]) -> Result<Arc<LabelResolver>> {
+        self.label_resolver_cache
+            .get_or_create(&self.system_label_config, user_profile_keys)
     }
 
     /// Add a service to this node.
@@ -755,14 +813,10 @@ impl Node {
         };
 
         // Create a lifecycle context for initialization
-        let init_context = crate::services::LifecycleContext::new(
+        let init_context = LifecycleContext::new(
             &service_topic,
             Arc::new(self.clone()), // Node delegate
-            Arc::new(
-                self.logger
-                    .clone()
-                    .with_component(runar_common::Component::Service),
-            ),
+            Arc::new(self.logger.clone().with_component(Component::Service)),
         );
 
         // Initialize the service using the context
@@ -774,18 +828,19 @@ impl Node {
             registry
                 .update_local_service_state(&service_topic, ServiceState::Error)
                 .await?;
-            self.publish_with_options(
+            self.publish(
                 &format!(
                     "$registry/services/{}/state/error",
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions {
+                Some(PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
                     retain_for: Some(Duration::from_secs(10)),
                     target: None,
-                },
+                    profile_public_keys: None,
+                }),
             )
             .await?;
             return Err(anyhow!("Failed to initialize service: {e}"));
@@ -793,23 +848,24 @@ impl Node {
         registry
             .update_local_service_state(&service_topic, ServiceState::Initialized)
             .await?;
-        self.publish_with_options(
+        self.publish(
             &format!(
                 "$registry/services/{}/state/initialized",
                 service_topic.service_path()
             ),
             Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-            PublishOptions {
+            Some(PublishOptions {
                 broadcast: false,
                 guaranteed_delivery: false,
                 retain_for: Some(Duration::from_secs(10)),
                 target: None,
-            },
+                profile_public_keys: None,
+            }),
         )
         .await?;
         // Service initialized successfully, create the ServiceEntry and register it
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
@@ -904,8 +960,8 @@ impl Node {
     pub fn on(
         &self,
         topic: impl Into<String>,
-        options: Option<crate::services::OnOptions>,
-    ) -> tokio::task::JoinHandle<Result<Option<ArcValue>>> {
+        options: Option<OnOptions>,
+    ) -> JoinHandle<Result<Option<ArcValue>>> {
         let topic_string = topic.into();
 
         // Build full topic path synchronously (no I/O here)
@@ -923,11 +979,11 @@ impl Node {
 
         let node = self.clone();
 
-        tokio::spawn(async move {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
+        spawn(async move {
+            let (tx, mut rx) = mpsc::channel::<Option<ArcValue>>(1);
 
             // Register subscription now (await inside the spawned task)
-            let on_opts = options.clone().unwrap_or(crate::services::OnOptions {
+            let on_opts = options.clone().unwrap_or(OnOptions {
                 timeout: Duration::from_secs(5),
                 include_past: None,
             });
@@ -948,7 +1004,7 @@ impl Node {
                 .await?;
 
             // Wait for event or timeout
-            let result = match tokio::time::timeout(on_opts.timeout, rx.recv()).await {
+            let result = match timeout(on_opts.timeout, rx.recv()).await {
                 Ok(Some(event_data)) => Ok(event_data),
                 Ok(None) => Err(anyhow!(
                     "Channel closed while waiting for event on topic: {full_topic}"
@@ -1086,14 +1142,14 @@ impl Node {
             let node_clone = Arc::new(self.clone());
             let service_topic_clone = service_topic.clone();
             let service_entry_clone = service_entry.clone();
-            let task = tokio::spawn(async move {
+            let task = spawn(async move {
                 log_info!(
                     node_clone.logger,
                     "Starting separate thread to start service: {service_topic_clone}"
                 );
 
                 // Add timeout to the service start operation
-                match tokio::time::timeout(
+                match timeout(
                     service_start_timeout,
                     node_clone.start_service(&service_topic_clone, &service_entry_clone, true),
                 )
@@ -1142,14 +1198,10 @@ impl Node {
         let registry = &self.service_registry.clone();
 
         // Create a lifecycle context for starting
-        let start_context = crate::services::LifecycleContext::new(
+        let start_context = LifecycleContext::new(
             service_topic,
             Arc::new(self.clone()), // Node delegate
-            Arc::new(
-                self.logger
-                    .clone()
-                    .with_component(runar_common::Component::Service),
-            ),
+            Arc::new(self.logger.clone().with_component(Component::Service)),
         );
 
         // Start the service using the context
@@ -1168,18 +1220,19 @@ impl Node {
                 );
             }
             if let Err(publish_err) = self
-                .publish_with_options(
+                .publish(
                     &format!(
                         "$registry/services/{}/state/error",
                         service_topic.service_path()
                     ),
                     Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                    PublishOptions {
+                    Some(PublishOptions {
                         broadcast: false,
                         guaranteed_delivery: false,
                         retain_for: Some(Duration::from_secs(10)),
                         target: None,
-                    },
+                        profile_public_keys: None,
+                    }),
                 )
                 .await
             {
@@ -1202,18 +1255,19 @@ impl Node {
         }
 
         if let Err(publish_err) = self
-            .publish_with_options(
+            .publish(
                 &format!(
                     "$registry/services/{}/state/running",
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions {
+                Some(PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
                     retain_for: Some(Duration::from_secs(120)),
                     target: None,
-                },
+                    profile_public_keys: None,
+                }),
             )
             .await
         {
@@ -1271,14 +1325,10 @@ impl Node {
             let service = service_entry.service.clone();
 
             // Create a lifecycle context for stopping
-            let stop_context = crate::services::LifecycleContext::new(
+            let stop_context = LifecycleContext::new(
                 &service_topic,
                 Arc::new(self.clone()), // Node delegate
-                Arc::new(
-                    self.logger
-                        .clone()
-                        .with_component(runar_common::Component::Service),
-                ),
+                Arc::new(self.logger.clone().with_component(Component::Service)),
             );
 
             // Stop the service using the context
@@ -1293,18 +1343,19 @@ impl Node {
             registry
                 .update_local_service_state(&service_topic, ServiceState::Stopped)
                 .await?;
-            self.publish_with_options(
+            self.publish(
                 &format!(
                     "$registry/services/{}/state/stopped",
                     service_topic.service_path()
                 ),
                 Some(ArcValue::new_primitive(service_topic.as_str().to_string())),
-                PublishOptions {
+                Some(PublishOptions {
                     broadcast: false,
                     guaranteed_delivery: false,
                     retain_for: Some(Duration::from_secs(3)),
                     target: None,
-                },
+                    profile_public_keys: None,
+                }),
             )
             .await?;
         }
@@ -1516,15 +1567,15 @@ impl Node {
                 });
 
                 let self_arc_for_callback = self_arc.clone();
-                let request_callback: RequestCallback = Arc::new(move |request: RequestMessage| {
+                let request_callback: RequestCallback = Arc::new(move |msg: NetworkMessage| {
                     let node = self_arc_for_callback.clone();
-                    Box::pin(async move { node.handle_network_request(request).await })
+                    Box::pin(async move { node.handle_network_request(msg).await })
                 });
 
                 let self_arc_for_callback = self_arc.clone();
-                let event_callback: EventCallback = Arc::new(move |event: EventMessage| {
+                let event_callback: EventCallback = Arc::new(move |msg: NetworkMessage| {
                     let node = self_arc_for_callback.clone();
-                    Box::pin(async move { node.handle_network_event(event).await })
+                    Box::pin(async move { node.handle_network_event(msg).await })
                 });
 
                 let cert_config = self
@@ -1552,8 +1603,6 @@ impl Node {
                     .with_peer_disconnected_callback(peer_disconnected_callback)
                     .with_get_local_node_info(get_local_node_info)
                     .with_logger(self.logger.clone())
-                    .with_keystore(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())))
-                    .with_label_resolver(self.label_resolver.clone())
                     .with_request_callback(request_callback)
                     .with_event_callback(event_callback);
 
@@ -1599,10 +1648,13 @@ impl Node {
             self.update_peer_capabilities(&existing_peer, &peer_node_info)
                 .await?;
             // replace stored peer info
-            self.publish_with_options(
+            self.publish(
                 &format!("$registry/peer/{peer_node_id}/updated"),
                 Some(ArcValue::new_primitive(peer_node_id.clone())),
-                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
+                Some(
+                    PublishOptions::local_only()
+                        .with_retain_for(std::time::Duration::from_secs(10)),
+                ),
             )
             .await?;
         } else {
@@ -1611,10 +1663,13 @@ impl Node {
                 "[handle_peer_connected] peer_node_id:{peer_node_id} is new"
             );
             self.add_new_peer(&peer_node_info).await?;
-            self.publish_with_options(
+            self.publish(
                 &format!("$registry/peer/{peer_node_id}/discovered"),
                 Some(ArcValue::new_primitive(peer_node_id.clone())),
-                PublishOptions::local_only().with_retain_for(std::time::Duration::from_secs(10)),
+                Some(
+                    PublishOptions::local_only()
+                        .with_retain_for(std::time::Duration::from_secs(10)),
+                ),
             )
             .await?;
         }
@@ -1685,7 +1740,7 @@ impl Node {
             if should_debounce {
                 log_debug!(self.logger, "Debounced discovery for {discovered_peer_id}");
                 // Do not early-return; small delay then continue to connect to ensure reconnection after restart
-                tokio::time::sleep(Duration::from_millis(150)).await;
+                sleep(Duration::from_millis(150)).await;
             } else {
                 self.discovery_seen_times
                     .insert(discovered_peer_id.clone(), Instant::now());
@@ -1707,52 +1762,6 @@ impl Node {
 
         Ok(())
     }
-
-    // /// Handle a network message
-    // async fn handle_network_message(
-    //     &self,
-    //     message: NetworkMessage,
-    // ) -> Result<Option<NetworkMessage>> {
-    //     // Skip if networking is not enabled
-    //     if !self.supports_networking {
-    //         log_warn!(
-    //             self.logger,
-    //             "Received network message but networking is disabled"
-    //         );
-    //         return Ok(None);
-    //     }
-
-    //     log_debug!(
-    //         self.logger,
-    //         "Received network message: {}",
-    //         message.message_type
-    //     );
-
-    //     // Match on message type
-    //     match message.message_type {
-    //         // MESSAGE_TYPE_REQUEST => {
-    //         //     let response = self.handle_network_request(message).await?;
-    //         //     if let Some(response_message) = response {
-    //         //         Ok(Some(response_message))
-    //         //     } else {
-    //         //         Ok(None)
-    //         //     }
-    //         // }
-    //         // MESSAGE_TYPE_RESPONSE => self.handle_network_response(message).await,
-    //         MESSAGE_TYPE_EVENT => self.handle_network_event(message).await,
-    //         _ => {
-    //             log_warn!(
-    //                 self.logger,
-    //                 "Unknown message type: {}",
-    //                 message.message_type
-    //             );
-    //             Err(anyhow!(
-    //                 "Unknown message type: {message_type}",
-    //                 message_type = message.message_type
-    //             ))
-    //         }
-    //     }
-    // }
 
     /// Cleanup state after a peer disconnects: remove remote services, subscriptions,
     /// and forget the peer from known_peers and discovery caches.
@@ -1791,10 +1800,13 @@ impl Node {
 
         // 4) Publish a local-only event indicating peer removal
         if let Err(e) = self
-            .publish_with_options(
+            .publish(
                 &format!("$registry/peer/{peer_node_id}/disconnected"),
                 Some(ArcValue::new_primitive(peer_node_id.to_string())),
-                PublishOptions::local_only(),
+                Some(
+                    PublishOptions::local_only()
+                        .with_retain_for(std::time::Duration::from_secs(10)),
+                ),
             )
             .await
         {
@@ -1806,11 +1818,11 @@ impl Node {
     }
 
     /// Handle a network request
-    async fn handle_network_request(&self, message: RequestMessage) -> Result<ResponseMessage> {
-        log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_key size: {profile_public_key_size}", path=message.path, correlation_id=message.correlation_id, profile_public_key_size=message.profile_public_key.len());
+    async fn handle_network_request(&self, msg: NetworkMessage) -> Result<NetworkMessage> {
+        log_debug!(self.logger, "[handle_network_request] path: {path} correlation_id: {correlation_id} profile_public_keys size: {profile_public_keys_size}", path=msg.payload.path, correlation_id=msg.payload.correlation_id, profile_public_keys_size=msg.payload.profile_public_keys.len());
 
         let payload = ArcValue::deserialize(
-            &message.payload_bytes,
+            &msg.payload.payload_bytes,
             Some(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone()))),
         )?;
         let params_option = if payload.is_null() {
@@ -1819,56 +1831,77 @@ impl Node {
             Some(payload)
         };
 
-        let topic_path = match TopicPath::from_full_path(&message.path) {
+        let topic_path = match TopicPath::from_full_path(&msg.payload.path) {
             Ok(tp) => tp,
             Err(e) => {
                 log_error!(
                     self.logger,
                     "[handle_network_request] Failed to parse topic path: {path} correlation_id: {correlation_id} : {e}",
-                    path=&message.path,
-                    correlation_id=message.correlation_id,
+                    path=&msg.payload.path,
+                    correlation_id=msg.payload.correlation_id,
                     e=e
                 );
                 return Err(anyhow!(
                     "Failed to parse topic path: {path} correlation_id: {correlation_id} : {e}",
-                    path = &message.path,
-                    correlation_id = message.correlation_id
+                    path = &msg.payload.path,
+                    correlation_id = msg.payload.correlation_id
                 ));
             }
         };
         let network_id = topic_path.network_id();
-        let profile_public_key = message.profile_public_key;
+        let profile_public_keys = msg.payload.profile_public_keys.clone();
+
+        // Resolve network ID to public key (needed for both success and error cases)
+        let network_public_key = self
+            .keys_manager
+            .read()
+            .unwrap()
+            .get_network_public_key(&network_id)?;
 
         match self.local_request(topic_path.as_str(), params_option).await {
             Ok(response) => {
-                log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=message.correlation_id);
+                log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=msg.payload.correlation_id);
 
-                // Create serialization context for encryption
-                let serialization_context = runar_serializer::traits::SerializationContext {
+                // Create dynamic resolver with user context for response serialization
+                // For response serialization, we can use a system-only resolver since we're not encrypting new data
+                let resolver = self.get_or_create_resolver(&profile_public_keys)?;
+
+                let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-                    resolver: self.label_resolver.clone(),
-                    network_id,
-                    profile_public_key: Some(profile_public_key.clone()),
+                    resolver,
+                    network_public_key: network_public_key.clone(),
+                    profile_public_keys: profile_public_keys.clone(),
                 };
 
                 // Serialize the response data
                 let serialized_data = response.serialize(Some(&serialization_context))?;
 
-                Ok(ResponseMessage {
-                    correlation_id: message.correlation_id,
-                    payload_bytes: serialized_data,
-                    profile_public_key,
+                // Create response NetworkMessage
+                Ok(NetworkMessage {
+                    source_node_id: self.node_id.clone(),
+                    destination_node_id: msg.source_node_id,
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payload: NetworkMessagePayloadItem {
+                        path: msg.payload.path.clone(),
+                        payload_bytes: serialized_data,
+                        correlation_id: msg.payload.correlation_id.clone(),
+                        profile_public_keys,
+                        network_public_key: Some(network_public_key.clone()),
+                    },
                 })
             }
             Err(e) => {
-                log_error!(self.logger, "❌ [handle_network_request] Local request failed correlation_id: {correlation_id} - Error: {e}", correlation_id=message.correlation_id);
+                log_error!(self.logger, "❌ [handle_network_request] Local request failed correlation_id: {correlation_id} - Error: {e}", correlation_id=msg.payload.correlation_id);
 
-                // Create serialization context for encryption
-                let serialization_context = runar_serializer::traits::SerializationContext {
+                // Create dynamic resolver with user context for error response serialization
+                // For error response serialization, we can use a system-only resolver since we're not encrypting new data
+                let resolver = self.get_or_create_resolver(&profile_public_keys)?;
+
+                let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-                    resolver: self.label_resolver.clone(),
-                    network_id,
-                    profile_public_key: Some(profile_public_key.clone()),
+                    resolver,
+                    network_public_key: network_public_key.clone(),
+                    profile_public_keys: profile_public_keys.clone(),
                 };
                 //TODO improve this by having a proper error type
                 // Create a map for the error response
@@ -1883,10 +1916,18 @@ impl Node {
                 // Serialize the error value
                 let serialized_error = error_value.serialize(Some(&serialization_context))?;
 
-                Ok(ResponseMessage {
-                    correlation_id: message.correlation_id,
-                    payload_bytes: serialized_error,
-                    profile_public_key,
+                // Create error response NetworkMessage
+                Ok(NetworkMessage {
+                    source_node_id: self.node_id.clone(),
+                    destination_node_id: msg.source_node_id,
+                    message_type: MESSAGE_TYPE_RESPONSE,
+                    payload: NetworkMessagePayloadItem {
+                        path: msg.payload.path.clone(),
+                        payload_bytes: serialized_error,
+                        correlation_id: msg.payload.correlation_id.clone(),
+                        profile_public_keys,
+                        network_public_key: Some(network_public_key.clone()),
+                    },
                 })
             }
         }
@@ -1951,21 +1992,21 @@ impl Node {
     // } // Closes async fn handle_network_response
 
     /// Handle a network event
-    async fn handle_network_event(&self, message: EventMessage) -> Result<()> {
+    async fn handle_network_event(&self, msg: NetworkMessage) -> Result<()> {
         log_debug!(
             self.logger,
             "[handle_network_event] correlation_id: {correlation_id}",
-            correlation_id = message.correlation_id
+            correlation_id = msg.payload.correlation_id
         );
 
         // Create topic path
-        let topic_path = match TopicPath::from_full_path(&message.path) {
+        let topic_path = match TopicPath::from_full_path(&msg.payload.path) {
             Ok(tp) => tp,
             Err(e) => {
-                log_error!(self.logger, "[handle_network_event] Invalid topic path for event correlation_id: {correlation_id} error: {e}", correlation_id=message.correlation_id, e=e);
+                log_error!(self.logger, "[handle_network_event] Invalid topic path for event correlation_id: {correlation_id} error: {e}", correlation_id=msg.payload.correlation_id, e=e);
                 return Err(anyhow!(
                     "Invalid topic path for event correlation_id: {correlation_id} error: {e}",
-                    correlation_id = message.correlation_id,
+                    correlation_id = msg.payload.correlation_id,
                     e = e
                 ));
             }
@@ -1973,7 +2014,7 @@ impl Node {
 
         // Deserialize the payload data
         let payload = ArcValue::deserialize(
-            &message.payload_bytes,
+            &msg.payload.payload_bytes,
             Some(Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone()))),
         )?;
 
@@ -2004,16 +2045,16 @@ impl Node {
         } else {
             Some(payload)
         };
-        let mut delivery_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+        let mut delivery_tasks: Vec<JoinHandle<()>> = Vec::new();
 
         // Notify all subscribers
         for (subscriber_id, callback, _options) in subscribers {
             let ctx = event_context.clone();
             let logger_arc = self.logger.clone();
-            let correlation_id = message.correlation_id.clone();
-            let path = message.path.clone();
+            let correlation_id = msg.payload.correlation_id.clone();
+            let path = msg.payload.path.clone();
             let payload_option = payload_option.clone();
-            delivery_tasks.push(tokio::spawn(async move {
+            delivery_tasks.push(spawn(async move {
                 log_debug!(logger_arc, "[handle_network_event] delivering event to subscriber correlation_id: {correlation_id} subscriber_id: {subscriber_id} path: {path}");
                 // Invoke callback. errors are logged but not propagated to avoid affecting other subscribers
                 let result = callback(ctx, payload_option).await;
@@ -2025,7 +2066,7 @@ impl Node {
         for task in delivery_tasks {
             let result = task.await;
             if let Err(e) = result {
-                log_error!(self.logger, "[handle_network_event] error in delivery task correlation_id: {correlation_id} error: {e}", correlation_id=message.correlation_id, e=e);
+                log_error!(self.logger, "[handle_network_event] error in delivery task correlation_id: {correlation_id} error: {e}", correlation_id=msg.payload.correlation_id, e=e);
             }
         }
 
@@ -2070,9 +2111,9 @@ impl Node {
 
             // Execute the handler and return result
             return handler(payload, context).await;
-        } else {
-            Err(anyhow!("No local handler found for topic: {topic_path}"))
         }
+
+        Err(anyhow!("No local handler found for: {topic_path}"))
     }
 
     /// Handle a request for a specific action - Stable API DO NOT CHANGE UNLESS EXPLICITLY ASKED TO DO SO!
@@ -2082,7 +2123,12 @@ impl Node {
     /// Apply load balancing when multiple remote handlers are available.
     ///
     /// This is the central request routing mechanism for the Node.
-    pub async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    pub async fn request<P>(
+        &self,
+        path: &str,
+        payload: Option<P>,
+        options: Option<RequestOptions>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -2112,7 +2158,7 @@ impl Node {
                 );
                 // Try remote handlers instead
                 match self
-                    .remote_request(topic_path.as_str(), request_payload_av)
+                    .remote_request(topic_path.as_str(), request_payload_av, options)
                     .await
                 {
                     Ok(response) => return Ok(response),
@@ -2132,9 +2178,15 @@ impl Node {
         {
             log_debug!(self.logger, "Executing local handler for: {topic_path}");
 
+            let profile_public_keys = options
+                .map(|o| o.profile_public_keys)
+                .unwrap_or_default()
+                .unwrap_or_default();
+
             // Create request context
             let mut context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
+                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
+                    .with_user_profile_public_keys(profile_public_keys);
 
             // Extract parameters using the original registration path
             if let Ok(path_params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -2153,11 +2205,16 @@ impl Node {
         }
 
         // No local handler found - try remote handlers
-        self.remote_request(topic_path.as_str(), request_payload_av)
+        self.remote_request(topic_path.as_str(), request_payload_av, options)
             .await
     }
 
-    pub async fn remote_request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    pub async fn remote_request<P>(
+        &self,
+        path: &str,
+        payload: Option<P>,
+        options: Option<RequestOptions>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
@@ -2182,12 +2239,19 @@ impl Node {
                 topic_path
             );
 
+            let profile_public_keys = options
+                .map(|o| o.profile_public_keys)
+                .unwrap_or_default()
+                .unwrap_or_default();
+
+            // Create request context with profile public keys
+            let context =
+                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
+                    .with_user_profile_public_keys(profile_public_keys);
+
             // Apply load balancing strategy to select a handler
             let load_balancer = self.load_balancer.read().await;
-            let handler_index = load_balancer.select_handler(
-                &remote_handlers,
-                &RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone()),
-            );
+            let handler_index = load_balancer.select_handler(&remote_handlers, &context);
 
             // Get the selected handler
             let handler = &remote_handlers[handler_index];
@@ -2199,10 +2263,6 @@ impl Node {
                 remote_handlers.len(),
                 topic_path
             );
-
-            // Create request context
-            let context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
 
             // For remote handlers, we don't have the registration path
             // In the future, we should enhance the remote handler registry to include registration paths
@@ -2217,11 +2277,11 @@ impl Node {
     }
 
     /// Publish with options - Helper method to implement the publish_with_options functionality
-    pub async fn publish_with_options(
+    pub async fn publish(
         &self,
         topic: &str,
         data: Option<ArcValue>,
-        options: PublishOptions,
+        options: Option<PublishOptions>,
     ) -> Result<()> {
         let topic_string = topic.to_string();
         // Check for valid topic path
@@ -2252,6 +2312,8 @@ impl Node {
                 );
             }
         }
+
+        let options = options.unwrap_or_default();
 
         // Retain event locally if configured
         if let Some(retain_for) = options.retain_for {
@@ -2361,7 +2423,8 @@ impl Node {
                     local_node_id: local_peer_id,
                     logger: self.logger.clone(),
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-                    resolver: self.label_resolver.clone(),
+                    label_resolver_config: self.system_label_config.clone(),
+                    label_resolver_cache: self.label_resolver_cache.clone(),
                 };
 
                 if let Ok(remote_services) =
@@ -2399,7 +2462,7 @@ impl Node {
 
                         // Publish local-only running state for remote service so local components can await readiness
                         if let Err(publish_err) = self
-                            .publish_with_options(
+                            .publish(
                                 &format!(
                                     "$registry/services/{}/state/running",
                                     service_topic_path.service_path()
@@ -2407,8 +2470,10 @@ impl Node {
                                 Some(ArcValue::new_primitive(
                                     service_topic_path.as_str().to_string(),
                                 )),
-                                PublishOptions::local_only()
-                                    .with_retain_for(Duration::from_secs(120)),
+                                Some(
+                                    PublishOptions::local_only()
+                                        .with_retain_for(Duration::from_secs(120)),
+                                ),
                             )
                             .await
                         {
@@ -2493,11 +2558,21 @@ impl Node {
                     .map_err(|e| anyhow!("Invalid topic path {path}: {e}"))?,
             );
             let network_id = topic_path.network_id();
+            // Resolve network ID to public key
+            let network_public_key = self
+                .keys_manager
+                .read()
+                .unwrap()
+                .get_network_public_key(&network_id)?;
+            // Create dynamic resolver for remote subscription (system context)
+            let empty_profile_keys = vec![];
+            let resolver = self.get_or_create_resolver(&empty_profile_keys)?;
+
             let serialization_context = SerializationContext {
                 keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-                resolver: self.label_resolver.clone(),
-                network_id,
-                profile_public_key: None,
+                resolver,
+                network_public_key,
+                profile_public_keys: vec![],
             };
             let transport_arc = transport_arc.clone();
             let handler: RemoteEventHandler = Arc::new(move |payload_opt: Option<ArcValue>| {
@@ -2511,7 +2586,7 @@ impl Node {
                     let topic_path_str = path_arc.as_str();
                     let correlation_id = Uuid::new_v4().to_string();
                     transport_arc
-                        .publish(topic_path_str, &correlation_id, payload_bytes, &peer)
+                        .publish(topic_path_str, &correlation_id, payload_bytes, &peer, None)
                         .await
                         .map_err(|e| anyhow!(e))?;
                     log_debug!(logger, "Forwarded event {path_arc} to peer {peer} correlation_id: {correlation_id}");
@@ -2588,7 +2663,8 @@ impl Node {
             local_node_id: local_peer_id,
             logger: self.logger.clone(),
             keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-            resolver: self.label_resolver.clone(),
+            label_resolver_config: self.system_label_config.clone(),
+            label_resolver_cache: self.label_resolver_cache.clone(),
         };
 
         let remote_services =
@@ -2643,7 +2719,7 @@ impl Node {
 
             // Publish local-only running state for remote service so local components can await readiness
             if let Err(publish_err) = self
-                .publish_with_options(
+                .publish(
                     &format!(
                         "$registry/services/{}/state/running",
                         service_topic_path.service_path()
@@ -2651,7 +2727,7 @@ impl Node {
                     Some(ArcValue::new_primitive(
                         service_topic_path.as_str().to_string(),
                     )),
-                    PublishOptions::local_only().with_retain_for(Duration::from_secs(120)),
+                    Some(PublishOptions::local_only().with_retain_for(Duration::from_secs(120))),
                 )
                 .await
             {
@@ -2698,11 +2774,21 @@ impl Node {
 
                 // Create serialization context for this subscription
                 let network_id = topic_path.network_id();
+                // Resolve network ID to public key
+                let network_public_key = self
+                    .keys_manager
+                    .read()
+                    .unwrap()
+                    .get_network_public_key(&network_id)?;
+                // Create dynamic resolver for remote subscription (system context)
+                let empty_profile_keys = vec![];
+                let resolver = self.get_or_create_resolver(&empty_profile_keys)?;
+
                 let serialization_context = SerializationContext {
                     keystore: Arc::new(NodeKeyManagerWrapper(self.keys_manager.clone())),
-                    resolver: self.label_resolver.clone(),
-                    network_id,
-                    profile_public_key: None,
+                    resolver,
+                    network_public_key,
+                    profile_public_keys: vec![],
                 };
 
                 // Create event handler forwarding events to remote peer
@@ -2726,6 +2812,7 @@ impl Node {
                                 &correlation_id,
                                 payload_bytes,
                                 &peer_node_id,
+                                None,
                             )
                             .await
                             .map_err(|e| anyhow!(e))?;
@@ -2804,7 +2891,7 @@ impl Node {
             }
         }
         // Spawn a new debounce task
-        let handle = tokio::spawn(async move {
+        let handle = spawn(async move {
             sleep(Duration::from_secs(1)).await;
             // Ignore errors from notify_node_change_impl; log if needed
             if let Err(e) = this.notify_node_change_impl().await {
@@ -2990,24 +3077,26 @@ impl Node {
 
 #[async_trait]
 impl NodeDelegate for Node {
-    async fn request<P>(&self, path: &str, payload: Option<P>) -> Result<ArcValue>
+    async fn request<P>(
+        &self,
+        path: &str,
+        payload: Option<P>,
+        options: Option<RequestOptions>,
+    ) -> Result<ArcValue>
     where
         P: AsArcValue + Send + Sync,
     {
         // Delegate directly to our (now generic) inherent implementation.
-        self.request(path, payload).await
+        self.request(path, payload, options).await
     }
 
-    async fn publish(&self, topic: &str, data: Option<ArcValue>) -> Result<()> {
-        // Create default options
-        let options = PublishOptions {
-            broadcast: true,
-            guaranteed_delivery: false,
-            retain_for: None,
-            target: None,
-        };
-
-        self.publish_with_options(topic, data, options).await
+    async fn publish(
+        &self,
+        topic: &str,
+        data: Option<ArcValue>,
+        options: Option<PublishOptions>,
+    ) -> Result<()> {
+        self.publish(topic, data, options).await
     }
 
     async fn subscribe(
@@ -3195,11 +3284,7 @@ impl NodeDelegate for Node {
     ///
     /// Returns Ok(ArcValue) with the event payload if event occurs within timeout,
     /// or Err with timeout message if no event occurs.
-    async fn on(
-        &self,
-        topic: &str,
-        options: Option<crate::services::OnOptions>,
-    ) -> Result<Option<ArcValue>> {
+    async fn on(&self, topic: &str, options: Option<OnOptions>) -> Result<Option<ArcValue>> {
         let full_topic = if topic.contains(':') {
             topic.to_string()
         } else {
@@ -3207,8 +3292,8 @@ impl NodeDelegate for Node {
         };
 
         let node = self.clone();
-        let handle = tokio::spawn(async move {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<ArcValue>>(1);
+        let handle = spawn(async move {
+            let (tx, mut rx) = mpsc::channel::<Option<ArcValue>>(1);
             use crate::services as services_mod;
             let on_opts = options.clone().unwrap_or(services_mod::OnOptions {
                 timeout: Duration::from_secs(5),
@@ -3231,7 +3316,7 @@ impl NodeDelegate for Node {
                 )
                 .await?;
 
-            let result = match tokio::time::timeout(on_opts.timeout, rx.recv()).await {
+            let result = match timeout(on_opts.timeout, rx.recv()).await {
                 Ok(Some(event_data)) => Ok(event_data),
                 Ok(None) => Err(anyhow!(
                     "Channel closed while waiting for event on topic: {full_topic}"
@@ -3371,7 +3456,7 @@ impl Clone for Node {
 
     fn clone(&self) -> Self {
         Self {
-            debounce_notify_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            debounce_notify_task: std::sync::Arc::new(Mutex::new(None)),
             network_id: self.network_id.clone(),
             network_ids: self.network_ids.clone(),
             node_id: self.node_id.clone(),
@@ -3389,7 +3474,8 @@ impl Clone for Node {
             network_discovery_providers: self.network_discovery_providers.clone(),
             load_balancer: self.load_balancer.clone(),
             // pending_requests: self.pending_requests.clone(),
-            label_resolver: self.label_resolver.clone(),
+            system_label_config: self.system_label_config.clone(),
+            label_resolver_cache: self.label_resolver_cache.clone(),
             registry_version: self.registry_version.clone(),
             keys_manager: self.keys_manager.clone(),
 

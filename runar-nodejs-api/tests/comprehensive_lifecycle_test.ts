@@ -185,11 +185,16 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     const profilePks = [personalProfileKey, workProfileKey];
 
     // 5.1 Mobile encrypts with envelope
-    const encryptedData = mobileKeys.mobileEncryptWithEnvelope(testData, networkId, profilePks);
+    // Get network public key from network ID for envelope encryption
+    const networkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkId);
+    expect(Buffer.isBuffer(networkPublicKey)).toBe(true);
+    expect(networkPublicKey.length).toBeGreaterThan(0);
+    
+    const encryptedData = mobileKeys.mobileEncryptWithEnvelope(testData, networkPublicKey, profilePks);
     expect(Buffer.isBuffer(encryptedData)).toBe(true);
     expect(encryptedData.equals(testData)).toBe(false);
     console.log(`   ✅ Data encrypted with envelope: ${encryptedData.length} bytes`);
-    console.log(`      Network: ${networkId}`);
+    console.log(`      Network: ${networkId} (${networkPublicKey.length} bytes)`);
     console.log(`      Profile recipients: ${profilePks.length}`);
 
     // 5.2 Node decrypts envelope

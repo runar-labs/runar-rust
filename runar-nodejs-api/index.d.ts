@@ -30,14 +30,14 @@ export declare class Keys {
    * This function encrypts data for a specific network and profile public keys
    * using the mobile key manager's envelope encryption.
    */
-  mobileEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
+  mobileEncryptWithEnvelope(data: Buffer, networkPublicKey: Buffer | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
   /**
    * Encrypt data using envelope encryption with node manager
    *
    * This function encrypts data for a specific network and profile public keys
    * using the node key manager's envelope encryption.
    */
-  nodeEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
+  nodeEncryptWithEnvelope(data: Buffer, networkPublicKey: Buffer | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
   nodeGetNodeId(): string
   nodeGetPublicKey(): Buffer
   enableAutoPersist(enabled: boolean): void
@@ -56,7 +56,6 @@ export declare class Keys {
   mobileGenerateNetworkDataKey(): string
   mobileInstallNetworkPublicKey(networkPk: Buffer): void
   nodeInstallNetworkKey(nkmCbor: Buffer): void
-  setLabelMapping(mappingCbor: Buffer): void
   setLocalNodeInfo(nodeInfoCbor: Buffer): void
   encryptForPublicKey(data: Buffer, recipientPk: Buffer): Buffer
   encryptForNetwork(data: Buffer, networkId: string): Buffer
@@ -81,16 +80,14 @@ export declare class Keys {
 
 export declare class Transport {
   constructor(keys: Keys, optionsCbor: Buffer)
-  completeRequest(requestId: string, responsePayload: Buffer, profilePk: Buffer): Promise<void>
+  completeRequest(requestId: string, responsePayload: Buffer, profilePublicKeys: Array<Buffer>): Promise<void>
   start(): Promise<void>
   stop(): Promise<void>
   connectPeer(peerInfoCbor: Buffer): Promise<void>
   isConnected(peerId: string): Promise<boolean>
   isConnectedToPublicKey(peerPublicKey: Buffer): Promise<boolean>
-  request(path: string, correlationId: string, payload: Buffer, destPeerId: string, profilePk: Buffer): Promise<Buffer>
-  requestToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer, profilePk: Buffer): Promise<Buffer>
-  publish(path: string, correlationId: string, payload: Buffer, destPeerId: string): Promise<void>
-  publishToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer): Promise<void>
+  request(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey?: Buffer | undefined | null, profilePublicKeys?: Array<Buffer> | undefined | null): Promise<Buffer>
+  publish(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey?: Buffer | undefined | null): Promise<void>
   updatePeers(nodeInfoCbor: Buffer): Promise<void>
 }
 

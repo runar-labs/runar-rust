@@ -7,18 +7,22 @@
 //! - Configuration storage
 
 use anyhow::{Context, Result};
+use hex::encode;
+use qrcode::{render::unicode::Dense1x2, QrCode};
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
-use runar_keys::node::NodeKeyManager;
+use runar_keys::node::{CertificateStatus, NodeKeyManager};
 use runar_macros_common::{log_debug, log_info};
+
+use serde_cbor::to_vec;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::config::{NodeConfig, SetupServerConfig};
 use crate::key_store::OsKeyStore;
-use crate::setup_server::SetupServer;
+use crate::setup_server::{SetupData, SetupServer};
 
 pub struct InitCommand {
     config_dir: PathBuf,
@@ -186,11 +190,10 @@ impl InitCommand {
 
         // Serialize the full setup token (CBOR)
         let setup_token_bytes =
-            serde_cbor::to_vec(&full_setup_token).context("Failed to serialize setup token")?;
+            to_vec(&full_setup_token).context("Failed to serialize setup token")?;
 
         // Generate QR code
-        let qr_code =
-            qrcode::QrCode::new(&setup_token_bytes).context("Failed to generate QR code")?;
+        let qr_code = QrCode::new(&setup_token_bytes).context("Failed to generate QR code")?;
 
         // Convert to image (PNG) - commented out, not needed for now
         // let qr_image = qr_code.to_image()
@@ -214,11 +217,9 @@ impl InitCommand {
         Ok(())
     }
 
-    fn display_qr_code_in_terminal(&self, qr_code: &qrcode::QrCode) -> Result<()> {
+    fn display_qr_code_in_terminal(&self, qr_code: &QrCode) -> Result<()> {
         // Try to display QR code in terminal using ASCII art
-        let qr_string = qr_code
-            .render::<qrcode::render::unicode::Dense1x2>()
-            .build();
+        let qr_string = qr_code.render::<Dense1x2>().build();
         println!("\n📱 QR Code (ASCII):");
         println!("{qr_string}");
         println!();
@@ -230,7 +231,7 @@ impl InitCommand {
         &self,
         _setup_token: &SetupToken,
         setup_config: &SetupConfig,
-    ) -> Result<crate::setup_server::SetupData> {
+    ) -> Result<SetupData> {
         let server = SetupServer::new(
             setup_config.get_setup_server().ip.clone(),
             setup_config.get_setup_server().port,
@@ -262,7 +263,7 @@ impl InitCommand {
         let status = node_key_manager.get_certificate_status();
         log_info!(self.logger, "Certificate status: {status:?}");
 
-        if status != runar_keys::node::CertificateStatus::Valid {
+        if status != CertificateStatus::Valid {
             return Err(anyhow::anyhow!(
                 "Certificate installation failed - status: {:?}",
                 status
@@ -299,7 +300,7 @@ impl InitCommand {
         // - node_id: compact ID (for display/identification)
         // - node_public_key: full hex-encoded public key bytes (for cryptographic operations)
         let node_id = setup_config.node_public_key.clone(); // This is already the compact ID
-        let node_public_key_hex = hex::encode(&node_public_key_bytes);
+        let node_public_key_hex = encode(&node_public_key_bytes);
 
         let final_config = NodeConfig::new(
             node_id,
@@ -315,8 +316,7 @@ impl InitCommand {
 
         // Export and save node state to OS key store
         let node_state = node_key_manager.export_state();
-        let serialized_state =
-            serde_cbor::to_vec(&node_state).context("Failed to serialize node state")?;
+        let serialized_state = to_vec(&node_state).context("Failed to serialize node state")?;
 
         // Store keys securely in OS key store
         let key_store = OsKeyStore::new(self.logger.clone());

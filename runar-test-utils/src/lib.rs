@@ -4,11 +4,15 @@
 // in production builds. All functions in this crate are for testing only.
 
 use anyhow::Result;
+use rand::{thread_rng, Rng};
 use runar_common::compact_ids;
 use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
 use runar_node::NodeConfig;
-use runar_serializer::traits::{ConfigurableLabelResolver, KeyMappingConfig, LabelKeyInfo};
+use runar_serializer::traits::{
+    create_context_label_resolver, EnvelopeCrypto, LabelKeyword, LabelResolver,
+    LabelResolverConfig, LabelValue, SerializationContext,
+};
 use runar_transporter::{
     discovery::DiscoveryOptions,
     network_config::{DiscoveryProviderConfig, NetworkConfig},
@@ -16,6 +20,89 @@ use runar_transporter::{
 };
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+
+/// Create a test label resolver configuration with common test labels
+pub fn create_test_label_resolver_config(network_public_key: Vec<u8>) -> LabelResolverConfig {
+    LabelResolverConfig {
+        label_mappings: HashMap::from([
+            // System label - network key only
+            (
+                "system".to_string(),
+                LabelValue {
+                    network_public_key: Some(network_public_key.clone()),
+                    user_key_spec: None,
+                },
+            ),
+            // User label - network key + current user
+            (
+                "user".to_string(),
+                LabelValue {
+                    network_public_key: Some(network_public_key.clone()),
+                    user_key_spec: Some(LabelKeyword::CurrentUser),
+                },
+            ),
+            // Admin label - network key only
+            (
+                "admin".to_string(),
+                LabelValue {
+                    network_public_key: Some(network_public_key.clone()),
+                    user_key_spec: None,
+                },
+            ),
+            // User-only label - no network key, only user keys
+            (
+                "private".to_string(),
+                LabelValue {
+                    network_public_key: Some(network_public_key.clone()),
+                    user_key_spec: Some(LabelKeyword::CurrentUser),
+                },
+            ),
+            // Search label - network key only
+            (
+                "search".to_string(),
+                LabelValue {
+                    network_public_key: Some(network_public_key.clone()),
+                    user_key_spec: None,
+                },
+            ),
+            // System-only label - network key only
+            (
+                "system_only".to_string(),
+                LabelValue {
+                    network_public_key: Some(network_public_key.clone()),
+                    user_key_spec: None,
+                },
+            ),
+        ]),
+    }
+}
+
+/// Create a test label resolver for a specific context
+pub fn create_test_label_resolver(
+    network_public_key: Vec<u8>,
+    user_profile_keys: Option<Vec<Vec<u8>>>,
+) -> Result<Arc<LabelResolver>> {
+    let config = create_test_label_resolver_config(network_public_key);
+    let profile_keys = user_profile_keys.unwrap_or_default();
+    create_context_label_resolver(&config, &profile_keys)
+}
+
+/// Create a test SerializationContext with dynamic resolver
+pub fn create_test_serialization_context(
+    keystore: Arc<dyn EnvelopeCrypto>,
+    network_public_key: Vec<u8>,
+    user_profile_keys: Option<Vec<Vec<u8>>>,
+) -> Result<SerializationContext> {
+    let resolver =
+        create_test_label_resolver(network_public_key.clone(), user_profile_keys.clone())?;
+
+    Ok(SerializationContext {
+        keystore,
+        resolver,
+        network_public_key,
+        profile_public_keys: user_profile_keys.unwrap_or_default(),
+    })
+}
 
 /// Create a test configuration with certificates, user root keys, network and node keys installed.
 ///
@@ -83,8 +170,13 @@ pub fn create_node_test_config() -> Result<NodeConfig> {
     let (node_keys_manager, _node_id) =
         create_test_node_keys(&mut mobile_keys_manager, &default_network_id)?;
 
+    // Create test label resolver config
+    let network_public_key = node_keys_manager.get_network_public_key(&default_network_id)?;
+    let label_config = create_test_label_resolver_config(network_public_key);
+
     let config = NodeConfig::new(default_network_id.clone())
-        .with_key_manager(Arc::new(RwLock::new(node_keys_manager)));
+        .with_key_manager(Arc::new(RwLock::new(node_keys_manager)))
+        .with_label_resolver_config(label_config);
 
     Ok(config)
 }
@@ -102,7 +194,7 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
         .get_ca_certificate()
         .to_rustls_certificate();
     // Assign a unique multicast port for this test instance to isolate from other tests
-    let unique_port: u16 = 47000 + (rand::random::<u16>() % 1000);
+    let unique_port: u16 = 47000 + (thread_rng().gen::<u16>() % 1000);
     let unique_group = format!("239.255.42.98:{unique_port}");
 
     let mut configs = Vec::new();
@@ -126,8 +218,13 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
             ..Default::default()
         };
 
+        // Create test label resolver config
+        let network_public_key = node_keys_manager.get_network_public_key(&default_network_id)?;
+        let label_config = create_test_label_resolver_config(network_public_key);
+
         let config = NodeConfig::new(default_network_id.clone())
             .with_key_manager(Arc::new(RwLock::new(node_keys_manager)))
+            .with_label_resolver_config(label_config)
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)
                     .with_discovery_options(discovery_options)
@@ -296,8 +393,14 @@ impl MobileSimulator {
 
         let discovery_options = DiscoveryOptions::default();
 
+        // Create test label resolver config
+        let network_public_key =
+            node_key_manager.get_network_public_key(&self.master.network_id)?;
+        let label_config = create_test_label_resolver_config(network_public_key);
+
         let config = NodeConfig::new(self.master.network_id.clone())
             .with_key_manager(Arc::new(RwLock::new(node_key_manager)))
+            .with_label_resolver_config(label_config)
             .with_network_config(
                 NetworkConfig::with_quic(transport_options)
                     .with_discovery_options(discovery_options)
@@ -312,9 +415,7 @@ impl MobileSimulator {
     }
 
     /// Create label resolvers for encryption/decryption scenarios
-    pub fn create_label_resolvers(
-        &self,
-    ) -> Result<(ConfigurableLabelResolver, ConfigurableLabelResolver)> {
+    pub fn create_label_resolvers(&self) -> Result<(Arc<LabelResolver>, Arc<LabelResolver>)> {
         self.logger.info("🔑 Creating label resolvers...");
 
         // Get profile keys from first user (or create default if none)
@@ -328,75 +429,20 @@ impl MobileSimulator {
             HashMap::from([("default".to_string(), default_profile)])
         };
 
-        // Mobile resolver (user context) - has access to user profile keys
-        let mobile_mappings = KeyMappingConfig {
-            label_mappings: HashMap::from([
-                (
-                    "user".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: profile_keys.values().cloned().collect(),
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-                (
-                    "system".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-                (
-                    "search".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-                (
-                    "system_only".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: vec![], // system_only has no profile keys
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-            ]),
-        };
-        let mobile_resolver = ConfigurableLabelResolver::new(mobile_mappings);
+        // Create system label config
+        let system_config =
+            create_test_label_resolver_config(self.master.network_public_key.clone());
 
-        // Node resolver (system context) - has access to network keys but not user profile keys
-        let node_mappings = KeyMappingConfig {
-            label_mappings: HashMap::from([
-                (
-                    "user".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: profile_keys.values().cloned().collect(),
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-                (
-                    "system".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-                (
-                    "search".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: vec![self.master.network_public_key.clone()],
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-                (
-                    "system_only".to_string(),
-                    LabelKeyInfo {
-                        profile_public_keys: vec![], // system_only has no profile keys
-                        network_id: Some(self.master.network_id.clone()),
-                    },
-                ),
-            ]),
-        };
-        let node_resolver = ConfigurableLabelResolver::new(node_mappings);
+        // Create mobile resolver (with user context)
+        let profile_keys_vec = profile_keys.values().cloned().collect::<Vec<_>>();
+        let mobile_resolver = create_context_label_resolver(&system_config, &profile_keys_vec)?;
+
+        // Create node resolver (system context only)
+        let empty_profile_keys = vec![];
+        let node_resolver = create_context_label_resolver(
+            &system_config,
+            &empty_profile_keys, // No user context
+        )?;
 
         self.logger.info("✅ Label resolvers created");
 
@@ -685,3 +731,6 @@ mod tests {
         Ok(())
     }
 }
+
+// Export test fixtures
+pub mod fixtures;

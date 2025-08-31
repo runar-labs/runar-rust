@@ -122,7 +122,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const testData = Buffer.from('test envelope data');
     const profilePks = [personalKey, workKey];
     
-    const encrypted = mobileKeys.mobileEncryptWithEnvelope(testData, networkId, profilePks);
+    // Get network public key from network ID for envelope encryption
+    const networkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkId);
+    expect(Buffer.isBuffer(networkPublicKey)).toBe(true);
+    expect(networkPublicKey.length).toBeGreaterThan(0);
+    
+    const encrypted = mobileKeys.mobileEncryptWithEnvelope(testData, networkPublicKey, profilePks);
     expect(Buffer.isBuffer(encrypted)).toBe(true);
     expect(encrypted.equals(testData)).toBe(false);
 

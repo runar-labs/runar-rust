@@ -8,17 +8,21 @@ use crate::certificate::{
 };
 use crate::derivation::derive_agreement_from_master;
 use crate::error::{KeyError, Result};
+use crate::keystore::persistence;
 use crate::keystore::{
     persistence::{load_state, save_state, PersistenceConfig, Role},
-    DeviceKeystore,
+    DeviceKeystore, DeviceKeystoreCaps,
 };
+use crate::EnvelopeCrypto;
 use crate::{log_debug, log_error, log_info};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
+use rand::thread_rng;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
 use serde::{Deserialize, Serialize};
+use serde_cbor::{from_slice, to_vec};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -193,7 +197,7 @@ impl MobileKeyManager {
         };
         let role = Role::Mobile;
         if let Ok(Some(bytes)) = load_state(&keystore, &cfg, &role) {
-            if let Ok(state) = serde_cbor::from_slice::<MobileKeyManagerState>(&bytes) {
+            if let Ok(state) = from_slice::<MobileKeyManagerState>(&bytes) {
                 // rebuild self from state, preserving logger and persistence settings
                 let logger = self.logger.clone();
                 let (device_keystore, persistence, auto_persist) = (
@@ -229,7 +233,7 @@ impl MobileKeyManager {
             (self.device_keystore.as_ref(), self.persistence.as_ref())
         {
             let state = self.export_state();
-            let bytes = serde_cbor::to_vec(&state).map_err(|e| {
+            let bytes = to_vec(&state).map_err(|e| {
                 KeyError::EncodingError(format!("Failed to encode mobile state: {e}"))
             })?;
             save_state(keystore, cfg, &Role::Mobile, &bytes)?;
@@ -244,14 +248,14 @@ impl MobileKeyManager {
     }
 
     /// Query keystore capabilities if a device keystore is configured.
-    pub fn get_keystore_caps(&self) -> Option<crate::keystore::DeviceKeystoreCaps> {
+    pub fn get_keystore_caps(&self) -> Option<DeviceKeystoreCaps> {
         self.device_keystore.as_ref().map(|k| k.capabilities())
     }
 
     /// Wipe persisted state file (if configured)
     pub fn wipe_persistence(&self) -> Result<()> {
         if let Some(cfg) = &self.persistence {
-            crate::keystore::persistence::wipe(cfg, &Role::Mobile)?;
+            persistence::wipe(cfg, &Role::Mobile)?;
         }
         Ok(())
     }
@@ -405,7 +409,7 @@ impl MobileKeyManager {
 
     /// Generate a network data key for envelope encryption and return the network ID (compact Base64 public key)
     pub fn generate_network_data_key(&mut self) -> Result<String> {
-        let network_key = P256SecretKey::random(&mut rand::thread_rng());
+        let network_key = P256SecretKey::random(&mut thread_rng());
         let public_key = network_key
             .public_key()
             .to_encoded_point(false)
@@ -438,7 +442,7 @@ impl MobileKeyManager {
             .ok_or_else(|| KeyError::KeyNotFound("User root key not initialized".to_string()))?;
         let ikm = root_key.signing_key().to_bytes();
         let mut nonce = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut nonce);
+        thread_rng().fill_bytes(&mut nonce);
         let hk = Hkdf::<Sha256>::new(Some(b"RunarKeyDerivationSalt/v1"), ikm.as_slice());
         let mut envelope_key = [0u8; 32];
         let mut info = b"runar-v1:user-root:storage:envelope:".to_vec();
@@ -456,7 +460,7 @@ impl MobileKeyManager {
     pub fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<EnvelopeEncryptedData> {
         // Generate ephemeral envelope key
@@ -467,12 +471,13 @@ impl MobileKeyManager {
 
         // Encrypt envelope key for network (optional)
         let mut network_encrypted_key = Vec::new();
-        if let Some(network_id) = network_id {
-            // Check both network_data_keys and network_public_keys
-            let network_public_key_bytes = self.get_network_public_key(network_id)?;
-
+        let mut network_id = None;
+        if let Some(network_public_key) = network_public_key {
+            // DIRECT USE - NO INTERNAL RESOLUTION
             network_encrypted_key =
-                self.encrypt_key_with_ecdsa(&envelope_key, &network_public_key_bytes)?;
+                self.encrypt_key_with_ecdsa(&envelope_key, network_public_key)?;
+            // Derive network ID from public key for storage
+            network_id = Some(compact_id(network_public_key));
         }
 
         // Encrypt envelope key for each profile
@@ -485,7 +490,7 @@ impl MobileKeyManager {
 
         Ok(EnvelopeEncryptedData {
             encrypted_data,
-            network_id: network_id.map(|s| s.to_string()),
+            network_id,
             network_encrypted_key,
             profile_encrypted_keys,
         })
@@ -600,8 +605,8 @@ impl MobileKeyManager {
         use p256::ecdh::EphemeralSecret;
         use p256::elliptic_curve::sec1::ToEncodedPoint;
         use p256::PublicKey;
-        use rand::thread_rng;
         use sha2::Sha256;
+        use thread_rng;
 
         // Generate ephemeral key pair for ECDH
         let ephemeral_secret = EphemeralSecret::random(&mut thread_rng());
@@ -637,7 +642,7 @@ impl MobileKeyManager {
     fn decrypt_key_with_agreement(
         &self,
         encrypted_data: &[u8],
-        agreement_secret: &p256::SecretKey,
+        agreement_secret: &P256SecretKey,
     ) -> Result<Vec<u8>> {
         use hkdf::Hkdf;
         use p256::ecdh::diffie_hellman;
@@ -883,9 +888,11 @@ impl MobileKeyManager {
 
     /// Encrypt data for a network (legacy method for compatibility)  
     pub fn encrypt_for_network(&self, data: &[u8], network_id: &str) -> Result<Vec<u8>> {
-        // Use envelope encryption with just this network
+        // Resolve network ID to public key
+        let network_public_key = self.get_network_public_key(network_id)?;
+        // Use envelope encryption with the resolved public key
         let envelope_data =
-            MobileKeyManager::encrypt_with_envelope(self, data, Some(network_id), vec![])?;
+            MobileKeyManager::encrypt_with_envelope(self, data, Some(&network_public_key), vec![])?;
         // Return just the encrypted data for compatibility
         Ok(envelope_data.encrypted_data)
     }
@@ -996,20 +1003,17 @@ impl MobileKeyManager {
 }
 
 // Implementation of EnvelopeCrypto for MobileKeyManager
-impl crate::EnvelopeCrypto for MobileKeyManager {
+impl EnvelopeCrypto for MobileKeyManager {
     fn encrypt_with_envelope(
         &self,
         data: &[u8],
-        network_id: Option<&str>,
+        network_public_key: Option<&[u8]>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Vec<u8>>,
-    ) -> crate::Result<crate::mobile::EnvelopeEncryptedData> {
-        MobileKeyManager::encrypt_with_envelope(self, data, network_id, profile_public_keys)
+    ) -> Result<EnvelopeEncryptedData> {
+        MobileKeyManager::encrypt_with_envelope(self, data, network_public_key, profile_public_keys)
     }
 
-    fn decrypt_envelope_data(
-        &self,
-        env: &crate::mobile::EnvelopeEncryptedData,
-    ) -> crate::Result<Vec<u8>> {
+    fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
         // Try profiles first
         for pid in env.profile_encrypted_keys.keys() {
             if let Ok(pt) = self.decrypt_with_profile(env, pid) {
@@ -1017,6 +1021,10 @@ impl crate::EnvelopeCrypto for MobileKeyManager {
             }
         }
         self.decrypt_with_network(env)
+    }
+
+    fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
+        MobileKeyManager::get_network_public_key(self, network_id)
     }
 }
 

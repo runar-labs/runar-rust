@@ -6,13 +6,12 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 use runar_common::logging::{Component, Logger};
-use runar_keys::{MobileKeyManager /*, mobile::EnvelopeEncryptedData*/, NodeKeyManager};
+use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_schemas::NodeInfo;
-use runar_serializer::traits::ConfigurableLabelResolver;
+
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
-use runar_transporter::NetworkTransport;
-use runar_transporter::NodeDiscovery;
-use runar_transporter::{QuicTransport, QuicTransportOptions};
+use runar_transporter::transport::NetworkTransport;
+use runar_transporter::{NodeDiscovery, QuicTransport, QuicTransportOptions};
 use serde_cbor as cbor;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -39,7 +38,7 @@ struct KeysInner {
     persistence_dir: Option<String>,
     auto_persist: bool,
     logger: Arc<Logger>,
-    label_resolver: Option<Arc<dyn runar_serializer::traits::LabelResolver>>,
+
     local_node_info: Arc<Mutex<Option<NodeInfo>>>,
 }
 
@@ -56,7 +55,7 @@ impl Keys {
                 persistence_dir: None,
                 auto_persist: true,
                 logger,
-                label_resolver: None,
+
                 local_node_info: Arc::new(Mutex::new(None)),
             })),
         }
@@ -146,7 +145,7 @@ impl Keys {
     pub fn mobile_encrypt_with_envelope(
         &self,
         data: Buffer,
-        network_id: Option<String>,
+        network_public_key: Option<Buffer>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
@@ -156,12 +155,12 @@ impl Keys {
             .as_ref()
             .ok_or_else(|| Error::from_reason("Mobile manager not initialized"))?;
 
-        let network_id_ref = network_id.as_deref();
+        let network_public_key_ref = network_public_key.as_ref().map(|b| b.as_ref());
         let profile_keys_ref: Vec<Vec<u8>> =
             profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
 
         let encrypted = mobile_manager
-            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
+            .encrypt_with_envelope(&data, network_public_key_ref, profile_keys_ref)
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
@@ -178,7 +177,7 @@ impl Keys {
     pub fn node_encrypt_with_envelope(
         &self,
         data: Buffer,
-        network_id: Option<String>,
+        network_public_key: Option<Buffer>, // ← NETWORK PUBLIC KEY BYTES
         profile_public_keys: Vec<Buffer>,
     ) -> Result<Buffer> {
         let inner = self.inner.lock().unwrap();
@@ -188,12 +187,12 @@ impl Keys {
             .as_ref()
             .ok_or_else(|| Error::from_reason("Node manager not initialized"))?;
 
-        let network_id_ref = network_id.as_ref();
+        let network_public_key_ref = network_public_key.as_ref().map(|b| b.as_ref());
         let profile_keys_ref: Vec<Vec<u8>> =
             profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
 
         let encrypted = node_manager
-            .encrypt_with_envelope(&data, network_id_ref, profile_keys_ref)
+            .encrypt_with_envelope(&data, network_public_key_ref, profile_keys_ref)
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
@@ -500,16 +499,6 @@ impl Keys {
     }
 
     #[napi]
-    pub fn set_label_mapping(&self, mapping_cbor: Buffer) -> Result<()> {
-        let map: HashMap<String, runar_serializer::traits::LabelKeyInfo> =
-            cbor::from_slice(&mapping_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
-        let resolver = Arc::new(ConfigurableLabelResolver::from_map(map));
-        let mut inner = self.inner.lock().unwrap();
-        inner.label_resolver = Some(resolver);
-        Ok(())
-    }
-
-    #[napi]
     pub fn set_local_node_info(&self, node_info_cbor: Buffer) -> Result<()> {
         let info: NodeInfo =
             cbor::from_slice(&node_info_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
@@ -754,7 +743,7 @@ type EventTsfn = ThreadsafeFunction<(String, Buffer)>;
 struct TransportInner {
     transport: Arc<QuicTransport>,
     pending:
-        AsyncMutex<HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>>,
+        AsyncMutex<HashMap<String, oneshot::Sender<runar_transporter::transport::NetworkMessage>>>,
 }
 
 #[napi]
@@ -762,7 +751,7 @@ impl Transport {
     #[napi(constructor)]
     pub fn new(keys: &Keys, options_cbor: Buffer) -> Result<Self> {
         // Extract shared NodeKeyManager and logger/resolver
-        let (km_arc, logger, resolver_arc, local_info_arc, node_pk) = {
+        let (km_arc, logger, local_info_arc, node_pk) = {
             let mut guard = keys.inner.lock().unwrap();
             let km_arc: Arc<NodeKeyManager> = if let Some(shared) = guard.node_shared.as_ref() {
                 Arc::clone(shared)
@@ -774,20 +763,8 @@ impl Transport {
                 return Err(Error::from_reason("Node not init"));
             };
             let logger = guard.logger.clone();
-            let resolver_arc: Arc<dyn runar_serializer::traits::LabelResolver> =
-                if let Some(r) = guard.label_resolver.as_ref() {
-                    Arc::clone(r)
-                } else {
-                    Arc::new(ConfigurableLabelResolver::from_map(HashMap::new()))
-                };
             let node_pk = km_arc.get_node_public_key();
-            (
-                km_arc,
-                logger,
-                resolver_arc,
-                guard.local_node_info.clone(),
-                node_pk,
-            )
+            (km_arc, logger, guard.local_node_info.clone(), node_pk)
         };
 
         // Parse bind address from options (CBOR: { bind_addr: "ip:port" })
@@ -808,7 +785,7 @@ impl Transport {
         let event_tsfn: Arc<Mutex<Option<EventTsfn>>> = Arc::new(Mutex::new(None));
         let pending_map: Arc<
             AsyncMutex<
-                HashMap<String, oneshot::Sender<runar_transporter::transport::ResponseMessage>>,
+                HashMap<String, oneshot::Sender<runar_transporter::transport::NetworkMessage>>,
             >,
         > = Arc::new(AsyncMutex::new(HashMap::new()));
 
@@ -841,24 +818,31 @@ impl Transport {
         let request_cb: runar_transporter::transport::RequestCallback = {
             let event_tsfn = Arc::clone(&event_tsfn);
             let pending_map = Arc::clone(&pending_map);
-            Arc::new(move |req: runar_transporter::transport::RequestMessage| {
+            Arc::new(move |req: runar_transporter::transport::NetworkMessage| {
                 let event_tsfn = Arc::clone(&event_tsfn);
                 let pending_map = Arc::clone(&pending_map);
                 Box::pin(async move {
                     // If no JS listener registered, auto-echo to avoid hangs in tests
                     let maybe_tsfn_present = event_tsfn.lock().unwrap().is_some();
                     if !maybe_tsfn_present {
-                        return Ok(runar_transporter::transport::ResponseMessage {
-                            correlation_id: req.correlation_id,
-                            payload_bytes: req.payload_bytes,
-                            profile_public_key: req.profile_public_key,
+                        return Ok(runar_transporter::transport::NetworkMessage {
+                            source_node_id: String::new(),
+                            destination_node_id: String::new(),
+                            message_type: 5, // MESSAGE_TYPE_RESPONSE
+                            payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                                path: req.payload.path.clone(),
+                                payload_bytes: req.payload.payload_bytes.clone(),
+                                correlation_id: req.payload.correlation_id.clone(),
+                                network_public_key: None,
+                                profile_public_keys: req.payload.profile_public_keys.clone(),
+                            },
                         });
                     }
                     // Else, register oneshot and emit event for JS to complete
                     let (tx, rx) = oneshot::channel();
                     {
                         let mut map = pending_map.lock().await;
-                        map.insert(req.correlation_id.clone(), tx);
+                        map.insert(req.payload.correlation_id.clone(), tx);
                     }
                     if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
                         let payload = cbor::to_vec(&req)
@@ -876,7 +860,7 @@ impl Transport {
 
         let event_cb: runar_transporter::transport::EventCallback = {
             let event_tsfn = Arc::clone(&event_tsfn);
-            Arc::new(move |ev: runar_transporter::transport::EventMessage| {
+            Arc::new(move |ev: runar_transporter::transport::NetworkMessage| {
                 let event_tsfn = Arc::clone(&event_tsfn);
                 Box::pin(async move {
                     if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
@@ -914,7 +898,6 @@ impl Transport {
             .with_local_node_public_key(node_pk)
             .with_logger(logger)
             .with_key_manager(km_arc)
-            .with_label_resolver(resolver_arc)
             .with_get_local_node_info(get_local_node_info)
             .with_request_callback(request_cb)
             .with_event_callback(event_cb)
@@ -938,15 +921,24 @@ impl Transport {
         &self,
         request_id: String,
         response_payload: Buffer,
-        profile_pk: Buffer,
+        profile_public_keys: Vec<Buffer>,
     ) -> Result<()> {
         let guard = self.inner.lock().unwrap();
         let mut map = guard.pending.blocking_lock();
         if let Some(sender) = map.remove(&request_id) {
-            let _ = sender.send(runar_transporter::transport::ResponseMessage {
-                correlation_id: String::new(),
-                payload_bytes: response_payload.to_vec(),
-                profile_public_key: profile_pk.to_vec(),
+            let profile_pks: Vec<Vec<u8>> =
+                profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
+            let _ = sender.send(runar_transporter::transport::NetworkMessage {
+                source_node_id: String::new(),
+                destination_node_id: String::new(),
+                message_type: 5, // MESSAGE_TYPE_RESPONSE
+                payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                    path: String::new(),
+                    payload_bytes: response_payload.to_vec(),
+                    correlation_id: String::new(),
+                    network_public_key: None,
+                    profile_public_keys: profile_pks,
+                },
             });
             Ok(())
         } else {
@@ -1004,34 +996,27 @@ impl Transport {
         correlation_id: String,
         payload: Buffer,
         dest_peer_id: String,
-        profile_pk: Buffer,
+        network_public_key: Option<Buffer>,
+        profile_public_keys: Option<Vec<Buffer>>,
     ) -> Result<Buffer> {
         let t = { self.inner.lock().unwrap().transport.clone() };
+        let network_pk = network_public_key.map(|b| b.to_vec());
+        let profile_pks = profile_public_keys
+            .map(|pks| pks.iter().map(|pk| pk.to_vec()).collect())
+            .unwrap_or_default();
+
         let res = t
             .request(
                 &path,
                 &correlation_id,
                 payload.to_vec(),
                 &dest_peer_id,
-                profile_pk.to_vec(),
+                network_pk,
+                profile_pks,
             )
             .await
             .map_err(|e| Error::from_reason(format!("request failed: {e}")))?;
         Ok(Buffer::from(res))
-    }
-
-    #[napi]
-    pub async fn request_to_public_key(
-        &self,
-        path: String,
-        correlation_id: String,
-        payload: Buffer,
-        dest_public_key: Buffer,
-        profile_pk: Buffer,
-    ) -> Result<Buffer> {
-        let id = runar_common::compact_ids::compact_id(&dest_public_key);
-        self.request(path, correlation_id, payload, id, profile_pk)
-            .await
     }
 
     #[napi]
@@ -1041,23 +1026,19 @@ impl Transport {
         correlation_id: String,
         payload: Buffer,
         dest_peer_id: String,
+        network_public_key: Option<Buffer>,
     ) -> Result<()> {
         let t = { self.inner.lock().unwrap().transport.clone() };
-        t.publish(&path, &correlation_id, payload.to_vec(), &dest_peer_id)
-            .await
-            .map_err(|e| Error::from_reason(format!("publish failed: {e}")))
-    }
-
-    #[napi]
-    pub async fn publish_to_public_key(
-        &self,
-        path: String,
-        correlation_id: String,
-        payload: Buffer,
-        dest_public_key: Buffer,
-    ) -> Result<()> {
-        let id = runar_common::compact_ids::compact_id(&dest_public_key);
-        self.publish(path, correlation_id, payload, id).await
+        let network_pk = network_public_key.map(|b| b.to_vec());
+        t.publish(
+            &path,
+            &correlation_id,
+            payload.to_vec(),
+            &dest_peer_id,
+            network_pk,
+        )
+        .await
+        .map_err(|e| Error::from_reason(format!("publish failed: {e}")))
     }
 
     #[napi]

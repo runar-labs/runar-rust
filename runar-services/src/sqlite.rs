@@ -1,13 +1,15 @@
+use crate::replication::{ReplicationConfig, ReplicationManager};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use hex::encode;
 use runar_common::logging::Logger;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_node::services::{EventContext, LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
 use rusqlite::types::ToSqlOutput;
-use rusqlite::types::{Null, ValueRef as RusqliteValueRef};
-use rusqlite::{params_from_iter, Connection, Result as RusqliteResult, ToSql};
+use rusqlite::types::{Null, Value as RusqliteValue, ValueRef as RusqliteValueRef};
+use rusqlite::{params_from_iter, Connection, Error, Result as RusqliteResult, ToSql};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
@@ -108,7 +110,7 @@ impl SqliteWorker {
         if let Some(key_bytes) = symmetric_key {
             // Convert the key bytes to a hex string for SQLCipher
             // SQLCipher expects the key as a hex string when using raw keys
-            let hex_key = format!("x'{}'", hex::encode(&key_bytes));
+            let hex_key = format!("x'{}'", encode(&key_bytes));
 
             // Set the raw key using PRAGMA
             connection
@@ -297,7 +299,7 @@ fn execute_internal(
 
     match rusqlite_params_results {
         Ok(rusqlite_params) => {
-            let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
+            let params_for_iter: Vec<&(dyn ToSql + Send + Sync)> =
                 rusqlite_params.iter().map(|b| b.as_ref()).collect();
             log_debug!(logger, "Executing SQL: {} with params: {:?}", sql, params);
             conn.execute(sql, params_from_iter(params_for_iter))
@@ -332,7 +334,7 @@ fn query_internal(
         }
     };
 
-    let params_for_iter: Vec<&(dyn rusqlite::types::ToSql + Send + Sync)> =
+    let params_for_iter: Vec<&(dyn ToSql + Send + Sync)> =
         rusqlite_params.iter().map(|b| b.as_ref()).collect();
 
     log_debug!(
@@ -444,7 +446,7 @@ pub struct SqlRow {
 }
 
 impl ToSql for Value {
-    fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
+    fn to_sql(&self) -> Result<ToSqlOutput<'_>, Error> {
         match self {
             Value::Null => Ok(ToSqlOutput::from(Null)),
             Value::Integer(i) => Ok(ToSqlOutput::from(*i)),
@@ -457,14 +459,14 @@ impl ToSql for Value {
 }
 
 // Conversion from rusqlite::types::Value to our Value type
-impl From<rusqlite::types::Value> for Value {
-    fn from(db_value: rusqlite::types::Value) -> Self {
+impl From<RusqliteValue> for Value {
+    fn from(db_value: RusqliteValue) -> Self {
         match db_value {
-            rusqlite::types::Value::Null => Value::Null,
-            rusqlite::types::Value::Integer(i) => Value::Integer(i),
-            rusqlite::types::Value::Real(f) => Value::Real(f),
-            rusqlite::types::Value::Text(s) => Value::Text(s),
-            rusqlite::types::Value::Blob(b) => Value::Blob(b),
+            RusqliteValue::Null => Value::Null,
+            RusqliteValue::Integer(i) => Value::Integer(i),
+            RusqliteValue::Real(f) => Value::Real(f),
+            RusqliteValue::Text(s) => Value::Text(s),
+            RusqliteValue::Blob(b) => Value::Blob(b),
         }
     }
 }
@@ -589,7 +591,7 @@ pub struct SqliteConfig {
     /// Encryption flag
     pub encryption: bool,
     /// Optional replication configuration
-    pub replication: Option<crate::replication::ReplicationConfig>,
+    pub replication: Option<ReplicationConfig>,
 }
 
 impl SqliteConfig {
@@ -604,7 +606,7 @@ impl SqliteConfig {
     }
 
     /// Add replication configuration to the SQLite config
-    pub fn with_replication(mut self, replication: crate::replication::ReplicationConfig) -> Self {
+    pub fn with_replication(mut self, replication: ReplicationConfig) -> Self {
         self.replication = Some(replication);
         self
     }
@@ -619,7 +621,7 @@ pub struct SqliteService {
     worker_tx: Arc<RwLock<Option<mpsc::Sender<SqliteWorkerCommand>>>>,
     network_id: Option<String>,
     /// Optional replication manager
-    replication_manager: Arc<RwLock<Option<Arc<crate::replication::ReplicationManager>>>>,
+    replication_manager: Arc<RwLock<Option<Arc<ReplicationManager>>>>,
 }
 
 // Manual Clone implementation because mpsc::Sender is Clone but not Copy.
@@ -883,7 +885,11 @@ impl AbstractService for SqliteService {
                                         ));
 
                                         req_ctx
-                                            .publish(&event_path, Some(ArcValue::new_struct(event)))
+                                            .publish(
+                                                &event_path,
+                                                Some(ArcValue::new_struct(event)),
+                                                None,
+                                            )
                                             .await?;
 
                                         req_ctx.info("✅ SQLite event published successfully");
@@ -1066,6 +1072,7 @@ impl AbstractService for SqliteService {
                 .request(
                     "$keys/ensure_symmetric_key",
                     Some(ArcValue::new_primitive(key_name)),
+                    None,
                 )
                 .await?;
             let key = key_arc.as_type_ref::<Vec<u8>>()?;

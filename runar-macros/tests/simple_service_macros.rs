@@ -155,7 +155,11 @@ impl TestService {
         ctx.debug(format!("get_my_data id: {id}"));
 
         let total_res: ArcValue = ctx
-            .request("math/add", Some(params! { "a" => 1000.0, "b" => 500.0 }))
+            .request(
+                "math/add",
+                Some(params! { "a" => 1000.0, "b" => 500.0 }),
+                None,
+            )
             .await?;
         let total: f64 = total_res.as_type()?;
 
@@ -170,9 +174,13 @@ impl TestService {
             map_field: HashMap::new(),
             network_id: self.get_network_id(),
         };
-        ctx.publish("my_data_changed", Some(ArcValue::new_struct(data.clone())))
-            .await?;
-        ctx.publish("age_changed", Some(ArcValue::new_primitive(25)))
+        ctx.publish(
+            "my_data_changed",
+            Some(ArcValue::new_struct(data.clone())),
+            None,
+        )
+        .await?;
+        ctx.publish("age_changed", Some(ArcValue::new_primitive(25)), None)
             .await?;
         Ok(data)
     }
@@ -427,7 +435,7 @@ mod tests {
         // Fetch ServiceMetadata for the "math" service
         let service_metadata_response_arc: ArcValue = ctx
             .node
-            .request("$registry/services/math", None::<ArcValue>) // Corrected path and payload with type annotation
+            .request("$registry/services/math", None::<ArcValue>, None) // Corrected path and payload with type annotation
             .await
             .expect("Failed to get 'math' service metadata");
         let service_metadata_response: ServiceMetadata = service_metadata_response_arc
@@ -483,7 +491,7 @@ mod tests {
         // Call the add action directly with `params!`.
         let response_arc: ArcValue = ctx
             .node
-            .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
+            .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }), None)
             .await
             .expect("Failed to call add action");
         let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
@@ -498,7 +506,11 @@ mod tests {
         // Test subtract action
         let response_arc: ArcValue = ctx
             .node
-            .request("math/subtract", Some(params! { "a" => 10.0, "b" => 5.0 }))
+            .request(
+                "math/subtract",
+                Some(params! { "a" => 10.0, "b" => 5.0 }),
+                None,
+            )
             .await
             .expect("Failed to call subtract action");
         let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
@@ -516,7 +528,7 @@ mod tests {
 
         let response_arc: ArcValue = ctx
             .node
-            .request("math/multiply_numbers", Some(params))
+            .request("math/multiply_numbers", Some(params), None)
             .await
             .expect("Failed to call multiply_numbers action");
         let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
@@ -533,7 +545,7 @@ mod tests {
 
         let response_arc: ArcValue = ctx
             .node
-            .request("math/divide", Some(params))
+            .request("math/divide", Some(params), None)
             .await
             .expect("Failed to call divide action");
         let response: f64 = response_arc.as_type().expect("Failed to convert to f64");
@@ -550,7 +562,7 @@ mod tests {
         let params = params! { "a" => 6.0, "b" => 0.0 };
 
         let response: Result<ArcValue, anyhow::Error> =
-            ctx.node.request("math/divide", Some(params)).await;
+            ctx.node.request("math/divide", Some(params), None).await;
 
         // Verify the error response
         assert!(response
@@ -568,7 +580,7 @@ mod tests {
         let params = ArcValue::new_primitive(42);
         let response_arc: ArcValue = ctx
             .node
-            .request("math/get_user", Some(params))
+            .request("math/get_user", Some(params), None)
             .await
             .expect("Failed to call get_user action");
         let response: User = response_arc.as_type().expect("Failed to convert to User");
@@ -597,7 +609,7 @@ mod tests {
         // Make a request to the get_my_data action
         let response_arc: ArcValue = ctx
             .node
-            .request("math/my_data", Some(ArcValue::new_primitive(100)))
+            .request("math/my_data", Some(ArcValue::new_primitive(100)), None)
             .await
             .expect("Failed to call my_data action");
         let response: MyData = response_arc.as_type().expect("Failed to convert to MyData");
@@ -643,7 +655,7 @@ mod tests {
         // Trigger events by calling add action first (this will create the first added event with 15.0)
         let response_arc: ArcValue = ctx
             .node
-            .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }))
+            .request("math/add", Some(params! { "a" => 10.0, "b" => 5.0 }), None)
             .await
             .expect("Failed to call add action");
         let add_result: f64 = response_arc.as_type().expect("Failed to convert to f64");
@@ -652,7 +664,7 @@ mod tests {
         // Then trigger events by calling my_data action (this will create the second added event with 1500.0)
         let response_arc: ArcValue = ctx
             .node
-            .request("math/my_data", Some(ArcValue::new_primitive(100)))
+            .request("math/my_data", Some(ArcValue::new_primitive(100)), None)
             .await
             .expect("Failed to call my_data action");
         let my_data: MyData = response_arc.as_type().expect("Failed to convert to MyData");
@@ -740,7 +752,7 @@ mod tests {
         // complex_data
         let list_result_arc: ArcValue = ctx
             .node
-            .request("math/complex_data", Some(arc_value))
+            .request("math/complex_data", Some(arc_value), None)
             .await
             .expect("Failed to call complex_data action");
         let list_result: Vec<HashMap<String, String>> = list_result_arc
@@ -783,6 +795,7 @@ mod tests {
             .request(
                 "math/echo_pre_wrapped_struct",
                 Some(ArcValue::new_map(pre_wrapped_params.clone())),
+                None,
             )
             .await
             .expect("Failed to call echo_pre_wrapped_struct");
@@ -809,6 +822,7 @@ mod tests {
             .request(
                 "math/echo_pre_wrapped_struct",
                 Some(ArcValue::new_map(pre_wrapped_params)),
+                None,
             )
             .await
             .expect("Failed to call echo_pre_wrapped_struct for Option result");
@@ -843,7 +857,7 @@ mod tests {
 
         let result_arc: ArcValue = ctx
             .node
-            .request("math/echo", payload)
+            .request("math/echo", payload, None)
             .await
             .expect("Failed to call echo action");
         let result: String = result_arc.as_type().expect("Failed to convert to String");
@@ -857,7 +871,7 @@ mod tests {
         let payload = Some(ArcValue::new_primitive("Hello, world!".to_string()));
         let result_arc: ArcValue = ctx
             .node
-            .request("math/echo", payload)
+            .request("math/echo", payload, None)
             .await
             .expect("Failed to call echo action");
         let result: String = result_arc.as_type().expect("Failed to convert to String");
@@ -893,7 +907,7 @@ mod tests {
         let map_payload = ArcValue::new_map(test_map.clone());
         let map_result_arc: ArcValue = ctx
             .node
-            .request("math/echo_map", Some(map_payload))
+            .request("math/echo_map", Some(map_payload), None)
             .await
             .expect("Failed to call echo_map action");
 
@@ -986,7 +1000,7 @@ mod tests {
 
         let single_struct_result_arc: ArcValue = ctx
             .node
-            .request("math/echo_single_struct", single_struct_payload)
+            .request("math/echo_single_struct", single_struct_payload, None)
             .await
             .expect("Failed to call echo_single_struct action");
 
@@ -1024,7 +1038,7 @@ mod tests {
 
         let result_arc: ArcValue = ctx
             .node
-            .request("math/echo", json_map_payload)
+            .request("math/echo", json_map_payload, None)
             .await
             .expect("Failed to call echo action with JSON map payload");
 
@@ -1055,7 +1069,7 @@ mod tests {
 
         let echo_list_result_arc: ArcValue = ctx
             .node
-            .request("math/echo_list", list_payload)
+            .request("math/echo_list", list_payload, None)
             .await
             .expect("Failed to call echo_list action");
 
@@ -1118,7 +1132,7 @@ mod tests {
 
         let profile_result_arc: ArcValue = ctx
             .node
-            .request("math/complex_profile", Some(arc_value))
+            .request("math/complex_profile", Some(arc_value), None)
             .await
             .expect("Failed to call complex_profile action");
         let profile_result: Vec<HashMap<String, TestProfile>> = profile_result_arc
@@ -1151,6 +1165,7 @@ mod tests {
                     "a" => 5.0f64,
                     "b" => 3.0f64
                 }),
+                None,
             )
             .await
             .expect("Failed to call add action");
@@ -1174,6 +1189,7 @@ mod tests {
                 Some(params! {
                     "id" => 42i32
                 }),
+                None,
             )
             .await
             .expect("Failed to call get_my_data action");
@@ -1268,7 +1284,7 @@ mod tests {
 
         let echo_list_result_arc: ArcValue = ctx
             .node
-            .request("math/echo_list_with_publish", Some(test_list))
+            .request("math/echo_list_with_publish", Some(test_list), None)
             .await
             .expect("Failed to call echo_list_with_publish action");
 

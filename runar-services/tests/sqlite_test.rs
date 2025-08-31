@@ -137,7 +137,7 @@ mod tests {
         let arc_insert_query = ArcValue::new_struct(insert_query.clone());
 
         let insert_response: ArcValue = node
-            .request("users_db/execute_query", Some(arc_insert_query))
+            .request("users_db/execute_query", Some(arc_insert_query), None)
             .await
             .unwrap();
         let affected_rows: i64 = *insert_response.as_type_ref::<i64>().unwrap();
@@ -151,7 +151,7 @@ mod tests {
         let arc_select_query = ArcValue::new_struct(select_query.clone());
 
         let select_response: ArcValue = node
-            .request("users_db/execute_query", Some(arc_select_query))
+            .request("users_db/execute_query", Some(arc_select_query), None)
             .await
             .unwrap();
         let result_list: Vec<ArcValue> =

@@ -3,14 +3,15 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Error as AnyhowError, Result};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use serde_json::Value as JsonValue;
+use serde::{de::DeserializeOwned, Serialize};
+use serde_cbor::{from_slice, to_vec};
+use serde_json::{to_value, Map, Value as JsonValue};
 
 use crate::traits::{KeyStore, LabelResolver, RunarDecrypt, RunarEncrypt};
 use crate::ArcValue;
-use serde::de::DeserializeOwned;
 
 /// Function pointer stored in the registry.
 pub type DecryptFn = fn(&[u8], &Arc<KeyStore>) -> Result<Box<dyn Any + Send + Sync>>;
@@ -23,7 +24,7 @@ static STRUCT_REGISTRY: Lazy<DashMap<TypeId, DecryptFn>> = Lazy::new(DashMap::ne
 
 /// Function pointer for element encryption stored in the registry.
 /// Receives a reference to a Plain value erased as &dyn Any, and returns CBOR bytes of Enc.
-pub type EncryptFn = fn(&dyn Any, &Arc<KeyStore>, &dyn LabelResolver) -> Result<Vec<u8>>;
+pub type EncryptFn = fn(&dyn Any, &Arc<KeyStore>, &LabelResolver) -> Result<Vec<u8>>;
 
 /// Global, thread-safe map: PlainTypeId -> encrypt function.
 static ENCRYPT_REGISTRY: Lazy<DashMap<TypeId, EncryptFn>> = Lazy::new(DashMap::new);
@@ -64,7 +65,7 @@ where
         Plain: 'static + Send + Sync,
         Enc: 'static + RunarDecrypt<Decrypted = Plain> + DeserializeOwned,
     {
-        let enc: Enc = serde_cbor::from_slice(bytes)?;
+        let enc: Enc = from_slice(bytes)?;
         let plain = enc.decrypt_with_keystore(ks)?;
         Ok(Box::new(plain))
     }
@@ -80,22 +81,22 @@ where
 pub fn register_encrypt<Plain, Enc>()
 where
     Plain: 'static + RunarEncrypt<Encrypted = Enc>,
-    Enc: 'static + serde::Serialize,
+    Enc: 'static + Serialize,
 {
     fn encrypt_impl<Plain, Enc>(
         value_any: &dyn Any,
         ks: &Arc<KeyStore>,
-        resolver: &dyn LabelResolver,
+        resolver: &LabelResolver,
     ) -> Result<Vec<u8>>
     where
         Plain: 'static + RunarEncrypt<Encrypted = Enc>,
-        Enc: 'static + serde::Serialize,
+        Enc: 'static + Serialize,
     {
         let plain = value_any
             .downcast_ref::<Plain>()
             .ok_or_else(|| anyhow::anyhow!("Encrypt downcast failed"))?;
         let enc = plain.encrypt_with_keystore(ks, resolver)?;
-        let bytes = serde_cbor::to_vec(&enc)?;
+        let bytes = to_vec(&enc)?;
         Ok(bytes)
     }
 
@@ -116,15 +117,15 @@ pub fn lookup_encryptor_by_typeid(type_id: TypeId) -> Option<EncryptFn> {
 /// through a `#[ctor]`-annotated function, so user code never calls it directly.
 pub fn register_to_json<T>()
 where
-    T: 'static + serde::Serialize + serde::de::DeserializeOwned,
+    T: 'static + Serialize + DeserializeOwned,
 {
     // Mono-morphise a concrete JSON conversion function and insert it.
     fn to_json_impl<T>(bytes: &[u8]) -> Result<JsonValue>
     where
-        T: 'static + serde::Serialize + serde::de::DeserializeOwned,
+        T: 'static + Serialize + DeserializeOwned,
     {
-        let value: T = serde_cbor::from_slice(bytes)?;
-        serde_json::to_value(&value).map_err(anyhow::Error::from)
+        let value: T = from_slice(bytes)?;
+        to_value(&value).map_err(AnyhowError::from)
     }
 
     let type_name: &'static str = std::any::type_name::<T>();
@@ -141,7 +142,7 @@ where
 /// Register wire name for type `T` and bind its JSON converter under the wire name.
 pub fn register_type_name<T>(wire_name: &'static str)
 where
-    T: 'static + serde::Serialize + serde::de::DeserializeOwned,
+    T: 'static + Serialize + DeserializeOwned,
 {
     let rust_name: &'static str = std::any::type_name::<T>();
 
@@ -244,7 +245,7 @@ pub fn get_json_converter(type_name: &str) -> Option<ToJsonFn> {
 
 fn to_json_list_wire(bytes: &[u8]) -> Result<JsonValue> {
     // Prefer Vec<ArcValue> to allow nested struct conversion
-    if let Ok(vec_av) = serde_cbor::from_slice::<Vec<ArcValue>>(bytes) {
+    if let Ok(vec_av) = from_slice::<Vec<ArcValue>>(bytes) {
         let mut out = Vec::with_capacity(vec_av.len());
         for v in vec_av.iter() {
             out.push(v.to_json()?);
@@ -253,15 +254,14 @@ fn to_json_list_wire(bytes: &[u8]) -> Result<JsonValue> {
     }
 
     // Fallback: direct CBOR -> JSON
-    let value: JsonValue = serde_cbor::from_slice(bytes)?;
+    let value: JsonValue = from_slice(bytes)?;
     Ok(value)
 }
 
 fn to_json_map_wire(bytes: &[u8]) -> Result<JsonValue> {
     // Prefer HashMap<String, ArcValue> to allow nested struct conversion
-    if let Ok(map_av) = serde_cbor::from_slice::<std::collections::HashMap<String, ArcValue>>(bytes)
-    {
-        let mut obj = serde_json::Map::with_capacity(map_av.len());
+    if let Ok(map_av) = from_slice::<std::collections::HashMap<String, ArcValue>>(bytes) {
+        let mut obj = Map::with_capacity(map_av.len());
         for (k, v) in map_av.iter() {
             obj.insert(k.clone(), v.to_json()?);
         }
@@ -269,12 +269,12 @@ fn to_json_map_wire(bytes: &[u8]) -> Result<JsonValue> {
     }
 
     // Fallback: direct CBOR -> JSON
-    let value: JsonValue = serde_cbor::from_slice(bytes)?;
+    let value: JsonValue = from_slice(bytes)?;
     Ok(value)
 }
 
 fn to_json_json_wire(bytes: &[u8]) -> Result<JsonValue> {
-    let value: JsonValue = serde_cbor::from_slice(bytes)?;
+    let value: JsonValue = from_slice(bytes)?;
     Ok(value)
 }
 

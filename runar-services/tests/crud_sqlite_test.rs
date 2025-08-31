@@ -193,6 +193,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_req_auto),
+            None,
         )
         .await?;
 
@@ -218,6 +219,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_auto),
+            None,
         )
         .await?;
     let find_response_auto: FindOneResponse =
@@ -267,6 +269,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_req_pre),
+            None,
         )
         .await?;
     let insert_response_pre: InsertOneResponse =
@@ -290,6 +293,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_pre),
+            None,
         )
         .await?;
 
@@ -326,6 +330,7 @@ async fn test_insert_one_and_find_one_basic() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_req_non_existent),
+            None,
         )
         .await?;
 
@@ -365,6 +370,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_order_req),
+            None,
         )
         .await?;
     let order_insert_resp: InsertOneResponse =
@@ -390,6 +396,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/insertOne"),
             Some(arc_insert_product_req),
+            None,
         )
         .await?;
     let product_insert_resp: InsertOneResponse =
@@ -410,6 +417,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_order_req),
+            None,
         )
         .await?;
     let find_order_resp: FindOneResponse =
@@ -440,6 +448,7 @@ async fn test_insert_into_different_collections() -> Result<()> {
         .request(
             &format!("{CRUD_SERVICE_PATH}/findOne"),
             Some(arc_find_product_req),
+            None,
         )
         .await?;
     let find_product_resp: FindOneResponse =

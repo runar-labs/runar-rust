@@ -17,7 +17,7 @@ use runar_keys::{
     EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
-use runar_serializer::traits::{LabelKeyInfo, LabelResolver};
+
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
@@ -76,8 +76,6 @@ struct KeysInner {
     mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
     node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
 
-    // Optional platform-provided label resolver
-    label_resolver: Option<Arc<dyn LabelResolver>>,
     // Local NodeInfo holder (push-updated from FFI)
     local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
     // Shared device keystore registered at FFI level
@@ -85,6 +83,33 @@ struct KeysInner {
     // Persistence directory and auto-persist flag
     persistence_dir: Option<std::path::PathBuf>,
     auto_persist: bool,
+}
+
+// New transport parameter types for CBOR serialization
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TransportRequestParams {
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+    pub dest_peer_id: String,
+    pub network_public_key: Option<Vec<u8>>,
+    pub profile_public_keys: Vec<Vec<u8>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TransportPublishParams {
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+    pub dest_peer_id: String,
+    pub network_public_key: Option<Vec<u8>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TransportCompleteRequestParams {
+    pub request_id: String,
+    pub response_payload: Vec<u8>,
+    pub profile_public_keys: Vec<Vec<u8>>,
 }
 
 // Error types for validation
@@ -279,7 +304,7 @@ struct TransportInner {
         Mutex<
             std::collections::HashMap<
                 String,
-                oneshot::Sender<runar_transporter::transport::ResponseMessage>,
+                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
             >,
         >,
     >,
@@ -338,45 +363,6 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
         *out_len = len;
     }
     true
-}
-
-// ------------------------------
-// LabelResolver mapping hydration (CBOR-based)
-// ------------------------------
-
-/// Set label mapping from a CBOR-encoded HashMap<String, LabelKeyInfo>.
-///
-/// Returns 0 on success.
-/// Returns 1 on null/invalid arguments.
-/// Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_set_label_mapping(
-    keys: *mut c_void,
-    mapping_cbor: *const u8,
-    len: usize,
-) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        return 1;
-    };
-    if mapping_cbor.is_null() || len == 0 {
-        return 1;
-    }
-    let slice = std::slice::from_raw_parts(mapping_cbor, len);
-    let mapping: std::collections::HashMap<String, LabelKeyInfo> =
-        match serde_cbor::from_slice(slice) {
-            Ok(m) => m,
-            Err(e) => {
-                set_error(
-                    std::ptr::null_mut(),
-                    2,
-                    &format!("decode label mapping: {e}"),
-                );
-                return 2;
-            }
-        };
-    let resolver = runar_serializer::traits::ConfigurableLabelResolver::from_map(mapping);
-    inner.label_resolver = Some(Arc::new(resolver));
-    0
 }
 
 /// Set local NodeInfo from a CBOR buffer.
@@ -851,7 +837,8 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
     keys: *mut c_void,
     data: *const u8,
     data_len: usize,
-    network_id: *const c_char,
+    network_public_key: *const u8, // ← NETWORK PUBLIC KEY BYTES
+    network_public_key_len: usize,
     profile_pks: *const *const u8,
     profile_lens: *const usize,
     profiles_count: usize,
@@ -921,16 +908,10 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
 
     // Main logic - manager is guaranteed to exist
     let data_slice = std::slice::from_raw_parts(data, data_len);
-    let network_id_opt = if network_id.is_null() {
+    let network_public_key_opt = if network_public_key.is_null() {
         None
     } else {
-        match std::ffi::CStr::from_ptr(network_id).to_str() {
-            Ok(s) => Some(s.to_string()),
-            Err(_) => {
-                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
-                return RN_ERROR_INVALID_UTF8;
-            }
-        }
+        Some(std::slice::from_raw_parts(network_public_key, network_public_key_len).to_vec())
     };
 
     // Process profile keys
@@ -954,7 +935,11 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
         }
     };
 
-    match node_manager.encrypt_with_envelope(data_slice, network_id_opt.as_ref(), profiles) {
+    match node_manager.encrypt_with_envelope(
+        data_slice,
+        network_public_key_opt.as_deref(),
+        profiles,
+    ) {
         Ok(eed) => {
             let cbor = match serde_cbor::to_vec(&eed) {
                 Ok(v) => v,
@@ -990,7 +975,8 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
     keys: *mut c_void,
     data: *const u8,
     data_len: usize,
-    network_id: *const c_char,
+    network_public_key: *const u8, // ← NETWORK PUBLIC KEY BYTES
+    network_public_key_len: usize,
     profile_pks: *const *const u8,
     profile_lens: *const usize,
     profiles_count: usize,
@@ -1060,16 +1046,10 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
 
     // Main logic - manager is guaranteed to exist
     let data_slice = std::slice::from_raw_parts(data, data_len);
-    let network_id_opt = if network_id.is_null() {
+    let network_public_key_opt = if network_public_key.is_null() {
         None
     } else {
-        match std::ffi::CStr::from_ptr(network_id).to_str() {
-            Ok(s) => Some(s.to_string()),
-            Err(_) => {
-                set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
-                return RN_ERROR_INVALID_UTF8;
-            }
-        }
+        Some(std::slice::from_raw_parts(network_public_key, network_public_key_len).to_vec())
     };
 
     // Process profile keys
@@ -1093,7 +1073,11 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
         }
     };
 
-    match mobile_manager.encrypt_with_envelope(data_slice, network_id_opt.as_deref(), profiles) {
+    match mobile_manager.encrypt_with_envelope(
+        data_slice,
+        network_public_key_opt.as_deref(),
+        profiles,
+    ) {
         Ok(eed) => {
             let cbor = match serde_cbor::to_vec(&eed) {
                 Ok(v) => v,
@@ -2931,7 +2915,7 @@ fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
         logger,
         mobile_key_manager: None,
         node_key_manager: None,
-        label_resolver: None,
+
         local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
         persistence_dir: None,
@@ -3575,7 +3559,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         Mutex<
             std::collections::HashMap<
                 String,
-                oneshot::Sender<runar_transporter::transport::ResponseMessage>,
+                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
             >,
         >,
     > = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -3604,19 +3588,25 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             );
             map.insert(
                 serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(req.path),
+                serde_cbor::Value::Text(req.payload.path.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(req.correlation_id),
+                serde_cbor::Value::Text(req.payload.correlation_id.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(req.payload_bytes),
+                serde_cbor::Value::Bytes(req.payload.payload_bytes.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("profile_public_key".into()),
-                serde_cbor::Value::Bytes(req.profile_public_key),
+                serde_cbor::Value::Bytes(
+                    req.payload
+                        .profile_public_keys
+                        .first()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
             );
             let _ = req_tx
                 .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
@@ -3624,10 +3614,17 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
 
             match rx_resp.await {
                 Ok(resp) => Ok(resp),
-                Err(_) => Ok(runar_transporter::transport::ResponseMessage {
-                    correlation_id: String::new(),
-                    payload_bytes: Vec::new(),
-                    profile_public_key: Vec::new(),
+                Err(_) => Ok(runar_transporter::transport::NetworkMessage {
+                    source_node_id: String::new(),
+                    destination_node_id: String::new(),
+                    message_type: 5, // MESSAGE_TYPE_RESPONSE
+                    payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                        path: String::new(),
+                        payload_bytes: Vec::new(),
+                        correlation_id: String::new(),
+                        network_public_key: None,
+                        profile_public_keys: Vec::new(),
+                    },
                 }),
             }
         })
@@ -3649,15 +3646,15 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             );
             map.insert(
                 serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(ev.path),
+                serde_cbor::Value::Text(ev.payload.path.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(ev.correlation_id),
+                serde_cbor::Value::Text(ev.payload.correlation_id.clone()),
             );
             map.insert(
                 serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(ev.payload_bytes),
+                serde_cbor::Value::Bytes(ev.payload.payload_bytes.clone()),
             );
             let _ = ev_tx
                 .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
@@ -3666,10 +3663,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
-    // Attach platform-provided LabelResolver if present
-    if let Some(resolver) = keys_inner.label_resolver.clone() {
-        let _ = options.with_label_resolver(resolver);
-    }
     // Require local NodeInfo to be set before initializing transport
     if keys_inner.local_node_info.load().as_ref().is_none() {
         set_error(
@@ -3963,22 +3956,11 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_request(
     transport: *mut c_void,
-    path: *const c_char,
-    correlation_id: *const c_char,
-    payload: *const u8,
-    payload_len: usize,
-    dest_peer_id: *const c_char,
-    profile_pk: *const u8,
-    pk_len: usize,
+    request_cbor: *const u8,
+    request_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null()
-        || path.is_null()
-        || correlation_id.is_null()
-        || payload.is_null()
-        || dest_peer_id.is_null()
-        || profile_pk.is_null()
-    {
+    if transport.is_null() || request_cbor.is_null() {
         set_error(err, 1, "null argument");
         return 1;
     }
@@ -3987,33 +3969,30 @@ pub unsafe extern "C" fn rn_transport_request(
         set_error(err, 1, "invalid transport handle");
         return 1;
     }
-    let path = match std::ffi::CStr::from_ptr(path).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let cid = match std::ffi::CStr::from_ptr(correlation_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let peer = match std::ffi::CStr::from_ptr(dest_peer_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
-    let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
+
+    // Deserialize CBOR request parameters
+    let request: TransportRequestParams =
+        match serde_cbor::from_slice(std::slice::from_raw_parts(request_cbor, request_len)) {
+            Ok(r) => r,
+            Err(_) => {
+                set_error(err, 2, "invalid request CBOR");
+                return 2;
+            }
+        };
     let t = (&*handle.inner).transport.clone();
     let events = (&*handle.inner).events_tx.clone();
     runtime().spawn(async move {
-        match t.request(&path, &cid, data, &peer, pk).await {
+        match t
+            .request(
+                &request.path,
+                &request.correlation_id,
+                request.payload,
+                &request.dest_peer_id,
+                request.network_public_key,
+                request.profile_public_keys,
+            )
+            .await
+        {
             Ok(resp) => {
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(
@@ -4026,7 +4005,7 @@ pub unsafe extern "C" fn rn_transport_request(
                 );
                 map.insert(
                     serde_cbor::Value::Text("correlation_id".into()),
-                    serde_cbor::Value::Text(cid),
+                    serde_cbor::Value::Text(request.correlation_id),
                 );
                 map.insert(
                     serde_cbor::Value::Text("payload".into()),
@@ -4045,19 +4024,11 @@ pub unsafe extern "C" fn rn_transport_request(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_publish(
     transport: *mut c_void,
-    path: *const c_char,
-    correlation_id: *const c_char,
-    payload: *const u8,
-    payload_len: usize,
-    dest_peer_id: *const c_char,
+    publish_cbor: *const u8,
+    publish_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null()
-        || path.is_null()
-        || correlation_id.is_null()
-        || payload.is_null()
-        || dest_peer_id.is_null()
-    {
+    if transport.is_null() || publish_cbor.is_null() {
         set_error(err, 1, "null argument");
         return 1;
     }
@@ -4066,31 +4037,27 @@ pub unsafe extern "C" fn rn_transport_publish(
         set_error(err, 1, "invalid transport handle");
         return 1;
     }
-    let path = match std::ffi::CStr::from_ptr(path).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let cid = match std::ffi::CStr::from_ptr(correlation_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let peer = match std::ffi::CStr::from_ptr(dest_peer_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
+
+    // Deserialize CBOR publish parameters
+    let publish: TransportPublishParams =
+        match serde_cbor::from_slice(std::slice::from_raw_parts(publish_cbor, publish_len)) {
+            Ok(p) => p,
+            Err(_) => {
+                set_error(err, 2, "invalid publish CBOR");
+                return 2;
+            }
+        };
     let t = (&*handle.inner).transport.clone();
     runtime().spawn(async move {
-        let _ = t.publish(&path, &cid, data, &peer).await;
+        let _ = t
+            .publish(
+                &publish.path,
+                &publish.correlation_id,
+                publish.payload,
+                &publish.dest_peer_id,
+                publish.network_public_key,
+            )
+            .await;
     });
     0
 }
@@ -4098,18 +4065,11 @@ pub unsafe extern "C" fn rn_transport_publish(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_complete_request(
     transport: *mut c_void,
-    request_id: *const c_char,
-    response_payload: *const u8,
-    len: usize,
-    profile_pk: *const u8,
-    pk_len: usize,
+    complete_cbor: *const u8,
+    complete_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null()
-        || request_id.is_null()
-        || response_payload.is_null()
-        || profile_pk.is_null()
-    {
+    if transport.is_null() || complete_cbor.is_null() {
         set_error(err, 1, "null argument");
         return 1;
     }
@@ -4118,21 +4078,29 @@ pub unsafe extern "C" fn rn_transport_complete_request(
         set_error(err, 1, "invalid transport handle");
         return 1;
     }
-    let req_id = match std::ffi::CStr::from_ptr(request_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let data = std::slice::from_raw_parts(response_payload, len).to_vec();
-    let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
+
+    // Deserialize CBOR complete request parameters
+    let complete: TransportCompleteRequestParams =
+        match serde_cbor::from_slice(std::slice::from_raw_parts(complete_cbor, complete_len)) {
+            Ok(c) => c,
+            Err(_) => {
+                set_error(err, 2, "invalid complete request CBOR");
+                return 2;
+            }
+        };
     let mut map = runtime().block_on((&*handle.inner).pending.lock());
-    if let Some(sender) = map.remove(&req_id) {
-        let _ = sender.send(runar_transporter::transport::ResponseMessage {
-            correlation_id: String::new(),
-            payload_bytes: data,
-            profile_public_key: pk,
+    if let Some(sender) = map.remove(&complete.request_id) {
+        let _ = sender.send(runar_transporter::transport::NetworkMessage {
+            source_node_id: String::new(),
+            destination_node_id: String::new(),
+            message_type: 5, // MESSAGE_TYPE_RESPONSE
+            payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                path: String::new(),
+                payload_bytes: complete.response_payload,
+                correlation_id: String::new(),
+                network_public_key: None,
+                profile_public_keys: complete.profile_public_keys,
+            },
         });
         0
     } else {

@@ -324,7 +324,7 @@ impl CrudSqliteService {
         let action_path = self.sqlite_action_path("execute_query");
 
         let rows_affected: Arc<i64> = context
-            .request(&action_path, Some(ArcValue::new_struct(sql_query)))
+            .request(&action_path, Some(ArcValue::new_struct(sql_query)), None)
             .await
             .expect("Failed to execute INSERT statement")
             .as_type_ref()?;
@@ -444,7 +444,7 @@ impl CrudSqliteService {
 
         // Make the actual request to SqliteService
         let rows: Arc<Vec<ArcValue>> = context
-            .request(&action_path, Some(request_payload_for_sqlite))
+            .request(&action_path, Some(request_payload_for_sqlite), None)
             .await
             .with_context(|| {
                 format!(
