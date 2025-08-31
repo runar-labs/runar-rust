@@ -85,6 +85,33 @@ struct KeysInner {
     auto_persist: bool,
 }
 
+// New transport parameter types for CBOR serialization
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TransportRequestParams {
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+    pub dest_peer_id: String,
+    pub network_public_key: Option<Vec<u8>>,
+    pub profile_public_keys: Vec<Vec<u8>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TransportPublishParams {
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+    pub dest_peer_id: String,
+    pub network_public_key: Option<Vec<u8>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TransportCompleteRequestParams {
+    pub request_id: String,
+    pub response_payload: Vec<u8>,
+    pub profile_public_keys: Vec<Vec<u8>>,
+}
+
 // Error types for validation
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -3929,22 +3956,11 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_request(
     transport: *mut c_void,
-    path: *const c_char,
-    correlation_id: *const c_char,
-    payload: *const u8,
-    payload_len: usize,
-    dest_peer_id: *const c_char,
-    profile_pk: *const u8,
-    pk_len: usize,
+    request_cbor: *const u8,
+    request_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null()
-        || path.is_null()
-        || correlation_id.is_null()
-        || payload.is_null()
-        || dest_peer_id.is_null()
-        || profile_pk.is_null()
-    {
+    if transport.is_null() || request_cbor.is_null() {
         set_error(err, 1, "null argument");
         return 1;
     }
@@ -3953,33 +3969,30 @@ pub unsafe extern "C" fn rn_transport_request(
         set_error(err, 1, "invalid transport handle");
         return 1;
     }
-    let path = match std::ffi::CStr::from_ptr(path).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let cid = match std::ffi::CStr::from_ptr(correlation_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let peer = match std::ffi::CStr::from_ptr(dest_peer_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
-    let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
+
+    // Deserialize CBOR request parameters
+    let request: TransportRequestParams =
+        match serde_cbor::from_slice(std::slice::from_raw_parts(request_cbor, request_len)) {
+            Ok(r) => r,
+            Err(_) => {
+                set_error(err, 2, "invalid request CBOR");
+                return 2;
+            }
+        };
     let t = (&*handle.inner).transport.clone();
     let events = (&*handle.inner).events_tx.clone();
     runtime().spawn(async move {
-        match t.request(&path, &cid, data, &peer, None, vec![pk]).await {
+        match t
+            .request(
+                &request.path,
+                &request.correlation_id,
+                request.payload,
+                &request.dest_peer_id,
+                request.network_public_key,
+                request.profile_public_keys,
+            )
+            .await
+        {
             Ok(resp) => {
                 let mut map = std::collections::BTreeMap::new();
                 map.insert(
@@ -3992,7 +4005,7 @@ pub unsafe extern "C" fn rn_transport_request(
                 );
                 map.insert(
                     serde_cbor::Value::Text("correlation_id".into()),
-                    serde_cbor::Value::Text(cid),
+                    serde_cbor::Value::Text(request.correlation_id),
                 );
                 map.insert(
                     serde_cbor::Value::Text("payload".into()),
@@ -4011,19 +4024,11 @@ pub unsafe extern "C" fn rn_transport_request(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_publish(
     transport: *mut c_void,
-    path: *const c_char,
-    correlation_id: *const c_char,
-    payload: *const u8,
-    payload_len: usize,
-    dest_peer_id: *const c_char,
+    publish_cbor: *const u8,
+    publish_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null()
-        || path.is_null()
-        || correlation_id.is_null()
-        || payload.is_null()
-        || dest_peer_id.is_null()
-    {
+    if transport.is_null() || publish_cbor.is_null() {
         set_error(err, 1, "null argument");
         return 1;
     }
@@ -4032,31 +4037,27 @@ pub unsafe extern "C" fn rn_transport_publish(
         set_error(err, 1, "invalid transport handle");
         return 1;
     }
-    let path = match std::ffi::CStr::from_ptr(path).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let cid = match std::ffi::CStr::from_ptr(correlation_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let peer = match std::ffi::CStr::from_ptr(dest_peer_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let data = std::slice::from_raw_parts(payload, payload_len).to_vec();
+
+    // Deserialize CBOR publish parameters
+    let publish: TransportPublishParams =
+        match serde_cbor::from_slice(std::slice::from_raw_parts(publish_cbor, publish_len)) {
+            Ok(p) => p,
+            Err(_) => {
+                set_error(err, 2, "invalid publish CBOR");
+                return 2;
+            }
+        };
     let t = (&*handle.inner).transport.clone();
     runtime().spawn(async move {
-        let _ = t.publish(&path, &cid, data, &peer, None).await;
+        let _ = t
+            .publish(
+                &publish.path,
+                &publish.correlation_id,
+                publish.payload,
+                &publish.dest_peer_id,
+                publish.network_public_key,
+            )
+            .await;
     });
     0
 }
@@ -4064,18 +4065,11 @@ pub unsafe extern "C" fn rn_transport_publish(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_complete_request(
     transport: *mut c_void,
-    request_id: *const c_char,
-    response_payload: *const u8,
-    len: usize,
-    profile_pk: *const u8,
-    pk_len: usize,
+    complete_cbor: *const u8,
+    complete_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null()
-        || request_id.is_null()
-        || response_payload.is_null()
-        || profile_pk.is_null()
-    {
+    if transport.is_null() || complete_cbor.is_null() {
         set_error(err, 1, "null argument");
         return 1;
     }
@@ -4084,27 +4078,28 @@ pub unsafe extern "C" fn rn_transport_complete_request(
         set_error(err, 1, "invalid transport handle");
         return 1;
     }
-    let req_id = match std::ffi::CStr::from_ptr(request_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            set_error(err, 2, "invalid utf8");
-            return 2;
-        }
-    };
-    let data = std::slice::from_raw_parts(response_payload, len).to_vec();
-    let pk = std::slice::from_raw_parts(profile_pk, pk_len).to_vec();
+
+    // Deserialize CBOR complete request parameters
+    let complete: TransportCompleteRequestParams =
+        match serde_cbor::from_slice(std::slice::from_raw_parts(complete_cbor, complete_len)) {
+            Ok(c) => c,
+            Err(_) => {
+                set_error(err, 2, "invalid complete request CBOR");
+                return 2;
+            }
+        };
     let mut map = runtime().block_on((&*handle.inner).pending.lock());
-    if let Some(sender) = map.remove(&req_id) {
+    if let Some(sender) = map.remove(&complete.request_id) {
         let _ = sender.send(runar_transporter::transport::NetworkMessage {
             source_node_id: String::new(),
             destination_node_id: String::new(),
             message_type: 5, // MESSAGE_TYPE_RESPONSE
             payload: runar_transporter::transport::NetworkMessagePayloadItem {
                 path: String::new(),
-                payload_bytes: data,
+                payload_bytes: complete.response_payload,
                 correlation_id: String::new(),
                 network_public_key: None,
-                profile_public_keys: vec![pk],
+                profile_public_keys: complete.profile_public_keys,
             },
         });
         0

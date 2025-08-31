@@ -201,22 +201,44 @@ fn two_transports_request_response() {
             0
         );
 
-        let path = CString::new("/echo").unwrap();
-        let cid = CString::new("c1").unwrap();
         let peer_id = runar_common::compact_ids::compact_id(&peer.public_key);
-        let peer_id_c = CString::new(peer_id).unwrap();
-        let payload: Vec<u8> = b"hello".to_vec();
-        let empty_pk: Vec<u8> = vec![];
+
+        // Create CBOR request parameters
+        let request_params = serde_cbor::to_vec(&serde_cbor::Value::Map({
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                serde_cbor::Value::Text("path".into()),
+                serde_cbor::Value::Text("/echo".into()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("correlation_id".into()),
+                serde_cbor::Value::Text("c1".into()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("payload".into()),
+                serde_cbor::Value::Bytes(b"hello".to_vec()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("dest_peer_id".into()),
+                serde_cbor::Value::Text(peer_id),
+            );
+            map.insert(
+                serde_cbor::Value::Text("network_public_key".into()),
+                serde_cbor::Value::Null,
+            );
+            map.insert(
+                serde_cbor::Value::Text("profile_public_keys".into()),
+                serde_cbor::Value::Array(vec![]),
+            );
+            map
+        }))
+        .unwrap();
+
         assert_eq!(
             rn_transport_request(
                 tb,
-                path.as_ptr(),
-                cid.as_ptr(),
-                payload.as_ptr(),
-                payload.len(),
-                peer_id_c.as_ptr(),
-                empty_pk.as_ptr(),
-                empty_pk.len(),
+                request_params.as_ptr(),
+                request_params.len(),
                 &mut err as *mut _ as *mut _
             ),
             0
@@ -250,15 +272,31 @@ fn two_transports_request_response() {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         let rid = rid_c.expect("no request received on server");
-        let resp_payload: Vec<u8> = b"world".to_vec();
+
+        // Create CBOR complete request parameters
+        let complete_params = serde_cbor::to_vec(&serde_cbor::Value::Map({
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                serde_cbor::Value::Text("request_id".into()),
+                serde_cbor::Value::Text(rid.to_string_lossy().to_string()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("response_payload".into()),
+                serde_cbor::Value::Bytes(b"world".to_vec()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("profile_public_keys".into()),
+                serde_cbor::Value::Array(vec![]),
+            );
+            map
+        }))
+        .unwrap();
+
         assert_eq!(
             rn_transport_complete_request(
                 ta,
-                rid.as_ptr(),
-                resp_payload.as_ptr(),
-                resp_payload.len(),
-                empty_pk.as_ptr(),
-                empty_pk.len(),
+                complete_params.as_ptr(),
+                complete_params.len(),
                 &mut err as *mut _ as *mut _
             ),
             0

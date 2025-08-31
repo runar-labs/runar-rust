@@ -374,29 +374,18 @@ int32_t rn_transport_update_local_node_info(void *transport,
                                             struct RNAPIRnError *err);
 
 int32_t rn_transport_request(void *transport,
-                             const char *path,
-                             const char *correlation_id,
-                             const uint8_t *payload,
-                             size_t payload_len,
-                             const char *dest_peer_id,
-                             const uint8_t *profile_pk,
-                             size_t pk_len,
+                             const uint8_t *request_cbor,
+                             size_t request_len,
                              struct RNAPIRnError *err);
 
 int32_t rn_transport_publish(void *transport,
-                             const char *path,
-                             const char *correlation_id,
-                             const uint8_t *payload,
-                             size_t payload_len,
-                             const char *dest_peer_id,
+                             const uint8_t *publish_cbor,
+                             size_t publish_len,
                              struct RNAPIRnError *err);
 
 int32_t rn_transport_complete_request(void *transport,
-                                      const char *request_id,
-                                      const uint8_t *response_payload,
-                                      size_t len,
-                                      const uint8_t *profile_pk,
-                                      size_t pk_len,
+                                      const uint8_t *complete_cbor,
+                                      size_t complete_len,
                                       struct RNAPIRnError *err);
 
 int32_t rn_transport_stop(void *transport, struct RNAPIRnError *err);
