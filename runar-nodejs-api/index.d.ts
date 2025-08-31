@@ -30,14 +30,14 @@ export declare class Keys {
    * This function encrypts data for a specific network and profile public keys
    * using the mobile key manager's envelope encryption.
    */
-  mobileEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
+  mobileEncryptWithEnvelope(data: Buffer, networkPublicKey: Buffer | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
   /**
    * Encrypt data using envelope encryption with node manager
    *
    * This function encrypts data for a specific network and profile public keys
    * using the node key manager's envelope encryption.
    */
-  nodeEncryptWithEnvelope(data: Buffer, networkId: string | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
+  nodeEncryptWithEnvelope(data: Buffer, networkPublicKey: Buffer | undefined | null, profilePublicKeys: Array<Buffer>): Buffer
   nodeGetNodeId(): string
   nodeGetPublicKey(): Buffer
   enableAutoPersist(enabled: boolean): void
@@ -56,7 +56,6 @@ export declare class Keys {
   mobileGenerateNetworkDataKey(): string
   mobileInstallNetworkPublicKey(networkPk: Buffer): void
   nodeInstallNetworkKey(nkmCbor: Buffer): void
-  setLabelMapping(mappingCbor: Buffer): void
   setLocalNodeInfo(nodeInfoCbor: Buffer): void
   encryptForPublicKey(data: Buffer, recipientPk: Buffer): Buffer
   encryptForNetwork(data: Buffer, networkId: string): Buffer

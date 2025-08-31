@@ -17,7 +17,7 @@ use runar_keys::{
     EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
-use runar_serializer::traits::LabelResolverConfig;
+
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
@@ -76,8 +76,6 @@ struct KeysInner {
     mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
     node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
 
-    // Optional platform-provided label resolver config
-    label_resolver_config: Option<Arc<LabelResolverConfig>>,
     // Local NodeInfo holder (push-updated from FFI)
     local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
     // Shared device keystore registered at FFI level
@@ -338,47 +336,6 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
         *out_len = len;
     }
     true
-}
-
-// ------------------------------
-// LabelResolver mapping hydration (CBOR-based)
-// ------------------------------
-
-/// Set label mapping from a CBOR-encoded HashMap<String, LabelKeyInfo>.
-///
-/// Returns 0 on success.
-/// Returns 1 on null/invalid arguments.
-/// Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_set_label_mapping(
-    keys: *mut c_void,
-    mapping_cbor: *const u8,
-    len: usize,
-) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        return 1;
-    };
-    if mapping_cbor.is_null() || len == 0 {
-        return 1;
-    }
-    let slice = std::slice::from_raw_parts(mapping_cbor, len);
-    let mapping: std::collections::HashMap<String, runar_serializer::traits::LabelValue> =
-        match serde_cbor::from_slice(slice) {
-            Ok(m) => m,
-            Err(e) => {
-                set_error(
-                    std::ptr::null_mut(),
-                    2,
-                    &format!("decode label mapping: {e}"),
-                );
-                return 2;
-            }
-        };
-    let resolver_config = runar_serializer::traits::LabelResolverConfig {
-        label_mappings: mapping,
-    };
-    inner.label_resolver_config = Some(Arc::new(resolver_config));
-    0
 }
 
 /// Set local NodeInfo from a CBOR buffer.
@@ -2931,7 +2888,7 @@ fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
         logger,
         mobile_key_manager: None,
         node_key_manager: None,
-        label_resolver_config: None,
+
         local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
         persistence_dir: None,

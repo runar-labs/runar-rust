@@ -38,7 +38,7 @@ struct KeysInner {
     persistence_dir: Option<String>,
     auto_persist: bool,
     logger: Arc<Logger>,
-    label_resolver_config: Option<Arc<runar_serializer::traits::LabelResolverConfig>>,
+
     local_node_info: Arc<Mutex<Option<NodeInfo>>>,
 }
 
@@ -55,7 +55,7 @@ impl Keys {
                 persistence_dir: None,
                 auto_persist: true,
                 logger,
-                label_resolver_config: None,
+
                 local_node_info: Arc::new(Mutex::new(None)),
             })),
         }
@@ -496,18 +496,6 @@ impl Keys {
             cbor::from_slice(&nkm_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
         n.install_network_key(msg)
             .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    #[napi]
-    pub fn set_label_mapping(&self, mapping_cbor: Buffer) -> Result<()> {
-        let map: HashMap<String, runar_serializer::traits::LabelValue> =
-            cbor::from_slice(&mapping_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
-        let resolver_config = Arc::new(runar_serializer::traits::LabelResolverConfig {
-            label_mappings: map,
-        });
-        let mut inner = self.inner.lock().unwrap();
-        inner.label_resolver_config = Some(resolver_config);
-        Ok(())
     }
 
     #[napi]

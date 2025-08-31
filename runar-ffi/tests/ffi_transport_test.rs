@@ -95,28 +95,7 @@ fn two_transports_request_response() {
             0
         );
         rn_free(ncm_p, ncm_l);
-        // Provide mapping (system -> net-test, no profile keys)
-        let mut map = std::collections::BTreeMap::new();
-        map.insert(
-            Value::Text("system".to_string()),
-            Value::Map({
-                let mut kv = std::collections::BTreeMap::new();
-                kv.insert(
-                    Value::Text("network_id".into()),
-                    Value::Text("net-test".into()),
-                );
-                kv.insert(
-                    Value::Text("profile_public_keys".into()),
-                    Value::Array(vec![]),
-                );
-                kv
-            }),
-        );
-        let mapping_cbor = serde_cbor::to_vec(&Value::Map(map)).unwrap();
-        assert_eq!(
-            rn_keys_set_label_mapping(keys_a, mapping_cbor.as_ptr(), mapping_cbor.len()),
-            0
-        );
+        // Label resolver functionality removed - no longer needed for transport
 
         let mut p2: *mut u8 = std::ptr::null_mut();
         let mut l2: usize = 0;
@@ -144,10 +123,6 @@ fn two_transports_request_response() {
             0
         );
         rn_free(ncm_p2, ncm_l2);
-        assert_eq!(
-            rn_keys_set_label_mapping(keys_b, mapping_cbor.as_ptr(), mapping_cbor.len()),
-            0
-        );
 
         let mut omap = std::collections::BTreeMap::<Value, Value>::new();
         omap.insert(
