@@ -87,9 +87,7 @@ export declare class Transport {
   isConnected(peerId: string): Promise<boolean>
   isConnectedToPublicKey(peerPublicKey: Buffer): Promise<boolean>
   request(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey?: Buffer | undefined | null, profilePublicKeys?: Array<Buffer> | undefined | null): Promise<Buffer>
-  requestToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer, networkPublicKey?: Buffer | undefined | null, profilePublicKeys?: Array<Buffer> | undefined | null): Promise<Buffer>
   publish(path: string, correlationId: string, payload: Buffer, destPeerId: string, networkPublicKey?: Buffer | undefined | null): Promise<void>
-  publishToPublicKey(path: string, correlationId: string, payload: Buffer, destPublicKey: Buffer, networkPublicKey?: Buffer | undefined | null): Promise<void>
   updatePeers(nodeInfoCbor: Buffer): Promise<void>
 }
 

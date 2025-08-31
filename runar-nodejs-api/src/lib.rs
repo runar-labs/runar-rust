@@ -1020,28 +1020,6 @@ impl Transport {
     }
 
     #[napi]
-    pub async fn request_to_public_key(
-        &self,
-        path: String,
-        correlation_id: String,
-        payload: Buffer,
-        dest_public_key: Buffer,
-        network_public_key: Option<Buffer>,
-        profile_public_keys: Option<Vec<Buffer>>,
-    ) -> Result<Buffer> {
-        let id = runar_common::compact_ids::compact_id(&dest_public_key);
-        self.request(
-            path,
-            correlation_id,
-            payload,
-            id,
-            network_public_key,
-            profile_public_keys,
-        )
-        .await
-    }
-
-    #[napi]
     pub async fn publish(
         &self,
         path: String,
@@ -1061,20 +1039,6 @@ impl Transport {
         )
         .await
         .map_err(|e| Error::from_reason(format!("publish failed: {e}")))
-    }
-
-    #[napi]
-    pub async fn publish_to_public_key(
-        &self,
-        path: String,
-        correlation_id: String,
-        payload: Buffer,
-        dest_public_key: Buffer,
-        network_public_key: Option<Buffer>,
-    ) -> Result<()> {
-        let id = runar_common::compact_ids::compact_id(&dest_public_key);
-        self.publish(path, correlation_id, payload, id, network_public_key)
-            .await
     }
 
     #[napi]
