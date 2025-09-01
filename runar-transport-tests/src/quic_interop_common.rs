@@ -89,7 +89,28 @@ pub fn default_logger() -> Arc<Logger> {
 }
 
 /// Minimal NoCrypto that satisfies EnvelopeCrypto for interop (no-op envelope)
-pub struct NoCrypto;
+pub struct NoCrypto {
+    network_public_key: Vec<u8>,
+}
+
+impl Default for NoCrypto {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NoCrypto {
+    pub fn new() -> Self {
+        // Generate a proper network public key for interop tests
+        use p256::ecdsa::SigningKey;
+        use rand::thread_rng;
+        let signing_key = SigningKey::random(&mut thread_rng());
+        let public_key = signing_key.verifying_key().to_encoded_point(false);
+        Self {
+            network_public_key: public_key.as_bytes().to_vec(),
+        }
+    }
+}
 
 impl EnvelopeCrypto for NoCrypto {
     fn encrypt_with_envelope(
@@ -101,7 +122,7 @@ impl EnvelopeCrypto for NoCrypto {
         use std::collections::HashMap;
         Ok(EnvelopeEncryptedData {
             encrypted_data: data.to_vec(),
-            network_id: Some("interop".to_string()), // For interop tests, use fixed network ID
+            network_public_key: Some(self.network_public_key.clone()),
             network_encrypted_key: vec![],
             profile_encrypted_keys: HashMap::new(),
         })
@@ -111,17 +132,28 @@ impl EnvelopeCrypto for NoCrypto {
         Ok(env.encrypted_data.clone())
     }
 
-    fn get_network_public_key(&self, _network_id: &str) -> KeyResult<Vec<u8>> {
-        Ok("interop".as_bytes().to_vec())
+    fn get_network_public_key(&self, _network_public_key: &[u8]) -> KeyResult<Vec<u8>> {
+        Ok(self.network_public_key.clone())
+    }
+
+    fn get_network_public_key_by_id(&self, _network_id: &str) -> KeyResult<Vec<u8>> {
+        Ok(self.network_public_key.clone())
     }
 }
 
 pub fn default_label_resolver() -> Arc<LabelResolverConfig> {
+    // Generate a proper network public key for interop tests
+    use p256::ecdsa::SigningKey;
+    use rand::thread_rng;
+    let signing_key = SigningKey::random(&mut thread_rng());
+    let public_key = signing_key.verifying_key().to_encoded_point(false);
+    let network_public_key = public_key.as_bytes().to_vec();
+
     let mut mappings = HashMap::new();
     mappings.insert(
         "interop".to_string(),
         LabelValue {
-            network_public_key: Some("interop".as_bytes().to_vec()),
+            network_public_key: Some(network_public_key),
             user_key_spec: None,
         },
     );

@@ -56,6 +56,9 @@ pub trait EnvelopeCrypto: Send + Sync {
 
     fn decrypt_envelope_data(&self, env: &EnvelopeEncryptedData) -> Result<Vec<u8>>;
 
-    /// Get network public key by network ID
-    fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>>;
+    /// Get network public key by network public key bytes
+    fn get_network_public_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>>;
+
+    /// Get network public key by network ID (needed for path resolution)
+    fn get_network_public_key_by_id(&self, network_id: &str) -> Result<Vec<u8>>;
 }

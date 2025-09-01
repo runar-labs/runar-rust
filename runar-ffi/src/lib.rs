@@ -1571,7 +1571,7 @@ pub unsafe extern "C" fn rn_keys_mobile_install_network_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
     keys: *mut c_void,
-    out_str: *mut *mut c_char,
+    out_pk: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
@@ -1580,8 +1580,12 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
         set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if out_str.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "output string pointer is null");
+    if out_pk.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output public key pointer is null",
+        );
         return RN_ERROR_NULL_ARGUMENT;
     }
     if out_len.is_null() {
@@ -1610,8 +1614,8 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
     };
 
     match mobile_manager.generate_network_data_key() {
-        Ok(network_id) => {
-            if !alloc_string(out_str, out_len, &network_id) {
+        Ok(network_public_key) => {
+            if !alloc_bytes(out_pk, out_len, &network_public_key) {
                 set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
                 RN_ERROR_MEMORY_ALLOCATION
             } else {
@@ -1632,7 +1636,8 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
     keys: *mut c_void,
-    network_id: *const c_char,
+    network_public_key: *const u8,
+    network_public_key_len: usize,
     out_pk: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
@@ -1642,8 +1647,12 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
         set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if network_id.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+    if network_public_key.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "network_public_key pointer is null",
+        );
         return RN_ERROR_NULL_ARGUMENT;
     }
     if out_pk.is_null() {
@@ -1679,15 +1688,9 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
         }
     };
 
-    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network_id");
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
+    let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
 
-    match mobile_manager.get_network_public_key(nid) {
+    match mobile_manager.get_network_public_key(network_pk) {
         Ok(pk) => {
             if !alloc_bytes(out_pk, out_len, &pk) {
                 set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
@@ -1710,7 +1713,8 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
     keys: *mut c_void,
-    network_id: *const c_char,
+    network_public_key: *const u8,
+    network_public_key_len: usize,
     node_agreement_pk: *const u8,
     node_agreement_pk_len: usize,
     out_msg_cbor: *mut *mut u8,
@@ -1718,16 +1722,16 @@ pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
     };
-    if network_id.is_null()
+    if network_public_key.is_null()
         || node_agreement_pk.is_null()
         || out_msg_cbor.is_null()
         || out_len.is_null()
     {
-        set_error(err, 1, "null argument");
-        return 1;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
     }
     let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
@@ -1745,16 +1749,9 @@ pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
         }
     };
 
-    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network_id");
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-
-    let pk = std::slice::from_raw_parts(node_agreement_pk, node_agreement_pk_len);
-    let msg = match mobile_manager.create_network_key_message(nid, pk) {
+    let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
+    let node_pk = std::slice::from_raw_parts(node_agreement_pk, node_agreement_pk_len);
+    let msg = match mobile_manager.create_network_key_message(network_pk, node_pk) {
         Ok(m) => m,
         Err(e) => {
             set_error(
@@ -1768,13 +1765,17 @@ pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
     let cbor = match serde_cbor::to_vec(&msg) {
         Ok(v) => v,
         Err(e) => {
-            set_error(err, 2, &format!("encode NetworkKeyMessage failed: {e}"));
-            return 2;
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("encode NetworkKeyMessage failed: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
     if !alloc_bytes(out_msg_cbor, out_len, &cbor) {
-        set_error(err, 3, "alloc failed");
-        return 3;
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }
@@ -2302,7 +2303,8 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
     keys: *mut c_void,
     data: *const u8,
     data_len: usize,
-    network_id: *const c_char,
+    network_public_key: *const u8,
+    network_public_key_len: usize,
     out_eed_cbor: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
@@ -2316,8 +2318,12 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
         set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if network_id.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+    if network_public_key.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "network_public_key pointer is null",
+        );
         return RN_ERROR_NULL_ARGUMENT;
     }
     if out_eed_cbor.is_null() {
@@ -2338,13 +2344,7 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
         return RN_ERROR_INVALID_HANDLE;
     };
     let data_slice = std::slice::from_raw_parts(data, data_len);
-    let nid = match std::ffi::CStr::from_ptr(network_id).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 network id");
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
+    let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
     let manager = match validate_node_manager(inner) {
         Ok(mgr) => mgr,
         Err(e) => {
@@ -2361,7 +2361,7 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
         }
     };
 
-    let eed = match node_manager.encrypt_for_network(data_slice, nid) {
+    let eed = match node_manager.encrypt_for_network(data_slice, network_pk) {
         Ok(v) => v,
         Err(e) => {
             set_error(

@@ -453,7 +453,7 @@ impl Keys {
     }
 
     #[napi]
-    pub fn mobile_generate_network_data_key(&self) -> Result<String> {
+    pub fn mobile_generate_network_data_key(&self) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -467,6 +467,7 @@ impl Keys {
             .unwrap()
             .generate_network_data_key()
             .map_err(|e| Error::from_reason(e.to_string()))
+            .map(Uint8Array::from)
     }
 
     #[napi]
@@ -529,7 +530,11 @@ impl Keys {
     }
 
     #[napi]
-    pub fn encrypt_for_network(&self, data: Uint8Array, network_id: String) -> Result<Uint8Array> {
+    pub fn encrypt_for_network(
+        &self,
+        data: Uint8Array,
+        network_public_key: Uint8Array,
+    ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -537,7 +542,7 @@ impl Keys {
             .or(inner.node_shared.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let eed = node_ref
-            .encrypt_for_network(&data, &network_id)
+            .encrypt_for_network(&data, &network_public_key)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         cbor::to_vec(&eed)
             .map(Uint8Array::from)
@@ -611,7 +616,10 @@ impl Keys {
     }
 
     #[napi]
-    pub fn mobile_get_network_public_key(&self, network_id: String) -> Result<Uint8Array> {
+    pub fn mobile_get_network_public_key(
+        &self,
+        network_public_key: Uint8Array,
+    ) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -623,7 +631,7 @@ impl Keys {
             .mobile
             .as_mut()
             .unwrap()
-            .get_network_public_key(&network_id)
+            .get_network_public_key(&network_public_key)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(Uint8Array::from(pk))
     }
@@ -631,7 +639,7 @@ impl Keys {
     #[napi]
     pub fn mobile_create_network_key_message(
         &self,
-        network_id: String,
+        network_public_key: Uint8Array,
         node_agreement_pk: Uint8Array,
     ) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
@@ -645,7 +653,7 @@ impl Keys {
             .mobile
             .as_mut()
             .unwrap()
-            .create_network_key_message(&network_id, &node_agreement_pk)
+            .create_network_key_message(&network_public_key, &node_agreement_pk)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         cbor::to_vec(&msg)
             .map(Uint8Array::from)

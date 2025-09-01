@@ -168,18 +168,20 @@ int32_t rn_keys_mobile_install_network_public_key(void *keys,
                                                   struct RNAPIRnError *err);
 
 int32_t rn_keys_mobile_generate_network_data_key(void *keys,
-                                                 char **out_str,
+                                                 uint8_t **out_pk,
                                                  size_t *out_len,
                                                  struct RNAPIRnError *err);
 
 int32_t rn_keys_mobile_get_network_public_key(void *keys,
-                                              const char *network_id,
+                                              const uint8_t *network_public_key,
+                                              size_t network_public_key_len,
                                               uint8_t **out_pk,
                                               size_t *out_len,
                                               struct RNAPIRnError *err);
 
 int32_t rn_keys_mobile_create_network_key_message(void *keys,
-                                                  const char *network_id,
+                                                  const uint8_t *network_public_key,
+                                                  size_t network_public_key_len,
                                                   const uint8_t *node_agreement_pk,
                                                   size_t node_agreement_pk_len,
                                                   uint8_t **out_msg_cbor,
@@ -248,7 +250,8 @@ int32_t rn_keys_encrypt_for_public_key(void *keys,
 int32_t rn_keys_encrypt_for_network(void *keys,
                                     const uint8_t *data,
                                     size_t data_len,
-                                    const char *network_id,
+                                    const uint8_t *network_public_key,
+                                    size_t network_public_key_len,
                                     uint8_t **out_eed_cbor,
                                     size_t *out_len,
                                     struct RNAPIRnError *err);

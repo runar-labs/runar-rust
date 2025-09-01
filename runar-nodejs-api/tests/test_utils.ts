@@ -174,7 +174,7 @@ export class TestEnvironment {
   private constructor(
     private mobileKeys: any,
     private nodeKeys: any,
-    private networkId: string,
+    private networkPublicKey: Uint8Array,
     private tmpDir: string
   ) {}
 
@@ -184,9 +184,9 @@ export class TestEnvironment {
   static async createMobileOnly(tmpDir?: string): Promise<TestEnvironment> {
     const dir = tmpDir || createTempDir();
     const mobileKeys = await createTestMobileKeys(dir);
-    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
+    const networkPublicKey = mobileKeys.mobileGenerateNetworkDataKey();
     
-    return new TestEnvironment(mobileKeys, null, networkId, dir);
+    return new TestEnvironment(mobileKeys, null, networkPublicKey, dir);
   }
 
   /**
@@ -196,7 +196,7 @@ export class TestEnvironment {
     const dir = tmpDir || createTempDir();
     const nodeKeys = createTestNodeKeys(dir);
     
-    return new TestEnvironment(null, nodeKeys, '', dir);
+    return new TestEnvironment(null, nodeKeys, new Uint8Array(), dir);
   }
 
   /**
@@ -207,7 +207,7 @@ export class TestEnvironment {
     
     // Create mobile first
     const mobileKeys = await createTestMobileKeys(dir);
-    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
+    const networkPublicKey = mobileKeys.mobileGenerateNetworkDataKey();
     
     // Create node and set it up with mobile
     const nodeKeys = createTestNodeKeys(dir);
@@ -219,18 +219,18 @@ export class TestEnvironment {
     
     // Mobile creates and installs network key
     const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(
-      networkId, 
+      networkPublicKey, 
       nodeKeys.nodeGetAgreementPublicKey()
     );
     nodeKeys.nodeInstallNetworkKey(networkKeyMessage);
     
-    return new TestEnvironment(mobileKeys, nodeKeys, networkId, dir);
+    return new TestEnvironment(mobileKeys, nodeKeys, networkPublicKey, dir);
   }
 
   // Accessors
   getMobileKeys(): any { return this.mobileKeys; }
   getNodeKeys(): any { return this.nodeKeys; }
-  getNetworkId(): string { return this.networkId; }
+  getNetworkPublicKey(): Uint8Array { return this.networkPublicKey; }
 
   /**
    * Cleanup method - removes temporary directory

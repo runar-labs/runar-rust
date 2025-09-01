@@ -68,16 +68,16 @@ describe('Discovery Basic Tests', () => {
     const mobileKeys = await createMobileKeys(tmpDir);
     
     // Generate network for discovery - this matches the Rust pattern
-    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
-    expect(typeof networkId).toBe('string');
-    expect(networkId.length).toBeGreaterThan(0);
+    const networkPublicKey = mobileKeys.mobileGenerateNetworkDataKey();
+    expect(networkPublicKey).toBeInstanceOf(Uint8Array);
+    expect(networkPublicKey.length).toBeGreaterThan(0);
 
     // Test network public key installation and retrieval
     // This simulates the network setup needed for discovery
     const testPk = Buffer.alloc(65, 0x42); // Use valid key format
     expect(() => mobileKeys.mobileInstallNetworkPublicKey(testPk)).not.toThrow();
 
-    const networkPk = mobileKeys.mobileGetNetworkPublicKey(networkId);
+    const networkPk = mobileKeys.mobileGetNetworkPublicKey(networkPublicKey);
     expect(networkPk instanceof Uint8Array).toBe(true);
     expect(networkPk.length).toBeGreaterThan(0);
 

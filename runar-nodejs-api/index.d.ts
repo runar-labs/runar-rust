@@ -53,18 +53,18 @@ export declare class Keys {
   nodeGenerateCsr(): Uint8Array
   mobileProcessSetupToken(stCbor: Uint8Array): Uint8Array
   nodeInstallCertificate(ncmCbor: Uint8Array): void
-  mobileGenerateNetworkDataKey(): string
+  mobileGenerateNetworkDataKey(): Uint8Array
   mobileInstallNetworkPublicKey(networkPk: Uint8Array): void
   nodeInstallNetworkKey(nkmCbor: Uint8Array): void
   setLocalNodeInfo(nodeInfoCbor: Uint8Array): void
   encryptForPublicKey(data: Uint8Array, recipientPk: Uint8Array): Uint8Array
-  encryptForNetwork(data: Uint8Array, networkId: string): Uint8Array
+  encryptForNetwork(data: Uint8Array, networkPublicKey: Uint8Array): Uint8Array
   decryptNetworkData(eedCbor: Uint8Array): Uint8Array
   encryptMessageForMobile(message: Uint8Array, mobilePk: Uint8Array): Uint8Array
   decryptMessageFromMobile(encrypted: Uint8Array): Uint8Array
   mobileDeriveUserProfileKey(label: string): Uint8Array
-  mobileGetNetworkPublicKey(networkId: string): Uint8Array
-  mobileCreateNetworkKeyMessage(networkId: string, nodeAgreementPk: Uint8Array): Uint8Array
+  mobileGetNetworkPublicKey(networkPublicKey: Uint8Array): Uint8Array
+  mobileCreateNetworkKeyMessage(networkPublicKey: Uint8Array, nodeAgreementPk: Uint8Array): Uint8Array
   ensureSymmetricKey(keyName: string): Uint8Array
   /**
    * Get the user public key after mobile initialization

@@ -271,32 +271,37 @@ fn test_complete_ffi_key_management_lifecycle() {
     println!("\n🌐 PHASE 3: Network Setup");
 
     // 3.1 Mobile generates network data key
-    let mut nid_c: *mut i8 = ptr::null_mut();
-    let mut nid_len: usize = 0;
+    let mut network_pk_ptr: *mut u8 = ptr::null_mut();
+    let mut network_pk_len: usize = 0;
     let result = unsafe {
-        rn_keys_mobile_generate_network_data_key(mobile_keys, &mut nid_c, &mut nid_len, &mut error)
+        rn_keys_mobile_generate_network_data_key(
+            mobile_keys,
+            &mut network_pk_ptr,
+            &mut network_pk_len,
+            &mut error,
+        )
     };
     assert_eq!(result, 0, "Should successfully generate network data key");
 
-    let _network_id = unsafe { std::slice::from_raw_parts(nid_c as *const u8, nid_len) }.to_vec();
-    let network_id_str = unsafe { std::ffi::CStr::from_ptr(nid_c) }
-        .to_str()
-        .unwrap()
-        .to_string();
-    rn_string_free(nid_c);
+    let network_public_key =
+        unsafe { std::slice::from_raw_parts(network_pk_ptr, network_pk_len) }.to_vec();
+    rn_free(network_pk_ptr, network_pk_len);
 
-    println!("   ✅ Network data key generated: {network_id_str}");
+    println!(
+        "   ✅ Network data key generated: {} bytes",
+        network_public_key.len()
+    );
 
     // 3.2 Mobile creates network key message
     let mut nkm_ptr: *mut u8 = ptr::null_mut();
     let mut nkm_len: usize = 0;
-    let network_id_c = std::ffi::CString::new(network_id_str.clone()).unwrap();
 
     // 🔑 CRITICAL: Use agreement key for encryption (not identity key)
     let result = unsafe {
         rn_keys_mobile_create_network_key_message(
             mobile_keys,
-            network_id_c.as_ptr(),
+            network_public_key.as_ptr(),
+            network_public_key.len(),
             setup_token_mobile.node_agreement_public_key.as_ptr(), // ✅ Using agreement key!
             setup_token_mobile.node_agreement_public_key.len(),
             &mut nkm_ptr,
@@ -377,25 +382,8 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     let test_data = b"This is a test message that should be encrypted and decrypted";
 
-    // Get the actual network public key bytes (not the network ID string)
-    let mut network_pubkey_ptr: *mut u8 = ptr::null_mut();
-    let mut network_pubkey_len: usize = 0;
-    let network_id_c = std::ffi::CString::new(network_id_str.clone()).unwrap();
-
-    let result = unsafe {
-        rn_keys_mobile_get_network_public_key(
-            mobile_keys,
-            network_id_c.as_ptr(),
-            &mut network_pubkey_ptr,
-            &mut network_pubkey_len,
-            &mut error,
-        )
-    };
-    assert_eq!(result, 0, "Should successfully get network public key");
-
-    let network_public_key =
-        unsafe { std::slice::from_raw_parts(network_pubkey_ptr, network_pubkey_len) }.to_vec();
-    rn_free(network_pubkey_ptr, network_pubkey_len);
+    // Use the network public key we already generated
+    // (No need to get it again since we have it from the generation step)
 
     // 5.1 Mobile encrypts with envelope
     let mut eed_ptr: *mut u8 = ptr::null_mut();
@@ -430,7 +418,7 @@ fn test_complete_ffi_key_management_lifecycle() {
         "   ✅ Data encrypted with envelope: {} bytes",
         encrypted_data.len()
     );
-    println!("      Network: {network_id_str:?}");
+    println!("      Network: {} bytes", network_public_key.len());
     println!("      Profile recipients: {}", 2);
 
     // 5.2 Node decrypts envelope
@@ -598,7 +586,7 @@ fn test_complete_ffi_key_management_lifecycle() {
     println!("📊 Key Statistics:");
     println!("   • User root key: {} bytes", user_public_key.len());
     println!("   • Profile keys: 2 (personal, work)");
-    println!("   • Network keys: 1 ({network_id_str})");
+    println!("   • Network keys: 1 ({} bytes)", network_public_key.len());
     println!("   • Node certificates: 1");
     println!("   • Storage encryption: ✅");
     println!("   • State persistence: ✅");

@@ -132,9 +132,9 @@ describe('Comprehensive API Tests', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsMobile();
       await withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey');
-      const networkId = keys.mobileGenerateNetworkDataKey();
-      expect(typeof networkId).toBe('string');
-      expect(networkId.length).toBeGreaterThan(0);
+      const networkPublicKey = keys.mobileGenerateNetworkDataKey();
+      expect(networkPublicKey).toBeInstanceOf(Uint8Array);
+      expect(networkPublicKey.length).toBeGreaterThan(0);
     }, 10000);
 
     test('should install network public key successfully', async () => {
@@ -151,8 +151,8 @@ describe('Comprehensive API Tests', () => {
       await withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey');
       const testPk = Buffer.alloc(65, 1); // Mock public key
       keys.mobileInstallNetworkPublicKey(testPk);
-      const networkId = keys.mobileGenerateNetworkDataKey();
-      const pk = keys.mobileGetNetworkPublicKey(networkId);
+      const networkPublicKey = keys.mobileGenerateNetworkDataKey();
+      const pk = keys.mobileGetNetworkPublicKey(networkPublicKey);
       expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     }, 10000);
