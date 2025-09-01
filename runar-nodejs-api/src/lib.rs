@@ -144,10 +144,10 @@ impl Keys {
     #[napi]
     pub fn mobile_encrypt_with_envelope(
         &self,
-        data: Buffer,
-        network_public_key: Option<Buffer>, // ← NETWORK PUBLIC KEY BYTES
-        profile_public_keys: Vec<Buffer>,
-    ) -> Result<Buffer> {
+        data: Uint8Array,
+        network_public_key: Option<Uint8Array>, // ← NETWORK PUBLIC KEY BYTES
+        profile_public_keys: Vec<Uint8Array>,
+    ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
 
         let mobile_manager = inner
@@ -166,7 +166,7 @@ impl Keys {
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
         let cbor_bytes = cbor::to_vec(&encrypted).map_err(|e| Error::from_reason(e.to_string()))?;
 
-        Ok(Buffer::from(cbor_bytes))
+        Ok(Uint8Array::from(cbor_bytes))
     }
 
     /// Encrypt data using envelope encryption with node manager
@@ -176,10 +176,10 @@ impl Keys {
     #[napi]
     pub fn node_encrypt_with_envelope(
         &self,
-        data: Buffer,
-        network_public_key: Option<Buffer>, // ← NETWORK PUBLIC KEY BYTES
-        profile_public_keys: Vec<Buffer>,
-    ) -> Result<Buffer> {
+        data: Uint8Array,
+        network_public_key: Option<Uint8Array>, // ← NETWORK PUBLIC KEY BYTES
+        profile_public_keys: Vec<Uint8Array>,
+    ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
 
         let node_manager = inner
@@ -198,7 +198,7 @@ impl Keys {
         // Convert EnvelopeEncryptedData to CBOR bytes like the FFI implementation
         let cbor_bytes = cbor::to_vec(&encrypted).map_err(|e| Error::from_reason(e.to_string()))?;
 
-        Ok(Buffer::from(cbor_bytes))
+        Ok(Uint8Array::from(cbor_bytes))
     }
 
     #[napi]
@@ -215,7 +215,7 @@ impl Keys {
     }
 
     #[napi]
-    pub fn node_get_public_key(&self) -> Result<Buffer> {
+    pub fn node_get_public_key(&self) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let pk = if let Some(n) = inner.node_owned.as_ref() {
             n.get_node_public_key()
@@ -224,7 +224,7 @@ impl Keys {
         } else {
             return Err(Error::from_reason("Node not init"));
         };
-        Ok(Buffer::from(pk))
+        Ok(Uint8Array::from(pk))
     }
 
     #[napi]
@@ -330,7 +330,7 @@ impl Keys {
     }
 
     #[napi]
-    pub fn encrypt_local_data(&self, data: Buffer) -> Result<Buffer> {
+    pub fn encrypt_local_data(&self, data: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -340,11 +340,11 @@ impl Keys {
         let out = node_ref
             .encrypt_local_data(&data)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(out))
+        Ok(Uint8Array::from(out))
     }
 
     #[napi]
-    pub fn decrypt_local_data(&self, data: Buffer) -> Result<Buffer> {
+    pub fn decrypt_local_data(&self, data: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -354,11 +354,11 @@ impl Keys {
         let out = node_ref
             .decrypt_local_data(&data)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(out))
+        Ok(Uint8Array::from(out))
     }
 
     #[napi]
-    pub fn mobile_decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
+    pub fn mobile_decrypt_envelope(&self, eed_cbor: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
 
         // Validate mobile manager exists
@@ -367,7 +367,7 @@ impl Keys {
         }
 
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
-            cbor::from_slice(&eed_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(eed_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
 
         let plain = inner
             .mobile
@@ -376,11 +376,11 @@ impl Keys {
             .decrypt_with_network(&eed)
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
-        Ok(Buffer::from(plain))
+        Ok(Uint8Array::from(plain))
     }
 
     #[napi]
-    pub fn node_decrypt_envelope(&self, eed_cbor: Buffer) -> Result<Buffer> {
+    pub fn node_decrypt_envelope(&self, eed_cbor: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
 
         // Validate node manager exists
@@ -389,7 +389,7 @@ impl Keys {
         }
 
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
-            cbor::from_slice(&eed_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(eed_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
 
         let plain = if let Some(n) = inner.node_owned.as_ref() {
             n.decrypt_envelope_data(&eed)
@@ -400,11 +400,11 @@ impl Keys {
         }
         .map_err(|e| Error::from_reason(e.to_string()))?;
 
-        Ok(Buffer::from(plain))
+        Ok(Uint8Array::from(plain))
     }
 
     #[napi]
-    pub fn node_generate_csr(&self) -> Result<Buffer> {
+    pub fn node_generate_csr(&self) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         let n = inner
             .node_owned
@@ -414,12 +414,12 @@ impl Keys {
             .generate_csr()
             .map_err(|e| Error::from_reason(e.to_string()))?;
         cbor::to_vec(&st)
-            .map(Buffer::from)
+            .map(Uint8Array::from)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn mobile_process_setup_token(&self, st_cbor: Buffer) -> Result<Buffer> {
+    pub fn mobile_process_setup_token(&self, st_cbor: Uint8Array) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -428,7 +428,7 @@ impl Keys {
             );
         }
         let st: runar_keys::mobile::SetupToken =
-            cbor::from_slice(&st_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(st_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
         let msg = inner
             .mobile
             .as_mut()
@@ -436,18 +436,18 @@ impl Keys {
             .process_setup_token(&st)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         cbor::to_vec(&msg)
-            .map(Buffer::from)
+            .map(Uint8Array::from)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn node_install_certificate(&self, ncm_cbor: Buffer) -> Result<()> {
+    pub fn node_install_certificate(&self, ncm_cbor: Uint8Array) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         let n = inner.node_owned.as_mut().ok_or_else(|| {
             Error::from_reason("node is shared; install_certificate not available".to_string())
         })?;
         let msg: runar_keys::mobile::NodeCertificateMessage =
-            cbor::from_slice(&ncm_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(ncm_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
         n.install_certificate(msg)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
@@ -470,7 +470,7 @@ impl Keys {
     }
 
     #[napi]
-    pub fn mobile_install_network_public_key(&self, network_pk: Buffer) -> Result<()> {
+    pub fn mobile_install_network_public_key(&self, network_pk: Uint8Array) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -487,21 +487,21 @@ impl Keys {
     }
 
     #[napi]
-    pub fn node_install_network_key(&self, nkm_cbor: Buffer) -> Result<()> {
+    pub fn node_install_network_key(&self, nkm_cbor: Uint8Array) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         let n = inner.node_owned.as_mut().ok_or_else(|| {
             Error::from_reason("node is shared; install_network_key not available".to_string())
         })?;
         let msg: runar_keys::mobile::NetworkKeyMessage =
-            cbor::from_slice(&nkm_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(nkm_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
         n.install_network_key(msg)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn set_local_node_info(&self, node_info_cbor: Buffer) -> Result<()> {
-        let info: NodeInfo =
-            cbor::from_slice(&node_info_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+    pub fn set_local_node_info(&self, node_info_cbor: Uint8Array) -> Result<()> {
+        let info: NodeInfo = cbor::from_slice(node_info_cbor.as_ref())
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         let inner = self.inner.lock().unwrap();
         let mut holder = inner.local_node_info.lock().unwrap();
         *holder = Some(info);
@@ -509,7 +509,11 @@ impl Keys {
     }
 
     #[napi]
-    pub fn encrypt_for_public_key(&self, data: Buffer, recipient_pk: Buffer) -> Result<Buffer> {
+    pub fn encrypt_for_public_key(
+        &self,
+        data: Uint8Array,
+        recipient_pk: Uint8Array,
+    ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -520,12 +524,12 @@ impl Keys {
             .encrypt_for_public_key(&data, &recipient_pk)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         cbor::to_vec(&eed)
-            .map(Buffer::from)
+            .map(Uint8Array::from)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn encrypt_for_network(&self, data: Buffer, network_id: String) -> Result<Buffer> {
+    pub fn encrypt_for_network(&self, data: Uint8Array, network_id: String) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -536,12 +540,12 @@ impl Keys {
             .encrypt_for_network(&data, &network_id)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         cbor::to_vec(&eed)
-            .map(Buffer::from)
+            .map(Uint8Array::from)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn decrypt_network_data(&self, eed_cbor: Buffer) -> Result<Buffer> {
+    pub fn decrypt_network_data(&self, eed_cbor: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -549,15 +553,19 @@ impl Keys {
             .or(inner.node_shared.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
-            cbor::from_slice(&eed_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(eed_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
         let plain = node_ref
             .decrypt_network_data(&eed)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(plain))
+        Ok(Uint8Array::from(plain))
     }
 
     #[napi]
-    pub fn encrypt_message_for_mobile(&self, message: Buffer, mobile_pk: Buffer) -> Result<Buffer> {
+    pub fn encrypt_message_for_mobile(
+        &self,
+        message: Uint8Array,
+        mobile_pk: Uint8Array,
+    ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -567,11 +575,11 @@ impl Keys {
         let cipher = node_ref
             .encrypt_message_for_mobile(&message, &mobile_pk)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(cipher))
+        Ok(Uint8Array::from(cipher))
     }
 
     #[napi]
-    pub fn decrypt_message_from_mobile(&self, encrypted: Buffer) -> Result<Buffer> {
+    pub fn decrypt_message_from_mobile(&self, encrypted: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
             .node_owned
@@ -581,11 +589,11 @@ impl Keys {
         let plain = node_ref
             .decrypt_message_from_mobile(&encrypted)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(plain))
+        Ok(Uint8Array::from(plain))
     }
 
     #[napi]
-    pub fn mobile_derive_user_profile_key(&self, label: String) -> Result<Buffer> {
+    pub fn mobile_derive_user_profile_key(&self, label: String) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -599,11 +607,11 @@ impl Keys {
             .unwrap()
             .derive_user_profile_key(&label)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(pk))
+        Ok(Uint8Array::from(pk))
     }
 
     #[napi]
-    pub fn mobile_get_network_public_key(&self, network_id: String) -> Result<Buffer> {
+    pub fn mobile_get_network_public_key(&self, network_id: String) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -617,15 +625,15 @@ impl Keys {
             .unwrap()
             .get_network_public_key(&network_id)
             .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(pk))
+        Ok(Uint8Array::from(pk))
     }
 
     #[napi]
     pub fn mobile_create_network_key_message(
         &self,
         network_id: String,
-        node_agreement_pk: Buffer,
-    ) -> Result<Buffer> {
+        node_agreement_pk: Uint8Array,
+    ) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile.is_none() {
             inner.mobile = Some(
@@ -640,12 +648,12 @@ impl Keys {
             .create_network_key_message(&network_id, &node_agreement_pk)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         cbor::to_vec(&msg)
-            .map(Buffer::from)
+            .map(Uint8Array::from)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
-    pub fn ensure_symmetric_key(&self, key_name: String) -> Result<Buffer> {
+    pub fn ensure_symmetric_key(&self, key_name: String) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         let key = if let Some(n) = inner.node_owned.as_mut() {
             n.ensure_symmetric_key(&key_name)
@@ -658,13 +666,13 @@ impl Keys {
             return Err(Error::from_reason("Node not init"));
         }
         .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Buffer::from(key))
+        Ok(Uint8Array::from(key))
     }
 
     /// Get the user public key after mobile initialization
     /// This is essential for encrypting setup tokens to the mobile
     #[napi]
-    pub fn mobile_get_user_public_key(&self) -> Result<Buffer> {
+    pub fn mobile_get_user_public_key(&self) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
 
         // Validate mobile manager exists
@@ -679,13 +687,13 @@ impl Keys {
             .get_user_public_key()
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
-        Ok(Buffer::from(pk))
+        Ok(Uint8Array::from(pk))
     }
 
     /// Get the node agreement public key
     /// This is used for verifying agreement keys in CSR flow
     #[napi]
-    pub fn node_get_agreement_public_key(&self) -> Result<Buffer> {
+    pub fn node_get_agreement_public_key(&self) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
 
         // Validate node manager exists
@@ -702,7 +710,7 @@ impl Keys {
         }
         .map_err(|e| Error::from_reason(e.to_string()))?;
 
-        Ok(Buffer::from(pk))
+        Ok(Uint8Array::from(pk))
     }
 }
 
@@ -738,7 +746,7 @@ pub struct Transport {
     inner: Arc<Mutex<TransportInner>>,
 }
 
-type EventTsfn = ThreadsafeFunction<(String, Buffer)>;
+type EventTsfn = ThreadsafeFunction<(String, Uint8Array)>;
 
 struct TransportInner {
     transport: Arc<QuicTransport>,
@@ -749,7 +757,7 @@ struct TransportInner {
 #[napi]
 impl Transport {
     #[napi(constructor)]
-    pub fn new(keys: &Keys, options_cbor: Buffer) -> Result<Self> {
+    pub fn new(keys: &Keys, options_cbor: Uint8Array) -> Result<Self> {
         // Extract shared NodeKeyManager and logger/resolver
         let (km_arc, logger, local_info_arc, node_pk) = {
             let mut guard = keys.inner.lock().unwrap();
@@ -770,7 +778,7 @@ impl Transport {
         // Parse bind address from options (CBOR: { bind_addr: "ip:port" })
         let mut bind_addr: std::net::SocketAddr = "0.0.0.0:0".parse().unwrap();
         if let Ok(serde_cbor::Value::Map(map)) =
-            cbor::from_slice::<serde_cbor::Value>(&options_cbor)
+            cbor::from_slice::<serde_cbor::Value>(options_cbor.as_ref())
         {
             if let Some(serde_cbor::Value::Text(addr)) =
                 map.get(&serde_cbor::Value::Text("bind_addr".into()))
@@ -848,7 +856,7 @@ impl Transport {
                         let payload = cbor::to_vec(&req)
                             .map_err(|e| anyhow!(format!("Failed to CBOR encode request: {e}")))?;
                         let _ = tsfn.call(
-                            Ok(("request".to_string(), Buffer::from(payload))),
+                            Ok(("request".to_string(), Uint8Array::from(payload))),
                             ThreadsafeFunctionCallMode::NonBlocking,
                         );
                     }
@@ -866,7 +874,7 @@ impl Transport {
                     if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
                         if let Ok(payload) = cbor::to_vec(&ev) {
                             let _ = tsfn.call(
-                                Ok(("event".to_string(), Buffer::from(payload))),
+                                Ok(("event".to_string(), Uint8Array::from(payload))),
                                 ThreadsafeFunctionCallMode::NonBlocking,
                             );
                         }
@@ -884,7 +892,7 @@ impl Transport {
                     if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
                         if let Ok(payload) = cbor::to_vec(&info) {
                             let _ = tsfn.call(
-                                Ok(("peerConnected".to_string(), Buffer::from(payload))),
+                                Ok(("peerConnected".to_string(), Uint8Array::from(payload))),
                                 ThreadsafeFunctionCallMode::NonBlocking,
                             );
                         }
@@ -920,8 +928,8 @@ impl Transport {
     pub async fn complete_request(
         &self,
         request_id: String,
-        response_payload: Buffer,
-        profile_public_keys: Vec<Buffer>,
+        response_payload: Uint8Array,
+        profile_public_keys: Vec<Uint8Array>,
     ) -> Result<()> {
         let guard = self.inner.lock().unwrap();
         let mut map = guard.pending.blocking_lock();
@@ -965,9 +973,9 @@ impl Transport {
     }
 
     #[napi]
-    pub async fn connect_peer(&self, peer_info_cbor: Buffer) -> Result<()> {
+    pub async fn connect_peer(&self, peer_info_cbor: Uint8Array) -> Result<()> {
         let peer: runar_transporter::discovery::multicast_discovery::PeerInfo =
-            cbor::from_slice(&peer_info_cbor)
+            cbor::from_slice(peer_info_cbor.as_ref())
                 .map_err(|e| Error::from_reason(format!("peer decode failed: {e}")))?;
         let t = { self.inner.lock().unwrap().transport.clone() };
         runar_transporter::transport::NetworkTransport::connect_peer(t, peer)
@@ -982,7 +990,7 @@ impl Transport {
     }
 
     #[napi]
-    pub async fn is_connected_to_public_key(&self, peer_public_key: Buffer) -> Result<bool> {
+    pub async fn is_connected_to_public_key(&self, peer_public_key: Uint8Array) -> Result<bool> {
         let id = runar_common::compact_ids::compact_id(&peer_public_key);
         self.is_connected(id)
             .await
@@ -994,11 +1002,11 @@ impl Transport {
         &self,
         path: String,
         correlation_id: String,
-        payload: Buffer,
+        payload: Uint8Array,
         dest_peer_id: String,
-        network_public_key: Option<Buffer>,
-        profile_public_keys: Option<Vec<Buffer>>,
-    ) -> Result<Buffer> {
+        network_public_key: Option<Uint8Array>,
+        profile_public_keys: Option<Vec<Uint8Array>>,
+    ) -> Result<Uint8Array> {
         let t = { self.inner.lock().unwrap().transport.clone() };
         let network_pk = network_public_key.map(|b| b.to_vec());
         let profile_pks = profile_public_keys
@@ -1016,7 +1024,7 @@ impl Transport {
             )
             .await
             .map_err(|e| Error::from_reason(format!("request failed: {e}")))?;
-        Ok(Buffer::from(res))
+        Ok(Uint8Array::from(res))
     }
 
     #[napi]
@@ -1024,9 +1032,9 @@ impl Transport {
         &self,
         path: String,
         correlation_id: String,
-        payload: Buffer,
+        payload: Uint8Array,
         dest_peer_id: String,
-        network_public_key: Option<Buffer>,
+        network_public_key: Option<Uint8Array>,
     ) -> Result<()> {
         let t = { self.inner.lock().unwrap().transport.clone() };
         let network_pk = network_public_key.map(|b| b.to_vec());
@@ -1042,8 +1050,8 @@ impl Transport {
     }
 
     #[napi]
-    pub async fn update_peers(&self, node_info_cbor: Buffer) -> Result<()> {
-        let info: runar_schemas::NodeInfo = cbor::from_slice(&node_info_cbor)
+    pub async fn update_peers(&self, node_info_cbor: Uint8Array) -> Result<()> {
+        let info: runar_schemas::NodeInfo = cbor::from_slice(node_info_cbor.as_ref())
             .map_err(|e| Error::from_reason(format!("NodeInfo decode failed: {e}")))?;
         let t = { self.inner.lock().unwrap().transport.clone() };
         t.update_peers(info)
@@ -1115,7 +1123,7 @@ fn parse_discovery_options(cbor_bytes: &[u8]) -> DiscoveryOptions {
 #[napi]
 impl Discovery {
     #[napi(constructor)]
-    pub fn new(keys: &Keys, options_cbor: Buffer) -> Result<Self> {
+    pub fn new(keys: &Keys, options_cbor: Uint8Array) -> Result<Self> {
         let inner = keys.inner.lock().unwrap();
         let node_pk = if let Some(n) = inner.node_owned.as_ref() {
             n.get_node_public_key()
@@ -1126,7 +1134,7 @@ impl Discovery {
         };
         let mut addrs: Vec<String> = Vec::new();
         if let Ok(serde_cbor::Value::Map(map)) =
-            cbor::from_slice::<serde_cbor::Value>(&options_cbor)
+            cbor::from_slice::<serde_cbor::Value>(options_cbor.as_ref())
         {
             if let Some(serde_cbor::Value::Array(arr)) =
                 map.get(&serde_cbor::Value::Text("local_addresses".into()))
@@ -1157,8 +1165,8 @@ impl Discovery {
     }
 
     #[napi]
-    pub async fn init(&self, options_cbor: Buffer) -> Result<()> {
-        let opts = parse_discovery_options(&options_cbor);
+    pub async fn init(&self, options_cbor: Uint8Array) -> Result<()> {
+        let opts = parse_discovery_options(options_cbor.as_ref());
         let d = { self.inner.lock().unwrap().discovery.clone() };
         d.init(opts)
             .await
@@ -1213,10 +1221,11 @@ impl Discovery {
     }
 
     #[napi]
-    pub async fn update_local_peer_info(&self, peer_info_cbor: Buffer) -> Result<()> {
+    pub async fn update_local_peer_info(&self, peer_info_cbor: Uint8Array) -> Result<()> {
         let d = { self.inner.lock().unwrap().discovery.clone() };
         let peer: runar_transporter::discovery::multicast_discovery::PeerInfo =
-            cbor::from_slice(&peer_info_cbor).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(peer_info_cbor.as_ref())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
         d.update_local_peer_info(peer)
             .await
             .map_err(|e| Error::from_reason(e.to_string()))
