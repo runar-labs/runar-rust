@@ -1,6 +1,7 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import { uint8ArrayEquals } from './test_utils';
 
 function loadAddon(): any {
   const filename = 'index.linux-x64-gnu.node';
@@ -79,7 +80,7 @@ describe('Cross-Platform Tests', () => {
       await expect(withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey')).resolves.not.toThrow();
       
       const pk = keys.mobileGetUserPublicKey();
-      expect(Buffer.isBuffer(pk)).toBe(true);
+      expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     }, 10000);
 
@@ -92,7 +93,7 @@ describe('Cross-Platform Tests', () => {
       expect(id.length).toBeGreaterThan(0);
       
       const pk = keys.nodeGetPublicKey();
-      expect(Buffer.isBuffer(pk)).toBe(true);
+      expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     });
 
@@ -113,11 +114,11 @@ describe('Cross-Platform Tests', () => {
       
       const data = Buffer.from('test data for encryption');
       const encrypted = keys.encryptLocalData(data);
-      expect(Buffer.isBuffer(encrypted)).toBe(true);
-      expect(encrypted.equals(data)).toBe(false);
+      expect(encrypted instanceof Uint8Array).toBe(true);
+      expect(uint8ArrayEquals(encrypted, data)).toBe(false);
       
       const decrypted = keys.decryptLocalData(encrypted);
-      expect(decrypted.equals(data)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, data)).toBe(true);
     });
 
     test('should perform symmetric key operations', () => {
@@ -128,10 +129,10 @@ describe('Cross-Platform Tests', () => {
       const key2 = keys.ensureSymmetricKey('service2');
       const key1Again = keys.ensureSymmetricKey('service1');
       
-      expect(Buffer.isBuffer(key1)).toBe(true);
+      expect(key1 instanceof Uint8Array).toBe(true);
       expect(key1.length).toBe(32);
-      expect(key1.equals(key2)).toBe(false);
-      expect(key1.equals(key1Again)).toBe(true);
+      expect(uint8ArrayEquals(key1, key2)).toBe(false);
+      expect(uint8ArrayEquals(key1, key1Again)).toBe(true);
     });
 
     test('should perform envelope encryption with mobile manager', async () => {
@@ -143,8 +144,8 @@ describe('Cross-Platform Tests', () => {
       const profilePks = [Buffer.alloc(65, 1)];
       const encrypted = keys.mobileEncryptWithEnvelope(data, 'test-network', profilePks);
       
-      expect(Buffer.isBuffer(encrypted)).toBe(true);
-      expect(encrypted.equals(data)).toBe(false);
+      expect(encrypted instanceof Uint8Array).toBe(true);
+      expect(uint8ArrayEquals(encrypted, data)).toBe(false);
     }, 10000);
 
     test('should perform envelope encryption with node manager', () => {
@@ -155,8 +156,8 @@ describe('Cross-Platform Tests', () => {
       const profilePks = [Buffer.alloc(65, 1)];
       const encrypted = keys.nodeEncryptWithEnvelope(data, 'test-network', profilePks);
       
-      expect(Buffer.isBuffer(encrypted)).toBe(true);
-      expect(encrypted.equals(data)).toBe(false);
+      expect(encrypted instanceof Uint8Array).toBe(true);
+      expect(uint8ArrayEquals(encrypted, data)).toBe(false);
     });
   });
 
@@ -199,10 +200,10 @@ describe('Cross-Platform Tests', () => {
       // Test with large data
       const largeData = Buffer.alloc(1024 * 1024, 0x42); // 1MB
       const encrypted = keys.encryptLocalData(largeData);
-      expect(Buffer.isBuffer(encrypted)).toBe(true);
+      expect(encrypted instanceof Uint8Array).toBe(true);
       
       const decrypted = keys.decryptLocalData(encrypted);
-      expect(decrypted.equals(largeData)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, largeData)).toBe(true);
     });
   });
 });

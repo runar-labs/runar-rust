@@ -1,6 +1,7 @@
 import { 
   TestEnvironment,
-  withTimeout
+  withTimeout,
+  uint8ArrayEquals
 } from './test_utils';
 
 describe('Keys End-to-End Specific Scenarios', () => {
@@ -25,7 +26,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
 
     // ✅ REAL: Use actual cryptographic operations
     const userPublicKey = mobileKeys.mobileGetUserPublicKey();
-    expect(Buffer.isBuffer(userPublicKey)).toBe(true);
+    expect(userPublicKey instanceof Uint8Array).toBe(true);
     expect(userPublicKey.length).toBe(65); // ECDSA P-256 uncompressed
 
     const nodeId = nodeKeys.nodeGetNodeId();
@@ -34,12 +35,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
 
     // ✅ REAL: Generate actual CSR
     const csr = nodeKeys.nodeGenerateCsr();
-    expect(Buffer.isBuffer(csr)).toBe(true);
+    expect(csr instanceof Uint8Array).toBe(true);
     expect(csr.length).toBeGreaterThan(0);
 
     // ✅ REAL: Process actual setup token
     const certMessage = mobileKeys.mobileProcessSetupToken(csr);
-    expect(Buffer.isBuffer(certMessage)).toBe(true);
+    expect(certMessage instanceof Uint8Array).toBe(true);
     expect(certMessage.length).toBeGreaterThan(0);
 
     // ✅ REAL: Install actual certificate
@@ -62,12 +63,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
 
     // ✅ REAL: Get actual agreement public key
     const nodeAgreementPk = nodeKeys.nodeGetAgreementPublicKey();
-    expect(Buffer.isBuffer(nodeAgreementPk)).toBe(true);
+    expect(nodeAgreementPk instanceof Uint8Array).toBe(true);
     expect(nodeAgreementPk.length).toBeGreaterThan(0);
 
     // ✅ REAL: Create actual network key message
     const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(networkId, nodeAgreementPk);
-    expect(Buffer.isBuffer(networkKeyMessage)).toBe(true);
+    expect(networkKeyMessage instanceof Uint8Array).toBe(true);
     expect(networkKeyMessage.length).toBeGreaterThan(0);
 
     // ✅ REAL: Install actual network key
@@ -91,14 +92,14 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // ✅ REAL: Create actual profile keys
     const personalKey = mobileKeys.mobileDeriveUserProfileKey('personal');
     const workKey = mobileKeys.mobileDeriveUserProfileKey('work');
-    expect(Buffer.isBuffer(personalKey)).toBe(true);
+    expect(personalKey instanceof Uint8Array).toBe(true);
     expect(personalKey.length).toBe(65); // ECDSA P-256 uncompressed
-    expect(Buffer.isBuffer(workKey)).toBe(true);
+    expect(workKey instanceof Uint8Array).toBe(true);
     expect(workKey.length).toBe(65); // ECDSA P-256 uncompressed
 
     // ✅ REAL: Get actual network public key
     const networkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkId);
-    expect(Buffer.isBuffer(networkPublicKey)).toBe(true);
+    expect(networkPublicKey instanceof Uint8Array).toBe(true);
     expect(networkPublicKey.length).toBeGreaterThan(0);
     
     // ✅ REAL: Encrypt with actual envelope
@@ -110,8 +111,8 @@ describe('Keys End-to-End Specific Scenarios', () => {
       networkPublicKey, 
       profilePks
     );
-    expect(Buffer.isBuffer(encrypted)).toBe(true);
-    expect(encrypted.equals(testData)).toBe(false);
+    expect(encrypted instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(encrypted, testData)).toBe(false);
 
     // ✅ REAL: Install network key and decrypt
     const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(
@@ -122,7 +123,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
 
     // ✅ REAL: Decrypt with actual network key
     const decrypted = nodeKeys.nodeDecryptEnvelope(encrypted);
-    expect(decrypted.equals(testData)).toBe(true);
+    expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
 
     console.log('   ✅ Profile-based envelope encryption completed successfully');
   }, 45000); // ✅ PROPER: 45-second timeout
@@ -142,11 +143,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
 
     testCases.forEach((testData, index) => {
       const encrypted = nodeKeys.encryptLocalData(testData);
-      expect(Buffer.isBuffer(encrypted)).toBe(true);
-      expect(encrypted.equals(testData)).toBe(false);
+      expect(encrypted instanceof Uint8Array).toBe(true);
+      expect(uint8ArrayEquals(encrypted, testData)).toBe(false);
 
       const decrypted = nodeKeys.decryptLocalData(encrypted);
-      expect(decrypted.equals(testData)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
 
       console.log(`   ✅ Data size ${index + 1} (${testData.length} bytes) encrypted/decrypted successfully`);
     });
@@ -163,7 +164,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
 
     services.forEach(service => {
       const key = nodeKeys.ensureSymmetricKey(service);
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(32);
       keys.set(service, key);
     });
@@ -171,7 +172,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // Verify keys are consistent
     services.forEach(service => {
       const key = nodeKeys.ensureSymmetricKey(service);
-      expect(key.equals(keys.get(service)!)).toBe(true);
+      expect(uint8ArrayEquals(key, keys.get(service)!)).toBe(true);
     });
 
     // Test key uniqueness
@@ -195,11 +196,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // This indirectly validates that certificates are working
     const testData = Buffer.from('test certificate validation');
     const encrypted = nodeKeys.encryptLocalData(testData);
-    expect(Buffer.isBuffer(encrypted)).toBe(true);
-    expect(encrypted.equals(testData)).toBe(false);
+    expect(encrypted instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(encrypted, testData)).toBe(false);
     
     const decrypted = nodeKeys.decryptLocalData(encrypted);
-    expect(decrypted.equals(testData)).toBe(true);
+    expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
     
     console.log('   ✅ Certificate installation and operations validated successfully');
     console.log('   📋 Note: X.509 structure validation handled in Rust layer - no duplication needed');
@@ -232,7 +233,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     );
     
     const decryptedBefore = nodeKeys.nodeDecryptEnvelope(encryptedBefore);
-    expect(decryptedBefore.equals(testData)).toBe(true);
+    expect(uint8ArrayEquals(decryptedBefore, testData)).toBe(true);
     
     // ✅ REAL: Force state serialization
     nodeKeys.flushState();
@@ -249,11 +250,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const restoredUserPublicKey = mobileKeys.mobileGetUserPublicKey();
     
     expect(restoredNodeId).toBe(initialNodeId);
-    expect(restoredUserPublicKey.equals(initialUserPublicKey)).toBe(true);
+    expect(uint8ArrayEquals(restoredUserPublicKey, initialUserPublicKey)).toBe(true);
     
     // ✅ REAL: Test envelope decryption after restoration
     const decryptedAfter = nodeKeys.nodeDecryptEnvelope(encryptedBefore);
-    expect(decryptedAfter.equals(testData)).toBe(true);
+    expect(uint8ArrayEquals(decryptedAfter, testData)).toBe(true);
     
     // ✅ REAL: Test new operations after restoration
     const newTestData = Buffer.from('test data after restoration');
@@ -264,7 +265,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     );
     
     const newDecrypted = nodeKeys.nodeDecryptEnvelope(newEncrypted);
-    expect(newDecrypted.equals(newTestData)).toBe(true);
+    expect(uint8ArrayEquals(newDecrypted, newTestData)).toBe(true);
     
     console.log('   ✅ State serialization and restoration completed successfully');
     console.log('   📋 All operations work correctly after state persistence');
@@ -319,12 +320,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // Test that operations still work after state operations
     const testData = Buffer.from('test state corruption handling');
     const encrypted = nodeKeys.encryptLocalData(testData);
-    expect(Buffer.isBuffer(encrypted)).toBe(true);
+    expect(encrypted instanceof Uint8Array).toBe(true);
     
     // Force state flush and verify operations still work
     nodeKeys.flushState();
     const decrypted = nodeKeys.decryptLocalData(encrypted);
-    expect(decrypted.equals(testData)).toBe(true);
+    expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
     
     console.log('   ✅ State corruption handling properly managed');
     
@@ -364,7 +365,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
       performanceResults.set(`decrypt_${size}`, decryptionTime);
       
       // ✅ REAL: Verify data integrity
-      expect(decrypted.equals(testData)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
       expect(encrypted.length).toBeGreaterThan(testData.length); // Encrypted should be larger
       
       console.log(`   ✅ ${size} bytes: Encrypt=${encryptionTime}ms, Decrypt=${decryptionTime}ms`);
@@ -379,7 +380,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const profileStartTime = Date.now();
     for (const profile of profileNames) {
       const key = mobileKeys.mobileDeriveUserProfileKey(profile);
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(65); // ECDSA P-256 uncompressed
       profileKeys.set(profile, key);
     }
@@ -394,7 +395,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     const symStartTime = Date.now();
     for (const service of serviceNames) {
       const key = nodeKeys.ensureSymmetricKey(service);
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(32); // 256-bit key
       symmetricKeys.set(service, key);
     }
@@ -417,7 +418,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
       
       // Verify decryption still works
       const decrypted = nodeKeys.nodeDecryptEnvelope(encrypted);
-      expect(decrypted.equals(testData)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
     }
     
     // ✅ REAL: Test 5 - State persistence performance
@@ -450,7 +451,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     );
     
     const finalDecrypted = nodeKeys.nodeDecryptEnvelope(finalEncrypted);
-    expect(finalDecrypted.equals(finalTestData)).toBe(true);
+    expect(uint8ArrayEquals(finalDecrypted, finalTestData)).toBe(true);
     
     console.log('   ✅ Comprehensive performance and memory validation completed successfully');
   }, 60000); // ✅ PROPER: 60-second timeout for performance testing
@@ -471,11 +472,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
       mobileKeys.mobileGetNetworkPublicKey(testEnv.getNetworkId()),
       [mobileKeys.mobileDeriveUserProfileKey('boundary-test')]
     );
-    expect(Buffer.isBuffer(oneByteEncrypted)).toBe(true);
+    expect(oneByteEncrypted instanceof Uint8Array).toBe(true);
     expect(oneByteEncrypted.length).toBeGreaterThan(1);
     
     const oneByteDecrypted = nodeKeys.nodeDecryptEnvelope(oneByteEncrypted);
-    expect(oneByteDecrypted.equals(oneByteData)).toBe(true);
+    expect(uint8ArrayEquals(oneByteDecrypted, oneByteData)).toBe(true);
     
     // Test with very large data (1MB)
     const largeData = Buffer.alloc(1048576, 0x42);
@@ -484,11 +485,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
       mobileKeys.mobileGetNetworkPublicKey(testEnv.getNetworkId()),
       [mobileKeys.mobileDeriveUserProfileKey('large-test')]
     );
-    expect(Buffer.isBuffer(largeEncrypted)).toBe(true);
+    expect(largeEncrypted instanceof Uint8Array).toBe(true);
     expect(largeEncrypted.length).toBeGreaterThan(largeData.length);
     
     const largeDecrypted = nodeKeys.nodeDecryptEnvelope(largeEncrypted);
-    expect(largeDecrypted.equals(largeData)).toBe(true);
+    expect(uint8ArrayEquals(largeDecrypted, largeData)).toBe(true);
     
     console.log('   ✅ Boundary data sizes handled correctly');
     
@@ -501,10 +502,10 @@ describe('Keys End-to-End Specific Scenarios', () => {
       mobileKeys.mobileGetNetworkPublicKey(testEnv.getNetworkId()),
       [] // Empty profile keys array
     );
-    expect(Buffer.isBuffer(emptyProfileEncrypted)).toBe(true);
+    expect(emptyProfileEncrypted instanceof Uint8Array).toBe(true);
     
     const emptyProfileDecrypted = nodeKeys.nodeDecryptEnvelope(emptyProfileEncrypted);
-    expect(emptyProfileDecrypted.equals(emptyProfileData)).toBe(true);
+    expect(uint8ArrayEquals(emptyProfileDecrypted, emptyProfileData)).toBe(true);
     
     console.log('   ✅ Empty profile keys array handled correctly');
     
@@ -525,7 +526,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     for (const profile of specialProfiles) {
       const key = mobileKeys.mobileDeriveUserProfileKey(profile);
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(65); // ECDSA P-256 uncompressed
       
       // Test encryption with this profile key
@@ -537,7 +538,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
       );
       
       const decrypted = nodeKeys.nodeDecryptEnvelope(encrypted);
-      expect(decrypted.equals(testData)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
     }
     
     console.log('   ✅ Special characters in profile names handled correctly');
@@ -558,7 +559,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
       );
       
       const decrypted = nodeKeys.nodeDecryptEnvelope(encrypted);
-      expect(decrypted.equals(rapidTestData)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, rapidTestData)).toBe(true);
       
       const totalTime = Date.now() - startTime;
       rapidResults.push(totalTime);
@@ -576,7 +577,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     for (const service of manyServices) {
       const key = nodeKeys.ensureSymmetricKey(service);
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(32);
       serviceKeys.set(service, key);
     }
@@ -589,7 +590,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     // Verify all keys are still accessible
     for (const service of manyServices) {
       const key = nodeKeys.ensureSymmetricKey(service);
-      expect(key.equals(serviceKeys.get(service)!)).toBe(true);
+      expect(uint8ArrayEquals(key, serviceKeys.get(service)!)).toBe(true);
     }
     
     console.log(`   ✅ State persistence under load: ${manyServices.length} services, persist time: ${persistTime}ms`);
@@ -621,7 +622,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     // Decrypt with new network key
     const newNetworkDecrypted = nodeKeys.nodeDecryptEnvelope(newNetworkEncrypted);
-    expect(newNetworkDecrypted.equals(newNetworkData)).toBe(true);
+    expect(uint8ArrayEquals(newNetworkDecrypted, newNetworkData)).toBe(true);
     
     console.log('   ✅ Network key regeneration handled correctly');
     
@@ -639,7 +640,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     // Verify mobile CA is properly initialized
     const userPublicKey = mobileKeys.mobileGetUserPublicKey();
-    expect(Buffer.isBuffer(userPublicKey)).toBe(true);
+    expect(userPublicKey instanceof Uint8Array).toBe(true);
     expect(userPublicKey.length).toBe(65); // ECDSA P-256 uncompressed
     
     // Verify node identity is properly created
@@ -649,11 +650,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     // Verify certificate workflow
     const csr = nodeKeys.nodeGenerateCsr();
-    expect(Buffer.isBuffer(csr)).toBe(true);
+    expect(csr instanceof Uint8Array).toBe(true);
     expect(csr.length).toBeGreaterThan(0);
     
     const certMessage = mobileKeys.mobileProcessSetupToken(csr);
-    expect(Buffer.isBuffer(certMessage)).toBe(true);
+    expect(certMessage instanceof Uint8Array).toBe(true);
     expect(certMessage.length).toBeGreaterThan(0);
     
     expect(() => nodeKeys.nodeInstallCertificate(certMessage)).not.toThrow();
@@ -668,14 +669,14 @@ describe('Keys End-to-End Specific Scenarios', () => {
     expect(networkId.length).toBeGreaterThan(0);
     
     const networkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkId);
-    expect(Buffer.isBuffer(networkPublicKey)).toBe(true);
+    expect(networkPublicKey instanceof Uint8Array).toBe(true);
     expect(networkPublicKey.length).toBe(65); // ECDSA P-256 uncompressed
     
     const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(
       networkId,
       nodeKeys.nodeGetAgreementPublicKey()
     );
-    expect(Buffer.isBuffer(networkKeyMessage)).toBe(true);
+    expect(networkKeyMessage instanceof Uint8Array).toBe(true);
     expect(networkKeyMessage.length).toBeGreaterThan(0);
     
     expect(() => nodeKeys.nodeInstallNetworkKey(networkKeyMessage)).not.toThrow();
@@ -690,7 +691,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     for (const profile of profileNames) {
       const key = mobileKeys.mobileDeriveUserProfileKey(profile);
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(65); // ECDSA P-256 uncompressed
       profileKeys.set(profile, key);
     }
@@ -712,11 +713,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
       networkPublicKey,
       profilePks
     );
-    expect(Buffer.isBuffer(encrypted)).toBe(true);
-    expect(encrypted.equals(testData)).toBe(false);
+    expect(encrypted instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(encrypted, testData)).toBe(false);
     
     const decrypted = nodeKeys.nodeDecryptEnvelope(encrypted);
-    expect(decrypted.equals(testData)).toBe(true);
+    expect(uint8ArrayEquals(decrypted, testData)).toBe(true);
     
     console.log('   ✅ Complete envelope encryption/decryption validated');
     
@@ -725,11 +726,11 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     const localData = Buffer.from('local storage test data for complete validation');
     const encryptedLocal = nodeKeys.encryptLocalData(localData);
-    expect(Buffer.isBuffer(encryptedLocal)).toBe(true);
-    expect(encryptedLocal.equals(localData)).toBe(false);
+    expect(encryptedLocal instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(encryptedLocal, localData)).toBe(false);
     
     const decryptedLocal = nodeKeys.decryptLocalData(encryptedLocal);
-    expect(decryptedLocal.equals(localData)).toBe(true);
+    expect(uint8ArrayEquals(decryptedLocal, localData)).toBe(true);
     
     console.log('   ✅ Complete local storage validated');
     
@@ -741,7 +742,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     for (const service of serviceNames) {
       const key = nodeKeys.ensureSymmetricKey(service);
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(32); // 256-bit key
       serviceKeys.set(service, key);
     }
@@ -750,8 +751,8 @@ describe('Keys End-to-End Specific Scenarios', () => {
     for (const service of serviceNames) {
       const key1 = nodeKeys.ensureSymmetricKey(service);
       const key2 = nodeKeys.ensureSymmetricKey(service);
-      expect(key1.equals(key2)).toBe(true);
-      expect(key1.equals(serviceKeys.get(service)!)).toBe(true);
+      expect(uint8ArrayEquals(key1, key2)).toBe(true);
+      expect(uint8ArrayEquals(key1, serviceKeys.get(service)!)).toBe(true);
     }
     
     console.log('   ✅ Complete symmetric key management validated');
@@ -778,7 +779,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     );
     
     const finalDecrypted = nodeKeys.nodeDecryptEnvelope(finalEncrypted);
-    expect(finalDecrypted.equals(finalTestData)).toBe(true);
+    expect(uint8ArrayEquals(finalDecrypted, finalTestData)).toBe(true);
     
     console.log('   ✅ Complete state persistence validated');
     
@@ -797,7 +798,7 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     // Node decrypts envelope
     const integrationDecrypted = nodeKeys.nodeDecryptEnvelope(integrationEncrypted);
-    expect(integrationDecrypted.equals(integrationData)).toBe(true);
+    expect(uint8ArrayEquals(integrationDecrypted, integrationData)).toBe(true);
     
     // Node encrypts local data
     const localIntegrationData = Buffer.from('local integration test');
@@ -805,12 +806,12 @@ describe('Keys End-to-End Specific Scenarios', () => {
     
     // Node decrypts local data
     const localIntegrationDecrypted = nodeKeys.decryptLocalData(localIntegrationEncrypted);
-    expect(localIntegrationDecrypted.equals(localIntegrationData)).toBe(true);
+    expect(uint8ArrayEquals(localIntegrationDecrypted, localIntegrationData)).toBe(true);
     
     // Verify symmetric keys still work
     const authKey = nodeKeys.ensureSymmetricKey('auth');
-    expect(Buffer.isBuffer(authKey)).toBe(true);
-    expect(authKey.equals(serviceKeys.get('auth')!)).toBe(true);
+    expect(authKey instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(authKey, serviceKeys.get('auth')!)).toBe(true);
     
     console.log('   ✅ Complete cross-component integration validated');
     

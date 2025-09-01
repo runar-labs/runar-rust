@@ -4,7 +4,8 @@ import {
   cleanupTempDir, 
   withTimeout,
   createMobileKeys,
-  createNodeKeys
+  createNodeKeys,
+  uint8ArrayEquals
 } from './test_utils';
 
 describe('Discovery Basic Tests', () => {
@@ -48,15 +49,15 @@ describe('Discovery Basic Tests', () => {
     const nodePk = nodeKeys.nodeGetPublicKey();
     const nodeAgreementPk = nodeKeys.nodeGetAgreementPublicKey();
 
-    expect(Buffer.isBuffer(mobilePk)).toBe(true);
-    expect(Buffer.isBuffer(nodePk)).toBe(true);
-    expect(Buffer.isBuffer(nodeAgreementPk)).toBe(true);
+    expect(mobilePk instanceof Uint8Array).toBe(true);
+    expect(nodePk instanceof Uint8Array).toBe(true);
+    expect(nodeAgreementPk instanceof Uint8Array).toBe(true);
     expect(mobilePk.length).toBeGreaterThan(0);
     expect(nodePk.length).toBeGreaterThan(0);
     expect(nodeAgreementPk.length).toBeGreaterThan(0);
 
     // Verify keys are different (as they should be)
-    expect(mobilePk.equals(nodePk)).toBe(false);
+    expect(uint8ArrayEquals(mobilePk, nodePk)).toBe(false);
 
     console.log('   ✅ Basic key validation successful');
   }, 30000);
@@ -77,7 +78,7 @@ describe('Discovery Basic Tests', () => {
     expect(() => mobileKeys.mobileInstallNetworkPublicKey(testPk)).not.toThrow();
 
     const networkPk = mobileKeys.mobileGetNetworkPublicKey(networkId);
-    expect(Buffer.isBuffer(networkPk)).toBe(true);
+    expect(networkPk instanceof Uint8Array).toBe(true);
     expect(networkPk.length).toBeGreaterThan(0);
 
     console.log('   ✅ Network setup for discovery successful');

@@ -4,7 +4,8 @@ import {
   createTempDir, 
   cleanupTempDir, 
   withTimeout,
-  createFreshKeys
+  createFreshKeys,
+  uint8ArrayEquals
 } from './test_utils';
 
 const mod = loadAddon();
@@ -114,7 +115,7 @@ describe('Comprehensive API Tests', () => {
       keys.initAsMobile();
       await withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey');
       const pk = keys.mobileGetUserPublicKey();
-      expect(Buffer.isBuffer(pk)).toBe(true);
+      expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     }, 10000);
 
@@ -123,7 +124,7 @@ describe('Comprehensive API Tests', () => {
       keys.initAsMobile();
       await withTimeout(keys.mobileInitializeUserRootKey(), 5000, 'mobileInitializeUserRootKey');
       const pk = keys.mobileDeriveUserProfileKey('personal');
-      expect(Buffer.isBuffer(pk)).toBe(true);
+      expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     }, 10000);
 
@@ -152,7 +153,7 @@ describe('Comprehensive API Tests', () => {
       keys.mobileInstallNetworkPublicKey(testPk);
       const networkId = keys.mobileGenerateNetworkDataKey();
       const pk = keys.mobileGetNetworkPublicKey(networkId);
-      expect(Buffer.isBuffer(pk)).toBe(true);
+      expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     }, 10000);
 
@@ -180,7 +181,7 @@ describe('Comprehensive API Tests', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
       const pk = keys.nodeGetPublicKey();
-      expect(Buffer.isBuffer(pk)).toBe(true);
+      expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     });
 
@@ -188,7 +189,7 @@ describe('Comprehensive API Tests', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
       const pk = keys.nodeGetAgreementPublicKey();
-      expect(Buffer.isBuffer(pk)).toBe(true);
+      expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     });
 
@@ -196,7 +197,7 @@ describe('Comprehensive API Tests', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
       const csr = keys.nodeGenerateCsr();
-      expect(Buffer.isBuffer(csr)).toBe(true);
+      expect(csr instanceof Uint8Array).toBe(true);
       expect(csr.length).toBeGreaterThan(0);
     });
 
@@ -217,8 +218,8 @@ describe('Comprehensive API Tests', () => {
       keys.initAsNode();
       const data = Buffer.from('test data');
       const encrypted = keys.encryptLocalData(data);
-      expect(Buffer.isBuffer(encrypted)).toBe(true);
-      expect(encrypted.equals(data)).toBe(false);
+      expect(encrypted instanceof Uint8Array).toBe(true);
+      expect(uint8ArrayEquals(encrypted, data)).toBe(false);
     });
 
     test('should decrypt local data successfully', () => {
@@ -227,7 +228,7 @@ describe('Comprehensive API Tests', () => {
       const data = Buffer.from('test data');
       const encrypted = keys.encryptLocalData(data);
       const decrypted = keys.decryptLocalData(encrypted);
-      expect(decrypted.equals(data)).toBe(true);
+      expect(uint8ArrayEquals(decrypted, data)).toBe(true);
     });
 
     // Note: Network encryption tests removed - covered in e2e tests
@@ -246,7 +247,7 @@ describe('Comprehensive API Tests', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
       const key = keys.ensureSymmetricKey('test-service');
-      expect(Buffer.isBuffer(key)).toBe(true);
+      expect(key instanceof Uint8Array).toBe(true);
       expect(key.length).toBe(32); // 256-bit key
     });
 
@@ -255,7 +256,7 @@ describe('Comprehensive API Tests', () => {
       keys.initAsNode();
       const key1 = keys.ensureSymmetricKey('test-service');
       const key2 = keys.ensureSymmetricKey('test-service');
-      expect(key1.equals(key2)).toBe(true);
+      expect(uint8ArrayEquals(key1, key2)).toBe(true);
     });
 
     test('should return different keys for different service names', () => {
@@ -263,7 +264,7 @@ describe('Comprehensive API Tests', () => {
       keys.initAsNode();
       const key1 = keys.ensureSymmetricKey('service-1');
       const key2 = keys.ensureSymmetricKey('service-2');
-      expect(key1.equals(key2)).toBe(false);
+      expect(uint8ArrayEquals(key1, key2)).toBe(false);
     });
   });
 
