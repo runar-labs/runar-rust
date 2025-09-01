@@ -144,10 +144,10 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     console.log('\n🌐 PHASE 3: Network Setup');
 
     // 3.1 Mobile generates network data key
-    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
-    expect(typeof networkId).toBe('string');
-    expect(networkId.length).toBeGreaterThan(0);
-    console.log(`   ✅ Network data key generated: ${networkId}`);
+    const networkPublicKey = mobileKeys.mobileGenerateNetworkDataKey();
+    expect(networkPublicKey).toBeInstanceOf(Uint8Array);
+    expect(networkPublicKey.length).toBeGreaterThan(0);
+    console.log(`   ✅ Network data key generated: ${networkPublicKey.length} bytes`);
 
     // 3.2 Mobile creates network key message
     // Get the node agreement public key for encryption
@@ -155,7 +155,7 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     expect(nodeAgreementPublicKey instanceof Uint8Array).toBe(true);
     expect(nodeAgreementPublicKey.length).toBeGreaterThan(0);
 
-    const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(networkId, nodeAgreementPublicKey);
+    const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(networkPublicKey, nodeAgreementPublicKey);
     expect(networkKeyMessage instanceof Uint8Array).toBe(true);
     expect(networkKeyMessage.length).toBeGreaterThan(0);
     console.log(`   ✅ Network key message created: ${networkKeyMessage.length} bytes`);
@@ -187,15 +187,15 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
 
     // 5.1 Mobile encrypts with envelope
     // Get network public key from network ID for envelope encryption
-    const networkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkId);
-    expect(networkPublicKey instanceof Uint8Array).toBe(true);
-    expect(networkPublicKey.length).toBeGreaterThan(0);
+    const retrievedNetworkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkPublicKey);
+    expect(retrievedNetworkPublicKey instanceof Uint8Array).toBe(true);
+    expect(retrievedNetworkPublicKey.length).toBeGreaterThan(0);
     
-    const encryptedData = mobileKeys.mobileEncryptWithEnvelope(testData, networkPublicKey, profilePks);
+    const encryptedData = mobileKeys.mobileEncryptWithEnvelope(testData, retrievedNetworkPublicKey, profilePks);
     expect(encryptedData instanceof Uint8Array).toBe(true);
     expect(uint8ArrayEquals(encryptedData, testData)).toBe(false);
     console.log(`   ✅ Data encrypted with envelope: ${encryptedData.length} bytes`);
-    console.log(`      Network: ${networkId} (${networkPublicKey.length} bytes)`);
+    console.log(`      Network: ${networkPublicKey.length} bytes`);
     console.log(`      Profile recipients: ${profilePks.length}`);
 
     // 5.2 Node decrypts envelope
@@ -263,7 +263,7 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     console.log('📊 Key Statistics:');
     console.log(`   • User root key: ${userPublicKey.length} bytes`);
     console.log('   • Profile keys: 2 (personal, work)');
-    console.log(`   • Network keys: 1 (${networkId})`);
+    console.log(`   • Network keys: 1 (${networkPublicKey.length} bytes)`);
     console.log('   • Node certificates: 1');
     console.log('   • Storage encryption: ✅');
     console.log('   • State persistence: ✅');

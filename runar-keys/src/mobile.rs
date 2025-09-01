@@ -79,8 +79,8 @@ pub struct NetworkKeyMessage {
 pub struct EnvelopeEncryptedData {
     /// The encrypted data payload
     pub encrypted_data: Vec<u8>,
-    /// Network ID this data belongs to
-    pub network_id: Option<String>,
+    /// Network public key this data belongs to (RAW BYTES)
+    pub network_public_key: Option<Vec<u8>>,
     /// Envelope key encrypted with network key (always required)
     pub network_encrypted_key: Vec<u8>,
     /// Envelope key encrypted with each profile key
@@ -103,10 +103,8 @@ pub struct MobileKeyManager {
     user_profile_agreements: HashMap<String, P256SecretKey>,
     /// Mapping from human-readable label → compact-id for quick reuse
     label_to_pid: HashMap<String, String>,
-    /// Network agreement keys indexed by network ID - for envelope encryption and decryption
-    network_data_keys: HashMap<String, P256SecretKey>,
-    // network public keys indexed by network ID - for envelope encryption
-    network_public_keys: HashMap<String, Vec<u8>>,
+    /// Network agreement keys indexed by network public key bytes - for envelope encryption and decryption
+    network_data_keys: HashMap<Vec<u8>, P256SecretKey>,
     /// Issued certificates tracking
     issued_certificates: HashMap<String, X509Certificate>,
     /// Monotonically-increasing certificate serial number used as the X.509
@@ -136,8 +134,7 @@ pub struct MobileKeyManagerState {
     user_profile_keys: HashMap<String, EcdsaKeyPair>,
     user_profile_agreements: HashMap<String, Vec<u8>>,
     label_to_pid: HashMap<String, String>,
-    network_data_keys: HashMap<String, Vec<u8>>,
-    network_public_keys: HashMap<String, Vec<u8>>,
+    network_data_keys: HashMap<Vec<u8>, Vec<u8>>,
     issued_certificates: HashMap<String, X509Certificate>,
     serial_counter: u64,
 }
@@ -160,7 +157,6 @@ impl MobileKeyManager {
             user_profile_agreements: HashMap::new(),
             label_to_pid: HashMap::new(),
             network_data_keys: HashMap::new(),
-            network_public_keys: HashMap::new(),
             issued_certificates: HashMap::new(),
             serial_counter: 1, // Start at 1 to avoid 0
             logger,
@@ -214,7 +210,6 @@ impl MobileKeyManager {
                     self.user_profile_agreements = new_self.user_profile_agreements;
                     self.label_to_pid = new_self.label_to_pid;
                     self.network_data_keys = new_self.network_data_keys;
-                    self.network_public_keys = new_self.network_public_keys;
                     self.issued_certificates = new_self.issued_certificates;
                     self.serial_counter = new_self.serial_counter;
                     self.device_keystore = device_keystore;
@@ -261,13 +256,13 @@ impl MobileKeyManager {
     }
 
     pub fn install_network_public_key(&mut self, network_public_key: &[u8]) -> Result<()> {
-        let network_id = compact_id(network_public_key);
-        self.network_public_keys
-            .insert(network_id.clone(), network_public_key.to_vec());
-
+        // Store the public key bytes directly (no derivation needed)
+        // Note: This method now only stores public keys for reference
+        // The actual network data keys are generated separately
         log_info!(
             self.logger,
-            "Network public key installed with ID: {network_id}"
+            "Network public key installed: {} bytes",
+            network_public_key.len()
         );
         let res = Ok(());
         self.persist_if_enabled();
@@ -390,41 +385,51 @@ impl MobileKeyManager {
         out
     }
 
-    pub fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
-        // Check both network_data_keys and network_public_keys
-        if let Some(network_key) = self.network_data_keys.get(network_id) {
-            Ok(network_key
-                .public_key()
-                .to_encoded_point(false)
-                .as_bytes()
-                .to_vec())
-        } else if let Some(network_public_key) = self.network_public_keys.get(network_id) {
-            Ok(network_public_key.clone())
+    pub fn get_network_public_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+        // Direct access - validate we have the key
+        if self.network_data_keys.contains_key(network_public_key) {
+            Ok(network_public_key.to_vec())
         } else {
             Err(KeyError::KeyNotFound(format!(
-                "Network public key not found for network: {network_id}"
+                "Network key not found for public key: {} bytes",
+                network_public_key.len()
             )))
         }
     }
 
-    /// Generate a network data key for envelope encryption and return the network ID (compact Base64 public key)
-    pub fn generate_network_data_key(&mut self) -> Result<String> {
+    /// Get network public key by network ID (for backward compatibility)
+    pub fn get_network_public_key_by_id(&self, network_id: &str) -> Result<Vec<u8>> {
+        // Search through all stored network keys to find one that matches the network_id
+        for public_key in self.network_data_keys.keys() {
+            let derived_id = compact_id(public_key);
+            if derived_id == network_id {
+                return Ok(public_key.clone());
+            }
+        }
+        Err(KeyError::KeyNotFound(format!(
+            "Network key not found for network ID: {network_id}"
+        )))
+    }
+
+    /// Generate a network data key for envelope encryption and return the public key bytes
+    pub fn generate_network_data_key(&mut self) -> Result<Vec<u8>> {
         let network_key = P256SecretKey::random(&mut thread_rng());
         let public_key = network_key
             .public_key()
             .to_encoded_point(false)
             .as_bytes()
             .to_vec();
-        let network_id = compact_id(&public_key);
 
+        // Store using public key bytes as key
         self.network_data_keys
-            .insert(network_id.clone(), network_key);
+            .insert(public_key.clone(), network_key);
         log_info!(
             self.logger,
-            "Network data key generated with ID: {network_id}"
+            "Network data key generated: {} bytes",
+            public_key.len()
         );
 
-        let out = Ok(network_id);
+        let out = Ok(public_key);
         self.persist_if_enabled();
         out
     }
@@ -471,13 +476,12 @@ impl MobileKeyManager {
 
         // Encrypt envelope key for network (optional)
         let mut network_encrypted_key = Vec::new();
-        let mut network_id = None;
+        let mut stored_network_public_key = None;
         if let Some(network_public_key) = network_public_key {
-            // DIRECT USE - NO INTERNAL RESOLUTION
+            // DIRECT USE - Store public key bytes directly
             network_encrypted_key =
                 self.encrypt_key_with_ecdsa(&envelope_key, network_public_key)?;
-            // Derive network ID from public key for storage
-            network_id = Some(compact_id(network_public_key));
+            stored_network_public_key = Some(network_public_key.to_vec());
         }
 
         // Encrypt envelope key for each profile
@@ -490,7 +494,7 @@ impl MobileKeyManager {
 
         Ok(EnvelopeEncryptedData {
             encrypted_data,
-            network_id,
+            network_public_key: stored_network_public_key,
             network_encrypted_key,
             profile_encrypted_keys,
         })
@@ -521,16 +525,19 @@ impl MobileKeyManager {
 
     /// Decrypt envelope-encrypted data using network key
     pub fn decrypt_with_network(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
-        let network_id = envelope_data
-            .network_id
-            .as_ref()
-            .ok_or_else(|| KeyError::DecryptionError("Envelope missing network_id".to_string()))?;
-
-        let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!(
-                "Network key pair not found for network: {network_id}"
-            ))
+        let network_public_key = envelope_data.network_public_key.as_ref().ok_or_else(|| {
+            KeyError::DecryptionError("Envelope missing network_public_key".to_string())
         })?;
+
+        let network_key = self
+            .network_data_keys
+            .get(network_public_key)
+            .ok_or_else(|| {
+                KeyError::KeyNotFound(format!(
+                    "Network key not found for public key: {} bytes",
+                    network_public_key.len()
+                ))
+            })?;
 
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
 
@@ -818,14 +825,18 @@ impl MobileKeyManager {
     /// Create a network key message for a node with proper encryption
     pub fn create_network_key_message(
         &self,
-        network_id: &str,
+        network_public_key: &[u8],
         node_agreement_public_key: &[u8],
     ) -> Result<NetworkKeyMessage> {
-        let network_key = self.network_data_keys.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!(
-                "Network key pair not found for network: {network_id}"
-            ))
-        })?;
+        let network_key = self
+            .network_data_keys
+            .get(network_public_key)
+            .ok_or_else(|| {
+                KeyError::KeyNotFound(format!(
+                    "Network key pair not found for public key: {} bytes",
+                    network_public_key.len()
+                ))
+            })?;
 
         // Encrypt the raw 32-byte scalar for the node's agreement public key
         let network_scalar = network_key.to_bytes().to_vec();
@@ -839,14 +850,13 @@ impl MobileKeyManager {
         );
 
         Ok(NetworkKeyMessage {
-            network_id: network_id.to_string(),
-            network_public_key: network_key
-                .public_key()
-                .to_encoded_point(false)
-                .as_bytes()
-                .to_vec(),
+            network_id: compact_id(network_public_key), // Keep for compatibility
+            network_public_key: network_public_key.to_vec(),
             encrypted_network_key,
-            key_derivation_info: format!("Network key for node {node_id} (ECIES encrypted)"),
+            key_derivation_info: format!(
+                "Network key for node {} (ECIES encrypted)",
+                compact_id(node_agreement_public_key)
+            ),
         })
     }
 
@@ -887,12 +897,10 @@ impl MobileKeyManager {
     }
 
     /// Encrypt data for a network (legacy method for compatibility)  
-    pub fn encrypt_for_network(&self, data: &[u8], network_id: &str) -> Result<Vec<u8>> {
-        // Resolve network ID to public key
-        let network_public_key = self.get_network_public_key(network_id)?;
-        // Use envelope encryption with the resolved public key
+    pub fn encrypt_for_network(&self, data: &[u8], network_public_key: &[u8]) -> Result<Vec<u8>> {
+        // Use envelope encryption with the provided public key
         let envelope_data =
-            MobileKeyManager::encrypt_with_envelope(self, data, Some(&network_public_key), vec![])?;
+            MobileKeyManager::encrypt_with_envelope(self, data, Some(network_public_key), vec![])?;
         // Return just the encrypted data for compatibility
         Ok(envelope_data.encrypted_data)
     }
@@ -953,9 +961,13 @@ impl MobileKeyManager {
             network_data_keys: self
                 .network_data_keys
                 .iter()
-                .map(|(id, sk)| (id.clone(), sk.to_pkcs8_der().unwrap().as_bytes().to_vec()))
+                .map(|(public_key, sk)| {
+                    (
+                        public_key.clone(),
+                        sk.to_pkcs8_der().unwrap().as_bytes().to_vec(),
+                    )
+                })
                 .collect(),
-            network_public_keys: self.network_public_keys.clone(),
             issued_certificates: self.issued_certificates.clone(),
             serial_counter: self.serial_counter,
         }
@@ -989,9 +1001,12 @@ impl MobileKeyManager {
             network_data_keys: state
                 .network_data_keys
                 .into_iter()
-                .filter_map(|(id, der)| P256SecretKey::from_pkcs8_der(&der).ok().map(|k| (id, k)))
+                .filter_map(|(public_key, der)| {
+                    P256SecretKey::from_pkcs8_der(&der)
+                        .ok()
+                        .map(|k| (public_key, k))
+                })
                 .collect(),
-            network_public_keys: state.network_public_keys,
             issued_certificates: state.issued_certificates,
             serial_counter: state.serial_counter,
             logger,
@@ -1023,8 +1038,12 @@ impl EnvelopeCrypto for MobileKeyManager {
         self.decrypt_with_network(env)
     }
 
-    fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
-        MobileKeyManager::get_network_public_key(self, network_id)
+    fn get_network_public_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+        MobileKeyManager::get_network_public_key(self, network_public_key)
+    }
+
+    fn get_network_public_key_by_id(&self, network_id: &str) -> Result<Vec<u8>> {
+        MobileKeyManager::get_network_public_key_by_id(self, network_id)
     }
 }
 

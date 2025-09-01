@@ -313,18 +313,18 @@ async fn test_multiple_network_scenario() -> Result<()> {
     println!("   ✅ Created and certified 3 nodes");
 
     // Create multiple networks
-    let mut network_ids = Vec::new();
+    let mut network_public_keys = Vec::new();
     for _ in 0..3 {
-        let network_id = mobile.generate_network_data_key()?;
-        network_ids.push(network_id);
+        let network_public_key = mobile.generate_network_data_key()?;
+        network_public_keys.push(network_public_key);
     }
 
     // Distribute network keys to all nodes for each network
-    for network_id in &network_ids {
+    for network_public_key in &network_public_keys {
         for node in &mut nodes {
             let token = node.generate_csr()?;
-            let network_key_msg =
-                mobile.create_network_key_message(network_id, &token.node_agreement_public_key)?;
+            let network_key_msg = mobile
+                .create_network_key_message(network_public_key, &token.node_agreement_public_key)?;
             node.install_network_key(network_key_msg)?;
         }
     }
@@ -332,11 +332,11 @@ async fn test_multiple_network_scenario() -> Result<()> {
     println!("   ✅ Created 3 networks and distributed keys to all nodes");
 
     // Test cross-node validation in each network
-    for network_id in &network_ids {
-        let test_data = format!("Test data for {network_id}");
+    for network_public_key in &network_public_keys {
+        let test_data = format!("Test data for {} bytes", network_public_key.len());
         // Each node encrypts data for the network
         for node in &nodes {
-            let encrypted = node.encrypt_for_network(test_data.as_bytes(), network_id)?;
+            let encrypted = node.encrypt_for_network(test_data.as_bytes(), network_public_key)?;
             // Other nodes can decrypt it
             for other_node in &nodes {
                 let decrypted = other_node.decrypt_network_data(&encrypted)?;
@@ -463,14 +463,14 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     // Phase 3: Network Data Keys
     println!("\n🌐 Phase 3: Network Data Key Management");
-    let network1_key = mobile.generate_network_data_key()?;
-    let network2_key = mobile.generate_network_data_key()?;
-    let network1_id = network1_key.clone();
-    let network2_id = network2_key.clone();
-    println!("   Network1 ID: {network1_id}");
-    println!("   Network2 ID: {network2_id}");
+    let network1_public_key = mobile.generate_network_data_key()?;
+    let network2_public_key = mobile.generate_network_data_key()?;
+    let _network1_id = compact_id(&network1_public_key);
+    let _network2_id = compact_id(&network2_public_key);
+    println!("   Network1 ID: {} bytes", network1_public_key.len());
+    println!("   Network2 ID: {} bytes", network2_public_key.len());
 
-    assert_ne!(network1_key, network2_key);
+    assert_ne!(network1_public_key, network2_public_key);
     println!("   ✅ Generated network data keys for home and office networks");
 
     // Phase 4: Node Storage Key
@@ -502,10 +502,13 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("\n🔒 Phase 6: Envelope Encryption Testing");
 
     // Set up network key on node BEFORE creating envelope
-    println!("   Installing network key on node for network1: {network1_id}");
+    println!(
+        "   Installing network key on node for network1: {} bytes",
+        network1_public_key.len()
+    );
     let token = node.generate_csr()?;
-    let network_key_msg =
-        mobile.create_network_key_message(&network1_key, &token.node_agreement_public_key)?;
+    let network_key_msg = mobile
+        .create_network_key_message(&network1_public_key, &token.node_agreement_public_key)?;
     node.install_network_key(network_key_msg)?;
     println!("   ✅ Network key installed on node");
 
@@ -513,19 +516,24 @@ async fn test_enhanced_key_management() -> Result<()> {
         b"This is highly sensitive data that needs to be shared securely across the network";
 
     // Encrypt for multiple profiles and a network
-    println!("   Encrypting envelope for network: {network1_id}");
-    // Resolve network ID to public key
-    let network1_public_key = mobile.get_network_public_key(&network1_key)?;
+    println!(
+        "   Encrypting envelope for network: {} bytes",
+        network1_public_key.len()
+    );
+    // Use the network public key directly
     let envelope_data = mobile.encrypt_with_envelope(
         sensitive_data,
         Some(&network1_public_key),
         vec![profile1_key.clone(), profile2_key.clone()],
     )?;
-    let envelope_network_id = envelope_data
-        .network_id
+    let envelope_network_public_key = envelope_data
+        .network_public_key
         .clone()
-        .expect("missign network id");
-    println!("   Envelope created for network: {envelope_network_id}");
+        .expect("missing network public key");
+    println!(
+        "   Envelope created for network: {} bytes",
+        envelope_network_public_key.len()
+    );
 
     println!("   ✅ Data encrypted with envelope encryption");
     println!(
@@ -578,8 +586,8 @@ async fn test_enhanced_key_management() -> Result<()> {
 
     // Verify all keys are different
     assert_ne!(user_root_public_key, profile1_key);
-    assert_ne!(profile1_key, network1_key.as_bytes());
-    assert_ne!(network1_key.as_bytes(), envelope_key1);
+    assert_ne!(profile1_key, network1_public_key);
+    assert_ne!(network1_public_key, envelope_key1);
     assert_ne!(storage_key, envelope_key1);
     println!("   ✅ All generated keys are unique");
 
@@ -663,14 +671,14 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
     );
 
     // Generate network key
-    let network_key = mobile.generate_network_data_key()?;
-    let network_id = network_key.clone();
-    println!("   Network ID: {network_id}");
+    let network_public_key = mobile.generate_network_data_key()?;
+    let _network_id = compact_id(&network_public_key);
+    println!("   Network ID: {} bytes", network_public_key.len());
 
     // Install network key on node
     let token = node.generate_csr()?;
     let network_key_msg =
-        mobile.create_network_key_message(&network_key, &token.node_agreement_public_key)?;
+        mobile.create_network_key_message(&network_public_key, &token.node_agreement_public_key)?;
     node.install_network_key(network_key_msg)?;
     println!("   ✅ Network key installed on node");
 
@@ -678,7 +686,7 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
 
     // Test 1: Encrypt with network key + EMPTY profile keys array
     println!("   🔒 Testing encryption with network key + empty profile keys array");
-    let network_public_key = mobile.get_network_public_key(&network_key)?;
+    // Use the network public key directly
 
     let envelope_data = mobile.encrypt_with_envelope(
         test_data,
@@ -687,7 +695,14 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
     )?;
 
     println!("   ✅ Encryption successful with empty profile keys array");
-    println!("      Network ID: {:?}", envelope_data.network_id);
+    println!(
+        "      Network public key: {} bytes",
+        envelope_data
+            .network_public_key
+            .as_ref()
+            .map(|k| k.len())
+            .unwrap_or(0)
+    );
     println!(
         "      Profile encrypted keys count: {}",
         envelope_data.profile_encrypted_keys.len()

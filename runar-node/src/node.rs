@@ -65,9 +65,14 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
         keys_manager.decrypt_envelope_data(env)
     }
 
-    fn get_network_public_key(&self, network_id: &str) -> KeyResult<Vec<u8>> {
+    fn get_network_public_key(&self, network_public_key: &[u8]) -> KeyResult<Vec<u8>> {
         let keys_manager = self.0.read().unwrap();
-        keys_manager.get_network_public_key(network_id)
+        keys_manager.get_network_public_key(network_public_key)
+    }
+
+    fn get_network_public_key_by_id(&self, network_id: &str) -> KeyResult<Vec<u8>> {
+        let keys_manager = self.0.read().unwrap();
+        keys_manager.get_network_public_key_by_id(network_id)
     }
 }
 
@@ -1856,7 +1861,7 @@ impl Node {
             .keys_manager
             .read()
             .unwrap()
-            .get_network_public_key(&network_id)?;
+            .get_network_public_key_by_id(&network_id)?;
 
         match self.local_request(topic_path.as_str(), params_option).await {
             Ok(response) => {
@@ -2563,7 +2568,7 @@ impl Node {
                 .keys_manager
                 .read()
                 .unwrap()
-                .get_network_public_key(&network_id)?;
+                .get_network_public_key_by_id(&network_id)?;
             // Create dynamic resolver for remote subscription (system context)
             let empty_profile_keys = vec![];
             let resolver = self.get_or_create_resolver(&empty_profile_keys)?;
@@ -2779,7 +2784,7 @@ impl Node {
                     .keys_manager
                     .read()
                     .unwrap()
-                    .get_network_public_key(&network_id)?;
+                    .get_network_public_key_by_id(&network_id)?;
                 // Create dynamic resolver for remote subscription (system context)
                 let empty_profile_keys = vec![];
                 let resolver = self.get_or_create_resolver(&empty_profile_keys)?;

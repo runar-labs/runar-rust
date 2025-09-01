@@ -108,13 +108,15 @@ impl MobileSimulator {
     fn generate_network_data_key(&mut self) -> Result<String> {
         self.logger.info("📱 Mobile: Generating network data key");
 
-        let network_id = self
+        let network_public_key = self
             .key_manager
             .generate_network_data_key()
             .context("Failed to generate network data key")?;
+        let network_id = compact_id(&network_public_key);
 
         self.logger.info(format!(
-            "📱 Mobile: Network data key generated: {network_id}"
+            "📱 Mobile: Network data key generated: {} bytes",
+            network_public_key.len()
         ));
         Ok(network_id)
     }
@@ -122,16 +124,17 @@ impl MobileSimulator {
     /// Create network key message for node
     fn create_network_key_message(
         &self,
-        network_id: &str,
+        network_public_key: &[u8],
         node_public_key: &[u8],
     ) -> Result<runar_keys::mobile::NetworkKeyMessage> {
         self.logger.info(format!(
-            "📱 Mobile: Creating network key message for network: {network_id}"
+            "📱 Mobile: Creating network key message for network: {} bytes",
+            network_public_key.len()
         ));
 
         let network_key_message = self
             .key_manager
-            .create_network_key_message(network_id, node_public_key)
+            .create_network_key_message(network_public_key, node_public_key)
             .context("Failed to create network key message")?;
 
         Ok(network_key_message)
@@ -326,8 +329,12 @@ async fn test_e2e_cli_initialization() -> Result<()> {
 
     // Generate network key for the node
     let network_id = mobile.generate_network_data_key()?;
+    // Get the network public key from the mobile key manager
+    let network_public_key = mobile
+        .key_manager
+        .get_network_public_key_by_id(&network_id)?;
     let network_key_message = mobile.create_network_key_message(
-        &network_id,
+        &network_public_key,
         &parsed_setup_token.setup_token.node_agreement_public_key,
     )?;
     println!("   ✅ Network key generated:");

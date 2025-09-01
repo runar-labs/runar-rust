@@ -62,11 +62,8 @@ pub struct NodeKeyManager {
     ca_certificate: Option<X509Certificate>,
     /// Certificate validator
     certificate_validator: Option<CertificateValidator>,
-    /// Network agreement secrets indexed by network id
-    network_agreements: HashMap<String, P256SecretKey>,
-
-    /// Network public keys indexed by network id
-    network_public_keys: HashMap<String, Vec<u8>>,
+    /// Network agreement secrets indexed by network public key bytes
+    network_agreements: HashMap<Vec<u8>, P256SecretKey>,
 
     /// Known user profile public keys (id -> public key bytes)
     profile_public_keys: HashMap<String, Vec<u8>>,
@@ -126,7 +123,6 @@ impl NodeKeyManager {
             ca_certificate: None,
             certificate_validator: None,
             network_agreements: HashMap::new(),
-            network_public_keys: HashMap::new(),
             symmetric_keys: HashMap::new(),
             storage_key,
             node_agreement_secret,
@@ -275,16 +271,19 @@ impl NodeKeyManager {
 
     /// Decrypt envelope-encrypted data using network key
     pub fn decrypt_envelope_data(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
-        let network_id = envelope_data
-            .network_id
-            .as_ref()
-            .ok_or_else(|| KeyError::DecryptionError("Envelope missing network_id".to_string()))?;
-
-        let network_key_pair = self.network_agreements.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!(
-                "Network key pair not found for network: {network_id}"
-            ))
+        let network_public_key = envelope_data.network_public_key.as_ref().ok_or_else(|| {
+            KeyError::DecryptionError("Envelope missing network_public_key".to_string())
         })?;
+
+        let network_key_pair =
+            self.network_agreements
+                .get(network_public_key)
+                .ok_or_else(|| {
+                    KeyError::KeyNotFound(format!(
+                        "Network key pair not found for public key: {} bytes",
+                        network_public_key.len()
+                    ))
+                })?;
 
         // Ensure the encrypted envelope key is present
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
@@ -318,12 +317,9 @@ impl NodeKeyManager {
         let encrypted_envelope_key =
             self.encrypt_key_with_ecdsa(&envelope_key, network_public_key)?;
 
-        // Derive network ID from public key for storage
-        let network_id = compact_id(network_public_key);
-
         Ok(EnvelopeEncryptedData {
             encrypted_data,
-            network_id: Some(network_id),
+            network_public_key: Some(network_public_key.to_vec()),
             network_encrypted_key: encrypted_envelope_key,
             profile_encrypted_keys: HashMap::new(),
         })
@@ -647,21 +643,21 @@ impl NodeKeyManager {
         let agr = P256SecretKey::from_slice(&decrypted_scalar)
             .map_err(|e| KeyError::InvalidKeyFormat(format!("Invalid network scalar: {e}")))?;
 
-        // Store under its public key ID
+        // Store under its public key bytes
         let network_public_key_bytes = agr.public_key().to_encoded_point(false).as_bytes().to_vec();
-        let network_public_key = compact_id(&network_public_key_bytes);
         log_debug!(
             self.logger,
-            "Installed network agreement key id={network_public_key}"
+            "Installed network agreement key: {} bytes",
+            network_public_key_bytes.len()
         );
-        // Store under its public key ID
-        // Store agreement secret under its id
+        // Store agreement secret under its public key bytes
         self.network_agreements
-            .insert(network_public_key.clone(), agr);
+            .insert(network_public_key_bytes.clone(), agr);
 
         log_info!(
             self.logger,
-            "Network agreement scalar installed for network: {network_public_key}"
+            "Network agreement scalar installed: {} bytes",
+            network_public_key_bytes.len()
         );
 
         let res = Ok(());
@@ -670,54 +666,62 @@ impl NodeKeyManager {
     }
 
     /// Get network agreement key for decryption
-    pub fn get_network_agreement(&self, network_id: &str) -> Result<&P256SecretKey> {
-        self.network_agreements.get(network_id).ok_or_else(|| {
-            KeyError::KeyNotFound(format!(
-                "Network key pair not found for network: {network_id}"
-            ))
-        })
+    pub fn get_network_agreement(&self, network_public_key: &[u8]) -> Result<&P256SecretKey> {
+        self.network_agreements
+            .get(network_public_key)
+            .ok_or_else(|| {
+                KeyError::KeyNotFound(format!(
+                    "Network key pair not found for public key: {} bytes",
+                    network_public_key.len()
+                ))
+            })
     }
 
-    pub fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
-        // Check both network_data_keys and network_public_keys
-        if let Some(network_key) = self.network_agreements.get(network_id) {
-            Ok(network_key
-                .public_key()
-                .to_encoded_point(false)
-                .as_bytes()
-                .to_vec())
-        } else if let Some(network_public_key) = self.network_public_keys.get(network_id) {
-            Ok(network_public_key.clone())
+    pub fn get_network_public_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+        // Direct access - validate we have the key
+        if self.network_agreements.contains_key(network_public_key) {
+            Ok(network_public_key.to_vec())
         } else {
             Err(KeyError::KeyNotFound(format!(
-                "Network public key not found for network: {network_id}"
+                "Network key not found for public key: {} bytes",
+                network_public_key.len()
             )))
         }
+    }
+
+    /// Get network public key by network ID (for backward compatibility)
+    pub fn get_network_public_key_by_id(&self, network_id: &str) -> Result<Vec<u8>> {
+        // Search through all stored network agreements to find one that matches the network_id
+        for public_key in self.network_agreements.keys() {
+            let derived_id = compact_id(public_key);
+            if derived_id == network_id {
+                return Ok(public_key.clone());
+            }
+        }
+        Err(KeyError::KeyNotFound(format!(
+            "Network key not found for network ID: {network_id}"
+        )))
     }
 
     /// Encrypt data for network transmission
     pub fn encrypt_for_network(
         &self,
         data: &[u8],
-        network_id: &str,
+        network_public_key: &[u8],
     ) -> Result<EnvelopeEncryptedData> {
-        // Resolve network ID to public key
-        let network_public_key = self.get_network_public_key(network_id)?;
-        // Use envelope encryption with the resolved public key
+        // Use envelope encryption with the provided public key
         let envelope_data =
-            NodeKeyManager::encrypt_with_envelope(self, data, Some(&network_public_key), vec![])?;
-        // Return just the encrypted data for compatibility
+            NodeKeyManager::encrypt_with_envelope(self, data, Some(network_public_key), vec![])?;
         Ok(envelope_data)
     }
 
     /// Decrypt network data
     pub fn decrypt_network_data(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
-        let network_id = envelope_data
-            .network_id
-            .as_ref()
-            .ok_or_else(|| KeyError::DecryptionError("Envelope missing network_id".to_string()))?;
+        let network_public_key = envelope_data.network_public_key.as_ref().ok_or_else(|| {
+            KeyError::DecryptionError("Envelope missing network_public_key".to_string())
+        })?;
 
-        let network_agreement = self.get_network_agreement(network_id)?;
+        let network_agreement = self.get_network_agreement(network_public_key)?;
 
         let encrypted_envelope_key = &envelope_data.network_encrypted_key;
 
@@ -876,13 +880,12 @@ impl NodeKeyManager {
 
         // Encrypt envelope key with network key if network_public_key provided
         let mut network_encrypted_key = Vec::new();
-        let mut network_id = None;
+        let mut stored_network_public_key = None;
         if let Some(network_public_key) = network_public_key {
-            // DIRECT USE - NO INTERNAL RESOLUTION
+            // DIRECT USE - Store public key bytes directly
             network_encrypted_key =
                 self.encrypt_key_with_ecdsa(&envelope_key, network_public_key)?;
-            // Derive network ID from public key for storage
-            network_id = Some(compact_id(network_public_key));
+            stored_network_public_key = Some(network_public_key.to_vec());
         }
 
         // Encrypt envelope key for each profile id using stored public key
@@ -895,7 +898,7 @@ impl NodeKeyManager {
 
         Ok(EnvelopeEncryptedData {
             encrypted_data,
-            network_id,
+            network_public_key: stored_network_public_key,
             network_encrypted_key,
             profile_encrypted_keys,
         })
@@ -913,8 +916,7 @@ impl NodeKeyManager {
 
     /// Check if the manager holds the private key for the given network public key.
     pub fn has_public_key(&self, public_key: &[u8]) -> bool {
-        let network_id = compact_id(public_key);
-        self.network_agreements.contains_key(&network_id)
+        self.network_agreements.contains_key(public_key)
     }
 
     /// Install a user profile public key so the node can encrypt data for that profile
@@ -947,8 +949,12 @@ impl EnvelopeCrypto for NodeKeyManager {
         NodeKeyManager::decrypt_envelope_data(self, env)
     }
 
-    fn get_network_public_key(&self, network_id: &str) -> Result<Vec<u8>> {
-        NodeKeyManager::get_network_public_key(self, network_id)
+    fn get_network_public_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+        NodeKeyManager::get_network_public_key(self, network_public_key)
+    }
+
+    fn get_network_public_key_by_id(&self, network_id: &str) -> Result<Vec<u8>> {
+        NodeKeyManager::get_network_public_key_by_id(self, network_id)
     }
 }
 
@@ -979,9 +985,8 @@ pub struct NodeKeyManagerState {
     node_certificate: Option<X509Certificate>,
     ca_certificate: Option<X509Certificate>,
     network_keys: HashMap<String, EcdsaKeyPair>,
-    /// Stored as PKCS#8 DER bytes of P-256 SecretKey
-    network_agreements: HashMap<String, Vec<u8>>,
-    network_public_keys: HashMap<String, Vec<u8>>,
+    /// Stored as PKCS#8 DER bytes of P-256 SecretKey, keyed by public key bytes
+    network_agreements: HashMap<Vec<u8>, Vec<u8>>,
     profile_public_keys: HashMap<String, Vec<u8>>,
     symmetric_keys: HashMap<String, Vec<u8>>,
     storage_key: Vec<u8>,
@@ -998,9 +1003,13 @@ impl NodeKeyManager {
             network_agreements: self
                 .network_agreements
                 .iter()
-                .map(|(id, sk)| (id.clone(), sk.to_pkcs8_der().unwrap().as_bytes().to_vec()))
+                .map(|(public_key, sk)| {
+                    (
+                        public_key.clone(),
+                        sk.to_pkcs8_der().unwrap().as_bytes().to_vec(),
+                    )
+                })
                 .collect(),
-            network_public_keys: self.network_public_keys.clone(),
             profile_public_keys: self.profile_public_keys.clone(),
             symmetric_keys: self.symmetric_keys.clone(),
             storage_key: self.storage_key.clone(),
@@ -1042,9 +1051,12 @@ impl NodeKeyManager {
             network_agreements: state
                 .network_agreements
                 .into_iter()
-                .filter_map(|(id, der)| P256SecretKey::from_pkcs8_der(&der).ok().map(|k| (id, k)))
+                .filter_map(|(public_key, der)| {
+                    P256SecretKey::from_pkcs8_der(&der)
+                        .ok()
+                        .map(|k| (public_key, k))
+                })
                 .collect(),
-            network_public_keys: state.network_public_keys,
             profile_public_keys: state.profile_public_keys,
             symmetric_keys: state.symmetric_keys,
             storage_key: state.storage_key,

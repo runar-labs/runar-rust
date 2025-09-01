@@ -60,7 +60,7 @@ mod linux_tests {
         unsafe { init_as_mobile(keys) };
 
         let mut error = create_test_error();
-        let mut key_ptr: *mut i8 = ptr::null_mut();
+        let mut key_ptr: *mut u8 = ptr::null_mut();
         let mut key_len: usize = 0;
 
         // Generate network data key
@@ -74,7 +74,7 @@ mod linux_tests {
 
         // Clean up
         if !key_ptr.is_null() {
-            rn_string_free(key_ptr);
+            rn_free(key_ptr, key_len);
         }
 
         destroy_keys_handle(keys);

@@ -433,15 +433,21 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // 5 - (mobile side) - user creates a network - generate a network key
     // The network ID is now the public key of the network key (no arbitrary strings)
-    let network_id = mobile_keys_manager
+    let network_public_key = mobile_keys_manager
         .generate_network_data_key()
         .expect("Failed to generate network data key");
-    println!("   ✅ Network data key generated with ID: {network_id}");
+    println!(
+        "   ✅ Network data key generated: {} bytes",
+        network_public_key.len()
+    );
 
     // Create network key message for the node
-    // Use the actual network_id (public key) and node's agreement public key
+    // Use the actual network_public_key and node's agreement public key
     let network_key_message = mobile_keys_manager
-        .create_network_key_message(&network_id, &setup_token_mobile.node_agreement_public_key)
+        .create_network_key_message(
+            &network_public_key,
+            &setup_token_mobile.node_agreement_public_key,
+        )
         .expect("Failed to create network key message");
 
     // The sensitive part of the network_key_message (the key itself) is already encrypted.
@@ -512,18 +518,18 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     //     user profile key and network key, so only the user or apps running in the
     //     network can decrypt it.
     let test_data = b"This is a test message that should be encrypted and decrypted";
-    // Resolve network ID to public key
-    let network_public_key = mobile_keys_manager.get_network_public_key(&network_id)?;
+    // Use the network public key directly
+    let network_public_key = &network_public_key;
     let envelope: runar_keys::mobile::EnvelopeEncryptedData = mobile_keys_manager
         .encrypt_with_envelope(
             test_data,
-            Some(&network_public_key),
+            Some(network_public_key),
             vec![restored_personal_key.clone(), profile_work_key.clone()],
         )
         .expect("Failed to encrypt data with envelope");
 
     println!("   ✅ Data encrypted with envelope encryption");
-    println!("      Network: {:?}", envelope.network_id);
+    println!("      Network: {:?}", envelope.network_public_key);
     println!(
         "      Profile recipients: {}",
         envelope.profile_encrypted_keys.len()
@@ -618,7 +624,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     let envelope_2 = mobile_keys_manager
         .encrypt_with_envelope(
             test_data_2,
-            Some(&network_public_key),
+            Some(network_public_key),
             vec![profile_personal_key.clone()],
         )
         .expect("Mobile failed to encrypt data after restoration");
@@ -796,7 +802,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     println!("   • User root key: {user_root_key_len} bytes");
     println!("   • CA public key: {user_ca_key_len} bytes");
     println!("   • Profile keys: 2 (personal, work)");
-    println!("   • Network keys: 1 ({network_id})");
+    println!("   • Network keys: 1 ({} bytes)", network_public_key.len());
     println!("   • Node certificates: 1 ({node_cert_hex})");
     println!("   • Storage encryption: ✅");
     println!("   • State persistence: ✅");

@@ -115,9 +115,10 @@ pub fn create_test_mobile_keys() -> Result<(MobileKeyManager, String)> {
     let _ = mobile_keys_manager
         .initialize_user_root_key()
         .expect("Failed to generate user root key");
-    let default_network_id = mobile_keys_manager
+    let default_network_public_key = mobile_keys_manager
         .generate_network_data_key()
         .expect("Failed to generate network data key");
+    let default_network_id = compact_ids::compact_id(&default_network_public_key);
     Ok((mobile_keys_manager, default_network_id))
 }
 
@@ -143,8 +144,12 @@ pub fn create_test_node_keys(
         .process_setup_token(&setup_token)
         .expect("Failed to process setup token");
 
+    // Get the network public key from the network_id
+    let network_public_key = mobile_keys_manager
+        .get_network_public_key_by_id(default_network_id)
+        .expect("Failed to get network public key");
     let network_key_message = mobile_keys_manager
-        .create_network_key_message(default_network_id, &setup_token.node_agreement_public_key)
+        .create_network_key_message(&network_public_key, &setup_token.node_agreement_public_key)
         .expect("Failed to create network key message");
 
     node_keys_manager
@@ -171,7 +176,7 @@ pub fn create_node_test_config() -> Result<NodeConfig> {
         create_test_node_keys(&mut mobile_keys_manager, &default_network_id)?;
 
     // Create test label resolver config
-    let network_public_key = node_keys_manager.get_network_public_key(&default_network_id)?;
+    let network_public_key = node_keys_manager.get_network_public_key_by_id(&default_network_id)?;
     let label_config = create_test_label_resolver_config(network_public_key);
 
     let config = NodeConfig::new(default_network_id.clone())
@@ -219,7 +224,8 @@ pub fn create_networked_node_test_config(total: u32) -> Result<Vec<NodeConfig>> 
         };
 
         // Create test label resolver config
-        let network_public_key = node_keys_manager.get_network_public_key(&default_network_id)?;
+        let network_public_key =
+            node_keys_manager.get_network_public_key_by_id(&default_network_id)?;
         let label_config = create_test_label_resolver_config(network_public_key);
 
         let config = NodeConfig::new(default_network_id.clone())
@@ -285,8 +291,8 @@ impl MobileSimulator {
 
         // Initialize master with user root key and network
         master_key_manager.initialize_user_root_key()?;
-        let network_id = master_key_manager.generate_network_data_key()?;
-        let network_public_key = master_key_manager.get_network_public_key(&network_id)?;
+        let network_public_key = master_key_manager.generate_network_data_key()?;
+        let network_id = compact_ids::compact_id(&network_public_key);
 
         let master = MasterMobile {
             key_manager: Arc::new(master_key_manager),
@@ -367,7 +373,7 @@ impl MobileSimulator {
 
         // Install network key from master using the existing network ID
         let network_key_message = master_key_manager.create_network_key_message(
-            &self.master.network_id,
+            &self.master.network_public_key,
             &setup_token.node_agreement_public_key,
         )?;
         node_key_manager.install_network_key(network_key_message)?;
@@ -395,7 +401,7 @@ impl MobileSimulator {
 
         // Create test label resolver config
         let network_public_key =
-            node_key_manager.get_network_public_key(&self.master.network_id)?;
+            node_key_manager.get_network_public_key_by_id(&self.master.network_id)?;
         let label_config = create_test_label_resolver_config(network_public_key);
 
         let config = NodeConfig::new(self.master.network_id.clone())

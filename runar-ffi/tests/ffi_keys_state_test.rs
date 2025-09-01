@@ -235,7 +235,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         rn_free(st_ptr, st_len);
 
         // Create a network and install on node
-        let mut nid_c: *mut c_char = std::ptr::null_mut();
+        let mut nid_c: *mut u8 = std::ptr::null_mut();
         let mut nid_len: usize = 0;
         assert_eq!(
             rn_keys_mobile_generate_network_data_key(
@@ -248,16 +248,16 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             "gen network key: {}",
             last_err()
         );
-        let nid = cstr_to_string(nid_c, nid_len);
-        rn_string_free(nid_c);
-        let nid_cs = CString::new(nid.clone()).unwrap();
+        let network_public_key = unsafe { std::slice::from_raw_parts(nid_c as *const u8, nid_len) }.to_vec();
+        rn_free(nid_c, nid_len);
 
         let mut nkm_ptr: *mut u8 = std::ptr::null_mut();
         let mut nkm_len: usize = 0;
         assert_eq!(
             rn_keys_mobile_create_network_key_message(
                 mobile_keys,
-                nid_cs.as_ptr(),
+                network_public_key.as_ptr(),
+                network_public_key.len(),
                 st_val.node_agreement_public_key.as_ptr(),
                 st_val.node_agreement_public_key.len(),
                 &mut nkm_ptr as *mut _,

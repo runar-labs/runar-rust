@@ -229,7 +229,7 @@ impl RemoteService {
             let label_resolver_cache = service.label_resolver_cache.clone();
             //let network_public_key = service.network_public_key.clone();
             let network_id = service.service_topic.network_id();
-            let network_public_key = match keystore.get_network_public_key(&network_id) {
+            let network_public_key = match keystore.get_network_public_key_by_id(&network_id) {
                 Ok(key) => key,
                 Err(e) => {
                     let error_msg =

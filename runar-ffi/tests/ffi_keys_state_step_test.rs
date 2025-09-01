@@ -60,13 +60,13 @@ fn linux_keystore_minimal_network_key_crash_repro() {
         assert_eq!(rn_keys_mobile_initialize_user_root_key(keys, &mut err), 0);
 
         // 8) rn_keys_mobile_generate_network_data_key (crash repro point)
-        let mut nid_ptr: *mut c_char = std::ptr::null_mut();
+        let mut nid_ptr: *mut u8 = std::ptr::null_mut();
         let mut nid_len: usize = 0;
         let rc =
             rn_keys_mobile_generate_network_data_key(keys, &mut nid_ptr, &mut nid_len, &mut err);
         assert_eq!(rc, 0, "generate_network_data_key failed: {}", last_err());
         if !nid_ptr.is_null() {
-            rn_string_free(nid_ptr);
+            rn_free(nid_ptr, nid_len);
         }
 
         rn_keys_free(keys);
