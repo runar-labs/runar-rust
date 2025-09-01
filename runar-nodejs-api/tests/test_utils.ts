@@ -40,50 +40,10 @@ export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promis
 }
 
 /**
- * Create a mock public key buffer for testing
- */
-export function createMockPublicKey(size: number = 65): Buffer {
-  return Buffer.alloc(size, 1);
-}
-
-/**
- * Create a mock profile key for testing
- */
-export function createMockProfileKey(): Buffer {
-  return Buffer.alloc(65, 2);
-}
-
-/**
- * Create test data buffer
+ * Create test data buffer for encryption/decryption tests
  */
 export function createTestData(size: number = 1024): Buffer {
   return Buffer.alloc(size, 0x42); // Fill with 'B'
-}
-
-/**
- * Create a mock setup token for testing
- */
-export function createMockSetupToken(): any {
-  return {
-    node_id: 'test-node-' + Date.now(),
-    node_public_key: createMockPublicKey(),
-    node_agreement_public_key: createMockPublicKey(),
-    csr_der: Buffer.alloc(100, 3)
-  };
-}
-
-/**
- * Create a mock network key message for testing
- */
-export function createMockNetworkKeyMessage(): Buffer {
-  return Buffer.alloc(100, 4);
-}
-
-/**
- * Create a mock certificate message for testing
- */
-export function createMockCertificateMessage(): Buffer {
-  return Buffer.alloc(100, 5);
 }
 
 /**
@@ -193,6 +153,114 @@ export function createFreshKeys(tmpDir?: string): any {
     console.log(`  ❌ Fresh keys creation failed after ${duration}ms:`, error);
     throw error;
   }
+}
+
+/**
+ * TestEnvironment class for proper test isolation and management
+ * Each test gets its own isolated instances to prevent cross-contamination
+ */
+export class TestEnvironment {
+  private constructor(
+    private mobileKeys: any,
+    private nodeKeys: any,
+    private networkId: string,
+    private tmpDir: string
+  ) {}
+
+  /**
+   * Factory method for mobile-only tests
+   */
+  static async createMobileOnly(tmpDir?: string): Promise<TestEnvironment> {
+    const dir = tmpDir || createTempDir();
+    const mobileKeys = await createTestMobileKeys(dir);
+    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
+    
+    return new TestEnvironment(mobileKeys, null, networkId, dir);
+  }
+
+  /**
+   * Factory method for node-only tests
+   */
+  static async createNodeOnly(tmpDir?: string): Promise<TestEnvironment> {
+    const dir = tmpDir || createTempDir();
+    const nodeKeys = createTestNodeKeys(dir);
+    
+    return new TestEnvironment(null, nodeKeys, '', dir);
+  }
+
+  /**
+   * Factory method for full environment (mobile + node)
+   */
+  static async createFullEnvironment(tmpDir?: string): Promise<TestEnvironment> {
+    const dir = tmpDir || createTempDir();
+    
+    // Create mobile first
+    const mobileKeys = await createTestMobileKeys(dir);
+    const networkId = mobileKeys.mobileGenerateNetworkDataKey();
+    
+    // Create node and set it up with mobile
+    const nodeKeys = createTestNodeKeys(dir);
+    const setupToken = nodeKeys.nodeGenerateCsr();
+    
+    // Mobile processes setup token
+    const certMessage = mobileKeys.mobileProcessSetupToken(setupToken);
+    nodeKeys.nodeInstallCertificate(certMessage);
+    
+    // Mobile creates and installs network key
+    const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(
+      networkId, 
+      nodeKeys.nodeGetAgreementPublicKey()
+    );
+    nodeKeys.nodeInstallNetworkKey(networkKeyMessage);
+    
+    return new TestEnvironment(mobileKeys, nodeKeys, networkId, dir);
+  }
+
+  // Accessors
+  getMobileKeys(): any { return this.mobileKeys; }
+  getNodeKeys(): any { return this.nodeKeys; }
+  getNetworkId(): string { return this.networkId; }
+
+  /**
+   * Cleanup method - removes temporary directory
+   */
+  cleanup(): void {
+    cleanupTempDir(this.tmpDir);
+  }
+}
+
+/**
+ * Create test mobile keys with proper initialization
+ */
+export async function createTestMobileKeys(tmpDir?: string): Promise<any> {
+  const mod = loadAddon();
+  const keys = new mod.Keys();
+  
+  if (tmpDir) {
+    keys.setPersistenceDir(tmpDir);
+    keys.enableAutoPersist(true);
+  }
+  
+  keys.initAsMobile();
+  await keys.mobileInitializeUserRootKey();
+  
+  return keys;
+}
+
+/**
+ * Create test node keys with proper initialization
+ */
+export function createTestNodeKeys(tmpDir?: string): any {
+  const mod = loadAddon();
+  const keys = new mod.Keys();
+  
+  if (tmpDir) {
+    keys.setPersistenceDir(tmpDir);
+    keys.enableAutoPersist(true);
+  }
+  
+  keys.initAsNode();
+  return keys;
 }
 
 /**
