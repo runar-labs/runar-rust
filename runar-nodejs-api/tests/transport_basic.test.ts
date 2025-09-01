@@ -5,7 +5,8 @@ import {
   loadAddon, 
   createTempDir, 
   cleanupTempDir, 
-  withTimeout
+  withTimeout,
+  uint8ArrayEquals
 } from './test_utils';
 
 describe('Transport Basic Tests', () => {
@@ -48,7 +49,7 @@ describe('Transport Basic Tests', () => {
 
     // Build PeerInfo for B using its public key
     const bPk: Buffer = b.keys.nodeGetPublicKey();
-    expect(Buffer.isBuffer(bPk)).toBe(true);
+    expect(bPk instanceof Uint8Array).toBe(true);
     expect(bPk.length).toBeGreaterThan(0);
     
     await withTimeout(ta.connectPeer(cborPeerInfo(bPk, ['127.0.0.1:50312'])), 2000, 'connectPeer');
@@ -69,7 +70,7 @@ describe('Transport Basic Tests', () => {
         2000,
         'request'
       );
-      expect(Buffer.isBuffer(resp)).toBe(true);
+      expect(resp instanceof Uint8Array).toBe(true);
       console.log('   ✅ Transport request/response successful');
     } else {
       console.log('   ⚠️  Transport connection not established, skipping request test');

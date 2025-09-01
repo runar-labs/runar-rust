@@ -1,6 +1,7 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import { uint8ArrayEquals } from './test_utils';
 
 function loadAddon(): any {
   const filename = 'index.linux-x64-gnu.node';
@@ -53,7 +54,7 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
 
     // Get the user root public key (essential for encrypting setup tokens)
     const userPublicKey = mobileKeys.mobileGetUserPublicKey();
-    expect(Buffer.isBuffer(userPublicKey)).toBe(true);
+    expect(userPublicKey instanceof Uint8Array).toBe(true);
     expect(userPublicKey.length).toBeGreaterThan(0);
     console.log(`   ✅ User public key generated: ${userPublicKey.length} bytes`);
 
@@ -73,13 +74,13 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
 
     // Get the node public key (node ID) - keys are created in constructor
     const nodePublicKey = nodeKeys.nodeGetPublicKey();
-    expect(Buffer.isBuffer(nodePublicKey)).toBe(true);
+    expect(nodePublicKey instanceof Uint8Array).toBe(true);
     expect(nodePublicKey.length).toBeGreaterThan(0);
     console.log(`   ✅ Node identity created: ${nodePublicKey.length} bytes`);
 
     // Generate setup token (CSR)
     const setupTokenCbor = nodeKeys.nodeGenerateCsr();
-    expect(Buffer.isBuffer(setupTokenCbor)).toBe(true);
+    expect(setupTokenCbor instanceof Uint8Array).toBe(true);
     expect(setupTokenCbor.length).toBeGreaterThan(0);
     console.log(`   ✅ Setup token (CSR) generated: ${setupTokenCbor.length} bytes`);
 
@@ -108,7 +109,7 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     
     // 3 - (mobile side) - received the token and sign the CSR
     const certMessageCbor = mobileKeys.mobileProcessSetupToken(setupTokenForMobile);
-    expect(Buffer.isBuffer(certMessageCbor)).toBe(true);
+    expect(certMessageCbor instanceof Uint8Array).toBe(true);
     expect(certMessageCbor.length).toBeGreaterThan(0);
     console.log('   ✅ Certificate issued successfully');
 
@@ -151,11 +152,11 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     // 3.2 Mobile creates network key message
     // Get the node agreement public key for encryption
     const nodeAgreementPublicKey = nodeKeys.nodeGetAgreementPublicKey();
-    expect(Buffer.isBuffer(nodeAgreementPublicKey)).toBe(true);
+    expect(nodeAgreementPublicKey instanceof Uint8Array).toBe(true);
     expect(nodeAgreementPublicKey.length).toBeGreaterThan(0);
 
     const networkKeyMessage = mobileKeys.mobileCreateNetworkKeyMessage(networkId, nodeAgreementPublicKey);
-    expect(Buffer.isBuffer(networkKeyMessage)).toBe(true);
+    expect(networkKeyMessage instanceof Uint8Array).toBe(true);
     expect(networkKeyMessage.length).toBeGreaterThan(0);
     console.log(`   ✅ Network key message created: ${networkKeyMessage.length} bytes`);
 
@@ -167,11 +168,11 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     console.log('\n👤 ENHANCED KEY MANAGEMENT TESTING');
 
     const personalProfileKey = mobileKeys.mobileDeriveUserProfileKey('personal');
-    expect(Buffer.isBuffer(personalProfileKey)).toBe(true);
+    expect(personalProfileKey instanceof Uint8Array).toBe(true);
     expect(personalProfileKey.length).toBeGreaterThan(0);
 
     const workProfileKey = mobileKeys.mobileDeriveUserProfileKey('work');
-    expect(Buffer.isBuffer(workProfileKey)).toBe(true);
+    expect(workProfileKey instanceof Uint8Array).toBe(true);
     expect(workProfileKey.length).toBeGreaterThan(0);
 
     console.log('   ✅ Profile keys generated: personal, work');
@@ -187,19 +188,19 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     // 5.1 Mobile encrypts with envelope
     // Get network public key from network ID for envelope encryption
     const networkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkId);
-    expect(Buffer.isBuffer(networkPublicKey)).toBe(true);
+    expect(networkPublicKey instanceof Uint8Array).toBe(true);
     expect(networkPublicKey.length).toBeGreaterThan(0);
     
     const encryptedData = mobileKeys.mobileEncryptWithEnvelope(testData, networkPublicKey, profilePks);
-    expect(Buffer.isBuffer(encryptedData)).toBe(true);
-    expect(encryptedData.equals(testData)).toBe(false);
+    expect(encryptedData instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(encryptedData, testData)).toBe(false);
     console.log(`   ✅ Data encrypted with envelope: ${encryptedData.length} bytes`);
     console.log(`      Network: ${networkId} (${networkPublicKey.length} bytes)`);
     console.log(`      Profile recipients: ${profilePks.length}`);
 
     // 5.2 Node decrypts envelope
     const decryptedData = nodeKeys.nodeDecryptEnvelope(encryptedData);
-    expect(decryptedData.equals(testData)).toBe(true);
+    expect(uint8ArrayEquals(decryptedData, testData)).toBe(true);
     console.log('   ✅ Node successfully decrypted envelope data using network key');
 
     // 10 - Test node local storage encryption
@@ -208,12 +209,12 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     const fileData1 = Buffer.from('This is some secret file content that should be encrypted on the node.');
 
     const encryptedFile1 = nodeKeys.encryptLocalData(fileData1);
-    expect(Buffer.isBuffer(encryptedFile1)).toBe(true);
-    expect(encryptedFile1.equals(fileData1)).toBe(false);
+    expect(encryptedFile1 instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(encryptedFile1, fileData1)).toBe(false);
     console.log(`   ✅ Encrypted local data (hex): ${encryptedFile1.toString('hex').substring(0, 32)}...`);
 
     const decryptedFile1 = nodeKeys.decryptLocalData(encryptedFile1);
-    expect(decryptedFile1.equals(fileData1)).toBe(true);
+    expect(uint8ArrayEquals(decryptedFile1, fileData1)).toBe(true);
     console.log('   ✅ Local data encryption/decryption successful');
 
     // State serialization and restoration check for profile keys
@@ -233,11 +234,11 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
     // Additional local storage test
     const fileData2 = Buffer.from('This is secret file content to test after hydration.');
     const encryptedFile2 = nodeKeys.encryptLocalData(fileData2);
-    expect(Buffer.isBuffer(encryptedFile2)).toBe(true);
-    expect(encryptedFile2.equals(fileData2)).toBe(false);
+    expect(encryptedFile2 instanceof Uint8Array).toBe(true);
+    expect(uint8ArrayEquals(encryptedFile2, fileData2)).toBe(false);
 
     const decryptedFile2 = nodeKeys.decryptLocalData(encryptedFile2);
-    expect(decryptedFile2.equals(fileData2)).toBe(true);
+    expect(uint8ArrayEquals(decryptedFile2, fileData2)).toBe(true);
     console.log('   ✅ Local storage encryption/decryption working correctly');
 
     // ==========================================

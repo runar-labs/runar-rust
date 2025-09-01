@@ -4,7 +4,8 @@ import {
   cleanupTempDir, 
   withTimeout,
   createMobileKeys,
-  createNodeKeys
+  createNodeKeys,
+  uint8ArrayEquals
 } from './test_utils';
 
 const mod = loadAddon();
@@ -43,14 +44,14 @@ describe('Keys Basic Tests', () => {
     keys.initAsNode();
     
     const key1 = keys.ensureSymmetricKey('test-service');
-    expect(Buffer.isBuffer(key1)).toBe(true);
+    expect(key1 instanceof Uint8Array).toBe(true);
     expect(key1.length).toBe(32);
     
     const key2 = keys.ensureSymmetricKey('test-service');
-    expect(key1.equals(key2)).toBe(true);
+    expect(uint8ArrayEquals(key1, key2)).toBe(true);
     
     const key3 = keys.ensureSymmetricKey('different-service');
-    expect(key1.equals(key3)).toBe(false);
+    expect(uint8ArrayEquals(key1, key3)).toBe(false);
   });
 
   test('should handle basic keystore capabilities', () => {
