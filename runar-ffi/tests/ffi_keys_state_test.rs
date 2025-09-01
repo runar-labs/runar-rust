@@ -248,7 +248,7 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             "gen network key: {}",
             last_err()
         );
-        let network_public_key = unsafe { std::slice::from_raw_parts(nid_c as *const u8, nid_len) }.to_vec();
+        let network_public_key = std::slice::from_raw_parts(nid_c as *const u8, nid_len).to_vec();
         rn_free(nid_c, nid_len);
 
         let mut nkm_ptr: *mut u8 = std::ptr::null_mut();
@@ -503,17 +503,6 @@ fn test_ensure_symmetric_key() {
         rn_free(key2_ptr, key2_len);
         rn_free(key1_retrieved_ptr, key1_retrieved_len);
         rn_keys_free(keys);
-    }
-}
-
-#[cfg(all(feature = "linux-keystore", target_os = "linux"))]
-fn cstr_to_string(ptr: *const c_char, len: usize) -> String {
-    if ptr.is_null() || len == 0 {
-        return String::new();
-    }
-    unsafe {
-        let bytes = std::slice::from_raw_parts(ptr as *const u8, len);
-        String::from_utf8_lossy(bytes).to_string()
     }
 }
 
