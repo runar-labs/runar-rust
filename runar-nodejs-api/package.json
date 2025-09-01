@@ -24,5 +24,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "@types/bun": "^1.0.0"
+  },
+  "dependencies": {
+    "@peculiar/x509": "^1.13.0"
   }
 }
