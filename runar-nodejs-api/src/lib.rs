@@ -616,7 +616,7 @@ impl Keys {
     }
 
     #[napi]
-    pub fn mobile_get_network_public_key(
+    pub fn mobile_has_network_private_key(
         &self,
         network_public_key: Uint8Array,
     ) -> Result<Uint8Array> {
@@ -631,7 +631,7 @@ impl Keys {
             .mobile
             .as_mut()
             .unwrap()
-            .get_network_public_key(&network_public_key)
+            .has_network_private_key(&network_public_key)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(Uint8Array::from(pk))
     }

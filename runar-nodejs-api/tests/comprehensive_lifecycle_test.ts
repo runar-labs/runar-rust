@@ -187,7 +187,7 @@ describe('Comprehensive End-to-End Lifecycle Tests', () => {
 
     // 5.1 Mobile encrypts with envelope
     // Get network public key from network ID for envelope encryption
-    const retrievedNetworkPublicKey = mobileKeys.mobileGetNetworkPublicKey(networkPublicKey);
+    const retrievedNetworkPublicKey = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
     expect(retrievedNetworkPublicKey instanceof Uint8Array).toBe(true);
     expect(retrievedNetworkPublicKey.length).toBeGreaterThan(0);
     

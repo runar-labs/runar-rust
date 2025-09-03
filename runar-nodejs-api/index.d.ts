@@ -63,7 +63,7 @@ export declare class Keys {
   encryptMessageForMobile(message: Uint8Array, mobilePk: Uint8Array): Uint8Array
   decryptMessageFromMobile(encrypted: Uint8Array): Uint8Array
   mobileDeriveUserProfileKey(label: string): Uint8Array
-  mobileGetNetworkPublicKey(networkPublicKey: Uint8Array): Uint8Array
+  mobileHasNetworkPrivateKey(networkPublicKey: Uint8Array): Uint8Array
   mobileCreateNetworkKeyMessage(networkPublicKey: Uint8Array, nodeAgreementPk: Uint8Array): Uint8Array
   ensureSymmetricKey(keyName: string): Uint8Array
   /**

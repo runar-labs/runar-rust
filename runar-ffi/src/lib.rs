@@ -1634,7 +1634,7 @@ pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
+pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
     keys: *mut c_void,
     network_public_key: *const u8,
     network_public_key_len: usize,
@@ -1690,7 +1690,7 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
 
     let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
 
-    match mobile_manager.get_network_public_key(network_pk) {
+    match mobile_manager.has_network_private_key(network_pk) {
         Ok(pk) => {
             if !alloc_bytes(out_pk, out_len, &pk) {
                 set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
@@ -1703,7 +1703,7 @@ pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key(
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
-                &format!("get_network_public_key failed: {e}"),
+                &format!("has_network_private_key failed: {e}"),
             );
             RN_ERROR_OPERATION_FAILED
         }
