@@ -6,7 +6,7 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 use runar_common::logging::{Component, Logger};
-use runar_keys::{MobileKeyManager, NodeKeyManager};
+use runar_keys::{EnvelopeCrypto, MobileKeyManager, NodeKeyManager};
 use runar_schemas::NodeInfo;
 
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
@@ -373,7 +373,7 @@ impl Keys {
             .mobile
             .as_ref()
             .unwrap()
-            .decrypt_with_network(&eed)
+            .decrypt_envelope_data(&eed)
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
         Ok(Uint8Array::from(plain))
