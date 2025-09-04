@@ -172,12 +172,12 @@ int32_t rn_keys_mobile_generate_network_data_key(void *keys,
                                                  size_t *out_len,
                                                  struct RNAPIRnError *err);
 
-int32_t rn_keys_mobile_get_network_public_key(void *keys,
-                                              const uint8_t *network_public_key,
-                                              size_t network_public_key_len,
-                                              uint8_t **out_pk,
-                                              size_t *out_len,
-                                              struct RNAPIRnError *err);
+int32_t rn_keys_mobile_has_network_private_key(void *keys,
+                                               const uint8_t *network_public_key,
+                                               size_t network_public_key_len,
+                                               uint8_t **out_pk,
+                                               size_t *out_len,
+                                               struct RNAPIRnError *err);
 
 int32_t rn_keys_mobile_create_network_key_message(void *keys,
                                                   const uint8_t *network_public_key,

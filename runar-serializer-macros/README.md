@@ -73,7 +73,7 @@ let logger = Arc::new(Logger::new_root(Component::System, "doc-example"));
 
 let mut network_master = MobileKeyManager::new(logger.clone())?;
 let network_id = network_master.generate_network_data_key()?;
-let network_pub = network_master.get_network_public_key(&network_id)?;
+let network_pub = network_master.has_network_private_key(&network_id)?;
 
 let mut user_mobile = MobileKeyManager::new(logger.clone())?;
 user_mobile.initialize_user_root_key()?;

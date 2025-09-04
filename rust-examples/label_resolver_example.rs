@@ -190,7 +190,7 @@ impl runar_serializer::traits::EnvelopeCrypto for ExampleKeyStore {
         unimplemented!("This is just an example")
     }
 
-    fn get_network_public_key(
+    fn has_network_private_key(
         &self,
         _network_public_key: &[u8],
     ) -> Result<Vec<u8>, runar_keys::error::KeyError> {

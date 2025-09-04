@@ -6,7 +6,7 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 use runar_common::logging::{Component, Logger};
-use runar_keys::{MobileKeyManager, NodeKeyManager};
+use runar_keys::{EnvelopeCrypto, MobileKeyManager, NodeKeyManager};
 use runar_schemas::NodeInfo;
 
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
@@ -373,7 +373,7 @@ impl Keys {
             .mobile
             .as_ref()
             .unwrap()
-            .decrypt_with_network(&eed)
+            .decrypt_envelope_data(&eed)
             .map_err(|e| Error::from_reason(e.to_string()))?;
 
         Ok(Uint8Array::from(plain))
@@ -616,7 +616,7 @@ impl Keys {
     }
 
     #[napi]
-    pub fn mobile_get_network_public_key(
+    pub fn mobile_has_network_private_key(
         &self,
         network_public_key: Uint8Array,
     ) -> Result<Uint8Array> {
@@ -631,7 +631,7 @@ impl Keys {
             .mobile
             .as_mut()
             .unwrap()
-            .get_network_public_key(&network_public_key)
+            .has_network_private_key(&network_public_key)
             .map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(Uint8Array::from(pk))
     }

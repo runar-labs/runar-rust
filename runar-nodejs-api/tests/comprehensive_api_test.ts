@@ -152,7 +152,7 @@ describe('Comprehensive API Tests', () => {
       const testPk = Buffer.alloc(65, 1); // Mock public key
       keys.mobileInstallNetworkPublicKey(testPk);
       const networkPublicKey = keys.mobileGenerateNetworkDataKey();
-      const pk = keys.mobileGetNetworkPublicKey(networkPublicKey);
+      const pk = keys.mobileHasNetworkPrivateKey(networkPublicKey);
       expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
     }, 10000);

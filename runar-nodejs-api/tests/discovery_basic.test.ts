@@ -77,7 +77,7 @@ describe('Discovery Basic Tests', () => {
     const testPk = Buffer.alloc(65, 0x42); // Use valid key format
     expect(() => mobileKeys.mobileInstallNetworkPublicKey(testPk)).not.toThrow();
 
-    const networkPk = mobileKeys.mobileGetNetworkPublicKey(networkPublicKey);
+    const networkPk = mobileKeys.mobileHasNetworkPrivateKey(networkPublicKey);
     expect(networkPk instanceof Uint8Array).toBe(true);
     expect(networkPk.length).toBeGreaterThan(0);
 
