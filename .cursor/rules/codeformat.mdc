@@ -1,7 +1,5 @@
 ---
-description: 
-globs: *.rs
-alwaysApply: false
+alwaysApply: true
 ---
 after making changes make sure the file compiles and all clippy warnings are fixed.
 

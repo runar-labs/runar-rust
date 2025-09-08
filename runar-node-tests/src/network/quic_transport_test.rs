@@ -7,7 +7,7 @@ async fn test_dial_cancel_on_inbound_connect(
     // PeerInfo not used in this test
     use runar_transporter::transport::NetworkTransport;
     use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock as StdRwLock};
     use std::time::Duration;
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
@@ -1607,7 +1607,7 @@ async fn test_transport_start_stop_idempotence(
 
     let t = Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_key_manager(Arc::new(km))
+            .with_key_manager(Arc::new(StdRwLock::new(km)))
             .with_local_node_public_key(local_pk.clone())
             .with_get_local_node_info(get_local_node_info)
             .with_bind_addr("127.0.0.1:50201".parse()?)

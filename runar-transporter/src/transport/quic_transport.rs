@@ -5,7 +5,7 @@ use std::{
     error::Error,
     fmt::{Debug, Formatter, Result as FmtResult},
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, RwLock as StdRwLock},
 };
 
 use async_trait::async_trait;
@@ -72,7 +72,7 @@ pub struct QuicTransportOptions {
     // Effective maximum message size (bytes) enforced by framing
     max_message_size: Option<usize>,
     // Optional: use key manager directly for certs/keys/roots
-    key_manager: Option<Arc<NodeKeyManager>>,
+    key_manager: Option<Arc<StdRwLock<NodeKeyManager>>>,
 }
 
 impl Debug for QuicTransportOptions {
@@ -272,7 +272,7 @@ impl QuicTransportOptions {
         self
     }
 
-    pub fn with_key_manager(mut self, key_manager: Arc<NodeKeyManager>) -> Self {
+    pub fn with_key_manager(mut self, key_manager: Arc<StdRwLock<NodeKeyManager>>) -> Self {
         self.key_manager = Some(key_manager);
         self
     }
@@ -311,7 +311,7 @@ impl QuicTransportOptions {
         self.max_message_size
     }
 
-    pub fn key_manager(&self) -> Option<&Arc<NodeKeyManager>> {
+    pub fn key_manager(&self) -> Option<&Arc<StdRwLock<NodeKeyManager>>> {
         self.key_manager.as_ref()
     }
 }
@@ -738,11 +738,15 @@ impl QuicTransport {
         // Resolve certificates and private key either from key manager or explicit options
         let (certs, key): (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) =
             if let Some(km) = self.options.key_manager() {
-                let cfg = km.get_quic_certificate_config().map_err(|e| {
-                    NetworkError::ConfigurationError(format!(
-                        "Failed to get QUIC certificate config from key manager: {e}"
-                    ))
-                })?;
+                let cfg = km
+                    .read()
+                    .unwrap()
+                    .get_quic_certificate_config()
+                    .map_err(|e| {
+                        NetworkError::ConfigurationError(format!(
+                            "Failed to get QUIC certificate config from key manager: {e}"
+                        ))
+                    })?;
                 (cfg.certificate_chain, cfg.private_key)
             } else {
                 let certs = self
@@ -796,9 +800,13 @@ impl QuicTransport {
             }
         } else if let Some(km) = self.options.key_manager() {
             // Use CA from key manager certificate chain (append all for simplicity)
-            let cfg = km.get_quic_certificate_config().map_err(|e| {
-                NetworkError::ConfigurationError(format!("Failed to get certs for roots: {e}"))
-            })?;
+            let cfg = km
+                .read()
+                .unwrap()
+                .get_quic_certificate_config()
+                .map_err(|e| {
+                    NetworkError::ConfigurationError(format!("Failed to get certs for roots: {e}"))
+                })?;
             for der in cfg.certificate_chain.iter() {
                 root_store.add(der.clone()).map_err(|e| {
                     NetworkError::ConfigurationError(format!("Failed to add key-manager root: {e}"))

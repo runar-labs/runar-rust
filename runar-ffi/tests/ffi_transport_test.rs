@@ -14,7 +14,6 @@ struct RnError {
 // no-op: legacy callback removed in favor of push-based API
 
 #[test]
-#[ignore] // TODO: Enable when transport integration is implemented
 fn two_transports_request_response() {
     unsafe {
         let mut err = RnError {
@@ -204,45 +203,26 @@ fn two_transports_request_response() {
         let peer_id = runar_common::compact_ids::compact_id(&peer.public_key);
 
         // Create CBOR request parameters
-        let request_params = serde_cbor::to_vec(&serde_cbor::Value::Map({
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text("/echo".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text("c1".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(b"hello".to_vec()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("dest_peer_id".into()),
-                serde_cbor::Value::Text(peer_id),
-            );
-            map.insert(
-                serde_cbor::Value::Text("network_public_key".into()),
-                serde_cbor::Value::Null,
-            );
-            map.insert(
-                serde_cbor::Value::Text("profile_public_keys".into()),
-                serde_cbor::Value::Array(vec![]),
-            );
-            map
-        }))
+        let request_params = serde_cbor::to_vec(&TransportRequestParams {
+            path: "/echo".to_string(),
+            correlation_id: "c1".to_string(),
+            payload: b"hello".to_vec(),
+            dest_peer_id: peer_id,
+            network_public_key: None,
+            profile_public_keys: vec![],
+        })
         .unwrap();
 
-        assert_eq!(
-            rn_transport_request(
-                tb,
-                request_params.as_ptr(),
-                request_params.len(),
-                &mut err as *mut _ as *mut _
-            ),
-            0
+        let result = rn_transport_request(
+            tb,
+            request_params.as_ptr(),
+            request_params.len(),
+            &mut err as *mut _ as *mut _,
         );
+        if result != 0 {
+            let error_msg = std::ffi::CStr::from_ptr(err.message).to_string_lossy();
+            panic!("Transport request failed with code {result}: {error_msg}");
+        }
 
         // Handle request on A then complete
         let mut rid_c: Option<CString> = None;
@@ -274,22 +254,11 @@ fn two_transports_request_response() {
         let rid = rid_c.expect("no request received on server");
 
         // Create CBOR complete request parameters
-        let complete_params = serde_cbor::to_vec(&serde_cbor::Value::Map({
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("request_id".into()),
-                serde_cbor::Value::Text(rid.to_string_lossy().to_string()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("response_payload".into()),
-                serde_cbor::Value::Bytes(b"world".to_vec()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("profile_public_keys".into()),
-                serde_cbor::Value::Array(vec![]),
-            );
-            map
-        }))
+        let complete_params = serde_cbor::to_vec(&TransportCompleteRequestParams {
+            request_id: rid.to_string_lossy().to_string(),
+            response_payload: b"world".to_vec(),
+            profile_public_keys: vec![],
+        })
         .unwrap();
 
         assert_eq!(

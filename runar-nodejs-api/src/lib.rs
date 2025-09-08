@@ -14,7 +14,7 @@ use runar_transporter::transport::NetworkTransport;
 use runar_transporter::{NodeDiscovery, QuicTransport, QuicTransportOptions};
 use serde_cbor as cbor;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
@@ -32,9 +32,8 @@ pub struct Keys {
 }
 
 struct KeysInner {
-    node_owned: Option<NodeKeyManager>,
-    node_shared: Option<Arc<NodeKeyManager>>,
-    mobile: Option<MobileKeyManager>,
+    node_key_manager: Option<Arc<StdRwLock<NodeKeyManager>>>,
+    mobile_key_manager: Option<Arc<StdRwLock<MobileKeyManager>>>,
     persistence_dir: Option<String>,
     auto_persist: bool,
     logger: Arc<Logger>,
@@ -49,9 +48,8 @@ impl Keys {
         let logger = Arc::new(Logger::new_root(Component::Keys));
         Keys {
             inner: Arc::new(Mutex::new(KeysInner {
-                node_owned: None,
-                node_shared: None,
-                mobile: None,
+                node_key_manager: None,
+                mobile_key_manager: None,
                 persistence_dir: None,
                 auto_persist: true,
                 logger,
@@ -68,16 +66,15 @@ impl Keys {
         let mut inner = self.inner.lock().unwrap();
 
         // Check if already initialized as node
-        if inner.node_owned.is_some() || inner.node_shared.is_some() {
+        if inner.node_key_manager.is_some() {
             return Err(Error::from_reason("Already initialized as node manager"));
         }
 
         // Initialize mobile manager if not already present
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
-                MobileKeyManager::new(inner.logger.clone())
-                    .map_err(|e| Error::from_reason(e.to_string()))?,
-            );
+        if inner.mobile_key_manager.is_none() {
+            let mobile = MobileKeyManager::new(inner.logger.clone())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(mobile)));
         }
 
         Ok(())
@@ -90,17 +87,17 @@ impl Keys {
         let mut inner = self.inner.lock().unwrap();
 
         // Check if already initialized as mobile
-        if inner.mobile.is_some() {
+        if inner.mobile_key_manager.is_some() {
             return Err(Error::from_reason("Already initialized as mobile manager"));
         }
 
         // Initialize node manager if not already present
-        if inner.node_owned.is_none() && inner.node_shared.is_none() {
+        if inner.node_key_manager.is_none() {
             let node = NodeKeyManager::new(inner.logger.clone())
                 .map_err(|e| Error::from_reason(e.to_string()))?;
             let node_id = node.get_node_id();
             inner.logger.set_node_id(node_id);
-            inner.node_owned = Some(node);
+            inner.node_key_manager = Some(Arc::new(StdRwLock::new(node)));
         }
 
         Ok(())
@@ -110,10 +107,18 @@ impl Keys {
     pub fn set_persistence_dir(&self, dir: String) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         inner.persistence_dir = Some(dir.clone());
-        if let Some(n) = inner.node_owned.as_mut() {
+        if let Some(n) = inner
+            .node_key_manager
+            .as_ref()
+            .map(|mgr| mgr.write().unwrap())
+        {
             n.set_persistence_dir(dir.clone().into());
         }
-        if let Some(m) = inner.mobile.as_mut() {
+        if let Some(m) = inner
+            .mobile_key_manager
+            .as_ref()
+            .map(|mgr| mgr.write().unwrap())
+        {
             m.set_persistence_dir(dir.into());
         }
         Ok(())
@@ -122,14 +127,14 @@ impl Keys {
     #[napi]
     pub async fn mobile_initialize_user_root_key(&self) -> Result<()> {
         let mut guard = self.inner.lock().unwrap();
-        if guard.mobile.is_none() {
-            guard.mobile = Some(
+        if guard.mobile_key_manager.is_none() {
+            guard.mobile_key_manager = Some(
                 MobileKeyManager::new(guard.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
         guard
-            .mobile
+            .mobile_key_manager
             .as_mut()
             .unwrap()
             .initialize_user_root_key()
@@ -151,11 +156,14 @@ impl Keys {
         let inner = self.inner.lock().unwrap();
 
         let mobile_manager = inner
-            .mobile
+            .mobile_key_manager
             .as_ref()
             .ok_or_else(|| Error::from_reason("Mobile manager not initialized"))?;
 
-        let network_public_key_ref = network_public_key.as_ref().map(|b| b.as_ref());
+        let network_public_key_ref = network_public_key
+            .read()
+            .unwrap()
+            .map(|b| b.read().unwrap());
         let profile_keys_ref: Vec<Vec<u8>> =
             profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
 
@@ -183,11 +191,14 @@ impl Keys {
         let inner = self.inner.lock().unwrap();
 
         let node_manager = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
             .ok_or_else(|| Error::from_reason("Node manager not initialized"))?;
 
-        let network_public_key_ref = network_public_key.as_ref().map(|b| b.as_ref());
+        let network_public_key_ref = network_public_key
+            .read()
+            .unwrap()
+            .map(|b| b.read().unwrap());
         let profile_keys_ref: Vec<Vec<u8>> =
             profile_public_keys.iter().map(|pk| pk.to_vec()).collect();
 
@@ -204,9 +215,9 @@ impl Keys {
     #[napi]
     pub fn node_get_node_id(&self) -> Result<String> {
         let inner = self.inner.lock().unwrap();
-        let id = if let Some(n) = inner.node_owned.as_ref() {
+        let id = if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_id()
-        } else if let Some(n) = inner.node_shared.as_ref() {
+        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_id()
         } else {
             return Err(Error::from_reason("Node not init"));
@@ -217,9 +228,9 @@ impl Keys {
     #[napi]
     pub fn node_get_public_key(&self) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
-        let pk = if let Some(n) = inner.node_owned.as_ref() {
+        let pk = if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_public_key()
-        } else if let Some(n) = inner.node_shared.as_ref() {
+        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_public_key()
         } else {
             return Err(Error::from_reason("Node not init"));
@@ -230,10 +241,10 @@ impl Keys {
     #[napi]
     pub fn enable_auto_persist(&self, enabled: bool) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(n) = inner.node_owned.as_mut() {
+        if let Some(n) = inner.node_key_manager.write().unwrap() {
             n.enable_auto_persist(enabled);
         }
-        if let Some(m) = inner.mobile.as_mut() {
+        if let Some(m) = inner.mobile_key_manager.write().unwrap() {
             m.enable_auto_persist(enabled);
         }
         inner.auto_persist = enabled;
@@ -243,11 +254,11 @@ impl Keys {
     #[napi]
     pub async fn wipe_persistence(&self) -> Result<()> {
         let inner = self.inner.lock().unwrap();
-        if let Some(n) = inner.node_owned.as_ref() {
+        if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.wipe_persistence()
                 .map_err(|e| Error::from_reason(e.to_string()))?;
         }
-        if let Some(m) = inner.mobile.as_ref() {
+        if let Some(m) = inner.mobile_key_manager.read().unwrap() {
             m.wipe_persistence()
                 .map_err(|e| Error::from_reason(e.to_string()))?;
         }
@@ -257,11 +268,11 @@ impl Keys {
     #[napi]
     pub async fn flush_state(&self) -> Result<()> {
         let inner = self.inner.lock().unwrap();
-        if let Some(n) = inner.node_owned.as_ref() {
+        if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.flush_state()
                 .map_err(|e| Error::from_reason(e.to_string()))?;
         }
-        if let Some(m) = inner.mobile.as_ref() {
+        if let Some(m) = inner.mobile_key_manager.read().unwrap() {
             m.flush_state()
                 .map_err(|e| Error::from_reason(e.to_string()))?;
         }
@@ -272,7 +283,7 @@ impl Keys {
     pub fn node_get_keystore_state(&self) -> Result<i32> {
         let mut inner = self.inner.lock().unwrap();
         let mut ready = 0i32;
-        if let Some(n) = inner.node_owned.as_mut() {
+        if let Some(n) = inner.node_key_manager.write().unwrap() {
             match n.probe_and_load_state() {
                 Ok(true) => ready = 1,
                 _ => ready = 0,
@@ -284,14 +295,14 @@ impl Keys {
     #[napi]
     pub fn mobile_get_keystore_state(&self) -> Result<i32> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
+        if inner.mobile_key_manager.is_none() {
+            inner.mobile_key_manager = Some(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
         let mut ready = 0i32;
-        if let Some(m) = inner.mobile.as_mut() {
+        if let Some(m) = inner.mobile_key_manager.write().unwrap() {
             match m.probe_and_load_state() {
                 Ok(true) => ready = 1,
                 _ => ready = 0,
@@ -303,9 +314,9 @@ impl Keys {
     #[napi]
     pub fn get_keystore_caps(&self) -> Result<DeviceKeystoreCaps> {
         let inner = self.inner.lock().unwrap();
-        let caps = if let Some(n) = inner.node_owned.as_ref() {
+        let caps = if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_keystore_caps().unwrap_or_default()
-        } else if let Some(m) = inner.mobile.as_ref() {
+        } else if let Some(m) = inner.mobile_key_manager.read().unwrap() {
             m.get_keystore_caps().unwrap_or_default()
         } else {
             runar_keys::keystore::DeviceKeystoreCaps::default()
@@ -333,9 +344,9 @@ impl Keys {
     pub fn encrypt_local_data(&self, data: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
-            .or(inner.node_shared.as_deref())
+            .or(inner.node_key_manager.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let out = node_ref
             .encrypt_local_data(&data)
@@ -347,9 +358,9 @@ impl Keys {
     pub fn decrypt_local_data(&self, data: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
-            .or(inner.node_shared.as_deref())
+            .or(inner.node_key_manager.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let out = node_ref
             .decrypt_local_data(&data)
@@ -362,15 +373,16 @@ impl Keys {
         let inner = self.inner.lock().unwrap();
 
         // Validate mobile manager exists
-        if inner.mobile.is_none() {
+        if inner.mobile_key_manager.is_none() {
             return Err(Error::from_reason("Mobile manager not initialized"));
         }
 
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
-            cbor::from_slice(eed_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(eed_cbor.read().unwrap())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
 
         let plain = inner
-            .mobile
+            .mobile_key_manager
             .as_ref()
             .unwrap()
             .decrypt_envelope_data(&eed)
@@ -384,16 +396,17 @@ impl Keys {
         let inner = self.inner.lock().unwrap();
 
         // Validate node manager exists
-        if inner.node_owned.is_none() && inner.node_shared.is_none() {
+        if inner.node_key_manager.is_none() && inner.node_key_manager.is_none() {
             return Err(Error::from_reason("Node manager not initialized"));
         }
 
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
-            cbor::from_slice(eed_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(eed_cbor.read().unwrap())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
 
-        let plain = if let Some(n) = inner.node_owned.as_ref() {
+        let plain = if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.decrypt_envelope_data(&eed)
-        } else if let Some(n) = inner.node_shared.as_ref() {
+        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.decrypt_envelope_data(&eed)
         } else {
             return Err(Error::from_reason("Node manager not available"));
@@ -407,7 +420,7 @@ impl Keys {
     pub fn node_generate_csr(&self) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         let n = inner
-            .node_owned
+            .node_key_manager
             .as_mut()
             .ok_or_else(|| Error::from_reason("node is shared; CSR not available".to_string()))?;
         let st = n
@@ -421,16 +434,16 @@ impl Keys {
     #[napi]
     pub fn mobile_process_setup_token(&self, st_cbor: Uint8Array) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
+        if inner.mobile_key_manager.is_none() {
+            inner.mobile_key_manager = Some(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
-        let st: runar_keys::mobile::SetupToken =
-            cbor::from_slice(st_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
+        let st: runar_keys::mobile::SetupToken = cbor::from_slice(st_cbor.read().unwrap())
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         let msg = inner
-            .mobile
+            .mobile_key_manager
             .as_mut()
             .unwrap()
             .process_setup_token(&st)
@@ -443,11 +456,12 @@ impl Keys {
     #[napi]
     pub fn node_install_certificate(&self, ncm_cbor: Uint8Array) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        let n = inner.node_owned.as_mut().ok_or_else(|| {
+        let n = inner.node_key_manager.write().unwrap().ok_or_else(|| {
             Error::from_reason("node is shared; install_certificate not available".to_string())
         })?;
         let msg: runar_keys::mobile::NodeCertificateMessage =
-            cbor::from_slice(ncm_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(ncm_cbor.read().unwrap())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
         n.install_certificate(msg)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
@@ -455,14 +469,14 @@ impl Keys {
     #[napi]
     pub fn mobile_generate_network_data_key(&self) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
+        if inner.mobile_key_manager.is_none() {
+            inner.mobile_key_manager = Some(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
         inner
-            .mobile
+            .mobile_key_manager
             .as_mut()
             .unwrap()
             .generate_network_data_key()
@@ -473,14 +487,14 @@ impl Keys {
     #[napi]
     pub fn mobile_install_network_public_key(&self, network_pk: Uint8Array) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
+        if inner.mobile_key_manager.is_none() {
+            inner.mobile_key_manager = Some(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
         inner
-            .mobile
+            .mobile_key_manager
             .as_mut()
             .unwrap()
             .install_network_public_key(&network_pk)
@@ -490,18 +504,18 @@ impl Keys {
     #[napi]
     pub fn node_install_network_key(&self, nkm_cbor: Uint8Array) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        let n = inner.node_owned.as_mut().ok_or_else(|| {
+        let n = inner.node_key_manager.write().unwrap().ok_or_else(|| {
             Error::from_reason("node is shared; install_network_key not available".to_string())
         })?;
-        let msg: runar_keys::mobile::NetworkKeyMessage =
-            cbor::from_slice(nkm_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
+        let msg: runar_keys::mobile::NetworkKeyMessage = cbor::from_slice(nkm_cbor.read().unwrap())
+            .map_err(|e| Error::from_reason(e.to_string()))?;
         n.install_network_key(msg)
             .map_err(|e| Error::from_reason(e.to_string()))
     }
 
     #[napi]
     pub fn set_local_node_info(&self, node_info_cbor: Uint8Array) -> Result<()> {
-        let info: NodeInfo = cbor::from_slice(node_info_cbor.as_ref())
+        let info: NodeInfo = cbor::from_slice(node_info_cbor.read().unwrap())
             .map_err(|e| Error::from_reason(e.to_string()))?;
         let inner = self.inner.lock().unwrap();
         let mut holder = inner.local_node_info.lock().unwrap();
@@ -517,9 +531,9 @@ impl Keys {
     ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
-            .or(inner.node_shared.as_deref())
+            .or(inner.node_key_manager.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let eed = node_ref
             .encrypt_for_public_key(&data, &recipient_pk)
@@ -537,9 +551,9 @@ impl Keys {
     ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
-            .or(inner.node_shared.as_deref())
+            .or(inner.node_key_manager.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let eed = node_ref
             .encrypt_for_network(&data, &network_public_key)
@@ -553,12 +567,13 @@ impl Keys {
     pub fn decrypt_network_data(&self, eed_cbor: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
-            .or(inner.node_shared.as_deref())
+            .or(inner.node_key_manager.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let eed: runar_keys::mobile::EnvelopeEncryptedData =
-            cbor::from_slice(eed_cbor.as_ref()).map_err(|e| Error::from_reason(e.to_string()))?;
+            cbor::from_slice(eed_cbor.read().unwrap())
+                .map_err(|e| Error::from_reason(e.to_string()))?;
         let plain = node_ref
             .decrypt_network_data(&eed)
             .map_err(|e| Error::from_reason(e.to_string()))?;
@@ -573,9 +588,9 @@ impl Keys {
     ) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
-            .or(inner.node_shared.as_deref())
+            .or(inner.node_key_manager.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let cipher = node_ref
             .encrypt_message_for_mobile(&message, &mobile_pk)
@@ -587,9 +602,9 @@ impl Keys {
     pub fn decrypt_message_from_mobile(&self, encrypted: Uint8Array) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
         let node_ref = inner
-            .node_owned
+            .node_key_manager
             .as_ref()
-            .or(inner.node_shared.as_deref())
+            .or(inner.node_key_manager.as_deref())
             .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
         let plain = node_ref
             .decrypt_message_from_mobile(&encrypted)
@@ -600,14 +615,14 @@ impl Keys {
     #[napi]
     pub fn mobile_derive_user_profile_key(&self, label: String) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
+        if inner.mobile_key_manager.is_none() {
+            inner.mobile_key_manager = Some(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
         let pk = inner
-            .mobile
+            .mobile_key_manager
             .as_mut()
             .unwrap()
             .derive_user_profile_key(&label)
@@ -621,14 +636,14 @@ impl Keys {
         network_public_key: Uint8Array,
     ) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
+        if inner.mobile_key_manager.is_none() {
+            inner.mobile_key_manager = Some(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
         let pk = inner
-            .mobile
+            .mobile_key_manager
             .as_mut()
             .unwrap()
             .has_network_private_key(&network_public_key)
@@ -643,14 +658,14 @@ impl Keys {
         node_agreement_pk: Uint8Array,
     ) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.mobile.is_none() {
-            inner.mobile = Some(
+        if inner.mobile_key_manager.is_none() {
+            inner.mobile_key_manager = Some(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             );
         }
         let msg = inner
-            .mobile
+            .mobile_key_manager
             .as_mut()
             .unwrap()
             .create_network_key_message(&network_public_key, &node_agreement_pk)
@@ -663,9 +678,9 @@ impl Keys {
     #[napi]
     pub fn ensure_symmetric_key(&self, key_name: String) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
-        let key = if let Some(n) = inner.node_owned.as_mut() {
+        let key = if let Some(n) = inner.node_key_manager.write().unwrap() {
             n.ensure_symmetric_key(&key_name)
-        } else if let Some(_n) = inner.node_shared.as_ref() {
+        } else if let Some(_n) = inner.node_key_manager.read().unwrap() {
             // For shared NodeKeyManager, we can't modify it, so we can't ensure symmetric keys
             return Err(Error::from_reason(
                 "node is shared; ensure_symmetric_key not available",
@@ -684,12 +699,12 @@ impl Keys {
         let inner = self.inner.lock().unwrap();
 
         // Validate mobile manager exists
-        if inner.mobile.is_none() {
+        if inner.mobile_key_manager.is_none() {
             return Err(Error::from_reason("Mobile manager not initialized"));
         }
 
         let pk = inner
-            .mobile
+            .mobile_key_manager
             .as_ref()
             .unwrap()
             .get_user_public_key()
@@ -705,13 +720,13 @@ impl Keys {
         let inner = self.inner.lock().unwrap();
 
         // Validate node manager exists
-        if inner.node_owned.is_none() && inner.node_shared.is_none() {
+        if inner.node_key_manager.is_none() && inner.node_key_manager.is_none() {
             return Err(Error::from_reason("Node manager not initialized"));
         }
 
-        let pk = if let Some(n) = inner.node_owned.as_ref() {
+        let pk = if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_agreement_public_key()
-        } else if let Some(n) = inner.node_shared.as_ref() {
+        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_agreement_public_key()
         } else {
             return Err(Error::from_reason("Node manager not available"));
@@ -732,10 +747,10 @@ impl Keys {
             runar_keys::keystore::linux::LinuxDeviceKeystore::new(&service, &account)
                 .map_err(|e| Error::from_reason(e.to_string()))?,
         );
-        if let Some(n) = inner.node_owned.as_mut() {
+        if let Some(n) = inner.node_key_manager.write().unwrap() {
             n.register_device_keystore(ks.clone());
         }
-        if let Some(m) = inner.mobile.as_mut() {
+        if let Some(m) = inner.mobile_key_manager.write().unwrap() {
             m.register_device_keystore(ks.clone());
         }
         Ok(())
@@ -768,25 +783,22 @@ impl Transport {
     pub fn new(keys: &Keys, options_cbor: Uint8Array) -> Result<Self> {
         // Extract shared NodeKeyManager and logger/resolver
         let (km_arc, logger, local_info_arc, node_pk) = {
-            let mut guard = keys.inner.lock().unwrap();
-            let km_arc: Arc<NodeKeyManager> = if let Some(shared) = guard.node_shared.as_ref() {
-                Arc::clone(shared)
-            } else if let Some(owned) = guard.node_owned.take() {
-                let arc = Arc::new(owned);
-                guard.node_shared = Some(Arc::clone(&arc));
-                arc
-            } else {
-                return Err(Error::from_reason("Node not init"));
-            };
+            let guard = keys.inner.lock().unwrap();
+            let km_arc = guard
+                .node_key_manager
+                .read()
+                .unwrap()
+                .ok_or_else(|| Error::from_reason("Node not init"))?
+                .clone();
             let logger = guard.logger.clone();
-            let node_pk = km_arc.get_node_public_key();
+            let node_pk = km_arc.read().unwrap().get_node_public_key();
             (km_arc, logger, guard.local_node_info.clone(), node_pk)
         };
 
         // Parse bind address from options (CBOR: { bind_addr: "ip:port" })
         let mut bind_addr: std::net::SocketAddr = "0.0.0.0:0".parse().unwrap();
         if let Ok(serde_cbor::Value::Map(map)) =
-            cbor::from_slice::<serde_cbor::Value>(options_cbor.as_ref())
+            cbor::from_slice::<serde_cbor::Value>(options_cbor.read().unwrap())
         {
             if let Some(serde_cbor::Value::Text(addr)) =
                 map.get(&serde_cbor::Value::Text("bind_addr".into()))
@@ -817,7 +829,7 @@ impl Transport {
                         Ok(info)
                     } else {
                         Ok(runar_schemas::NodeInfo {
-                            node_public_key: km_arc.get_node_public_key(),
+                            node_public_key: km_arc.read().unwrap().get_node_public_key(),
                             network_ids: Vec::new(),
                             addresses: vec!["0.0.0.0:0".to_string()],
                             node_metadata: runar_schemas::NodeMetadata {
@@ -983,7 +995,7 @@ impl Transport {
     #[napi]
     pub async fn connect_peer(&self, peer_info_cbor: Uint8Array) -> Result<()> {
         let peer: runar_transporter::discovery::multicast_discovery::PeerInfo =
-            cbor::from_slice(peer_info_cbor.as_ref())
+            cbor::from_slice(peer_info_cbor.read().unwrap())
                 .map_err(|e| Error::from_reason(format!("peer decode failed: {e}")))?;
         let t = { self.inner.lock().unwrap().transport.clone() };
         runar_transporter::transport::NetworkTransport::connect_peer(t, peer)
@@ -1059,7 +1071,7 @@ impl Transport {
 
     #[napi]
     pub async fn update_peers(&self, node_info_cbor: Uint8Array) -> Result<()> {
-        let info: runar_schemas::NodeInfo = cbor::from_slice(node_info_cbor.as_ref())
+        let info: runar_schemas::NodeInfo = cbor::from_slice(node_info_cbor.read().unwrap())
             .map_err(|e| Error::from_reason(format!("NodeInfo decode failed: {e}")))?;
         let t = { self.inner.lock().unwrap().transport.clone() };
         t.update_peers(info)
@@ -1133,16 +1145,16 @@ impl Discovery {
     #[napi(constructor)]
     pub fn new(keys: &Keys, options_cbor: Uint8Array) -> Result<Self> {
         let inner = keys.inner.lock().unwrap();
-        let node_pk = if let Some(n) = inner.node_owned.as_ref() {
+        let node_pk = if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_public_key()
-        } else if let Some(n) = inner.node_shared.as_ref() {
+        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
             n.get_node_public_key()
         } else {
             return Err(Error::from_reason("Node not init"));
         };
         let mut addrs: Vec<String> = Vec::new();
         if let Ok(serde_cbor::Value::Map(map)) =
-            cbor::from_slice::<serde_cbor::Value>(options_cbor.as_ref())
+            cbor::from_slice::<serde_cbor::Value>(options_cbor.read().unwrap())
         {
             if let Some(serde_cbor::Value::Array(arr)) =
                 map.get(&serde_cbor::Value::Text("local_addresses".into()))
@@ -1174,7 +1186,7 @@ impl Discovery {
 
     #[napi]
     pub async fn init(&self, options_cbor: Uint8Array) -> Result<()> {
-        let opts = parse_discovery_options(options_cbor.as_ref());
+        let opts = parse_discovery_options(options_cbor.read().unwrap());
         let d = { self.inner.lock().unwrap().discovery.clone() };
         d.init(opts)
             .await
@@ -1232,7 +1244,7 @@ impl Discovery {
     pub async fn update_local_peer_info(&self, peer_info_cbor: Uint8Array) -> Result<()> {
         let d = { self.inner.lock().unwrap().discovery.clone() };
         let peer: runar_transporter::discovery::multicast_discovery::PeerInfo =
-            cbor::from_slice(peer_info_cbor.as_ref())
+            cbor::from_slice(peer_info_cbor.read().unwrap())
                 .map_err(|e| Error::from_reason(e.to_string()))?;
         d.update_local_peer_info(peer)
             .await

@@ -569,7 +569,7 @@ impl ArcValue {
 
         if let Some(ctx) = context {
             let ks = &ctx.keystore;
-            let network_public_key = &ctx.network_public_key; // ← PRE-RESOLVED KEY
+            let network_public_key: &Vec<u8> = &ctx.network_public_key; // ← PRE-RESOLVED KEY
             let recipients = ctx.profile_public_keys.clone(); // ← ALL PROFILE KEYS
 
             let bytes = if let Some(ser_fn) = &self.serialize_fn {

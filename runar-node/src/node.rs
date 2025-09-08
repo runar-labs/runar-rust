@@ -1609,7 +1609,8 @@ impl Node {
                     .with_get_local_node_info(get_local_node_info)
                     .with_logger(self.logger.clone())
                     .with_request_callback(request_callback)
-                    .with_event_callback(event_callback);
+                    .with_event_callback(event_callback)
+                    .with_key_manager(self.keys_manager.clone());
 
                 let transport = QuicTransport::new(transport_options)
                     .map_err(|e| anyhow!("Failed to create QUIC transport: {e}"))?;

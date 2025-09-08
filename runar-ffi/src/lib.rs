@@ -23,7 +23,6 @@ use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDi
 use runar_transporter::{NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions};
 use serde_cbor as _; // keep dependency linked for now
                      // panic handling imports removed - no longer needed without ffi_guard
-use std::sync::atomic::AtomicU64;
 use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -114,51 +113,23 @@ pub struct TransportCompleteRequestParams {
 
 // Error types for validation
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 enum RnErrorType {
-    NullArgument(String),
-    InvalidHandle(String),
     NotInitialized,
     WrongManagerType(String),
-    OperationFailed(String),
-    SerializationFailed(String),
-    KeystoreFailed(String),
-    MemoryAllocation(String),
-    LockError(String),
-    InvalidUtf8(String),
-    InvalidArgument(String),
 }
 
 impl RnErrorType {
     fn code(&self) -> i32 {
         match self {
-            RnErrorType::NullArgument(_) => RN_ERROR_NULL_ARGUMENT,
-            RnErrorType::InvalidHandle(_) => RN_ERROR_INVALID_HANDLE,
             RnErrorType::NotInitialized => RN_ERROR_NOT_INITIALIZED,
             RnErrorType::WrongManagerType(_) => RN_ERROR_WRONG_MANAGER_TYPE,
-            RnErrorType::OperationFailed(_) => RN_ERROR_OPERATION_FAILED,
-            RnErrorType::SerializationFailed(_) => RN_ERROR_SERIALIZATION_FAILED,
-            RnErrorType::KeystoreFailed(_) => RN_ERROR_KEYSTORE_FAILED,
-            RnErrorType::MemoryAllocation(_) => RN_ERROR_MEMORY_ALLOCATION,
-            RnErrorType::LockError(_) => RN_ERROR_LOCK_ERROR,
-            RnErrorType::InvalidUtf8(_) => RN_ERROR_INVALID_UTF8,
-            RnErrorType::InvalidArgument(_) => RN_ERROR_INVALID_ARGUMENT,
         }
     }
 
     fn message(&self) -> String {
         match self {
-            RnErrorType::NullArgument(msg) => msg.clone(),
-            RnErrorType::InvalidHandle(msg) => msg.clone(),
             RnErrorType::NotInitialized => "key manager not initialized".to_string(),
             RnErrorType::WrongManagerType(msg) => msg.clone(),
-            RnErrorType::OperationFailed(msg) => msg.clone(),
-            RnErrorType::SerializationFailed(msg) => msg.clone(),
-            RnErrorType::KeystoreFailed(msg) => msg.clone(),
-            RnErrorType::MemoryAllocation(msg) => msg.clone(),
-            RnErrorType::LockError(msg) => msg.clone(),
-            RnErrorType::InvalidUtf8(msg) => msg.clone(),
-            RnErrorType::InvalidArgument(msg) => msg.clone(),
         }
     }
 }
@@ -197,33 +168,14 @@ fn validate_node_manager(inner: &KeysInner) -> Result<&Arc<RwLock<NodeKeyManager
         .ok_or_else(|| RnErrorType::NotInitialized)
 }
 
-/// Helper to work with validated mobile manager
-#[allow(dead_code)]
-fn with_validated_mobile_manager<F>(inner: &KeysInner, f: F) -> Result<(), RnErrorType>
-where
-    F: FnOnce(&mut MobileKeyManager) -> Result<(), RnErrorType>,
-{
-    let manager = validate_mobile_manager(inner)?;
-    let mut mgr = manager
-        .write()
-        .map_err(|_| RnErrorType::LockError("failed to acquire mobile manager lock".into()))?;
-    f(&mut mgr)
-}
-
-/// Helper to work with validated node manager
-#[allow(dead_code)]
-fn with_validated_node_manager<F>(inner: &KeysInner, f: F) -> Result<(), RnErrorType>
-where
-    F: FnOnce(&mut NodeKeyManager) -> Result<(), RnErrorType>,
-{
-    let manager = validate_node_manager(inner)?;
-    let mut mgr = manager
-        .write()
-        .map_err(|_| RnErrorType::LockError("failed to acquire node manager lock".into()))?;
-    f(&mut mgr)
-}
-
 // Common keystore registration helpers
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common parameter validation for keystore registration
 unsafe fn validate_keystore_params(
     keys: *mut c_void,
@@ -236,6 +188,13 @@ unsafe fn validate_keystore_params(
     Ok(inner)
 }
 
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common UTF-8 validation for keystore registration
 unsafe fn validate_utf8_string(
     ptr: *const c_char,
@@ -263,6 +222,13 @@ unsafe fn validate_utf8_string(
     }
 }
 
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common manager registration logic
 fn register_keystore_with_managers(
     inner: &mut KeysInner,
@@ -279,6 +245,13 @@ fn register_keystore_with_managers(
     inner.device_keystore = Some(keystore);
 }
 
+#[cfg(any(
+    all(
+        feature = "apple-keystore",
+        any(target_os = "macos", target_os = "ios")
+    ),
+    all(feature = "linux-keystore", target_os = "linux")
+))]
 /// Common keystore creation error handling
 fn handle_keystore_creation_error(
     err: *mut RnError,
@@ -293,10 +266,7 @@ fn handle_keystore_creation_error(
     RN_ERROR_KEYSTORE_FAILED
 }
 
-#[allow(dead_code)]
 struct TransportInner {
-    #[allow(dead_code)]
-    logger: Arc<Logger>,
     transport: Arc<QuicTransport>,
     events_tx: mpsc::Sender<Vec<u8>>,
     events_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
@@ -308,15 +278,10 @@ struct TransportInner {
             >,
         >,
     >,
-    #[allow(dead_code)]
-    request_id_seq: Arc<AtomicU64>,
     local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
 }
 
-#[allow(dead_code)]
 struct DiscoveryInner {
-    #[allow(dead_code)]
-    logger: Arc<Logger>,
     discovery: Arc<MulticastDiscovery>,
     events_tx: Option<mpsc::Sender<Vec<u8>>>,
 }
@@ -628,8 +593,16 @@ pub unsafe extern "C" fn rn_keys_node_get_keystore_state(
     };
 
     let ready = match node_manager.probe_and_load_state() {
-        Ok(true) => 1i32,
-        Ok(false) => 0i32,
+        Ok(true) => {
+            // State was loaded - update logger with loaded node ID (replaces fresh keys)
+            let node_id = node_manager.get_node_id();
+            inner.logger.set_node_id(node_id);
+            1i32
+        }
+        Ok(false) => {
+            // No state found - logger already has fresh node ID from initialization
+            0i32
+        }
         Err(e) => {
             set_error(
                 err,
@@ -2604,7 +2577,6 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
         }
     };
     let inner = DiscoveryInner {
-        logger: keys_inner.logger.clone(),
         discovery: disc,
         events_tx: None,
     };
@@ -3018,7 +2990,7 @@ pub unsafe extern "C" fn rn_keys_init_as_node(keys: *mut c_void, err: *mut RnErr
     // Initialize node manager
     match NodeKeyManager::new(inner.logger.clone()) {
         Ok(mut manager) => {
-            // Apply existing configuration
+            // Apply existing configuration first
             if let Some(ks) = &inner.device_keystore {
                 manager.register_device_keystore(ks.clone());
             }
@@ -3026,6 +2998,10 @@ pub unsafe extern "C" fn rn_keys_init_as_node(keys: *mut c_void, err: *mut RnErr
                 manager.set_persistence_dir(dir.clone());
             }
             manager.enable_auto_persist(inner.auto_persist);
+
+            // Update logger with fresh node ID immediately after key generation
+            let node_id = manager.get_node_id();
+            inner.logger.set_node_id(node_id);
 
             inner.node_key_manager = Some(Arc::new(RwLock::new(manager)));
             0
@@ -3484,24 +3460,12 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         }
     };
 
-    // Get node ID first
-    #[allow(unused_variables)]
-    let node_id = {
-        let mgr = match manager.read() {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-                return RN_ERROR_LOCK_ERROR;
-            }
-        };
-        mgr.get_node_id()
-    };
+    // Node ID is now available in the logger from keys_inner
     let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
     let _ = rx; // Suppress unused variable warning - used in future implementation
 
     // Build callbacks to emit events
     let pc_tx = tx.clone();
-    #[allow(unused_variables)]
     let pc_cb: runar_transporter::transport::PeerConnectedCallback =
         Arc::new(move |peer_id, node_info| {
             let pc_tx = pc_tx.clone();
@@ -3531,7 +3495,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         });
 
     let pd_tx = tx.clone();
-    #[allow(unused_variables)]
     let pd_cb: runar_transporter::transport::PeerDisconnectedCallback = Arc::new(move |peer_id| {
         let pd_tx = pd_tx.clone();
         Box::pin(async move {
@@ -3564,7 +3527,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         >,
     > = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let pending_cb = pending.clone();
-    #[allow(unused_variables)]
     let rq_cb: runar_transporter::transport::RequestCallback = Arc::new(move |req| {
         let req_tx = req_tx.clone();
         let pending_cb = pending_cb.clone();
@@ -3631,7 +3593,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     });
 
     let ev_tx = tx.clone();
-    #[allow(unused_variables)]
     let ev_cb: runar_transporter::transport::EventCallback = Arc::new(move |ev| {
         let ev_tx = ev_tx.clone();
         Box::pin(async move {
@@ -3672,34 +3633,26 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         );
         return 1;
     }
-    // Note: This is a temporary workaround for the transport API mismatch
-    // The transport expects Arc<NodeKeyManager> but we have Arc<RwLock<NodeKeyManager>>
-    // This should be addressed in a future architectural update
-    #[allow(unused_variables)]
-    let node_manager_for_transport = {
-        let _mgr = match manager.read() {
+    // Get node public key for transport
+    let node_public_key = {
+        let mgr = match manager.read() {
             Ok(mgr) => mgr,
             Err(_) => {
                 set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
                 return RN_ERROR_LOCK_ERROR;
             }
         };
-        // We can't easily extract the inner manager without ownership issues
-        // For now, we'll create a dummy manager - this needs proper architectural resolution
-        // This todo!() is a placeholder for future implementation when the transport API is updated
-        // to work with the new key manager structure. The code after this prepares the necessary
-        // variables for that future implementation.
-        todo!("Transport integration needs architectural update for new key manager structure")
+        mgr.get_node_public_key()
     };
 
-    // This code block is unreachable due to the todo!() above, but it prepares variables
-    // for future implementation when the transport integration is completed.
-    #[allow(unreachable_code)]
+    // Wire callbacks and key manager
     {
+        let node_manager_for_transport = manager.clone();
+        let logger = keys_inner.logger.clone();
         options = options
             .with_key_manager(node_manager_for_transport)
-            .with_local_node_public_key(node_manager_for_transport.get_node_public_key())
-            .with_logger_from_node_id(node_id)
+            .with_local_node_public_key(node_public_key)
+            .with_logger(logger)
             .with_peer_connected_callback(pc_cb)
             .with_peer_disconnected_callback(pd_cb)
             .with_request_callback(rq_cb)
@@ -3729,12 +3682,10 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         }
     };
     let inner = TransportInner {
-        logger: keys_inner.logger.clone(),
         transport,
         events_tx: tx,
         events_rx: Mutex::new(rx),
         pending,
-        request_id_seq: Arc::new(AtomicU64::new(1)),
         local_node_info: keys_inner.local_node_info.clone(),
     };
     let handle = FfiTransportHandle {
