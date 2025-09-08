@@ -67,7 +67,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
         .generate_csr()
         .context("Failed to generate certificate signing request")?;
 
-    let node_public_key = node_key_manager.get_node_public_key();
+    let node_public_key = node_key_manager.get_node_public_key().unwrap();
     let node_id = compact_id(&node_public_key);
     println!("   ✅ Node keys generated:");
     println!("      Node ID: {node_id}");

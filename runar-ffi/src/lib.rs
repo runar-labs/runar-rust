@@ -545,7 +545,9 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
             let node_id = mgr.get_node_id();
             let _ = runar_keys::keystore::persistence::wipe(
                 &cfg,
-                &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
+                &runar_keys::keystore::persistence::Role::Node {
+                    node_id: &node_id.unwrap_or_else(|| "unknown".to_string()),
+                },
             );
         }
     }
@@ -594,14 +596,25 @@ pub unsafe extern "C" fn rn_keys_node_get_keystore_state(
 
     let ready = match node_manager.probe_and_load_state() {
         Ok(true) => {
-            // State was loaded - update logger with loaded node ID (replaces fresh keys)
-            let node_id = node_manager.get_node_id();
-            inner.logger.set_node_id(node_id);
+            // State was loaded - logger was updated in probe_and_load_state
             1i32
         }
         Ok(false) => {
-            // No state found - logger already has fresh node ID from initialization
-            0i32
+            // No state found - generate keys and update logger
+            match node_manager.generate_keys() {
+                Ok(()) => {
+                    // Logger was updated in generate_keys
+                    0i32
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_KEYSTORE_FAILED,
+                        &format!("failed to generate keys: {e}"),
+                    );
+                    return RN_ERROR_KEYSTORE_FAILED;
+                }
+            }
         }
         Err(e) => {
             set_error(
@@ -2561,7 +2574,7 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
     let node_pk = node_manager.get_node_public_key();
 
     let local_peer = PeerInfo {
-        public_key: node_pk,
+        public_key: node_pk.unwrap_or_default(),
         addresses,
     };
     let logger = keys_inner.logger.as_ref().clone();
@@ -2999,9 +3012,7 @@ pub unsafe extern "C" fn rn_keys_init_as_node(keys: *mut c_void, err: *mut RnErr
             }
             manager.enable_auto_persist(inner.auto_persist);
 
-            // Update logger with fresh node ID immediately after key generation
-            let node_id = manager.get_node_id();
-            inner.logger.set_node_id(node_id);
+            // Don't update logger here - node_id will be set after keys are generated or state is loaded
 
             inner.node_key_manager = Some(Arc::new(RwLock::new(manager)));
             0
@@ -3058,7 +3069,17 @@ pub extern "C" fn rn_keys_node_get_public_key(
         }
     };
 
-    let pk = node_manager.get_node_public_key();
+    let pk = match node_manager.get_node_public_key() {
+        Some(pk) => pk,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Node keys not available - call rn_keys_node_get_keystore_state first",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
     if !alloc_bytes(out, out_len, &pk) {
         set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
         return RN_ERROR_MEMORY_ALLOCATION;
@@ -3139,7 +3160,11 @@ pub extern "C" fn rn_keys_node_get_node_id(
     };
 
     let node_id = node_manager.get_node_id();
-    if !alloc_string(out_str, out_len, &node_id) {
+    if !alloc_string(
+        out_str,
+        out_len,
+        &node_id.unwrap_or_else(|| "unknown".to_string()),
+    ) {
         set_error(err, 3, "invalid out pointers or string alloc failed");
         return 3;
     }
@@ -3651,7 +3676,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         let logger = keys_inner.logger.clone();
         options = options
             .with_key_manager(node_manager_for_transport)
-            .with_local_node_public_key(node_public_key)
+            .with_local_node_public_key(node_public_key.unwrap_or_default())
             .with_logger(logger)
             .with_peer_connected_callback(pc_cb)
             .with_peer_disconnected_callback(pd_cb)
@@ -3673,6 +3698,88 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             })
         });
     options = options.with_get_local_node_info(get_local_node_info_cb);
+
+    // Configure mTLS - get certificate configuration from key manager
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire lock for certificate config",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get certificate configuration for mTLS
+    let cert_config = match node_manager.get_quic_certificate_config() {
+        Ok(config) => config,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to get certificate config: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Get node public key for local identity
+    let node_public_key = match node_manager.get_node_public_key() {
+        Some(pk) => pk,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Node public key not available",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Extract CA certificate from certificate chain (last certificate in chain)
+    let ca_cert = match cert_config.certificate_chain.last() {
+        Some(cert) => cert,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "CA certificate not found in certificate chain",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Configure mTLS options
+    options = options
+        .with_key_manager(manager.clone())
+        .with_root_certificates(vec![ca_cert.clone()])
+        .with_local_node_public_key(node_public_key);
+
+    // Configure required callbacks for transport to work
+    let request_callback: runar_transporter::transport::RequestCallback = Arc::new(|_request| {
+        Box::pin(async move {
+            Ok(runar_schemas::ResponseMessage {
+                request_id: "".to_string(),
+                response_data: vec![],
+                error: None,
+            })
+        })
+    });
+
+    let event_callback: runar_transporter::transport::EventCallback =
+        Arc::new(|_event| Box::pin(async move { Ok(()) }));
+
+    let logger = Arc::new(runar_common::logging::Logger::new_root(
+        runar_common::logging::Component::Custom("ffi_transport"),
+    ));
+
+    options = options
+        .with_request_callback(request_callback)
+        .with_event_callback(event_callback)
+        .with_logger(logger);
+
     // Construct transport
     let transport = match QuicTransport::new(options) {
         Ok(t) => Arc::new(t),

@@ -66,6 +66,11 @@ fn test_complete_ffi_key_management_lifecycle() {
     let node_keys = create_keys_handle();
     unsafe { init_as_node(node_keys) };
 
+    // Generate keys first
+    let mut state = 0i32;
+    let result = unsafe { rn_keys_node_get_keystore_state(node_keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
+
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
     // and generate a setup handshake token which contains the CSR request and the node public key
     // which will be presented as QR code.. here in the test we use the token as a string directly.

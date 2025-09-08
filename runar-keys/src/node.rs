@@ -54,8 +54,8 @@ pub enum CertificateStatus {
 
 /// Node Key Manager for certificate requests and management
 pub struct NodeKeyManager {
-    /// Node's identity key pair (always present)
-    node_key_pair: EcdsaKeyPair,
+    /// Node's identity key pair (optional until generated/loaded)
+    node_key_pair: Option<EcdsaKeyPair>,
     /// Node's certificate (if issued by CA)
     node_certificate: Option<X509Certificate>,
     /// CA certificate for validation
@@ -67,12 +67,16 @@ pub struct NodeKeyManager {
 
     /// Known user profile public keys (id -> public key bytes)
     profile_public_keys: HashMap<String, Vec<u8>>,
+    /// User profile agreement keys (profile_id -> secret key)
+    user_profile_agreements: HashMap<String, P256SecretKey>,
+    /// Label to profile ID mapping
+    label_to_pid: HashMap<String, String>,
     /// Symmetric keys indexed by key name for services
     symmetric_keys: HashMap<String, Vec<u8>>,
-    /// Node storage key for local file encryption (always present)
-    storage_key: Vec<u8>,
-    /// Node agreement private key (used for ECIES)
-    node_agreement_secret: P256SecretKey,
+    /// Node storage key for local file encryption (optional until derived)
+    storage_key: Option<Vec<u8>>,
+    /// Node agreement private key (used for ECIES) (optional until derived)
+    node_agreement_secret: Option<P256SecretKey>,
     /// Certificate status
     certificate_status: CertificateStatus,
     /// Logger instance
@@ -86,8 +90,40 @@ pub struct NodeKeyManager {
 }
 
 impl NodeKeyManager {
-    /// Create a new Node Key Manager with fresh keys
+    /// Create a new Node Key Manager (initialize structure only, no key generation)
     pub fn new(logger: Arc<Logger>) -> Result<Self> {
+        log_debug!(
+            logger,
+            "Node Key Manager initialized (no keys generated yet)"
+        );
+
+        Ok(Self {
+            node_key_pair: None,
+            node_certificate: None,
+            ca_certificate: None,
+            certificate_validator: None,
+            network_agreements: HashMap::new(),
+            symmetric_keys: HashMap::new(),
+            storage_key: None,
+            node_agreement_secret: None,
+            certificate_status: CertificateStatus::None,
+            logger,
+            profile_public_keys: HashMap::new(),
+            user_profile_agreements: HashMap::new(),
+            label_to_pid: HashMap::new(),
+            device_keystore: None,
+            persistence: None,
+            auto_persist: true,
+        })
+    }
+
+    /// Generate node keys (moved from new() to support lazy initialization)
+    pub fn generate_keys(&mut self) -> Result<()> {
+        // Check if keys are already generated (idempotent)
+        if self.node_key_pair.is_some() {
+            return Ok(());
+        }
+
         // Generate node identity key pair
         let node_key_pair = EcdsaKeyPair::new()?;
 
@@ -109,30 +145,148 @@ impl NodeKeyManager {
             b"runar-v1:node-identity:agreement",
         )?;
 
+        // Update logger with node ID (only if not already set)
         let node_public_key = node_key_pair.public_key_bytes();
         let node_public_key_str = compact_id(&node_public_key);
-        log_info!(
-            logger,
-            "Node Key Manager created with identity: {node_public_key_str}"
-        );
-        log_debug!(logger, "Node storage key generated for local encryption");
+        if self.logger.node_id() == "unknown" {
+            self.logger.set_node_id(node_public_key_str.clone());
+        }
 
-        Ok(Self {
-            node_key_pair,
-            node_certificate: None,
-            ca_certificate: None,
-            certificate_validator: None,
-            network_agreements: HashMap::new(),
-            symmetric_keys: HashMap::new(),
-            storage_key,
-            node_agreement_secret,
-            certificate_status: CertificateStatus::None,
-            logger,
-            profile_public_keys: HashMap::new(),
-            device_keystore: None,
-            persistence: None,
-            auto_persist: true,
-        })
+        log_info!(
+            self.logger,
+            "Node Key Manager keys generated with identity: {node_public_key_str}"
+        );
+        log_debug!(
+            self.logger,
+            "Node storage key generated for local encryption"
+        );
+
+        // Store the generated keys
+        self.node_key_pair = Some(node_key_pair);
+        self.storage_key = Some(storage_key);
+        self.node_agreement_secret = Some(node_agreement_secret);
+
+        Ok(())
+    }
+
+    /// Derive and store a user profile agreement key
+    pub fn derive_user_profile_key(&mut self, label: &str) -> Result<Vec<u8>> {
+        let Some(node_key_pair) = &self.node_key_pair else {
+            return Err(KeyError::KeyNotFound(
+                "Node key pair not available for profile key derivation".to_string(),
+            ));
+        };
+
+        // Use the same derivation scheme as MobileKeyManager
+        let salt = b"RunarKeyDerivationSalt/v1";
+        let info_prefix = b"runar-v1:profile:agreement:";
+
+        // Derive agreement key using HKDF-SHA-256 with rejection sampling
+        let mut counter = 0u32;
+        let agreement_secret = loop {
+            let info = format!("{}{}", String::from_utf8_lossy(info_prefix), label);
+            if counter > 0 {
+                let _info = format!("{}{}", info, counter);
+            }
+
+            let ikm = node_key_pair.signing_key().to_bytes();
+            let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm.as_slice());
+            let mut key_bytes = [0u8; 32];
+            hk.expand(info.as_bytes(), &mut key_bytes)
+                .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
+
+            // Try to create P256 secret key with rejection sampling
+            if let Ok(secret_key) = P256SecretKey::from_slice(&key_bytes) {
+                break secret_key;
+            }
+
+            counter += 1;
+            if counter > 1000 {
+                return Err(KeyError::KeyDerivationError(
+                    "Failed to derive valid P256 key after 1000 attempts".to_string(),
+                ));
+            }
+        };
+
+        // Get public key bytes (uncompressed 65 bytes)
+        let public_key_bytes = agreement_secret
+            .public_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
+
+        // Generate profile ID
+        let profile_id = compact_id(&public_key_bytes);
+
+        // Store the agreement secret and label mapping
+        self.user_profile_agreements
+            .insert(profile_id.clone(), agreement_secret);
+        self.label_to_pid.insert(label.to_string(), profile_id);
+
+        log_debug!(self.logger, "Derived profile key for label: {label}");
+
+        Ok(public_key_bytes)
+    }
+
+    /// Decrypt envelope data using a specific profile key
+    pub fn decrypt_with_profile(
+        &self,
+        env: &EnvelopeEncryptedData,
+        profile_id: &str,
+    ) -> Result<Vec<u8>> {
+        let Some(_profile_secret) = self.user_profile_agreements.get(profile_id) else {
+            return Err(KeyError::KeyNotFound(format!(
+                "Profile key not found for ID: {profile_id}"
+            )));
+        };
+
+        let Some(encrypted_key) = env.profile_encrypted_keys.get(profile_id) else {
+            return Err(KeyError::DecryptionError(format!(
+                "No encrypted key found for profile: {profile_id}"
+            )));
+        };
+
+        // ECIES decrypt the key
+        let decrypted_key =
+            self.decrypt_key_with_ecdsa(encrypted_key, &self.node_key_pair.as_ref().unwrap())?;
+
+        // AES-GCM decrypt the payload
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+
+        if env.encrypted_data.len() < 12 {
+            return Err(KeyError::DecryptionError(
+                "Encrypted data too short for AES-GCM".to_string(),
+            ));
+        }
+
+        let (nonce_bytes, ciphertext) = env.encrypted_data.split_at(12);
+        let key = Key::<Aes256Gcm>::from_slice(&decrypted_key);
+        let nonce = Nonce::from_slice(nonce_bytes);
+        let cipher = Aes256Gcm::new(key);
+
+        cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| KeyError::DecryptionError(format!("AES-GCM decryption failed: {e}")))
+    }
+
+    /// Load node_id from separate file to break the state loading dependency cycle
+    fn load_node_id_from_file(&self, cfg: &PersistenceConfig) -> Option<String> {
+        let node_id_path = cfg.base_dir.join("node_id.txt");
+        match std::fs::read_to_string(&node_id_path) {
+            Ok(id) => Some(id.trim().to_string()),
+            Err(_) => None,
+        }
+    }
+
+    /// Save node_id to separate file to break the state loading dependency cycle
+    fn save_node_id_to_file(&self, cfg: &PersistenceConfig, node_id: &str) -> Result<()> {
+        let node_id_path = cfg.base_dir.join("node_id.txt");
+        if let Some(parent) = node_id_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&node_id_path, node_id)?;
+        Ok(())
     }
 
     /// Configure the persistence base directory.
@@ -160,7 +314,12 @@ impl NodeKeyManager {
         else {
             return Ok(false);
         };
-        let node_id = self.get_node_id();
+
+        // Load node_id from separate file to break the dependency cycle
+        let Some(node_id) = self.load_node_id_from_file(&cfg) else {
+            return Ok(false); // No state on disk
+        };
+
         let role = Role::Node { node_id: &node_id };
         if let Ok(Some(bytes)) = load_state(&keystore, &cfg, &role) {
             if let Ok(state) = from_slice::<NodeKeyManagerState>(&bytes) {
@@ -175,6 +334,10 @@ impl NodeKeyManager {
                     self.device_keystore = device_keystore;
                     self.persistence = persistence;
                     self.auto_persist = auto_persist;
+
+                    // Logger already has the correct node ID from when state was created
+                    // No need to set it again
+
                     return Ok(true);
                 }
             }
@@ -191,8 +354,15 @@ impl NodeKeyManager {
             let bytes = to_vec(&state).map_err(|e| {
                 KeyError::EncodingError(format!("Failed to encode node state: {e}"))
             })?;
-            let node_id = self.get_node_id();
+            let Some(node_id) = self.get_node_id() else {
+                return Err(KeyError::KeyNotFound(
+                    "Node ID not available for state persistence".to_string(),
+                ));
+            };
             save_state(keystore, cfg, &Role::Node { node_id: &node_id }, &bytes)?;
+
+            // Also save node_id to separate file
+            self.save_node_id_to_file(cfg, &node_id)?;
         }
         Ok(())
     }
@@ -211,27 +381,34 @@ impl NodeKeyManager {
     /// Wipe persisted state file (if configured)
     pub fn wipe_persistence(&self) -> Result<()> {
         if let Some(cfg) = &self.persistence {
-            let id = self.get_node_id();
-            persistence::wipe(cfg, &Role::Node { node_id: &id })?;
+            if let Some(id) = self.get_node_id() {
+                persistence::wipe(cfg, &Role::Node { node_id: &id })?;
+            }
+
+            // Also delete node_id.txt file
+            let node_id_path = cfg.base_dir.join("node_id.txt");
+            let _ = std::fs::remove_file(&node_id_path); // Ignore errors if file doesn't exist
         }
         Ok(())
     }
 
-    /// Get the node public key (node ID) - keys are always available
-    pub fn get_node_public_key(&self) -> Vec<u8> {
-        self.node_key_pair.public_key_bytes()
+    /// Get the node public key (node ID) - returns None if keys not generated yet
+    pub fn get_node_public_key(&self) -> Option<Vec<u8>> {
+        self.node_key_pair.as_ref().map(|kp| kp.public_key_bytes())
     }
 
-    /// Get the node ID (compact Base58 encoding of public key)
-    pub fn get_node_id(&self) -> String {
-        compact_id(&self.node_key_pair.public_key_bytes())
+    /// Get the node ID (compact Base58 encoding of public key) - returns None if keys not generated yet
+    pub fn get_node_id(&self) -> Option<String> {
+        self.node_key_pair
+            .as_ref()
+            .map(|kp| compact_id(&kp.public_key_bytes()))
     }
 
     // Removed random storage key generator; storage keys are derived via HKDF from the node master key
 
-    /// Get the node storage key for local encryption
-    pub fn get_storage_key(&self) -> &[u8] {
-        &self.storage_key
+    /// Get the node storage key for local encryption - returns None if not derived yet
+    pub fn get_storage_key(&self) -> Option<&[u8]> {
+        self.storage_key.as_deref()
     }
 
     /// Ensure a symmetric key exists with the given name, creating it if it doesn't exist
@@ -255,7 +432,11 @@ impl NodeKeyManager {
 
     /// Encrypt local data using the node storage key
     pub fn encrypt_local_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let storage_key = self.get_storage_key();
+        let Some(storage_key) = self.get_storage_key() else {
+            return Err(KeyError::KeyNotFound(
+                "Storage key not available for encryption".to_string(),
+            ));
+        };
 
         // Use AES-256-GCM for secure local data encryption
         self.encrypt_with_symmetric_key(data, storage_key)
@@ -263,7 +444,11 @@ impl NodeKeyManager {
 
     /// Decrypt local data using the node storage key
     pub fn decrypt_local_data(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
-        let storage_key = self.get_storage_key();
+        let Some(storage_key) = self.get_storage_key() else {
+            return Err(KeyError::KeyNotFound(
+                "Storage key not available for decryption".to_string(),
+            ));
+        };
 
         // Use AES-256-GCM for secure local data decryption
         self.decrypt_with_symmetric_key(encrypted_data, storage_key)
@@ -271,8 +456,22 @@ impl NodeKeyManager {
 
     /// Decrypt envelope-encrypted data using network key
     pub fn decrypt_envelope_data(&self, envelope_data: &EnvelopeEncryptedData) -> Result<Vec<u8>> {
+        // Try profile-based decryption first
+        for profile_id in envelope_data.profile_encrypted_keys.keys() {
+            if let Ok(decrypted) = self.decrypt_with_profile(envelope_data, profile_id) {
+                log_debug!(
+                    self.logger,
+                    "Successfully decrypted using profile key: {profile_id}"
+                );
+                return Ok(decrypted);
+            }
+        }
+
+        // Fallback to network-based decryption
         let network_public_key = envelope_data.network_public_key.as_ref().ok_or_else(|| {
-            KeyError::DecryptionError("Envelope missing network_public_key".to_string())
+            KeyError::DecryptionError(
+                "Envelope missing network_public_key and no profile keys available".to_string(),
+            )
         })?;
 
         let network_key_pair =
@@ -456,8 +655,13 @@ impl NodeKeyManager {
         })?;
 
         // Use node's agreement secret for ECDH
+        let Some(node_agreement_secret) = &self.node_agreement_secret else {
+            return Err(KeyError::KeyNotFound(
+                "Node agreement secret not available for decryption".to_string(),
+            ));
+        };
         let shared_secret = diffie_hellman(
-            self.node_agreement_secret.to_nonzero_scalar(),
+            node_agreement_secret.to_nonzero_scalar(),
             ephemeral_public.as_affine(),
         );
         let shared_secret_bytes = shared_secret.raw_secret_bytes();
@@ -512,19 +716,32 @@ impl NodeKeyManager {
 
     /// Generate a certificate signing request (CSR) for this node
     pub fn generate_csr(&mut self) -> Result<SetupToken> {
-        let node_public_key = self.get_node_public_key();
-        let node_id = self.get_node_id();
+        let Some(node_public_key) = self.get_node_public_key() else {
+            return Err(KeyError::KeyNotFound(
+                "Node public key not available for CSR generation".to_string(),
+            ));
+        };
+        let Some(node_id) = self.get_node_id() else {
+            return Err(KeyError::KeyNotFound(
+                "Node ID not available for CSR generation".to_string(),
+            ));
+        };
+        let Some(node_key_pair) = &self.node_key_pair else {
+            return Err(KeyError::KeyNotFound(
+                "Node key pair not available for CSR generation".to_string(),
+            ));
+        };
 
         // Convert to DNS-safe format for certificate generation
         let subject = format!("CN={node_id},O=Runar Node,C=US");
 
-        let csr_der = CertificateRequest::create(&self.node_key_pair, &subject)?;
+        let csr_der = CertificateRequest::create(node_key_pair, &subject)?;
 
         self.certificate_status = CertificateStatus::Pending;
 
         // Derive agreement from node master and include public part in token
         let agreement = derivation::derive_agreement_from_master(
-            &self.node_key_pair.signing_key().to_bytes(),
+            &node_key_pair.signing_key().to_bytes(),
             b"runar-v1:node-identity:agreement",
         )?;
         Ok(SetupToken {
@@ -540,8 +757,8 @@ impl NodeKeyManager {
     }
 
     /// Get the node key pair for certificate creation
-    pub fn get_node_key_pair(&self) -> &EcdsaKeyPair {
-        &self.node_key_pair
+    pub fn get_node_key_pair(&self) -> Option<&EcdsaKeyPair> {
+        self.node_key_pair.as_ref()
     }
 
     /// Install certificate received from mobile CA
@@ -551,7 +768,11 @@ impl NodeKeyManager {
         cert_message.node_certificate.validate(&ca_public_key)?;
 
         // Verify the certificate is for this node
-        let node_id = self.get_node_id();
+        let Some(node_id) = self.get_node_id() else {
+            return Err(KeyError::KeyNotFound(
+                "Node ID not available for certificate validation".to_string(),
+            ));
+        };
         if !cert_message.node_certificate.subject().contains(&node_id) {
             return Err(KeyError::CertificateValidationError(
                 "Certificate subject doesn't match node ID".to_string(),
@@ -594,7 +815,12 @@ impl NodeKeyManager {
         ];
 
         // Get private key for TLS
-        let private_key = self.node_key_pair.to_rustls_private_key()?;
+        let Some(node_key_pair) = &self.node_key_pair else {
+            return Err(KeyError::KeyNotFound(
+                "Node key pair not available for certificate config".to_string(),
+            ));
+        };
+        let private_key = node_key_pair.to_rustls_private_key()?;
 
         Ok(QuicCertificateConfig {
             certificate_chain,
@@ -605,8 +831,13 @@ impl NodeKeyManager {
 
     /// Get the node ECIES agreement public key (P-256) derived from the node master key
     pub fn get_node_agreement_public_key(&self) -> Result<Vec<u8>> {
+        let Some(node_key_pair) = &self.node_key_pair else {
+            return Err(KeyError::KeyNotFound(
+                "Node key pair not available for agreement key derivation".to_string(),
+            ));
+        };
         let agreement = derivation::derive_agreement_from_master(
-            &self.node_key_pair.signing_key().to_bytes(),
+            &node_key_pair.signing_key().to_bytes(),
             b"runar-v1:node-identity:agreement",
         )?;
         Ok(agreement
@@ -629,8 +860,12 @@ impl NodeKeyManager {
     pub fn install_network_key(&mut self, network_key_message: NetworkKeyMessage) -> Result<()> {
         // Decrypt the ECIES-wrapped raw 32-byte scalar using the node's agreement key
         let encrypted_network_key = &network_key_message.encrypted_network_key;
-        let decrypted_scalar =
-            self.decrypt_key_with_ecdsa(encrypted_network_key, &self.node_key_pair)?;
+        let Some(node_key_pair) = &self.node_key_pair else {
+            return Err(KeyError::KeyNotFound(
+                "Node key pair not available for network key decryption".to_string(),
+            ));
+        };
+        let decrypted_scalar = self.decrypt_key_with_ecdsa(encrypted_network_key, node_key_pair)?;
 
         if decrypted_scalar.len() != 32 {
             return Err(KeyError::InvalidKeyFormat(
@@ -794,12 +1029,15 @@ impl NodeKeyManager {
     /// Get statistics about the node key manager
     pub fn get_statistics(&self) -> NodeKeyManagerStatistics {
         NodeKeyManagerStatistics {
-            node_id: self.get_node_id(),
+            node_id: self.get_node_id().unwrap_or_else(|| "unknown".to_string()),
             has_certificate: self.node_certificate.is_some(),
             has_ca_certificate: self.ca_certificate.is_some(),
             certificate_status: self.get_certificate_status(),
             network_keys_count: self.network_agreements.len(),
-            node_public_key: compact_id(&self.get_node_public_key()),
+            node_public_key: self
+                .get_node_public_key()
+                .map(|pk| compact_id(&pk))
+                .unwrap_or_else(|| "unknown".to_string()),
         }
     }
 
@@ -807,7 +1045,12 @@ impl NodeKeyManager {
     pub fn sign_data(&self, data: &[u8]) -> Result<Vec<u8>> {
         use p256::ecdsa::{signature::Signer, Signature};
 
-        let signature: Signature = self.node_key_pair.signing_key().sign(data);
+        let Some(node_key_pair) = &self.node_key_pair else {
+            return Err(KeyError::KeyNotFound(
+                "Node key pair not available for signing".to_string(),
+            ));
+        };
+        let signature: Signature = node_key_pair.signing_key().sign(data);
         Ok(signature.to_der().as_bytes().to_vec())
     }
 
@@ -859,7 +1102,12 @@ impl NodeKeyManager {
             self.logger,
             "Decrypting message from mobile ({encrypted_message_len} bytes)"
         );
-        self.decrypt_key_with_ecdsa(encrypted_message, &self.node_key_pair)
+        let Some(node_key_pair) = &self.node_key_pair else {
+            return Err(KeyError::KeyNotFound(
+                "Node key pair not available for message decryption".to_string(),
+            ));
+        };
+        self.decrypt_key_with_ecdsa(encrypted_message, node_key_pair)
     }
 
     /// Create an envelope‐encrypted payload. For the node side we only
@@ -988,6 +1236,9 @@ pub struct NodeKeyManagerState {
     /// Stored as PKCS#8 DER bytes of P-256 SecretKey, keyed by public key bytes
     network_agreements: HashMap<Vec<u8>, Vec<u8>>,
     profile_public_keys: HashMap<String, Vec<u8>>,
+    /// Stored as PKCS#8 DER bytes of P-256 SecretKey, keyed by profile ID
+    user_profile_agreements: HashMap<String, Vec<u8>>,
+    label_to_pid: HashMap<String, String>,
     symmetric_keys: HashMap<String, Vec<u8>>,
     storage_key: Vec<u8>,
 }
@@ -995,8 +1246,14 @@ pub struct NodeKeyManagerState {
 impl NodeKeyManager {
     /// Export state for persistence
     pub fn export_state(&self) -> NodeKeyManagerState {
+        let Some(node_key_pair) = &self.node_key_pair else {
+            panic!("Cannot export state without node key pair");
+        };
+        let Some(storage_key) = &self.storage_key else {
+            panic!("Cannot export state without storage key");
+        };
         NodeKeyManagerState {
-            node_key_pair: self.node_key_pair.clone(),
+            node_key_pair: node_key_pair.clone(),
             node_certificate: self.node_certificate.clone(),
             ca_certificate: self.ca_certificate.clone(),
             network_keys: HashMap::new(),
@@ -1011,8 +1268,19 @@ impl NodeKeyManager {
                 })
                 .collect(),
             profile_public_keys: self.profile_public_keys.clone(),
+            user_profile_agreements: self
+                .user_profile_agreements
+                .iter()
+                .map(|(profile_id, secret_key)| {
+                    (
+                        profile_id.clone(),
+                        secret_key.to_pkcs8_der().unwrap().as_bytes().to_vec(),
+                    )
+                })
+                .collect(),
+            label_to_pid: self.label_to_pid.clone(),
             symmetric_keys: self.symmetric_keys.clone(),
-            storage_key: self.storage_key.clone(),
+            storage_key: storage_key.clone(),
         }
     }
 
@@ -1044,7 +1312,7 @@ impl NodeKeyManager {
         )?;
 
         Ok(Self {
-            node_key_pair: state.node_key_pair,
+            node_key_pair: Some(state.node_key_pair),
             node_certificate: state.node_certificate,
             ca_certificate: state.ca_certificate,
             certificate_validator,
@@ -1058,9 +1326,20 @@ impl NodeKeyManager {
                 })
                 .collect(),
             profile_public_keys: state.profile_public_keys,
+            user_profile_agreements: state
+                .user_profile_agreements
+                .into_iter()
+                .map(|(profile_id, der_bytes)| {
+                    let secret_key = P256SecretKey::from_pkcs8_der(&der_bytes).map_err(|e| {
+                        KeyError::KeyDerivationError(format!("Failed to parse profile key: {e}"))
+                    })?;
+                    Ok((profile_id, secret_key))
+                })
+                .collect::<Result<HashMap<_, _>>>()?,
+            label_to_pid: state.label_to_pid,
             symmetric_keys: state.symmetric_keys,
-            storage_key: state.storage_key,
-            node_agreement_secret,
+            storage_key: Some(state.storage_key),
+            node_agreement_secret: Some(node_agreement_secret),
             certificate_status,
             logger,
             device_keystore: None,

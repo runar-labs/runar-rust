@@ -645,7 +645,9 @@ impl Node {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Failed to load node credentials."))?;
 
-        let node_public_key = keys_manager.read().unwrap().get_node_public_key();
+        let Some(node_public_key) = keys_manager.read().unwrap().get_node_public_key() else {
+            return Err(anyhow::anyhow!("Node public key not available"));
+        };
         let node_id = compact_id(&node_public_key);
         logger.set_node_id(node_id.clone());
 

@@ -407,10 +407,15 @@ fn test_mobile_encrypt_with_envelope_not_initialized() {
 fn test_node_encrypt_local_data_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
+
+    // Generate keys first
+    let mut state = 0i32;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
+    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
 
     let data = b"Secret data to encrypt";
 
@@ -554,10 +559,15 @@ fn test_mobile_initialize_user_root_key_wrong_manager_type() {
 fn test_node_get_public_key_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
+
+    // Generate keys first
+    let mut state = 0i32;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
+    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
 
     let mut pk_ptr: *mut u8 = ptr::null_mut();
     let mut pk_len: usize = 0;
@@ -598,10 +608,15 @@ fn test_node_get_public_key_wrong_manager_type() {
 fn test_node_get_agreement_public_key_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
+
+    // Generate keys first
+    let mut state = 0i32;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
+    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
 
     let mut pk_ptr: *mut u8 = ptr::null_mut();
     let mut pk_len: usize = 0;

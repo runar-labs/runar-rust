@@ -133,9 +133,9 @@ pub fn create_test_node_keys(
     let logger = Arc::new(Logger::new_root(Component::Keys));
 
     let mut node_keys_manager = NodeKeyManager::new(logger.clone())?;
-    let node_public_key = node_keys_manager.get_node_public_key();
+    node_keys_manager.generate_keys()?;
+    let node_public_key = node_keys_manager.get_node_public_key().unwrap();
     let node_id = compact_ids::compact_id(&node_public_key);
-    logger.set_node_id(node_id.clone());
     let setup_token = node_keys_manager
         .generate_csr()
         .expect("Failed to generate setup token");
@@ -358,6 +358,7 @@ impl MobileSimulator {
         // Create node key manager
         let node_logger = Arc::new(Logger::new_root(Component::System));
         let mut node_key_manager = NodeKeyManager::new(node_logger)?;
+        node_key_manager.generate_keys()?;
 
         // Get node setup token and have master sign it
         let setup_token = node_key_manager.generate_csr()?;
@@ -414,7 +415,8 @@ impl MobileSimulator {
             );
 
         self.logger.info(format!(
-            "✅ Node configuration created for node: {node_id} with network transport"
+            "✅ Node configuration created for node: {} with network transport",
+            node_id.unwrap_or_else(|| "unknown".to_string())
         ));
 
         Ok(config)
@@ -547,7 +549,7 @@ mod tests {
 
         // Verify node keys manager was created with proper state
         assert!(!node_id.is_empty());
-        assert!(!node_keys_manager.get_node_public_key().is_empty());
+        assert!(!node_keys_manager.get_node_public_key().unwrap().is_empty());
 
         // Verify node ID format (should be a compact ID)
         assert!(node_id.len() > 20); // Compact IDs are typically long
@@ -560,7 +562,7 @@ mod tests {
         let imported_manager = NodeKeyManager::from_state(exported_state, logger).unwrap();
 
         // Verify the imported manager has the same node ID
-        assert_eq!(imported_manager.get_node_id(), node_id);
+        assert_eq!(imported_manager.get_node_id(), Some(node_id));
     }
 
     #[test]

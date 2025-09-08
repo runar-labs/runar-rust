@@ -30,11 +30,24 @@ fn two_transports_request_response() {
             0
         );
 
+        // Generate keys for A
+        let mut state = 0i32;
+        assert_eq!(
+            rn_keys_node_get_keystore_state(keys_a, &mut state, &mut err as *mut _ as *mut _),
+            0
+        );
+
         // Create second node keys for B
         let mut keys_b: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(rn_keys_new(&mut keys_b, &mut err as *mut _ as *mut _), 0);
         assert_eq!(
             rn_keys_init_as_node(keys_b, &mut err as *mut _ as *mut _),
+            0
+        );
+
+        // Generate keys for B
+        assert_eq!(
+            rn_keys_node_get_keystore_state(keys_b, &mut state, &mut err as *mut _ as *mut _),
             0
         );
 

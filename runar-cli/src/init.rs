@@ -144,7 +144,9 @@ impl InitCommand {
             .generate_csr()
             .context("Failed to generate certificate signing request")?;
 
-        let node_public_key = node_key_manager.get_node_public_key();
+        let node_public_key = node_key_manager.get_node_public_key().ok_or_else(|| {
+            anyhow::anyhow!("Node public key not available - keys may not be generated")
+        })?;
         let node_id = compact_id(&node_public_key);
 
         log_info!(self.logger, "Node identity created: {node_id}");
@@ -158,7 +160,9 @@ impl InitCommand {
     }
 
     fn create_setup_config(&self, node_key_manager: &NodeKeyManager) -> Result<SetupConfig> {
-        let node_public_key = node_key_manager.get_node_public_key();
+        let node_public_key = node_key_manager.get_node_public_key().ok_or_else(|| {
+            anyhow::anyhow!("Node public key not available - keys may not be generated")
+        })?;
 
         // Create temporary setup config with unique keys name for OS key store
         let setup_config = SetupConfig::new(compact_id(&node_public_key));
@@ -300,7 +304,9 @@ impl InitCommand {
         // - node_id: compact ID (for display/identification)
         // - node_public_key: full hex-encoded public key bytes (for cryptographic operations)
         let node_id = setup_config.node_public_key.clone(); // This is already the compact ID
-        let node_public_key_hex = encode(&node_public_key_bytes);
+        let node_public_key_hex = encode(&node_public_key_bytes.ok_or_else(|| {
+            anyhow::anyhow!("Node public key not available - keys may not be generated")
+        })?);
 
         let final_config = NodeConfig::new(
             node_id,

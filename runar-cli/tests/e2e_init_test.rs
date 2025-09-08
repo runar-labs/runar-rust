@@ -275,7 +275,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
         (node_key_manager, setup_token)
     };
 
-    let node_public_key = node_key_manager.get_node_public_key();
+    let node_public_key = node_key_manager.get_node_public_key().unwrap();
     let node_id = compact_id(&node_public_key);
     println!("   ✅ Node keys generated:");
     println!("      Node ID: {node_id}");

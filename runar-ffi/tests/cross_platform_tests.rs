@@ -141,7 +141,11 @@ fn test_core_basic_encryption_operations() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
+    // Generate keys first
+    let mut state = 0i32;
     let mut error = create_test_error();
+    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
 
     // Test local data encryption
     let data = b"test data";
@@ -176,7 +180,11 @@ fn test_core_basic_decryption_operations() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
+    // Generate keys first
+    let mut state = 0i32;
     let mut error = create_test_error();
+    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
 
     // First encrypt some data
     let data = b"test data for decryption";

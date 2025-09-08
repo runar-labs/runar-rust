@@ -75,14 +75,14 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
     //     and generate a setup handshake token which contains the CSR request and the node public key
     //     which will be presented as QR code.. here in the test we use the token as a string directly.
     let node_logger = create_test_logger();
-    node_logger.set_node_id("node".to_string());
     let mut node_keys_manager = NodeKeyManager::new(node_logger)?;
+    node_keys_manager.generate_keys()?;
 
     // Get the node public key (node ID) - keys are created in constructor
     let node_public_key = node_keys_manager.get_node_public_key();
     println!(
         "   ✅ Node identity created: {}",
-        compact_id(&node_public_key)
+        compact_id(&node_public_key.unwrap())
     );
     let setup_token = node_keys_manager
         .generate_csr()
@@ -613,7 +613,6 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         bincode::deserialize(&serialized_node_state).expect("Failed to deserialize node state");
 
     let node_logger_2 = create_test_logger();
-    node_logger_2.set_node_id("node".to_string());
     let node_hydrated = NodeKeyManager::from_state(deserialized_node_state, node_logger_2)?;
 
     println!("   ✅ Node state successfully serialized and restored");
@@ -816,8 +815,8 @@ async fn test_negative_csr_cn_mismatch_rejected() -> Result<()> {
     mobile_logger.set_node_id("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let node_logger = create_test_logger();
-    node_logger.set_node_id("node".to_string());
     let mut node_keys = NodeKeyManager::new(node_logger)?;
+    node_keys.generate_keys()?;
 
     // Generate valid setup token
     let token = node_keys.generate_csr()?;
@@ -837,8 +836,8 @@ async fn test_negative_tampered_csr_signature_rejected() -> Result<()> {
     mobile_logger.set_node_id("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let node_logger = create_test_logger();
-    node_logger.set_node_id("node".to_string());
     let mut node_keys = NodeKeyManager::new(node_logger)?;
+    node_keys.generate_keys()?;
 
     let mut token = node_keys.generate_csr()?;
     // Flip one byte in csr_der to break signature
@@ -854,15 +853,15 @@ async fn test_negative_tampered_csr_signature_rejected() -> Result<()> {
 #[tokio::test]
 async fn test_negative_ecies_wrong_recipient_fails() -> Result<()> {
     let logger = create_test_logger();
-    logger.set_node_id("node".to_string());
-    let node = NodeKeyManager::new(logger.clone())?;
+    let mut node = NodeKeyManager::new(logger.clone())?;
+    node.generate_keys()?;
     let other_node_logger = create_test_logger();
-    other_node_logger.set_node_id("other".to_string());
-    let other_node = NodeKeyManager::new(other_node_logger)?;
+    let mut other_node = NodeKeyManager::new(other_node_logger)?;
+    other_node.generate_keys()?;
 
     // Encrypt a message for other_node's public key
     let msg = b"secret";
-    let ct = node.encrypt_message_for_mobile(msg, &other_node.get_node_public_key())?;
+    let ct = node.encrypt_message_for_mobile(msg, &other_node.get_node_public_key().unwrap())?;
 
     // Attempt to decrypt with node (wrong recipient)
     let res = node.decrypt_message_from_mobile(&ct);
@@ -873,8 +872,8 @@ async fn test_negative_ecies_wrong_recipient_fails() -> Result<()> {
 #[tokio::test]
 async fn test_negative_ecies_short_payload_fails() -> Result<()> {
     let logger = create_test_logger();
-    logger.set_node_id("node".to_string());
-    let node = NodeKeyManager::new(logger)?;
+    let mut node = NodeKeyManager::new(logger)?;
+    node.generate_keys()?;
 
     // Shorter than 65 bytes (P-256 uncompressed pubkey)
     let ct = vec![0u8; 10];

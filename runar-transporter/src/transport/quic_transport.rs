@@ -782,11 +782,31 @@ impl QuicTransport {
 
         let transport_config = Arc::new(transport_config);
 
-        // Create server configuration using Quinn 0.11.x API with custom transport config
-        let mut server_config = ServerConfig::with_single_cert(certs.clone(), key.clone_key())
+        // Create server configuration with mTLS (require client certificates)
+        let root_store = self.build_root_cert_store()?;
+        let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+            .build()
             .map_err(|e| {
-                NetworkError::ConfigurationError(format!("Failed to create server config: {e}"))
+                NetworkError::ConfigurationError(format!("Failed to create client verifier: {e}"))
             })?;
+
+        let rustls_server_config = rustls::ServerConfig::builder()
+            .with_client_cert_verifier(client_verifier)
+            .with_single_cert(certs.clone(), key.clone_key())
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!(
+                    "Failed to create rustls server config: {e}"
+                ))
+            })?;
+
+        let server_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(rustls_server_config)
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!(
+                    "Failed to convert to Quinn server config: {e}"
+                ))
+            })?;
+
+        let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
         server_config.transport_config(transport_config.clone());
 
         // Build a strict rustls client config with provided root certificates (or CA from key manager).
@@ -817,9 +837,17 @@ impl QuicTransport {
                 "no root certificates configured".into(),
             ));
         }
+        // Get client certificate and private key from key manager
+        let (client_cert_chain, client_private_key) = self.get_client_certificates()?;
+
         let rustls_client_config = RustlsClientConfig::builder()
             .with_root_certificates(root_store)
-            .with_no_client_auth();
+            .with_client_auth_cert(client_cert_chain, client_private_key)
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!(
+                    "Failed to create client config with auth: {e}"
+                ))
+            })?;
 
         let mut client_config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(rustls_client_config).map_err(|e| {
@@ -1598,6 +1626,46 @@ impl QuicTransport {
             dial_backoff: Arc::new(DashMap::new()),
             dial_cancel: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Get client certificates from the key manager
+    fn get_client_certificates(
+        &self,
+    ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), NetworkError> {
+        let Some(key_manager) = &self.options.key_manager else {
+            return Err(NetworkError::ConfigurationError(
+                "No key manager configured for client certificates".to_string(),
+            ));
+        };
+
+        let cert_config = key_manager
+            .read()
+            .unwrap()
+            .get_quic_certificate_config()
+            .map_err(|e| {
+                NetworkError::ConfigurationError(format!("Failed to get client certificates: {e}"))
+            })?;
+
+        Ok((cert_config.certificate_chain, cert_config.private_key))
+    }
+
+    /// Build root certificate store from configured root certificates
+    fn build_root_cert_store(&self) -> Result<RootCertStore, NetworkError> {
+        let mut root_store = RootCertStore::empty();
+
+        if let Some(roots) = self.options.root_certificates() {
+            for cert in roots {
+                root_store.add(cert.clone()).map_err(|e| {
+                    NetworkError::ConfigurationError(format!("Failed to add root certificate: {e}"))
+                })?;
+            }
+        } else {
+            return Err(NetworkError::ConfigurationError(
+                "No root certificates configured for mTLS".to_string(),
+            ));
+        }
+
+        Ok(root_store)
     }
 }
 

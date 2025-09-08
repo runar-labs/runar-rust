@@ -7,7 +7,7 @@ async fn test_dial_cancel_on_inbound_connect(
     // PeerInfo not used in this test
     use runar_transporter::transport::NetworkTransport;
     use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
-    use std::sync::{Arc, RwLock as StdRwLock};
+    use std::sync::Arc;
     use std::time::Duration;
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
@@ -17,11 +17,15 @@ async fn test_dial_cancel_on_inbound_connect(
     // Use CA + node certs as in other tests
     let mut mobile_ca = runar_keys::MobileKeyManager::new(logger.clone())?;
     let _ = mobile_ca.initialize_user_root_key()?;
-    let mut km1 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let km1_logger = Arc::new(Logger::new_root(Component::Custom("km1")));
+    let mut km1 = runar_keys::NodeKeyManager::new(km1_logger)?;
+    km1.generate_keys()?;
     let csr1 = km1.generate_csr()?;
     let cert1 = mobile_ca.process_setup_token(&csr1)?;
     km1.install_certificate(cert1)?;
-    let mut km2 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    let km2_logger = Arc::new(Logger::new_root(Component::Custom("km2")));
+    let mut km2 = runar_keys::NodeKeyManager::new(km2_logger)?;
+    km2.generate_keys()?;
     let csr2 = km2.generate_csr()?;
     let cert2 = mobile_ca.process_setup_token(&csr2)?;
     km2.install_certificate(cert2)?;
@@ -81,30 +85,39 @@ async fn test_dial_cancel_on_inbound_connect(
         let t2_info_clone = t2_info_clone.clone();
         Box::pin(async move { Ok(t2_info_clone.clone()) })
     });
+
+    // Extract values before moving key managers
+    let km1_cert_config = km1.get_quic_certificate_config()?;
+    let km1_public_key = km1.get_node_public_key().unwrap();
+    let km2_cert_config = km2.get_quic_certificate_config()?;
+    let km2_public_key = km2.get_node_public_key().unwrap();
+    let id1 = compact_id(&km1_public_key);
+    let id2 = compact_id(&km2_public_key);
+    let p1_pub = km1_public_key.clone();
+    let p2_pub = km2_public_key.clone();
+
     let t1_opts = QuicTransportOptions::new()
-        .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
-        .with_private_key(km1.get_quic_certificate_config()?.private_key)
+        .with_certificates(km1_cert_config.certificate_chain)
+        .with_private_key(km1_cert_config.private_key)
         .with_root_certificates(vec![ca_cert.clone()])
-        .with_local_node_public_key(km1.get_node_public_key())
+        .with_local_node_public_key(km1_public_key)
+        .with_key_manager(Arc::new(std::sync::RwLock::new(km1)))
         .with_get_local_node_info(get_local_node_info_t1)
         .with_bind_addr(t1_addr)
         .with_request_callback(request_handler1)
         .with_event_callback(event_handler1)
         .with_logger(logger.clone());
     let t2_opts = QuicTransportOptions::new()
-        .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
-        .with_private_key(km2.get_quic_certificate_config()?.private_key)
+        .with_certificates(km2_cert_config.certificate_chain)
+        .with_private_key(km2_cert_config.private_key)
         .with_root_certificates(vec![ca_cert])
-        .with_local_node_public_key(km2.get_node_public_key())
+        .with_local_node_public_key(km2_public_key)
+        .with_key_manager(Arc::new(std::sync::RwLock::new(km2)))
         .with_get_local_node_info(get_local_node_info_t2)
         .with_bind_addr(t2_addr)
         .with_request_callback(request_handler2)
         .with_event_callback(event_handler2)
         .with_logger(logger.clone());
-    let id1 = compact_id(&km1.get_node_public_key());
-    let id2 = compact_id(&km2.get_node_public_key());
-    let p1_pub = km1.get_node_public_key();
-    let p2_pub = km2.get_node_public_key();
     let t1 = Arc::new(QuicTransport::new(t1_opts)?);
     let t2 = Arc::new(QuicTransport::new(t2_opts)?);
     t1.clone().start().await?;
@@ -235,7 +248,9 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // ==================================================
 
     // Create node 1 key manager and generate setup token
-    let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
+    let node1_logger = Arc::new(Logger::new_root(Component::Custom("node1")));
+    let mut node_key_manager_1 = NodeKeyManager::new(node1_logger)?;
+    node_key_manager_1.generate_keys()?;
     let setup_token_1 = node_key_manager_1
         .generate_csr()
         .expect("Failed to generate setup token for node 1");
@@ -255,7 +270,9 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // ==================================================
 
     // Create node 2 key manager and generate setup token
-    let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
+    let node2_logger = Arc::new(Logger::new_root(Component::Custom("node2")));
+    let mut node_key_manager_2 = NodeKeyManager::new(node2_logger)?;
+    node_key_manager_2.generate_keys()?;
     let setup_token_2 = node_key_manager_2
         .generate_csr()
         .expect("Failed to generate setup token for node 2");
@@ -288,10 +305,10 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
     // ==================================================
 
     // Get the actual node public keys (not hardcoded values)
-    let node1_public_key_bytes = node_key_manager_1.get_node_public_key();
+    let node1_public_key_bytes = node_key_manager_1.get_node_public_key().unwrap();
     let node1_id = compact_id(&node1_public_key_bytes);
 
-    let node2_public_key_bytes = node_key_manager_2.get_node_public_key();
+    let node2_public_key_bytes = node_key_manager_2.get_node_public_key().unwrap();
     let node2_id = compact_id(&node2_public_key_bytes);
 
     logger.debug(format!("Node 1 node1_id: {node1_id}"));
@@ -565,7 +582,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         .with_certificates(node1_cert_config.certificate_chain)
         .with_private_key(node1_cert_config.private_key)
         .with_root_certificates(vec![ca_certificate.clone()])
-        .with_local_node_public_key(node_key_manager_1.get_node_public_key())
+        .with_local_node_public_key(node_key_manager_1.get_node_public_key().unwrap())
         .with_get_local_node_info(get_local_node_info_t1)
         .with_bind_addr("127.0.0.1:50069".parse::<SocketAddr>()?)
         .with_request_callback(node1_request_handler)
@@ -578,7 +595,7 @@ async fn test_quic_transport() -> Result<(), Box<dyn std::error::Error + Send + 
         .with_certificates(node2_cert_config.certificate_chain)
         .with_private_key(node2_cert_config.private_key)
         .with_root_certificates(vec![ca_certificate])
-        .with_local_node_public_key(node_key_manager_2.get_node_public_key())
+        .with_local_node_public_key(node_key_manager_2.get_node_public_key().unwrap())
         .with_get_local_node_info(get_local_node_info_t2)
         .with_bind_addr("127.0.0.1:50044".parse::<SocketAddr>()?)
         .with_request_callback(node2_request_handler)
@@ -640,19 +657,21 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
     let _ = mobile_ca.initialize_user_root_key()?;
     let mut node_key_manager_1 = NodeKeyManager::new(logger.clone())?;
+    node_key_manager_1.generate_keys()?;
     let cert_1 = mobile_ca.process_setup_token(&node_key_manager_1.generate_csr()?)?;
     node_key_manager_1.install_certificate(cert_1)?;
     let mut node_key_manager_2 = NodeKeyManager::new(logger.clone())?;
+    node_key_manager_2.generate_keys()?;
     let cert_2 = mobile_ca.process_setup_token(&node_key_manager_2.generate_csr()?)?;
     node_key_manager_2.install_certificate(cert_2)?;
 
-    let node1_cert_config = node_key_manager_1.get_quic_certificate_config()?;
-    let node2_cert_config = node_key_manager_2.get_quic_certificate_config()?;
+    let _node1_cert_config = node_key_manager_1.get_quic_certificate_config()?;
+    let _node2_cert_config = node_key_manager_2.get_quic_certificate_config()?;
     let ca_certificate = mobile_ca.get_ca_certificate().to_rustls_certificate();
 
     // Node infos
-    let node1_pk = node_key_manager_1.get_node_public_key();
-    let node2_pk = node_key_manager_2.get_node_public_key();
+    let node1_pk = node_key_manager_1.get_node_public_key().unwrap();
+    let node2_pk = node_key_manager_2.get_node_public_key().unwrap();
     let node1_id = compact_id(&node1_pk);
     let node2_id = compact_id(&node2_pk);
 
@@ -741,8 +760,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         Box::pin(async move { Ok(node2_info_clone.clone()) })
     });
     let t1_opts = QuicTransportOptions::new()
-        .with_certificates(node1_cert_config.certificate_chain)
-        .with_private_key(node1_cert_config.private_key)
+        .with_key_manager(Arc::new(std::sync::RwLock::new(node_key_manager_1)))
         .with_root_certificates(vec![ca_certificate.clone()])
         .with_local_node_public_key(node1_pk.clone())
         .with_get_local_node_info(get_local_node_info_t1)
@@ -751,8 +769,7 @@ async fn test_quic_duplicate_resolution_simultaneous_dial(
         .with_event_callback(event_handler1)
         .with_logger(logger.clone());
     let t2_opts = QuicTransportOptions::new()
-        .with_certificates(node2_cert_config.certificate_chain)
-        .with_private_key(node2_cert_config.private_key)
+        .with_key_manager(Arc::new(std::sync::RwLock::new(node_key_manager_2)))
         .with_root_certificates(vec![ca_certificate])
         .with_local_node_public_key(node2_pk.clone())
         .with_get_local_node_info(get_local_node_info_t2)
@@ -847,15 +864,17 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
     let mut mobile_ca = MobileKeyManager::new(logger.clone())?;
     let _ = mobile_ca.initialize_user_root_key()?;
     let mut km1 = NodeKeyManager::new(logger.clone())?;
+    km1.generate_keys()?;
     let csr1 = km1.generate_csr()?;
     let cert1 = mobile_ca.process_setup_token(&csr1)?;
     km1.install_certificate(cert1)?;
     let mut km2 = NodeKeyManager::new(logger.clone())?;
+    km2.generate_keys()?;
     let csr2 = km2.generate_csr()?;
     let cert2 = mobile_ca.process_setup_token(&csr2)?;
     km2.install_certificate(cert2)?;
-    let n1 = km1.get_node_public_key();
-    let n2 = km2.get_node_public_key();
+    let n1 = km1.get_node_public_key().unwrap();
+    let n2 = km2.get_node_public_key().unwrap();
     let id1 = compact_id(&n1);
     let id2 = compact_id(&n2);
     let ca = mobile_ca.get_ca_certificate().to_rustls_certificate();
@@ -961,8 +980,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
 
     let t1 = Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
-            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_key_manager(Arc::new(std::sync::RwLock::new(km1)))
             .with_root_certificates(vec![ca.clone()])
             .with_local_node_public_key(n1.clone())
             .with_get_local_node_info(get_local_node_info_t1)
@@ -975,8 +993,7 @@ async fn test_quic_lifecycle_callbacks() -> Result<(), Box<dyn std::error::Error
     )?);
     let t2 = Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
-            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_key_manager(Arc::new(std::sync::RwLock::new(km2)))
             .with_root_certificates(vec![ca])
             .with_local_node_public_key(n2.clone())
             .with_get_local_node_info(get_local_node_info_t2)
@@ -1065,16 +1082,18 @@ async fn test_capability_version_bump_across_reconnect(
     let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
     let _ = ca.initialize_user_root_key()?;
     let mut km1 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    km1.generate_keys()?;
     let cert1 = ca.process_setup_token(&km1.generate_csr()?)?;
     km1.install_certificate(cert1)?;
     let mut km2 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    km2.generate_keys()?;
     let cert2 = ca.process_setup_token(&km2.generate_csr()?)?;
     km2.install_certificate(cert2)?;
     let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
 
     // NodeInfo v0
-    let pk1 = km1.get_node_public_key();
-    let pk2 = km2.get_node_public_key();
+    let pk1 = km1.get_node_public_key().unwrap();
+    let pk2 = km2.get_node_public_key().unwrap();
     let id1 = runar_common::compact_ids::compact_id(&pk1);
     let id2 = runar_common::compact_ids::compact_id(&pk2);
     let mut info1 = NodeInfo {
@@ -1150,8 +1169,7 @@ async fn test_capability_version_bump_across_reconnect(
     });
     let t1 = std::sync::Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
-            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_key_manager(Arc::new(std::sync::RwLock::new(km1)))
             .with_root_certificates(vec![ca_cert.clone()])
             .with_local_node_public_key(pk1.clone())
             .with_get_local_node_info(get_local_node_info_t1)
@@ -1162,8 +1180,7 @@ async fn test_capability_version_bump_across_reconnect(
     )?);
     let t2 = std::sync::Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
-            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_key_manager(Arc::new(std::sync::RwLock::new(km2)))
             .with_root_certificates(vec![ca_cert])
             .with_local_node_public_key(pk2.clone())
             .with_get_local_node_info(get_local_node_info_t2)
@@ -1240,15 +1257,17 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
     let _ = ca.initialize_user_root_key()?;
     let mut km1 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    km1.generate_keys()?;
     let cert1 = ca.process_setup_token(&km1.generate_csr()?)?;
     km1.install_certificate(cert1)?;
     let mut km2 = runar_keys::NodeKeyManager::new(logger.clone())?;
+    km2.generate_keys()?;
     let cert2 = ca.process_setup_token(&km2.generate_csr()?)?;
     km2.install_certificate(cert2)?;
     let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
 
-    let pk1 = km1.get_node_public_key();
-    let pk2 = km2.get_node_public_key();
+    let pk1 = km1.get_node_public_key().unwrap();
+    let pk2 = km2.get_node_public_key().unwrap();
     let id1 = runar_common::compact_ids::compact_id(&pk1);
     let id2 = runar_common::compact_ids::compact_id(&pk2);
     let info1 = NodeInfo {
@@ -1371,8 +1390,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
 
     let t1 = std::sync::Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_certificates(km1.get_quic_certificate_config()?.certificate_chain)
-            .with_private_key(km1.get_quic_certificate_config()?.private_key)
+            .with_key_manager(Arc::new(std::sync::RwLock::new(km1)))
             .with_root_certificates(vec![ca_cert.clone()])
             .with_local_node_public_key(pk1.clone())
             .with_get_local_node_info(get_local_node_info_t1)
@@ -1385,8 +1403,7 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
     )?);
     let t2 = std::sync::Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_certificates(km2.get_quic_certificate_config()?.certificate_chain)
-            .with_private_key(km2.get_quic_certificate_config()?.private_key)
+            .with_key_manager(Arc::new(std::sync::RwLock::new(km2)))
             .with_root_certificates(vec![ca_cert])
             .with_local_node_public_key(pk2.clone())
             .with_get_local_node_info(get_local_node_info_t2)
@@ -1565,11 +1582,13 @@ async fn test_transport_start_stop_idempotence(
     let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
     let _ = ca.initialize_user_root_key()?;
     let mut km = runar_keys::NodeKeyManager::new(logger.clone())?;
+    km.generate_keys()?;
     let csr = km.generate_csr()?;
     let cert = ca.process_setup_token(&csr)?;
     km.install_certificate(cert)?;
 
-    let local_pk = km.get_node_public_key();
+    let local_pk = km.get_node_public_key().unwrap();
+    let ca_cert = ca.get_ca_certificate().to_rustls_certificate();
 
     // Minimal NodeInfo provider
     let node_info = NodeInfo {
@@ -1607,8 +1626,9 @@ async fn test_transport_start_stop_idempotence(
 
     let t = Arc::new(QuicTransport::new(
         QuicTransportOptions::new()
-            .with_key_manager(Arc::new(StdRwLock::new(km)))
+            .with_key_manager(Arc::new(std::sync::RwLock::new(km)))
             .with_local_node_public_key(local_pk.clone())
+            .with_root_certificates(vec![ca_cert])
             .with_get_local_node_info(get_local_node_info)
             .with_bind_addr("127.0.0.1:50201".parse()?)
             .with_request_callback(request_cb)
