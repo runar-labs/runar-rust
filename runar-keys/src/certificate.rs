@@ -105,6 +105,44 @@ impl EcdsaKeyPair {
     pub fn signing_key(&self) -> &SigningKey {
         &self.signing_key
     }
+
+    /// Sign data with this key pair
+    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        use p256::ecdsa::{signature::Signer, Signature};
+        let signature: Signature = self.signing_key.sign(data);
+        Ok(signature.to_der().as_bytes().to_vec())
+    }
+
+    /// Verify a signature
+    pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
+        use p256::ecdsa::{signature::Verifier, Signature};
+        let sig = Signature::from_der(signature)
+            .map_err(|e| KeyError::SigningError(format!("Invalid signature format: {e}")))?;
+        self.verifying_key
+            .verify(data, &sig)
+            .map_err(|e| KeyError::SigningError(format!("Signature verification failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Get public key as encoded point
+    pub fn public_key(&self) -> EncodedPoint {
+        self.verifying_key.to_encoded_point(false)
+    }
+
+    /// Create from public key bytes
+    pub fn from_public_key_bytes(public_key_bytes: &[u8]) -> Result<Self> {
+        let _verifying_key =
+            VerifyingKey::from_encoded_point(&EncodedPoint::from_bytes(public_key_bytes).map_err(
+                |e| KeyError::InvalidKeyFormat(format!("Invalid public key format: {e}")),
+            )?)
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("Invalid public key: {e}")))?;
+
+        // For verification-only key pairs, we can't create a signing key
+        // This is a limitation - we'd need the private key to create a full key pair
+        Err(KeyError::InvalidKeyFormat(
+            "Cannot create EcdsaKeyPair from public key only - private key required".to_string(),
+        ))
+    }
 }
 
 impl Serialize for EcdsaKeyPair {

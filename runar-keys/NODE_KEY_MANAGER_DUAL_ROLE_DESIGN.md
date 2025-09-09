@@ -468,3 +468,665 @@ These items complement the dual-role/profile changes and transporter mTLS enforc
 
 ---
 
+## 14) CA Node Infrastructure – Detailed Design (QUIC-only)
+
+This section specifies a complete, QUIC-based CA Node infrastructure, including enrollment APIs, token system, issuing CA management, revocation, lifecycle, and operations. All interactions use QUIC via our existing transporter (quinn + rustls), building on our request/response patterns and CBOR serialization.
+
+### 14.1 Transport and endpoints
+- Transport: QUIC using `quinn = "0.11"` and `rustls = "0.23.28"` (already in repo). TLS 1.3 only.
+- mTLS policy:
+  - Bootstrap bind (server-auth only): clients do not yet have device certs. Authorize via Enrollment Tokens + rate limits.
+  - Authenticated bind (full mTLS): all other CA operations require client certs.
+- QUIC settings: reuse transporter’s `TransportConfig` (idle timeout, keep-alive). No new knobs required.
+
+Endpoints (topic-style over QUIC; CBOR payloads):
+- Bootstrap bind (server-auth only):
+  - `$ca/{network_id}/enroll`
+  - `$ca/{network_id}/chain`
+- Authenticated bind (mTLS required):
+  - `$ca/{network_id}/renew`
+  - `$ca/{network_id}/revoke`
+  - `$ca/{network_id}/crl` (if CRL-lite enabled)
+  - `$ca/{network_id}/status`
+
+Error handling (CBOR):
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CaErrorResponse {
+    pub code: &'static str,  // e.g., "invalid_token", "csr_invalid", "rate_limited"
+    pub message: String,
+}
+```
+
+Rate limiting (bootstrap bind):
+- Sliding-window counters keyed by (remote_addr, token_id) with burst/sustained limits (e.g., 5/min, 30/hour). Implement with in-memory maps and timestamps; no new crates.
+
+HA and discovery:
+- Multiple CA Nodes per network are supported. Each CA Node publishes presence at `$registry/ca/{network_id}/announces` with bind addresses and capabilities. Clients pick any announced node.
+
+CA Node server authentication (bootstrap) – top options:
+1) Issuing CA TLS server cert (recommended)
+   - Pros: Single trust root (Root/Issuing). Clients embed Root/Issuing CA to authenticate CA Nodes immediately.
+   - Cons: App must embed Root (or Issuing) CA; update on CA rotation.
+2) Public Web PKI cert for bootstrap bind
+   - Pros: No embedded root needed for bootstrap.
+   - Cons: Two trust roots; operational overhead; not aligned with closed-network model.
+
+Recommendation: option 1.
+
+### 14.2 Enrollment token system (no new crates)
+
+Token body (CBOR):
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct EnrollmentTokenBody {
+    pub token_id: String,         // 16 random bytes hex
+    pub network_id: String,       // compact_id of owner network
+    pub subject_hint: Option<String>,
+    pub not_before: u64,          // UNIX seconds
+    pub expires_at: u64,          // UNIX seconds
+    pub nonce: [u8; 16],          // anti-replay
+    pub permissions: Vec<String>, // ["enroll"], future: ["renew"]
+}
+```
+
+Signed envelope:
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct EnrollmentToken {
+    pub body: EnrollmentTokenBody,
+    pub signature: Vec<u8>,   // ECDSA P-256 DER
+    pub signer_id: String,    // compact_id of EA public key
+}
+```
+
+Signing/verification:
+- Use existing P-256 ECDSA (`p256`) and our `EcdsaKeyPair` style. Serialize `body` with CBOR (serde_cbor), sign bytes to DER.
+- CA Node verifies with pre-configured Enrollment Authority (EA) public keys by `signer_id`.
+
+Issuer key options:
+1) Dedicated Enrollment Authority key (recommended)
+   - Pros: separation of duties; compromise doesn’t expose Issuing CA.
+   - Cons: manage one more key.
+2) Reuse Issuing CA key for tokens
+   - Pros: fewer keys.
+   - Cons: mixes roles; larger blast radius.
+
+Distribution and generation:
+- Admin tool (out-of-band) builds `EnrollmentTokenBody`, signs with EA key, delivers `EnrollmentToken` to user (QR/deeplink/backend). No new crates.
+
+Validation steps on CA Node:
+1) Verify DER signature over CBOR(body) using EA pubkey.
+2) Check `network_id` matches configured network.
+3) Enforce `not_before <= now <= expires_at`.
+4) Rate-limit by (remote_addr, token_id) and (remote_addr, subject_hint).
+5) Optional anti-replay: cache `(token_id, nonce)` in memory until expiry.
+
+Token revocation:
+- Maintain in-memory denylist of `token_id` with TTL. Admin can push signed revocation messages over mTLS to invalidate early.
+
+### 14.3 API specifications (CBOR over QUIC)
+
+Types:
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CsrEnrollRequest {
+    pub csr_der: Vec<u8>,
+    pub enrollment_token: EnrollmentToken,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CsrEnrollResponse {
+    pub certificate_der: Vec<u8>,
+    pub issuing_ca_der: Vec<u8>,
+    pub root_ca_der: Option<Vec<u8>>,
+    pub expires_at: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RenewRequest { pub csr_der: Vec<u8> }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RenewResponse {
+    pub certificate_der: Vec<u8>,
+    pub issuing_ca_der: Vec<u8>,
+    pub expires_at: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RevokeRequest { pub certificate_serial: Vec<u8>, pub reason: String }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RevokeResponse { pub ok: bool }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ChainResponse { pub issuing_ca_der: Vec<u8>, pub root_ca_der: Option<Vec<u8>> }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CaStatus { pub issuing_subject: String, pub issuing_serial_hex: String, pub not_before: u64, pub not_after: u64 }
+```
+
+Endpoints:
+- `$ca/{network_id}/enroll` (server-auth only)
+  - Req: `CsrEnrollRequest`, Resp: `CsrEnrollResponse | CaErrorResponse`
+  - Checks: token valid; CSR CN equals compact_id(node_public_key). Use `x509-parser` to parse CSR subject (same as current validation in `MobileKeyManager::process_setup_token`).
+
+- `$ca/{network_id}/chain` (server-auth only)
+  - Req: `{}`; Resp: `ChainResponse`
+
+- `$ca/{network_id}/renew` (mTLS)
+  - Req: `RenewRequest`; Resp: `RenewResponse`
+  - Checks: mTLS peer cert subject matches CSR CN; optional policy to require new key.
+
+- `$ca/{network_id}/revoke` (mTLS; admin-only)
+  - Req: `RevokeRequest`; Resp: `RevokeResponse`
+  - Authorization: admin cert allowlist by subject/SKI.
+
+- `$ca/{network_id}/status` (mTLS)
+  - Req: `{}`; Resp: `CaStatus`
+
+### 14.4 Issuing CA certificate management
+
+Creation/import:
+- Use existing `CertificateAuthority`:
+  - `CertificateAuthority::from_existing(ca_key_pair, ca_certificate)` to load an Issuing CA signed by Root.
+  - Or `CertificateAuthority::new(...)` to generate keys, then sign the CSR offline with Root before use.
+
+Storage/protection:
+- Persist Issuing CA key/cert using existing keystore/persistence (same as key managers). If platform HSM/TEE later, delegate signing (future work, no new crates now).
+
+Chain distribution/validation:
+- Provide via `$ca/{network_id}/chain`. Clients install chain in `NodeKeyManager::install_certificate(...)` which already validates signatures.
+
+Multiple Issuing CAs:
+- Support publishing multiple chains; clients trust any rooted at configured Root(s).
+
+Issuing CA renewal:
+- Prepare new Issuing CA; publish both chains during overlap; retire old after migration.
+
+### 14.5 Revocation model (pragmatic)
+
+Approach:
+1) Short-lived device certs (7–30 days)
+2) CRL-lite over QUIC (CBOR), signed by Issuing CA or dedicated revocation key
+
+CRL-lite structure:
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CaRevocationList {
+    pub issuing_ca_serial_hex: String,
+    pub generated_at: u64,
+    pub revoked_serials: Vec<Vec<u8>>, // big-endian
+    pub signature: Vec<u8>,            // ECDSA P-256 DER
+}
+```
+- Endpoint: `$ca/{network_id}/crl` (mTLS)
+- Clients fetch on startup and then periodically (e.g., 10 min). Cache in memory and persist if desired.
+- Transporter enforcement: after QUIC handshake, before finalizing peer connection, compare presented peer cert serial to cached denylist; drop connection if revoked. Use `NodeKeyManager::get_certificate_info()` to read peer subject/serial and a small adapter in transporter to consult the cache.
+
+OCSP option (not chosen now): requires additional responder logic and likely new crates; defer to future.
+
+### 14.6 Certificate lifecycle management
+
+Monitoring:
+- CA Node tracks expirations for issued certs; emits `$ca/{network_id}/events/expiring` for thresholds (14d/7d/3d).
+- Nodes also check via `get_certificate_status()` and log warnings at thresholds.
+
+Automatic renewal:
+- Nodes initiate renewal within 7 days of expiry via `$ca/{network_id}/renew` (mTLS). Policy may require key rotation.
+
+### 14.7 Network integration and discovery
+
+- CA Nodes publish `$registry/ca/{network_id}/announces` with:
+  - bootstrap_bind, ca_bind, issuing_subject, issuing_serial_hex, features: [enroll, renew, revoke, crl].
+- Clients subscribe or query to select a CA Node.
+- Multi-network: one process can serve multiple networks; endpoints are namespaced by `{network_id}`.
+
+### 14.8 Security and operations
+
+HSM/TEE options:
+1) Software-only (current baseline)
+   - Pros: simplest; no new deps.
+   - Cons: higher exposure.
+2) External HSM/TEE (future)
+   - Pros: protects CA private key.
+   - Cons: integration work; hardware costs.
+
+Audit logging:
+- INFO on success (enroll/renew/revoke): node_id, serial, token_id hash, network_id.
+- WARN/ERROR on invalid token/CSR, rate-limit, signature failures.
+
+Key rollover:
+- Rotate EA and Issuing CA periodically (6–12 months) or on compromise. Advertise next issuer during overlap.
+
+Monitoring & health:
+- `$ca/{network_id}/health` returns uptime, counters, last CRL generation.
+
+Backup & recovery:
+- Back up Issuing CA persisted state offline. Recovery verifies subject/serial consistency before serving.
+
+### 14.9 Dataflows (end-to-end)
+
+1) Bootstrap enrollment (server-auth only)
+   - Client: `NodeKeyManager::generate_csr()` + receive `EnrollmentToken` out-of-band.
+   - Call `$ca/{network_id}/enroll` with `CsrEnrollRequest` → receive `CsrEnrollResponse`.
+   - Install via `NodeKeyManager::install_certificate(...)`. From now on, full mTLS.
+
+2) Renewal (mTLS)
+   - Client: send `RenewRequest` within renewal window.
+   - CA Node: validate mTLS identity vs CSR CN; return `RenewResponse`.
+
+3) Revocation (mTLS)
+   - Admin: send `RevokeRequest` (authorized cert).
+   - CA Node: update CRL-lite and publish; clients fetch and transporter enforces denylist.
+
+4) Chain fetch (server-auth only)
+   - Client: `$ca/{network_id}/chain` → `ChainResponse` to bootstrap trust.
+
+All structures and cryptographic operations use existing crates in the repo; no new dependencies are introduced.
+
+---
+
+## 15) End-to-End Test Specification – Mobile Enrollment via CA Node (QUIC)
+
+Purpose: validate the full QUIC-based CA infrastructure by enrolling a brand-new mobile app (using `NodeKeyManager` in frontend role), issuing its device certificate via a CA Node, and then participating with mTLS. This extends the existing `end_to_end_test.rs` scenario.
+
+### 15.1 Preconditions (reusing existing e2e steps)
+- Master mobile (owner):
+  - `MobileKeyManager::new(logger)`
+  - `initialize_user_root_key()`
+  - `generate_network_data_key()` → `network_public_key`, `network_id = compact_id(network_public_key)`
+- Backend nodes (at least one):
+  - `NodeKeyManager::new(logger)` → `generate_keys()`
+  - CSR issuance via Master mobile:
+    - Node: `generate_csr()`
+    - Mobile: `process_setup_token(...)` → `NodeCertificateMessage`
+    - Node: `install_certificate(NodeCertificateMessage)`
+- Result: backend nodes are mTLS-capable; Master mobile owns network and CA from earlier steps (as per current e2e).
+
+### 15.2 Phase 1 – Elect CA Node and install Issuing CA
+- Elect one enrolled backend node to act as CA Node.
+- Two supported options for issuance authority:
+  - Option A (recommended): Issuing CA (intermediate) signed by Root/Master CA
+    - Create Issuing CA keypair and CA certificate (CA=true, path_len=0, KeyUsage keyCertSign+cRLSign). Root signs the Issuing CA CSR offline.
+    - Install on CA Node:
+      - `install_issuing_ca(issuing_ca_key_pair, issuing_ca_certificate, root_ca_certificate, ea_public_keys)`
+  - Option B (early bring-up only): Use Root CA directly on CA Node
+    - Securely transfer Root CA key+cert (encrypted using node agreement key) and call the same install API.
+    - Not recommended for production, but validates the rest of the flow.
+- Assertions:
+  - CA Node `status()` exposes issuing subject, serial, validity window.
+  - Chain validates: Issuing → Root (or leaf==root in Option B).
+
+Required certificate API (design):
+- Add CA-profile signing to existing `CertificateAuthority` for Issuing CA:
+  - `sign_ca_certificate_request_with_serial(ca_csr_der, validity_days, Some(serial))` → CA cert (BasicConstraints CA=true, path_len=0; KeyUsage keyCertSign+cRLSign; SKI present).
+
+### 15.3 Phase 2 – Enrollment Token issuance (out-of-band)
+- Admin tooling generates a token using an Enrollment Authority (EA) ECDSA P-256 key (no new crate needed):
+  - Build `EnrollmentTokenBody { token_id, network_id, subject_hint, not_before, expires_at, nonce, permissions:["enroll"] }` (CBOR).
+  - Sign `CBOR(body)` with EA key → DER signature.
+  - Produce `EnrollmentToken { body, signature, signer_id = compact_id(ea_public_key) }`.
+- Provide EA public key to the CA Node via `configure_enrollment_authority(vec![ea_public_key])`.
+- Assertions:
+  - Token window valid; `network_id` matches.
+  - CA Node recognizes `signer_id` and verifies signature with EA public key.
+
+### 15.4 Phase 3 – New Mobile App (frontend role) prepares CSR
+- New app uses `NodeKeyManager`:
+  - `let mut mobile_node = NodeKeyManager::new(logger)?;`
+  - `mobile_node.generate_keys()?;`
+  - `let csr = mobile_node.generate_csr()?;` // CN = compact_id(device public key)
+- Assertions:
+- CSR parseable with `x509-parser` and CN matches device compact_id.
+
+### 15.5 Phase 4 – Enrollment over QUIC (server-auth only)
+- Client request to `$ca/{network_id}/enroll` with CBOR body:
+  - `CsrEnrollRequest { csr_der: csr.csr_der, enrollment_token }`
+- CA Node handler steps:
+  1) Verify token signature (EA public key) and time window.
+  2) Anti-replay and rate-limit checks (per remote+token_id/subject_hint).
+  3) Parse CSR; validate CN equals `compact_id(public_key)` extracted from CSR.
+  4) Issue device leaf certificate from Issuing CA (not CA), 7–30 days validity.
+  5) Respond `CsrEnrollResponse { certificate_der, issuing_ca_der, root_ca_der: Some(root_der), expires_at }`.
+- Client installs cert:
+  - Convert to `NodeCertificateMessage` and call `mobile_node.install_certificate(...)`.
+- Assertions:
+  - `mobile_node.get_certificate_status() == CertificateStatus::Valid`.
+  - `get_quic_certificate_config()` returns chain [leaf, issuing/root] and parseable private key via `PrivateKeyDer::try_from(...)`.
+  - X.509 checks: BasicConstraints notCA, KeyUsage digitalSignature, EKU includes clientAuth/serverAuth per policy.
+
+### 15.6 Phase 5 – Participate as peer under mTLS
+- Build root store for transporter from Issuing/Root CA (from CA Node or config).
+- Optional live transport validation (if wired):
+  - Server requires client auth (`WebPkiClientVerifier::builder(root_store)`); client presents `with_client_auth_cert(chain, key)`.
+  - Verify mutual acceptance and that subjects match compact_ids.
+
+### 15.7 Phase 6 – Renewal (mTLS)
+- Trigger renewal when within renewal window (e.g., T-7d):
+  - `RenewRequest { csr_der }` sent over mTLS to `$ca/{network_id}/renew`.
+  - CA Node validates mTLS identity vs CSR CN; issues new leaf cert.
+  - Client installs new cert; validate `CertificateStatus::Valid` and updated serial/validity.
+
+### 15.8 Phase 7 – Revocation + CRL-lite propagation
+- CA Node revokes old device certificate via `RevokeRequest { certificate_serial, reason }` from an authorized admin cert (mTLS).
+- CA Node publishes CRL-lite over QUIC: `$ca/{network_id}/crl` → `CaRevocationList` (CBOR, signed by Issuing CA or a dedicated revocation key).
+- Client fetches and caches denylist.
+- Transporter enforcement hook (post-handshake): deny connections whose peer serial appears in CRL-lite cache.
+- Assertions:
+  - CRL-lite contains the revoked serial.
+  - Connection attempt using revoked cert is rejected (if hook implemented), or the denylist is present (design validated).
+
+### 15.9 Phase 8 – Profile keys (frontend/mobile role)
+- Derive a profile agreement key on `mobile_node`:
+  - `let personal_pub = mobile_node.derive_user_profile_key("personal")?;`
+- Envelope interop:
+  - Existing node encrypts with envelope for `personal_pub`.
+  - `mobile_node.decrypt_with_profile(env, &compact_id(&personal_pub))?` returns plaintext.
+- Assertions: encryption/decryption round-trip.
+
+### 15.10 Pseudocode skeleton (design)
+```rust
+#[tokio::test]
+async fn test_e2e_mobile_enrollment_via_ca_node_quic() -> Result<()> {
+  // 0) Reuse existing e2e: master mobile + network + enrolled backend nodes
+
+  // 1) Elect CA Node and install Issuing CA
+  // ca_node.install_issuing_ca(issuing_ca_key_pair, issuing_ca_cert, root_ca_cert, ea_pubkeys)?;
+
+  // 2) Enrollment token (out-of-band)
+  // let token = sign_enrollment_token(&ea_key, &body)?;
+  // ca_node.configure_enrollment_authority(vec![ea_key.public_key_bytes()]);
+
+  // 3) New mobile (frontend role)
+  let mut mobile_node = NodeKeyManager::new(create_logger())?;
+  mobile_node.generate_keys()?;
+  let csr = mobile_node.generate_csr()?;
+
+  // 4) Enroll over QUIC (server-auth only)
+  let enroll_req = CsrEnrollRequest { csr_der: csr.csr_der.clone(), enrollment_token: token };
+  let enroll_resp = ca_node.handle_enroll(enroll_req)?; // in-memory handler for test
+  let msg = NodeCertificateMessage::from_enroll_response(&enroll_resp);
+  mobile_node.install_certificate(msg)?;
+  assert_eq!(mobile_node.get_certificate_status(), CertificateStatus::Valid);
+
+  // 5) Validate QUIC config
+  let cfg = mobile_node.get_quic_certificate_config()?;
+  assert!(!cfg.certificate_chain.is_empty());
+  let _ = PrivateKeyDer::try_from(cfg.private_key.secret_der().to_vec())?;
+
+  // 6) Renewal (mTLS)
+  let renew_req = RenewRequest { csr_der: mobile_node.generate_csr()?.csr_der };
+  let renew_resp = ca_node.handle_renew(renew_req)?;
+  let msg = NodeCertificateMessage::from_renew_response(&renew_resp);
+  mobile_node.install_certificate(msg)?;
+
+  // 7) Revocation + CRL-lite
+  let old_serial = /* from first leaf cert */;
+  let _ = ca_node.handle_revoke(RevokeRequest { certificate_serial: old_serial, reason: "compromise".into() })?;
+  let crl = ca_node.handle_crl_request(/* mTLS */)?;
+  assert!(crl.revoked_serials.iter().any(|s| s == &old_serial));
+
+  // 8) Profile keys
+  let personal = mobile_node.derive_user_profile_key("personal")?;
+  let env = existing_node.encrypt_with_envelope(b"hello", None, vec![personal.clone()])?;
+  let pt = mobile_node.decrypt_with_profile(&env, &compact_id(&personal))?;
+  assert_eq!(pt, b"hello");
+  Ok(())
+}
+```
+
+### 15.11 Design validation and gaps
+- Required new certificate API: CA-profile signing for Issuing CA (CA=true, path_len=0, KeyUsage keyCertSign+cRLSign). No new crates.
+- CA Node service (test harness): `install_issuing_ca(...)`, `configure_enrollment_authority(...)`, handlers for `enroll/renew/revoke/crl/status` using existing crypto libs.
+- Transporter denylist enforcement: small post-handshake hook to consult CRL-lite cache before marking peer connected.
+- NodeKeyManager frontend additions from Section 4 must be implemented (profile agreements + decrypt precedence).
+
+---
+
+## 16) Policy decisions and their impact (defaults and alternatives)
+
+This section expands the remaining policy choices with detailed rationale, dataflows affected, and top options. Defaults are suitable for initial rollout and can be revised per network policy.
+
+### 16.1 Leaf EKU policy scope (Selected: Option A)
+
+Context:
+- QUIC over rustls uses TLS 1.3. A peer may act as server and client at different times (true P2P). Today, tests assume leaf certs are usable for both roles.
+
+Option A (selected): EKU = clientAuth + serverAuth on all device leaf certs
+- What it does: one device certificate supports both TLS client and TLS server roles.
+- Dataflows impacted:
+  - Enrollment/Renewal: CA issues leaf with both EKUs.
+  - Transport handshake: rustls validates EKU per role; the same certificate passes both server and client checks.
+- Pros:
+  - Simpler key management; single cert per device regardless of role.
+  - Fits P2P usage where roles can switch dynamically.
+- Cons:
+  - Slightly broader usage than least-privilege if a device should never act as server.
+
+Option B: Separate profiles – client-only and server-only device certs
+- What it does: devices get role-specific certs or two certs if they must serve both roles.
+- Dataflows impacted:
+  - Enrollment: client requests must specify profile; CA issues EKU-appropriate leaf.
+  - Transport: app must choose the correct cert per role and handle storage of multiple certs.
+- Pros:
+  - Least-privilege alignment; tighter scope.
+- Cons:
+  - More complex provisioning and runtime selection; larger operational surface.
+
+Final decision: Option A. This is a peer-to-peer system; devices may act as both client and server.
+
+### 16.2 CRL-lite fetch interval (Selected: Option A)
+
+Context:
+- We propose a signed CBOR denylist (CRL-lite) fetched by peers and enforced post-handshake by transporter.
+
+Option A (selected): 10 minutes
+- What it does: peers fetch CRL-lite on startup and every ~10 minutes.
+- Dataflows impacted:
+  - CA Node: generates and serves CRL-lite upon change; otherwise cached copy served.
+  - Client: schedules periodic fetch; on update, refresh in-memory denylist.
+- Pros:
+  - Balanced staleness vs. load; suitable for most networks.
+- Cons:
+  - Up to 10-minute window where a revoked cert could still connect (unless proactively disconnected).
+
+Option B: 1–5 minutes
+- Pros:
+  - Tighter revocation freshness.
+- Cons:
+  - Higher load on CA endpoints; more churn.
+
+Final decision: Option A (10 minutes) with backoff on failures; allow per-network override.
+
+### 16.3 Admin authorization matching for CA control endpoints (Selected: Option A)
+
+Context:
+- Admin-only endpoints (e.g., revoke) over mTLS need authorization checks beyond successful TLS.
+
+Option A (selected): Allowlist by Subject Key Identifier (SKI)
+- What it does: configure a set of admin SKIs; on mTLS, extract peer cert SKI and match.
+- Dataflows impacted:
+  - CA Node: on `$ca/{network_id}/revoke` and similar, read SKI from peer cert and compare.
+- Pros:
+  - Stable across CN/subject formatting changes; resilient to subject collisions.
+- Cons:
+  - Requires extracting SKI from cert (which we already parse elsewhere).
+
+Option B: Allowlist by subject string (exact match)
+- Pros:
+  - Simple to configure/read.
+- Cons:
+  - Brittle to formatting changes; potential for ambiguity if subjects are not unique.
+
+Final decision: Option A (SKI allowlist) enforced over mTLS. This provides strong authentication because:
+1) mTLS proves possession of the admin certificate private key (TLS layer), and
+2) SKI allowlist authorizes only specific admin identities at the application layer.
+
+Optional (not required by default): request-body signing for non-repudiation
+- If additional provenance is desired for auditability beyond mTLS, we can require admins to sign the request payload using their device identity key.
+- Mechanism:
+  - Include `AdminSignedEnvelope { payload_cbor_sha256: [u8;32], timestamp: u64, signature_der: Vec<u8> }` alongside the admin request.
+  - CA Node verifies `signature_der` with the mTLS peer certificate public key and checks timestamp skew.
+- Impact: Adds explicit application-level signatures; useful for offline audit trails. Not strictly necessary for security when mTLS + SKI allowlist are enforced.
+
+### 16.4 Issuing CA overlap window length before cutover (Selected: Option A)
+
+Context:
+- When rotating Issuing CA, both old and new chains should be accepted for a period to allow smooth migration.
+
+Option A (selected): 30 days overlap
+- What it does: CA Node publishes both chains; clients accept either chain for 30 days.
+- Dataflows impacted:
+  - `$ca/{network_id}/chain` returns both or switches at mid-point; issuance uses new CA after a date; verification allows both.
+- Pros:
+  - Plenty of time for intermittently connected devices to update.
+- Cons:
+  - Longer window where two issuers are trusted.
+
+Option B: 7–14 days overlap
+- Pros:
+  - Faster convergence to a single issuer.
+- Cons:
+  - Risk of stranding long-offline devices.
+
+Final decision: Option A (30 days). Suitable for mobile-heavy networks; configurable per deployment.
+
+### 16.5 Which CA to embed at bootstrap (for server-auth to CA Node) (Selected: Option A)
+
+Context:
+- New clients must authenticate the CA Node on the bootstrap bind before they have device certs.
+
+Option A (selected): Embed Root CA
+- What it does: ship Root CA cert in the app; bootstrap bind uses an Issuing/leaf chain anchored at Root.
+- Dataflows impacted:
+  - App install: Root CA stored in trust set.
+  - CA Node: presents server cert chaining to Root.
+- Pros:
+  - Stable trust anchor across Issuing CA rotations.
+- Cons:
+  - App updates required if Root changes (rare by design).
+
+Option B: Embed current Issuing CA
+- Pros:
+  - Smaller trust surface; faster revocation of a compromised Issuing CA by app update.
+- Cons:
+  - Requires app updates on every Issuing CA rotation; operationally heavier.
+
+Final decision: Option A (Root). Provides long-lived stability; Issuing CA rotations do not require app updates.
+
+---
+
+## 17) X.509 profiles and SKI extraction – exact details
+
+This section enumerates exact extension OIDs, criticality, and validation rules for both Issuing CA and Device Leaf certificates, plus precise SKI/AKI extraction and matching rules. All validation is performed using the existing `x509-parser = "0.16"` already used in tests.
+
+### 17.1 OIDs and constants (for reference)
+- Subject Key Identifier (SKI): 2.5.29.14
+- Authority Key Identifier (AKI): 2.5.29.35
+- Basic Constraints: 2.5.29.19
+- Key Usage: 2.5.29.15
+- Extended Key Usage (EKU): 2.5.29.37
+  - serverAuth: 1.3.6.1.5.5.7.3.1
+  - clientAuth: 1.3.6.1.5.5.7.3.2
+- Signature algorithm: ECDSA with SHA-256 → 1.2.840.10045.4.3.2
+
+### 17.2 Issuing CA certificate profile (intermediate)
+- BasicConstraints: critical, CA=true, pathLenConstraint=0
+- KeyUsage: critical, keyCertSign=true, cRLSign=true; all others false
+- SubjectKeyIdentifier: present (20 bytes typical)
+- AuthorityKeyIdentifier: present (keyIdentifier matches Root’s SKI)
+- Signature algorithm: ECDSA-SHA256 (1.2.840.10045.4.3.2)
+- Subject/Issuer: Issuer is Root; Subject is Issuing CA DN
+
+Validation on import at CA Node:
+1) Parse with `x509-parser`; assert BasicConstraints and KeyUsage per above.
+2) Verify AKI of Issuing CA matches SKI of Root CA when both are present.
+3) Accept only ECDSA-SHA256 signatures.
+
+### 17.3 Device leaf certificate profile
+- BasicConstraints: critical, CA=false (notCA)
+- KeyUsage: critical, digitalSignature=true; keyEncipherment=false; cRLSign=false; keyCertSign=false; keyAgreement=false
+- ExtendedKeyUsage: non-critical, contains both serverAuth and clientAuth
+- SubjectKeyIdentifier: present (20 bytes typical)
+- AuthorityKeyIdentifier: present; must equal Issuing CA SKI
+- Signature algorithm: ECDSA-SHA256 (1.2.840.10045.4.3.2)
+- Subject DN: `CN={compact_id(device_public_key)},O=Runar Node,C=US` (consistent with existing CSR subject)
+
+Validation on install (`NodeKeyManager::install_certificate` path):
+1) Use CA public key to verify leaf signature.
+2) Assert BasicConstraints/KeyUsage/EKU per above.
+3) Assert AKI(leaf) == SKI(issuing CA); if Root used directly, AKI(leaf) == SKI(root CA).
+4) Assert CN contains `compact_id(node_public_key)` (current behavior).
+
+### 17.4 SKI and AKI extraction using x509-parser
+- SKI: extension OID 2.5.29.14 yields 20-byte key identifier (SHA-1 of subject public key, per common practice).
+- AKI: extension OID 2.5.29.35 may include keyIdentifier; we match on that field.
+
+Pseudocode (already consistent with tests):
+```rust
+use x509_parser::prelude::FromDer;
+use x509_parser::extensions::ParsedExtension;
+
+let (_, cert) = x509_parser::certificate::X509Certificate::from_der(der_bytes)?;
+let mut maybe_ski: Option<Vec<u8>> = None;
+let mut maybe_aki: Option<Vec<u8>> = None;
+for ext in cert.extensions() {
+    match ext.parsed_extension() {
+        ParsedExtension::SubjectKeyIdentifier(ski) => {
+            maybe_ski = Some(ski.0.to_vec()); // typically 20 bytes
+        }
+        ParsedExtension::AuthorityKeyIdentifier(aki) => {
+            if let Some(kid) = &aki.key_identifier { maybe_aki = Some(kid.0.to_vec()); }
+        }
+        _ => {}
+    }
+}
+// For admin SKI allowlist: hex::encode(maybe_ski.unwrap()) compare against configured set
+```
+
+Where needed, compare SKI byte arrays directly or hex-encode using `hex = "0.4"` (already in repo).
+
+---
+
+## 18) CA Node admin auth – handler wiring and verification flow
+
+Admin-only endpoints (e.g., `$ca/{network_id}/revoke`) enforce two layers:
+1) Transport-layer authentication (mTLS): rustls validates the admin client certificate chain against Root/Issuing roots.
+2) Application-layer authorization: SKI allowlist on the peer’s leaf certificate.
+
+### 18.1 Obtaining peer certificate (transporter/Quinn/rustls)
+- At connection acceptance, use the rustls-backed Quinn crypto session to access peer certificates:
+  - In rustls 0.23, `tls_connection.peer_certificates()` returns `Option<&[CertificateDer]>` after handshake.
+  - In Quinn 0.11 with rustls backend, wrap the `rustls::Connection` via `quinn::crypto::rustls` and plumb the chain up to the request handling layer (design change in transporter: expose peer cert chain on per-connection context).
+- The CA service layer reads the peer leaf certificate DER from this context for each request.
+
+### 18.2 SKI allowlist check
+Steps:
+1) Parse the peer leaf DER with `x509-parser` and extract SKI (Section 17.4).
+2) Hex-encode or compare raw bytes against the configured admin SKI allowlist for the `network_id`.
+3) If not matched, return `CaErrorResponse { code: "forbidden", message: "admin SKI not authorized" }` and close the connection.
+
+### 18.3 Optional request-body signing (non-repudiation)
+- Structure appended to admin requests:
+```rust
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct AdminSignedEnvelope {
+    pub payload_sha256: [u8; 32],    // SHA-256 over CBOR(payload)
+    pub timestamp: u64,              // UNIX seconds, max skew e.g., 120s
+    pub signature_der: Vec<u8>,      // ECDSA P-256 signature
+}
+```
+- Verification:
+  1) Compute SHA-256 over the received CBOR payload and compare to `payload_sha256`.
+  2) Extract peer leaf cert public key (from mTLS) and verify `signature_der` over `payload_sha256` using `p256::ecdsa::Verifier`.
+  3) Check `timestamp` within allowed skew; keep a short-lived nonce ledger (payload hash + ts) to prevent replay.
+- This layer is optional; mTLS + SKI allowlist already provide strong auth. Enable when audit-level non-repudiation is required.
+
+### 18.4 Failure mapping
+- Unauthorized admin: `forbidden`
+- Bad signature or timestamp skew: `bad_signature`
+- Missing peer cert (should not happen after mTLS): `protocol_error`
+- All errors returned as `CaErrorResponse` (CBOR) with clear message.
+
+

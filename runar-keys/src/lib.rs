@@ -20,8 +20,11 @@
 //!     └── Used for all QUIC/TLS operations
 //! ```
 
+pub mod ca_node;
+pub mod ca_node_types;
 pub mod certificate;
 pub mod derivation;
+pub mod enrollment_token;
 pub mod error;
 pub mod mobile;
 pub mod node;
@@ -30,7 +33,14 @@ mod macros;
 pub mod pure_x509;
 
 // Re-export key types for convenience
+pub use ca_node::CANode;
+pub use ca_node_types::{
+    CaErrorResponse, CaRevocationList, CaStatus, ChainResponse, CsrEnrollRequest,
+    CsrEnrollResponse, RateLimitState, RenewRequest, RenewResponse, RevokeRequest, RevokeResponse,
+    RevokedSerial,
+};
 pub use certificate::{CertificateAuthority, CertificateValidator, X509Certificate};
+pub use enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 pub use error::{KeyError, Result};
 pub use mobile::MobileKeyManager;
 pub use node::NodeKeyManager;
