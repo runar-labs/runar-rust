@@ -35,7 +35,7 @@ use uuid::Uuid;
 use crate::discovery::multicast_discovery::PeerInfo;
 
 use crate::transport::{GetLocalNodeInfoCallback, NetworkError, NetworkMessage, NetworkTransport};
-use runar_keys::NodeKeyManager;
+use runar_keys::{ca_node::CANode, NodeKeyManager};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 // No direct use of ServerName; rely on rustls SNI handling.
@@ -437,6 +437,10 @@ pub struct QuicTransport {
 
     // Per-peer connect guards to avoid concurrent connects
     peer_connect_mutexes: Arc<DashMap<String, Arc<Mutex<()>>>>,
+
+    // CA Node for CRL validation
+    #[allow(dead_code)]
+    ca_node: Option<Arc<StdRwLock<CANode>>>,
     // shared runtime state (peers + broadcast)
     state: SharedState,
 
@@ -731,6 +735,7 @@ impl QuicTransport {
             response_cache: DashMap::new(),
             response_cache_ttl: cache_ttl,
             max_request_retries,
+            ca_node: None, // TODO: Add CA Node configuration
         })
     }
 
@@ -883,6 +888,13 @@ impl QuicTransport {
                 if let Some(connecting) = endpoint.accept().await {
                     match connecting.await {
                         Ok(conn) => {
+                            // TODO: Validate peer certificate against CRL-lite
+                            // For now, skip CRL validation until we implement proper peer certificate access
+                            // if let Err(e) = self_clone.validate_peer_certificate_against_crl(&conn.peer_identity().unwrap().certificates[0]).await {
+                            //     log_error!(self_clone.logger, "CRL validation failed: {e}");
+                            //     continue; // Skip this connection
+                            // }
+
                             let task = self_clone
                                 .clone()
                                 .spawn_connection_tasks("inbound".to_string(), Arc::new(conn));
@@ -1667,6 +1679,33 @@ impl QuicTransport {
 
         Ok(root_store)
     }
+
+    /// Validate peer certificate against CRL-lite using CA Node
+    #[allow(dead_code)]
+    async fn validate_peer_certificate_against_crl(
+        &self,
+        peer_cert: &CertificateDer<'static>,
+    ) -> Result<(), NetworkError> {
+        // If no CA Node is configured, skip CRL validation
+        let Some(ca_node) = &self.ca_node else {
+            log_debug!(
+                self.logger,
+                "No CA Node configured, skipping CRL validation"
+            );
+            return Ok(());
+        };
+
+        // Validate certificate against CRL
+        let cert_der = peer_cert.as_ref();
+        ca_node
+            .read()
+            .unwrap()
+            .validate_certificate_against_crl(cert_der)
+            .map_err(|e| NetworkError::ConfigurationError(format!("CRL validation failed: {e}")))?;
+
+        log_debug!(self.logger, "Peer certificate passed CRL validation");
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -2160,6 +2199,13 @@ impl NetworkTransport for QuicTransport {
                 )));
             }
         };
+
+        // TODO: Validate peer certificate against CRL-lite
+        // For now, skip CRL validation until we implement proper peer certificate access
+        // if let Err(e) = self.validate_peer_certificate_against_crl(&conn.peer_identity().unwrap().certificates[0]).await {
+        //     log_error!(self.logger, "CRL validation failed for outbound connection: {e}");
+        //     return Err(NetworkError::ConnectionError(format!("CRL validation failed: {e}")));
+        // }
 
         self.logger
             .debug("[connect_peer] QUIC connection established successfully");

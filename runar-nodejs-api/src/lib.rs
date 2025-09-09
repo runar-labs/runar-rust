@@ -93,10 +93,21 @@ impl Keys {
 
         // Initialize node manager if not already present
         if inner.node_key_manager.is_none() {
-            let node = NodeKeyManager::new(inner.logger.clone())
+            let mut node = NodeKeyManager::new(inner.logger.clone())
                 .map_err(|e| Error::from_reason(e.to_string()))?;
-            let node_id = node.get_node_id();
-            inner.logger.set_node_id(node_id);
+
+            // Try to load existing state first, otherwise generate keys
+            let state_loaded = node
+                .probe_and_load_state()
+                .map_err(|e| Error::from_reason(format!("Failed to probe state: {e}")))?;
+
+            if !state_loaded {
+                // No state found - generate keys
+                node.generate_keys()
+                    .map_err(|e| Error::from_reason(format!("Failed to generate keys: {e}")))?;
+            }
+
+            // Logger is updated in both probe_and_load_state and generate_keys
             inner.node_key_manager = Some(Arc::new(StdRwLock::new(node)));
         }
 
@@ -215,27 +226,35 @@ impl Keys {
     #[napi]
     pub fn node_get_node_id(&self) -> Result<String> {
         let inner = self.inner.lock().unwrap();
-        let id = if let Some(n) = inner.node_key_manager.read().unwrap() {
-            n.get_node_id()
-        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
-            n.get_node_id()
+        let id = if let Some(n) = inner.node_key_manager.as_ref() {
+            n.read().unwrap().get_node_id()
         } else {
             return Err(Error::from_reason("Node not init"));
         };
-        Ok(id)
+
+        match id {
+            Some(node_id) => Ok(node_id),
+            None => Err(Error::from_reason(
+                "Node ID not available - call init_as_node first",
+            )),
+        }
     }
 
     #[napi]
     pub fn node_get_public_key(&self) -> Result<Uint8Array> {
         let inner = self.inner.lock().unwrap();
-        let pk = if let Some(n) = inner.node_key_manager.read().unwrap() {
-            n.get_node_public_key()
-        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
-            n.get_node_public_key()
+        let pk = if let Some(n) = inner.node_key_manager.as_ref() {
+            n.read().unwrap().get_node_public_key()
         } else {
             return Err(Error::from_reason("Node not init"));
         };
-        Ok(Uint8Array::from(pk))
+
+        match pk {
+            Some(public_key) => Ok(Uint8Array::from(public_key)),
+            None => Err(Error::from_reason(
+                "Node public key not available - call init_as_node first",
+            )),
+        }
     }
 
     #[napi]
@@ -791,7 +810,11 @@ impl Transport {
                 .ok_or_else(|| Error::from_reason("Node not init"))?
                 .clone();
             let logger = guard.logger.clone();
-            let node_pk = km_arc.read().unwrap().get_node_public_key();
+            let node_pk = km_arc
+                .read()
+                .unwrap()
+                .get_node_public_key()
+                .ok_or_else(|| Error::from_reason("Node public key not available"))?;
             (km_arc, logger, guard.local_node_info.clone(), node_pk)
         };
 
@@ -829,7 +852,11 @@ impl Transport {
                         Ok(info)
                     } else {
                         Ok(runar_schemas::NodeInfo {
-                            node_public_key: km_arc.read().unwrap().get_node_public_key(),
+                            node_public_key: km_arc
+                                .read()
+                                .unwrap()
+                                .get_node_public_key()
+                                .unwrap_or_default(),
                             network_ids: Vec::new(),
                             addresses: vec!["0.0.0.0:0".to_string()],
                             node_metadata: runar_schemas::NodeMetadata {
@@ -1145,13 +1172,13 @@ impl Discovery {
     #[napi(constructor)]
     pub fn new(keys: &Keys, options_cbor: Uint8Array) -> Result<Self> {
         let inner = keys.inner.lock().unwrap();
-        let node_pk = if let Some(n) = inner.node_key_manager.read().unwrap() {
-            n.get_node_public_key()
-        } else if let Some(n) = inner.node_key_manager.read().unwrap() {
-            n.get_node_public_key()
+        let node_pk = if let Some(n) = inner.node_key_manager.as_ref() {
+            n.read().unwrap().get_node_public_key()
         } else {
             return Err(Error::from_reason("Node not init"));
         };
+
+        let node_pk = node_pk.ok_or_else(|| Error::from_reason("Node public key not available"))?;
         let mut addrs: Vec<String> = Vec::new();
         if let Ok(serde_cbor::Value::Map(map)) =
             cbor::from_slice::<serde_cbor::Value>(options_cbor.read().unwrap())

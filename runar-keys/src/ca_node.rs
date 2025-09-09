@@ -435,6 +435,27 @@ impl CANode {
         self.revoked_tokens.insert(token_id, SystemTime::now());
         Ok(())
     }
+
+    /// Validate a peer certificate against CRL-lite
+    /// This method checks if a certificate is revoked by looking up its serial number
+    /// in the current revocation list.
+    pub fn validate_certificate_against_crl(&self, certificate_der: &[u8]) -> Result<()> {
+        // Parse the certificate to extract serial number
+        let (_, cert) = x509_parser::certificate::X509Certificate::from_der(certificate_der)
+            .map_err(|e| KeyError::ValidationError(format!("Failed to parse certificate: {e}")))?;
+
+        let serial_bytes = cert.serial.to_bytes_be();
+
+        // Check if certificate is revoked
+        if self.is_certificate_revoked(&serial_bytes) {
+            return Err(KeyError::ValidationError(format!(
+                "Certificate with serial {} is revoked",
+                cert.serial
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
