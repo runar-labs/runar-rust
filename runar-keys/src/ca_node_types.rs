@@ -94,7 +94,7 @@ pub struct CaStatus {
 pub struct CaRevocationList {
     /// Network ID this CRL applies to
     pub network_id: String,
-    /// Issuing CA serial number (hex)
+    /// Issuing CA serial number (raw bytes)
     pub issuing_ca_serial: Vec<u8>,
     /// List of revoked certificate serials
     pub revoked_serials: Vec<RevokedSerial>,

@@ -767,6 +767,10 @@ impl NodeKeyManager {
             ));
         }
 
+        // Validate X.509 extensions for leaf certificate
+        let validator = CertificateValidator::new(vec![cert_message.ca_certificate.clone()]);
+        validator.validate_for_tls_server(&cert_message.node_certificate)?;
+
         // Install the certificates
         self.node_certificate = Some(cert_message.node_certificate);
         self.ca_certificate = Some(cert_message.ca_certificate.clone());
@@ -1017,6 +1021,11 @@ impl NodeKeyManager {
     /// Get the node certificate
     pub fn get_node_certificate(&self) -> Option<&X509Certificate> {
         self.node_certificate.as_ref()
+    }
+
+    /// Get the CA certificate
+    pub fn get_ca_certificate(&self) -> Option<&X509Certificate> {
+        self.ca_certificate.as_ref()
     }
 
     /// Get statistics about the node key manager

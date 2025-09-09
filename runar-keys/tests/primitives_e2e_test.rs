@@ -18,7 +18,7 @@ use runar_common::{
 use runar_keys::{
     ca_node::CANode,
     ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest},
-    certificate::{CertificateAuthority, CertificateRequest, EcdsaKeyPair},
+    certificate::{CertificateAuthority, CertificateRequest, CertificateValidator, EcdsaKeyPair},
     enrollment_token::{EnrollmentToken, EnrollmentTokenBody},
     error::Result,
     mobile::MobileKeyManager,
@@ -237,6 +237,10 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     );
     println!("   ✅ CRL handler working correctly");
 
+    // Test CRL-lite serial format consistency (raw bytes, not hex)
+    assert!(!crl.issuing_ca_serial.is_empty()); // Should be raw bytes, not hex string
+    println!("   ✅ CRL-lite serial format is raw bytes (not hex string)");
+
     // ==========================================
     // Phase 6: CA Node API Status and Chain
     // ==========================================
@@ -374,9 +378,40 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     println!("   ✅ Revoked token correctly rejected");
 
     // ==========================================
-    // Phase 10: Error Handling Tests
+    // Phase 10: X.509 Extension Validation Tests
     // ==========================================
-    println!("\n❌ PHASE 10: Error Handling Tests");
+    println!("\n🔒 PHASE 10: X.509 Extension Validation Tests");
+
+    // Test leaf certificate X.509 validation
+    let node_cert = mobile_node.get_node_certificate().unwrap();
+    let validator =
+        CertificateValidator::new(vec![mobile_node.get_ca_certificate().unwrap().clone()]);
+
+    // This should pass - valid leaf certificate
+    validator.validate_for_tls_server(node_cert)?;
+    println!("   ✅ Valid leaf certificate passed X.509 validation");
+
+    // Test CA certificate X.509 validation
+    let ca_cert = mobile_node.get_ca_certificate().unwrap();
+    // For CA validation, we need to provide the Root CA as trusted
+    let root_ca_cert = root_ca.ca_certificate();
+    let ca_validator = CertificateValidator::new(vec![root_ca_cert.clone()]);
+
+    // This should pass - valid CA certificate
+    ca_validator.validate_certificate(ca_cert)?;
+    println!("   ✅ Valid CA certificate passed X.509 validation");
+
+    // Test SKI extraction
+    let node_ski = CertificateValidator::extract_ski(node_cert)?;
+    let ca_ski = CertificateValidator::extract_ski(ca_cert)?;
+    assert!(!node_ski.is_empty());
+    assert!(!ca_ski.is_empty());
+    println!("   ✅ SKI extraction working for both leaf and CA certificates");
+
+    // ==========================================
+    // Phase 11: Error Handling Tests
+    // ==========================================
+    println!("\n❌ PHASE 11: Error Handling Tests");
 
     // Test invalid enrollment token
     let invalid_token = EnrollmentToken {

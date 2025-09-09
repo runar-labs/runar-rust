@@ -402,7 +402,10 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
                 ca_has_bc = true;
                 assert!(ext.critical, "CA BasicConstraints must be critical");
                 assert!(bc.ca, "CA certificate must be CA=true");
-                assert_eq!(bc.path_len_constraint, Some(0), "CA pathLen should be 0");
+                assert_eq!(
+                    bc.path_len_constraint, None,
+                    "Root CA pathLen should be None (unlimited)"
+                );
             }
             CaParsedExt::KeyUsage(ku) => {
                 ca_has_ku = true;

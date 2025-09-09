@@ -107,7 +107,7 @@ pub fn create_self_signed_ca(
 
     let bc = BasicConstraints {
         ca: true,
-        path_len_constraint: Some(0),
+        path_len_constraint: None, // Root CA has no path length constraint
     };
     let ext_basic = Extension {
         extn_id: OID_BASIC_CONSTRAINTS,
