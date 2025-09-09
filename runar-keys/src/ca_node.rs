@@ -332,13 +332,13 @@ impl CANode {
             })?;
 
         let subject = cert.subject().to_string();
-        let serial = cert.serial.to_string();
+        let serial_hex = format!("{:x}", cert.serial);
         let not_before = cert.validity().not_before.timestamp() as u64;
         let not_after = cert.validity().not_after.timestamp() as u64;
 
         Ok(CaStatus {
             issuing_subject: subject,
-            issuing_serial_hex: serial,
+            issuing_serial_hex: serial_hex,
             not_before,
             not_after,
         })
