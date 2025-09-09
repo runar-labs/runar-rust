@@ -411,6 +411,69 @@ impl MobileKeyManager {
         )))
     }
 
+    /// Convert CA Node enrollment response to NodeCertificateMessage
+    pub fn from_enroll_response(
+        &self,
+        response: &crate::ca_node_types::CsrEnrollResponse,
+    ) -> Result<NodeCertificateMessage> {
+        // Parse the device certificate
+        let device_cert = X509Certificate::from_der(response.certificate_der.clone())?;
+
+        // Parse the issuing CA certificate
+        let issuing_ca_cert = X509Certificate::from_der(response.issuing_ca_der.clone())?;
+
+        // Parse root CA certificate if present (not used in this implementation)
+        let _root_ca_cert = if let Some(root_der) = &response.root_ca_der {
+            X509Certificate::from_der(root_der.clone())?
+        } else {
+            issuing_ca_cert.clone() // Use issuing CA as root if no root provided
+        };
+
+        // Create metadata
+        let metadata = CertificateMetadata {
+            issued_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            validity_days: 30, // Default from CA Node
+            purpose: "Node TLS Certificate".to_string(),
+        };
+
+        Ok(NodeCertificateMessage {
+            node_certificate: device_cert,
+            ca_certificate: issuing_ca_cert,
+            metadata,
+        })
+    }
+
+    /// Convert CA Node renewal response to NodeCertificateMessage
+    pub fn from_renew_response(
+        &self,
+        response: &crate::ca_node_types::RenewResponse,
+    ) -> Result<NodeCertificateMessage> {
+        // Parse the renewed certificate
+        let renewed_cert = X509Certificate::from_der(response.certificate_der.clone())?;
+
+        // Parse the issuing CA certificate
+        let issuing_ca_cert = X509Certificate::from_der(response.issuing_ca_der.clone())?;
+
+        // Create metadata
+        let metadata = CertificateMetadata {
+            issued_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            validity_days: 30, // Default from CA Node
+            purpose: "Node TLS Certificate (Renewed)".to_string(),
+        };
+
+        Ok(NodeCertificateMessage {
+            node_certificate: renewed_cert,
+            ca_certificate: issuing_ca_cert,
+            metadata,
+        })
+    }
+
     /// Generate a network data key for envelope encryption and return the public key bytes
     pub fn generate_network_data_key(&mut self) -> Result<Vec<u8>> {
         let network_key = P256SecretKey::random(&mut thread_rng());

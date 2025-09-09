@@ -33,6 +33,8 @@ pub struct CANode {
     pub revoked_certificates: HashMap<Vec<u8>, RevokedSerial>,
     /// Admin SKI allowlist for admin operations
     pub admin_ski_allowlist: Vec<String>,
+    /// Token anti-replay ledger: (token_id, nonce) -> expiry_time
+    pub token_replay_ledger: HashMap<(String, [u8; 16]), SystemTime>,
 }
 
 impl CANode {
@@ -53,6 +55,7 @@ impl CANode {
             rate_limits: HashMap::new(),
             revoked_certificates: HashMap::new(),
             admin_ski_allowlist: Vec::new(),
+            token_replay_ledger: HashMap::new(),
         }
     }
 
@@ -87,12 +90,22 @@ impl CANode {
     }
 
     /// Validate an enrollment token
-    pub fn validate_enrollment_token(&self, token: &EnrollmentToken) -> Result<()> {
+    pub fn validate_enrollment_token(&mut self, token: &EnrollmentToken) -> Result<()> {
         // Check if token is revoked
         if self.revoked_tokens.contains_key(&token.body.token_id) {
             return Err(KeyError::ValidationError(
                 "Token has been revoked".to_string(),
             ));
+        }
+
+        // Check anti-replay ledger
+        let replay_key = (token.body.token_id.clone(), token.body.nonce);
+        if let Some(expiry_time) = self.token_replay_ledger.get(&replay_key) {
+            if SystemTime::now() < *expiry_time {
+                return Err(KeyError::ValidationError(
+                    "Token nonce already used (replay attack)".to_string(),
+                ));
+            }
         }
 
         // Get the enrollment authority public key
@@ -106,6 +119,15 @@ impl CANode {
 
         // Validate token for enrollment
         token.validate_for_enrollment(&self.network_id)?;
+
+        // Add to anti-replay ledger with token expiry time
+        self.token_replay_ledger.insert(
+            replay_key,
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(token.body.expires_at),
+        );
+
+        // Clean up expired entries from replay ledger
+        self.cleanup_expired_replay_entries();
 
         Ok(())
     }
@@ -199,18 +221,44 @@ impl CANode {
 
     /// Handle certificate renewal request
     pub fn handle_renew(&mut self, request: RenewRequest, peer_ski: &str) -> Result<RenewResponse> {
-        // Check admin authorization
-        if !self.admin_ski_allowlist.contains(&peer_ski.to_string()) {
-            return Err(KeyError::AuthorizationError(
-                "Admin SKI not authorized".to_string(),
-            ));
-        }
-
-        // Parse CSR (validation only - we don't need the CSR data for renewal)
-        let (_, _csr) = x509_parser::certification_request::X509CertificationRequest::from_der(
+        // Parse CSR to extract public key and validate
+        let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(
             &request.csr_der,
         )
         .map_err(|e| KeyError::ValidationError(format!("Invalid CSR: {e}")))?;
+
+        // Extract public key from CSR
+        let public_key_bytes = csr
+            .certification_request_info
+            .subject_pki
+            .subject_public_key
+            .data
+            .to_vec();
+
+        // Validate that CSR CN matches the peer identity (device-based authorization)
+        let expected_cn = runar_common::compact_ids::compact_id(&public_key_bytes);
+        let csr_cn = csr
+            .certification_request_info
+            .subject
+            .iter_common_name()
+            .next()
+            .ok_or_else(|| KeyError::ValidationError("CSR missing CN".to_string()))?
+            .as_str()
+            .map_err(|e| KeyError::ValidationError(format!("Invalid CSR CN: {e}")))?;
+
+        if csr_cn != expected_cn {
+            return Err(KeyError::AuthorizationError(format!(
+                "CSR CN {csr_cn} does not match peer identity {expected_cn}"
+            )));
+        }
+
+        // Validate that peer_ski matches the CSR public key
+        let csr_ski = runar_common::compact_ids::compact_id(&public_key_bytes);
+        if peer_ski != csr_ski {
+            return Err(KeyError::AuthorizationError(format!(
+                "Peer SKI {peer_ski} does not match CSR public key SKI {csr_ski}"
+            )));
+        }
 
         // Create certificate authority for signing
         let ca = CertificateAuthority::from_existing(
@@ -309,7 +357,7 @@ impl CANode {
             })?;
         let issuing_ca_serial = cert.serial.to_bytes_be();
 
-        let crl = CaRevocationList {
+        let mut crl = CaRevocationList {
             network_id: self.network_id.clone(),
             issuing_ca_serial,
             revoked_serials,
@@ -318,10 +366,31 @@ impl CANode {
                 .unwrap_or_default()
                 .as_secs()
                 + 3600, // 1 hour from now
-            signature: vec![], // TODO: Implement signing
+            signature: vec![], // Will be filled after signing
         };
 
+        // Sign the CRL-lite with the issuing CA key
+        let signature = self.sign_crl_lite(&crl)?;
+        crl.signature = signature;
+
         Ok(crl)
+    }
+
+    /// Sign a CRL-lite with the issuing CA key
+    fn sign_crl_lite(&self, crl: &CaRevocationList) -> Result<Vec<u8>> {
+        // Create a copy without the signature for signing
+        let mut crl_for_signing = crl.clone();
+        crl_for_signing.signature = vec![];
+
+        // Serialize the CRL-lite to CBOR
+        let crl_cbor = serde_cbor::to_vec(&crl_for_signing)
+            .map_err(|e| KeyError::ValidationError(format!("Failed to serialize CRL: {e}")))?;
+
+        // Sign with ECDSA P-256
+        let signature = self.issuing_ca_key.sign(&crl_cbor)?;
+
+        // Return raw signature bytes (already in DER format from ECDSA)
+        Ok(signature)
     }
 
     /// Revoke a certificate
@@ -347,6 +416,24 @@ impl CANode {
     /// Check if a certificate is revoked
     pub fn is_certificate_revoked(&self, serial: &[u8]) -> bool {
         self.revoked_certificates.contains_key(serial)
+    }
+
+    /// Handle CRL fetch request
+    pub fn handle_crl(&self) -> Result<CaRevocationList> {
+        self.generate_crl_lite()
+    }
+
+    /// Clean up expired entries from the replay ledger
+    fn cleanup_expired_replay_entries(&mut self) {
+        let now = SystemTime::now();
+        self.token_replay_ledger
+            .retain(|_, expiry_time| now < *expiry_time);
+    }
+
+    /// Revoke an enrollment token (admin-only)
+    pub fn revoke_token(&mut self, token_id: String) -> Result<()> {
+        self.revoked_tokens.insert(token_id, SystemTime::now());
+        Ok(())
     }
 }
 

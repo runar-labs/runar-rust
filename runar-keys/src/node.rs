@@ -1014,6 +1014,11 @@ impl NodeKeyManager {
         }
     }
 
+    /// Get the node certificate
+    pub fn get_node_certificate(&self) -> Option<&X509Certificate> {
+        self.node_certificate.as_ref()
+    }
+
     /// Get statistics about the node key manager
     pub fn get_statistics(&self) -> Result<NodeKeyManagerStatistics> {
         let node_id = self.get_node_id().ok_or_else(|| {

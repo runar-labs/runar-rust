@@ -1,5 +1,6 @@
 //! Network transport and discovery for Runar nodes
 
+pub mod ca_node_server;
 pub mod discovery;
 pub mod network_config;
 pub mod transport;

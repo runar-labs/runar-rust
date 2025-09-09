@@ -394,3 +394,175 @@ pub fn sign_csr_with_ca(
 
     X509Certificate::from_der(cert_der)
 }
+
+/// Sign a CA certificate request (for Issuing CA certificates)
+pub fn sign_ca_certificate_request_with_serial(
+    ca_key_pair: &EcdsaKeyPair,
+    ca_der: &[u8],
+    ca_csr_der: &[u8],
+    validity_days: u32,
+    serial_override: Option<u64>,
+) -> Result<X509Certificate> {
+    let csr = x509_cert::request::CertReq::from_der(ca_csr_der)
+        .map_err(|e| KeyError::CertificateError(format!("Failed to parse CA CSR DER: {e}")))?;
+
+    // Verify CSR signature
+    {
+        use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
+        let info_der = csr.info.to_der().map_err(|e| {
+            KeyError::CertificateError(format!("Failed to encode CA CSR info: {e}"))
+        })?;
+        let sig = Signature::from_der(csr.signature.as_bytes().unwrap_or(&[])).map_err(|e| {
+            KeyError::CertificateError(format!("Invalid CA CSR signature DER: {e}"))
+        })?;
+        let pubkey_bytes = csr
+            .info
+            .public_key
+            .subject_public_key
+            .as_bytes()
+            .unwrap_or(&[]);
+        let vk = VerifyingKey::from_sec1_bytes(pubkey_bytes)
+            .map_err(|e| KeyError::CertificateError(format!("Invalid CA CSR public key: {e}")))?;
+        vk.verify(&info_der, &sig).map_err(|e| {
+            KeyError::CertificateError(format!("CA CSR signature verification failed: {e}"))
+        })?;
+    }
+
+    let subject = Name::from_der(&csr.info.subject.to_der().map_err(|e| {
+        KeyError::CertificateError(format!("Failed to encode CA CSR subject: {e}"))
+    })?)
+    .map_err(|e| KeyError::CertificateError(format!("Failed to import CA CSR subject: {e}")))?;
+
+    // Extract SPKI DER once to avoid temporary lifetime issues
+    let spki_der =
+        csr.info.public_key.to_der().map_err(|e| {
+            KeyError::CertificateError(format!("Failed to encode CA CSR SPKI: {e}"))
+        })?;
+    let spki_ref = SubjectPublicKeyInfoRef::from_der(&spki_der)
+        .map_err(|e| KeyError::CertificateError(format!("Failed to import CA CSR SPKI: {e}")))?;
+
+    // Convert to owned by rebuilding from SEC1 bytes
+    let pubkey_bytes = spki_ref.subject_public_key.as_bytes().unwrap_or(&[]);
+    let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(pubkey_bytes)
+        .map_err(|e| KeyError::InvalidKeyFormat(format!("Invalid CA CSR public key: {e}")))?;
+    let spki = spki_from_verifying_key(&vk)?;
+
+    let ca_ski = compute_ski(&spki);
+
+    // Get issuer from CA certificate DER
+    let ca_cert = x509_cert::Certificate::from_der(ca_der).map_err(|e| {
+        KeyError::CertificateError(format!("Failed to parse CA DER for issuer: {e}"))
+    })?;
+    let issuer: Name = ca_cert.tbs_certificate.subject.clone();
+
+    let serial = match serial_override {
+        Some(s) => serial_from_u64(s)?,
+        None => SerialNumber::new(&[2]).unwrap(),
+    };
+
+    const OID_BASIC_CONSTRAINTS: const_oid::ObjectIdentifier =
+        const_oid::ObjectIdentifier::new_unwrap("2.5.29.19");
+    const OID_KEY_USAGE: const_oid::ObjectIdentifier =
+        const_oid::ObjectIdentifier::new_unwrap("2.5.29.15");
+    const OID_SKI: const_oid::ObjectIdentifier =
+        const_oid::ObjectIdentifier::new_unwrap("2.5.29.14");
+    const OID_AKI: const_oid::ObjectIdentifier =
+        const_oid::ObjectIdentifier::new_unwrap("2.5.29.35");
+
+    // CA certificate specific extensions
+    let bc = BasicConstraints {
+        ca: true,
+        path_len_constraint: Some(0), // path_len=0 for intermediate CA
+    };
+    let ext_basic = Extension {
+        extn_id: OID_BASIC_CONSTRAINTS,
+        critical: true,
+        extn_value: OctetString::new(bc.to_der().unwrap()).unwrap(),
+    };
+
+    // KeyUsage for CA: keyCertSign + cRLSign
+    let ku = KeyUsage(
+        x509_cert::ext::pkix::KeyUsages::KeyCertSign | x509_cert::ext::pkix::KeyUsages::CRLSign,
+    );
+    let ext_ku = Extension {
+        extn_id: OID_KEY_USAGE,
+        critical: true,
+        extn_value: OctetString::new(ku.to_der().unwrap()).unwrap(),
+    };
+
+    let ext_ski = Extension {
+        extn_id: OID_SKI,
+        critical: false,
+        extn_value: OctetString::new(ca_ski.0.to_der().unwrap()).unwrap(),
+    };
+
+    // Authority Key Identifier
+    let ca_ski_from_cert = compute_ski(&spki_from_verifying_key(ca_key_pair.verifying_key())?);
+    let aki = AuthorityKeyIdentifier {
+        key_identifier: Some(ca_ski_from_cert.0),
+        authority_cert_issuer: None,
+        authority_cert_serial_number: None,
+    };
+    let ext_aki = Extension {
+        extn_id: OID_AKI,
+        critical: false,
+        extn_value: OctetString::new(aki.to_der().unwrap()).unwrap(),
+    };
+
+    let extensions = vec![ext_basic, ext_ku, ext_ski, ext_aki];
+
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let not_before =
+        Time::UtcTime(UtcTime::from_unix_duration(std::time::Duration::from_secs(now)).unwrap());
+    let not_after = Time::UtcTime(
+        UtcTime::from_unix_duration(std::time::Duration::from_secs(
+            now + (validity_days as u64 * 24 * 60 * 60),
+        ))
+        .unwrap(),
+    );
+
+    let tbs = TbsCertificate {
+        version: Version::V3,
+        serial_number: serial,
+        signature: AlgorithmIdentifier {
+            oid: OID_ECDSA_SHA256,
+            parameters: None,
+        },
+        issuer: issuer.clone(),
+        validity: Validity {
+            not_before,
+            not_after,
+        },
+        subject: subject.clone(),
+        subject_public_key_info: spki,
+        issuer_unique_id: None,
+        subject_unique_id: None,
+        extensions: Some(extensions),
+    };
+
+    let tbs_der = tbs
+        .to_der()
+        .map_err(|e| KeyError::CertificateError(format!("Failed to encode TBS: {e}")))?;
+
+    let sig = ca_key_pair.sign(&tbs_der)?;
+    let sig_der = p256::ecdsa::Signature::from_der(&sig)
+        .map_err(|e| KeyError::SigningError(format!("Invalid signature DER: {e}")))?;
+
+    let cert = Certificate {
+        tbs_certificate: tbs,
+        signature_algorithm: AlgorithmIdentifier {
+            oid: OID_ECDSA_SHA256,
+            parameters: None,
+        },
+        signature: BitString::from_bytes(sig_der.to_der().as_bytes()).unwrap(),
+    };
+
+    let cert_der = cert
+        .to_der()
+        .map_err(|e| KeyError::CertificateError(format!("Failed to encode CA certificate: {e}")))?;
+
+    X509Certificate::from_der(cert_der)
+}
