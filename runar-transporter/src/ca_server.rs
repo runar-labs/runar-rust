@@ -137,8 +137,10 @@ struct RateLimitEntry {
 #[derive(Clone)]
 pub struct CaServer {
     config: CaServerConfig,
+    #[allow(dead_code)]
     ca_node: Arc<RwLock<CANode>>,
     logger: Arc<Logger>,
+    #[allow(dead_code)]
     rate_limits: Arc<RwLock<HashMap<String, RateLimitEntry>>>,
     bootstrap_endpoint: Option<Arc<Endpoint>>,
     authenticated_endpoint: Option<Arc<Endpoint>>,
@@ -165,14 +167,14 @@ impl CaServer {
 
         // Start bootstrap server (server-auth only)
         self.start_bootstrap_server().await?;
-        self.logger.info(&format!(
+        self.logger.info(format!(
             "Bootstrap server started on {}",
             self.config.bootstrap_bind
         ));
 
         // Start authenticated server (mTLS required)
         self.start_authenticated_server().await?;
-        self.logger.info(&format!(
+        self.logger.info(format!(
             "Authenticated server started on {}",
             self.config.authenticated_bind
         ));
@@ -205,7 +207,7 @@ impl CaServer {
 
         // Convert to Quinn server config
         let server_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(server_config)?;
-        let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
+        let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
 
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, self.config.bootstrap_bind)?;
@@ -223,13 +225,13 @@ impl CaServer {
                     if let Err(e) = server.handle_bootstrap_connection(conn).await {
                         server
                             .logger
-                            .error(&format!("Bootstrap connection error: {}", e));
+                            .error(format!("Bootstrap connection error: {e}"));
                     }
                 });
             }
         });
 
-        self.logger.info(&format!(
+        self.logger.info(format!(
             "Bootstrap server started on {}",
             self.config.bootstrap_bind
         ));
@@ -267,7 +269,7 @@ impl CaServer {
 
         // Convert to Quinn server config
         let server_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(server_config)?;
-        let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
+        let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
 
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, self.config.authenticated_bind)?;
@@ -285,13 +287,13 @@ impl CaServer {
                     if let Err(e) = server.handle_authenticated_connection(conn).await {
                         server
                             .logger
-                            .error(&format!("Authenticated connection error: {}", e));
+                            .error(format!("Authenticated connection error: {e}"));
                     }
                 });
             }
         });
 
-        self.logger.info(&format!(
+        self.logger.info(format!(
             "Authenticated server started on {}",
             self.config.authenticated_bind
         ));
@@ -339,9 +341,7 @@ impl CaServer {
                     let server = self.clone();
                     tokio::spawn(async move {
                         if let Err(e) = server.handle_bootstrap_stream(send, recv).await {
-                            server
-                                .logger
-                                .error(&format!("Bootstrap stream error: {}", e));
+                            server.logger.error(format!("Bootstrap stream error: {e}"));
                         }
                     });
                 }
@@ -351,7 +351,7 @@ impl CaServer {
                 }
                 Err(e) => {
                     self.logger
-                        .error(&format!("Bootstrap connection error: {}", e));
+                        .error(format!("Bootstrap connection error: {e}"));
                     break;
                 }
             }
@@ -374,7 +374,7 @@ impl CaServer {
                         if let Err(e) = server.handle_authenticated_stream(send, recv).await {
                             server
                                 .logger
-                                .error(&format!("Authenticated stream error: {}", e));
+                                .error(format!("Authenticated stream error: {e}"));
                         }
                     });
                 }
@@ -385,7 +385,7 @@ impl CaServer {
                 }
                 Err(e) => {
                     self.logger
-                        .error(&format!("Authenticated connection error: {}", e));
+                        .error(format!("Authenticated connection error: {e}"));
                     break;
                 }
             }
@@ -599,10 +599,7 @@ impl CaServer {
             _ => {
                 let error = CaErrorResponse {
                     code: "invalid_message_type".to_string(),
-                    message: format!(
-                        "Invalid message type for bootstrap server: {:?}",
-                        message_type
-                    ),
+                    message: format!("Invalid message type for bootstrap server: {message_type:?}",),
                 };
                 self.create_binary_response(CaMessageType::ErrorResponse, &error)
             }
@@ -640,8 +637,7 @@ impl CaServer {
                 let error = CaErrorResponse {
                     code: "invalid_message_type".to_string(),
                     message: format!(
-                        "Invalid message type for authenticated server: {:?}",
-                        message_type
+                        "Invalid message type for authenticated server: {message_type:?}",
                     ),
                 };
                 self.create_binary_response(CaMessageType::ErrorResponse, &error)
@@ -668,6 +664,7 @@ impl CaServer {
     }
 
     /// Handle bootstrap endpoint requests
+    #[allow(dead_code)]
     async fn handle_bootstrap_request(
         &self,
         endpoint: &str,
@@ -682,6 +679,7 @@ impl CaServer {
     }
 
     /// Handle authenticated endpoint requests
+    #[allow(dead_code)]
     async fn handle_authenticated_request(
         &self,
         endpoint: &str,
@@ -714,6 +712,7 @@ impl CaServer {
     }
 
     /// Handle enrollment request (bootstrap endpoint)
+    #[allow(dead_code)]
     async fn handle_enroll_request(
         &self,
         request_data: &[u8],
@@ -744,10 +743,11 @@ impl CaServer {
     }
 
     /// Handle chain request (bootstrap endpoint)
+    #[allow(dead_code)]
     async fn handle_chain_request(
         &self,
         _request_data: &[u8],
-        peer_addr: SocketAddr,
+        _peer_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
         // Process chain request via CA Node
         let response = {
@@ -760,10 +760,11 @@ impl CaServer {
     }
 
     /// Handle renewal request (authenticated endpoint)
+    #[allow(dead_code)]
     async fn handle_renew_request(
         &self,
         request_data: &[u8],
-        peer_addr: SocketAddr,
+        _peer_addr: SocketAddr,
         peer_cert_der: &[u8],
     ) -> Result<Vec<u8>> {
         // Parse request
@@ -784,10 +785,11 @@ impl CaServer {
     }
 
     /// Handle revocation request (authenticated endpoint, admin-only)
+    #[allow(dead_code)]
     async fn handle_revoke_request(
         &self,
         request_data: &[u8],
-        peer_addr: SocketAddr,
+        _peer_addr: SocketAddr,
         peer_cert_der: &[u8],
     ) -> Result<Vec<u8>> {
         // Parse request
@@ -815,10 +817,11 @@ impl CaServer {
     }
 
     /// Handle CRL request (authenticated endpoint)
+    #[allow(dead_code)]
     async fn handle_crl_request(
         &self,
         _request_data: &[u8],
-        peer_addr: SocketAddr,
+        _peer_addr: SocketAddr,
         _peer_cert_der: &[u8],
     ) -> Result<Vec<u8>> {
         // Process CRL request via CA Node
@@ -832,10 +835,11 @@ impl CaServer {
     }
 
     /// Handle status request (authenticated endpoint)
+    #[allow(dead_code)]
     async fn handle_status_request(
         &self,
         _request_data: &[u8],
-        peer_addr: SocketAddr,
+        _peer_addr: SocketAddr,
         _peer_cert_der: &[u8],
     ) -> Result<Vec<u8>> {
         // Process status request via CA Node
@@ -849,6 +853,7 @@ impl CaServer {
     }
 
     /// Check rate limiting for bootstrap endpoints
+    #[allow(dead_code)]
     async fn check_rate_limit(&self, rate_key: &str) -> Result<bool> {
         let now = SystemTime::now();
         let mut rate_limits = self.rate_limits.write().await;
@@ -887,6 +892,7 @@ impl CaServer {
     }
 
     /// Extract peer SKI from certificate DER
+    #[allow(dead_code)]
     fn extract_peer_ski(&self, cert_der: &[u8]) -> Result<String> {
         let (_, cert) = x509_parser::certificate::X509Certificate::from_der(cert_der)
             .map_err(|e| anyhow::anyhow!("Failed to parse peer certificate: {}", e))?;
@@ -905,12 +911,13 @@ impl CaServer {
 
         Ok(ski
             .iter()
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<Vec<_>>()
             .join(""))
     }
 
     /// Check if peer SKI is authorized for admin operations
+    #[allow(dead_code)]
     fn is_admin_authorized(&self, peer_ski: &str) -> bool {
         self.config.admin_skis.contains(&peer_ski.to_string())
     }
@@ -989,7 +996,6 @@ mod tests {
         ca_node::CANode,
         certificate::{CertificateAuthority, EcdsaKeyPair},
     };
-    use std::time::SystemTime;
 
     #[tokio::test]
     async fn test_ca_server_builder() -> Result<()> {

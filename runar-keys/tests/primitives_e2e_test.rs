@@ -134,6 +134,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     let enroll_request = CsrEnrollRequest {
         csr_der: setup_token.csr_der.clone(),
         enrollment_token: enrollment_token2,
+        network_id: "test_network".to_string(),
     };
 
     // Process enrollment via CA Node
@@ -167,6 +168,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     // Create renewal request
     let renew_request = RenewRequest {
         csr_der: renew_csr.csr_der.clone(),
+        network_id: "test_network".to_string(),
     };
 
     // Get mobile node's SKI for device-based authorization (from the node's key, not mobile's CA key)
@@ -205,6 +207,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     let revoke_request = RevokeRequest {
         certificate_serial: cert_serial.clone(),
         reason: "Test revocation".to_string(),
+        network_id: "test_network".to_string(),
     };
 
     // Add mobile node's SKI to admin allowlist for revocation (admin operation)
@@ -370,6 +373,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     let revoked_enroll_request = CsrEnrollRequest {
         enrollment_token: revoked_token,
         csr_der: mobile_node.generate_csr()?.csr_der.clone(),
+        network_id: "test_network".to_string(),
     };
 
     assert!(ca_node
@@ -426,6 +430,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     // Test unauthorized renewal
     let unauthorized_renew = RenewRequest {
         csr_der: renew_csr.csr_der.clone(),
+        network_id: "test_network".to_string(),
     };
 
     assert!(ca_node

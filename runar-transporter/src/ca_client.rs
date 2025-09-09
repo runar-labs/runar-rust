@@ -10,7 +10,7 @@
 //! - Certificate management and mTLS authentication
 
 use anyhow::Result;
-use quinn::{ClientConfig, Connection, Endpoint};
+use quinn::{ClientConfig, Endpoint};
 use runar_common::logging::Logger;
 use runar_keys::{
     ca_node_types::{
@@ -20,7 +20,7 @@ use runar_keys::{
     node::NodeKeyManager,
 };
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::CertificateDer;
 use serde_cbor;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -157,14 +157,14 @@ impl CaClient {
     {
         let request_data = serde_cbor::to_vec(request)?;
 
-        self.logger.debug(&format!(
+        self.logger.debug(format!(
             "Sending bootstrap request to {}: {} bytes",
             endpoint,
             request_data.len()
         ));
 
         // Build root store for server certificate validation
-        let mut root_store = RootCertStore::empty();
+        let root_store = RootCertStore::empty();
         // In real implementation, this would load the CA certificate
         // For now, we'll create an empty store (insecure for testing)
 
@@ -175,7 +175,7 @@ impl CaClient {
 
         // Convert to Quinn client config
         let client_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(client_config)?;
-        let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+        let client_config = ClientConfig::new(Arc::new(client_crypto));
 
         // Create QUIC endpoint
         let mut endpoint = Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?;
@@ -194,10 +194,9 @@ impl CaClient {
         send.finish()?;
 
         // Read response
-        let response_data;
-        response_data = recv.read_to_end(1024 * 1024).await?;
+        let response_data = recv.read_to_end(1024 * 1024).await?;
 
-        self.logger.debug(&format!(
+        self.logger.debug(format!(
             "Received bootstrap response: {} bytes",
             response_data.len()
         ));
@@ -217,7 +216,7 @@ impl CaClient {
             anyhow::anyhow!("Node key manager required for authenticated requests")
         })?;
 
-        self.logger.debug(&format!(
+        self.logger.debug(format!(
             "Sending authenticated request to {}: {} bytes",
             endpoint,
             request_data.len()
@@ -230,7 +229,7 @@ impl CaClient {
         let private_key = cert_config.private_key;
 
         // Build root store for server certificate validation
-        let mut root_store = RootCertStore::empty();
+        let root_store = RootCertStore::empty();
         // In real implementation, this would load the CA certificate
         // For now, we'll create an empty store (insecure for testing)
 
@@ -241,7 +240,7 @@ impl CaClient {
 
         // Convert to Quinn client config
         let client_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(client_config)?;
-        let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+        let client_config = ClientConfig::new(Arc::new(client_crypto));
 
         // Create QUIC endpoint
         let mut endpoint = Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?;
@@ -260,10 +259,9 @@ impl CaClient {
         send.finish()?;
 
         // Read response
-        let response_data;
-        response_data = recv.read_to_end(1024 * 1024).await?;
+        let response_data = recv.read_to_end(1024 * 1024).await?;
 
-        self.logger.debug(&format!(
+        self.logger.debug(format!(
             "Received authenticated response: {} bytes",
             response_data.len()
         ));
