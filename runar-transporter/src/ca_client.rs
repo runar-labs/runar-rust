@@ -10,6 +10,7 @@
 //! - Certificate management and mTLS authentication
 
 use anyhow::Result;
+use quinn::{ClientConfig, Connection, Endpoint};
 use runar_common::logging::Logger;
 use runar_keys::{
     ca_node_types::{
@@ -18,12 +19,10 @@ use runar_keys::{
     },
     node::NodeKeyManager,
 };
-// use runar_common::logging::Component;
-// use crate::transport::quic_transport::{QuicTransport, QuicTransportOptions};
-// use crate::discovery::multicast_discovery;
+use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde_cbor;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-// use uuid;
 
 /// CA Node QUIC Client configuration
 #[derive(Debug, Clone)]
@@ -164,15 +163,46 @@ impl CaClient {
             request_data.len()
         ));
 
-        // TODO: Implement actual QUIC client for bootstrap requests
-        // This would:
-        // 1. Create QUIC transport for bootstrap connection (server-auth only)
-        // 2. Connect to bootstrap server without client certificate
-        // 3. Send CBOR request over QUIC stream
-        // 4. Receive CBOR response
-        // 5. Return response data
+        // Build root store for server certificate validation
+        let mut root_store = RootCertStore::empty();
+        // In real implementation, this would load the CA certificate
+        // For now, we'll create an empty store (insecure for testing)
 
-        Err(anyhow::anyhow!("Bootstrap QUIC client not yet implemented"))
+        // Build rustls client config (server-auth only, no client cert)
+        let client_config = RustlsClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        // Convert to Quinn client config
+        let client_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(client_config)?;
+        let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+
+        // Create QUIC endpoint
+        let mut endpoint = Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?;
+        endpoint.set_default_client_config(client_config);
+
+        // Connect to bootstrap server
+        let connection = endpoint
+            .connect(self.config.bootstrap_server, "ca-node")?
+            .await?;
+
+        // Open bidirectional stream
+        let (mut send, mut recv) = connection.open_bi().await?;
+
+        // Send request
+        send.write_all(&request_data).await?;
+        send.finish()?;
+
+        // Read response
+        let response_data;
+        response_data = recv.read_to_end(1024 * 1024).await?;
+
+        self.logger.debug(&format!(
+            "Received bootstrap response: {} bytes",
+            response_data.len()
+        ));
+
+        Ok(response_data)
     }
 
     /// Send an authenticated request (mTLS required)
@@ -183,7 +213,7 @@ impl CaClient {
         let request_data = serde_cbor::to_vec(request)?;
 
         // Check if we have a node key manager for mTLS
-        let _node_key_manager = self.node_key_manager.as_ref().ok_or_else(|| {
+        let node_key_manager = self.node_key_manager.as_ref().ok_or_else(|| {
             anyhow::anyhow!("Node key manager required for authenticated requests")
         })?;
 
@@ -193,18 +223,52 @@ impl CaClient {
             request_data.len()
         ));
 
-        // TODO: Implement actual QUIC client for authenticated requests
-        // This would:
-        // 1. Create QUIC transport for authenticated connection with mTLS
-        // 2. Present client certificate from node_key_manager
-        // 3. Connect to authenticated server with mTLS
-        // 4. Send CBOR request over QUIC stream
-        // 5. Receive CBOR response
-        // 6. Return response data
+        // Get client certificate from node key manager
+        let cert_config = node_key_manager.get_quic_certificate_config()?;
+        let certificate_chain: Vec<CertificateDer> =
+            cert_config.certificate_chain.into_iter().collect();
+        let private_key = cert_config.private_key;
 
-        Err(anyhow::anyhow!(
-            "Authenticated QUIC client not yet implemented"
-        ))
+        // Build root store for server certificate validation
+        let mut root_store = RootCertStore::empty();
+        // In real implementation, this would load the CA certificate
+        // For now, we'll create an empty store (insecure for testing)
+
+        // Build rustls client config with client auth
+        let client_config = RustlsClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(certificate_chain, private_key)?;
+
+        // Convert to Quinn client config
+        let client_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(client_config)?;
+        let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+
+        // Create QUIC endpoint
+        let mut endpoint = Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?;
+        endpoint.set_default_client_config(client_config);
+
+        // Connect to authenticated server
+        let connection = endpoint
+            .connect(self.config.authenticated_server, "ca-node")?
+            .await?;
+
+        // Open bidirectional stream
+        let (mut send, mut recv) = connection.open_bi().await?;
+
+        // Send request
+        send.write_all(&request_data).await?;
+        send.finish()?;
+
+        // Read response
+        let response_data;
+        response_data = recv.read_to_end(1024 * 1024).await?;
+
+        self.logger.debug(&format!(
+            "Received authenticated response: {} bytes",
+            response_data.len()
+        ));
+
+        Ok(response_data)
     }
 
     /// Get the network ID for this client
@@ -289,6 +353,7 @@ impl CaClient {
         enrollment_token: runar_keys::enrollment_token::EnrollmentToken,
     ) -> Result<CsrEnrollResponse> {
         let request = CsrEnrollRequest {
+            network_id: self.config.network_id.clone(),
             csr_der,
             enrollment_token,
         };
@@ -298,7 +363,10 @@ impl CaClient {
 
     /// Complete renewal flow for an existing device
     pub async fn complete_renewal(&self, csr_der: Vec<u8>) -> Result<RenewResponse> {
-        let request = RenewRequest { csr_der };
+        let request = RenewRequest {
+            network_id: self.config.network_id.clone(),
+            csr_der,
+        };
         self.renew(request).await
     }
 
@@ -309,6 +377,7 @@ impl CaClient {
         reason: String,
     ) -> Result<RevokeResponse> {
         let request = RevokeRequest {
+            network_id: self.config.network_id.clone(),
             certificate_serial,
             reason,
         };
@@ -383,6 +452,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_ca_client_convenience_methods() -> Result<()> {
+        // Install default crypto provider
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .map_err(|e| anyhow::anyhow!("Failed to install crypto provider: {:?}", e))?;
         let logger = Arc::new(Logger::new_root(Component::Transporter));
         let client = CaClient::new(CaClientConfig::default(), logger);
 

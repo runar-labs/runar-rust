@@ -474,31 +474,36 @@ This section specifies a complete, QUIC-based CA Node infrastructure, including 
 
 ### 14.1 Transport and endpoints
 - Transport: QUIC using `quinn = "0.11"` and `rustls = "0.23.28"` (already in repo). TLS 1.3 only.
-- mTLS policy:
-  - Bootstrap bind (server-auth only): clients do not yet have device certs. Authorize via Enrollment Tokens + rate limits.
-  - Authenticated bind (full mTLS): all other CA operations require client certs.
-- QUIC settings: reuse transporter’s `TransportConfig` (idle timeout, keep-alive). No new knobs required.
+- Two separate QUIC servers required:
+  - Bootstrap server (server-auth only): clients do not yet have device certs. Authorize via Enrollment Tokens + rate limits.
+  - Authenticated server (full mTLS): all other CA operations require client certs.
+- QUIC settings: reuse transporter's `TransportConfig` (idle timeout, keep-alive). No new knobs required.
 
-Endpoints (topic-style over QUIC; CBOR payloads):
-- Bootstrap bind (server-auth only):
-  - `$ca/{network_id}/enroll`
-  - `$ca/{network_id}/chain`
-- Authenticated bind (mTLS required):
-  - `$ca/{network_id}/renew`
-  - `$ca/{network_id}/revoke`
-  - `$ca/{network_id}/crl` (if CRL-lite enabled)
-  - `$ca/{network_id}/status`
+Binary Protocol over QUIC:
+- Message Header (8 bytes): `[Message Type (u32)] + [Payload Length (u32)]`
+- Message Structure: `[Header(8 bytes)] + [CBOR Payload]`
+- All requests include `network_id` field in CBOR payload
+
+Endpoints (binary protocol over QUIC):
+- Bootstrap server (server-auth only):
+  - `CsrEnrollRequest` (0x0001) → `CsrEnrollResponse` (0x1001)
+  - `ChainRequest` (0x0002) → `ChainResponse` (0x1002)
+- Authenticated server (mTLS required):
+  - `RenewRequest` (0x0003) → `RenewResponse` (0x1003)
+  - `RevokeRequest` (0x0004) → `RevokeResponse` (0x1004)
+  - `CrlRequest` (0x0005) → `CrlResponse` (0x1005)
+  - `StatusRequest` (0x0006) → `StatusResponse` (0x1006)
 
 Error handling (CBOR):
 ```rust
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct CaErrorResponse {
-    pub code: &'static str,  // e.g., "invalid_token", "csr_invalid", "rate_limited"
+pub struct ErrorResponse {
+    pub code: String,  // e.g., "invalid_token", "csr_invalid", "rate_limited"
     pub message: String,
 }
 ```
 
-Rate limiting (bootstrap bind):
+Rate limiting (bootstrap server):
 - Sliding-window counters keyed by (remote_addr, token_id) with burst/sustained limits (e.g., 5/min, 30/hour). Implement with in-memory maps and timestamps; no new crates.
 
 HA and discovery:
@@ -565,16 +570,52 @@ Validation steps on CA Node:
 Token revocation:
 - Maintain in-memory denylist of `token_id` with TTL. Admin can push signed revocation messages over mTLS to invalidate early.
 
-### 14.3 API specifications (CBOR over QUIC)
+### 14.3 API specifications (Binary Protocol over QUIC)
 
-Types:
+Message Types:
 ```rust
+enum CaMessageType {
+    // Bootstrap requests
+    CsrEnrollRequest = 0x0001,
+    ChainRequest = 0x0002,
+    
+    // Bootstrap responses  
+    CsrEnrollResponse = 0x1001,
+    ChainResponse = 0x1002,
+    
+    // Authenticated requests
+    RenewRequest = 0x0003,
+    RevokeRequest = 0x0004,
+    CrlRequest = 0x0005,
+    StatusRequest = 0x0006,
+    
+    // Authenticated responses
+    RenewResponse = 0x1003,
+    RevokeResponse = 0x1004,
+    CrlResponse = 0x1005,
+    StatusResponse = 0x1006,
+    
+    // Error response
+    ErrorResponse = 0x2000,
+}
+```
+
+Request/Response Types (all include network_id):
+```rust
+// Bootstrap requests
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct CsrEnrollRequest {
+    pub network_id: String,
     pub csr_der: Vec<u8>,
     pub enrollment_token: EnrollmentToken,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ChainRequest {
+    pub network_id: String,
+}
+
+// Bootstrap responses
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct CsrEnrollResponse {
     pub certificate_der: Vec<u8>,
@@ -584,8 +625,36 @@ pub struct CsrEnrollResponse {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct RenewRequest { pub csr_der: Vec<u8> }
+pub struct ChainResponse {
+    pub issuing_ca_der: Vec<u8>,
+    pub root_ca_der: Option<Vec<u8>>,
+}
 
+// Authenticated requests
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RenewRequest {
+    pub network_id: String,
+    pub csr_der: Vec<u8>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RevokeRequest {
+    pub network_id: String,
+    pub certificate_serial: Vec<u8>,
+    pub reason: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CrlRequest {
+    pub network_id: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct StatusRequest {
+    pub network_id: String,
+}
+
+// Authenticated responses
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct RenewResponse {
     pub certificate_der: Vec<u8>,
@@ -594,36 +663,40 @@ pub struct RenewResponse {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct RevokeRequest { pub certificate_serial: Vec<u8>, pub reason: String }
+pub struct RevokeResponse {
+    pub ok: bool,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct RevokeResponse { pub ok: bool }
+pub struct CrlResponse {
+    pub issuing_ca_serial_hex: String,
+    pub generated_at: u64,
+    pub revoked_serials: Vec<Vec<u8>>,
+    pub signature: Vec<u8>,
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct ChainResponse { pub issuing_ca_der: Vec<u8>, pub root_ca_der: Option<Vec<u8>> }
-
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct CaStatus { pub issuing_subject: String, pub issuing_serial_hex: String, pub not_before: u64, pub not_after: u64 }
+pub struct StatusResponse {
+    pub issuing_subject: String,
+    pub issuing_serial_hex: String,
+    pub not_before: u64,
+    pub not_after: u64,
+}
 ```
 
-Endpoints:
-- `$ca/{network_id}/enroll` (server-auth only)
-  - Req: `CsrEnrollRequest`, Resp: `CsrEnrollResponse | CaErrorResponse`
-  - Checks: token valid; CSR CN equals compact_id(node_public_key). Use `x509-parser` to parse CSR subject (same as current validation in `MobileKeyManager::process_setup_token`).
+Protocol Flow:
+- Bootstrap server (server-auth only):
+  - `CsrEnrollRequest` (0x0001) → `CsrEnrollResponse` (0x1001)
+  - `ChainRequest` (0x0002) → `ChainResponse` (0x1002)
+- Authenticated server (mTLS required):
+  - `RenewRequest` (0x0003) → `RenewResponse` (0x1003)
+  - `RevokeRequest` (0x0004) → `RevokeResponse` (0x1004)
+  - `CrlRequest` (0x0005) → `CrlResponse` (0x1005)
+  - `StatusRequest` (0x0006) → `StatusResponse` (0x1006)
 
-- `$ca/{network_id}/chain` (server-auth only)
-  - Req: `{}`; Resp: `ChainResponse`
-
-- `$ca/{network_id}/renew` (mTLS)
-  - Req: `RenewRequest`; Resp: `RenewResponse`
-  - Checks: mTLS peer cert subject matches CSR CN; optional policy to require new key.
-
-- `$ca/{network_id}/revoke` (mTLS; admin-only)
-  - Req: `RevokeRequest`; Resp: `RevokeResponse`
-  - Authorization: admin cert allowlist by subject/SKI.
-
-- `$ca/{network_id}/status` (mTLS)
-  - Req: `{}`; Resp: `CaStatus`
+Validation:
+- Bootstrap endpoints: network_id validation + enrollment token verification + rate limiting
+- Authenticated endpoints: network_id validation + mTLS client cert validation + SKI allowlist for admin operations
 
 ### 14.4 Issuing CA certificate management
 
@@ -636,7 +709,7 @@ Storage/protection:
 - Persist Issuing CA key/cert using existing keystore/persistence (same as key managers). If platform HSM/TEE later, delegate signing (future work, no new crates now).
 
 Chain distribution/validation:
-- Provide via `$ca/{network_id}/chain`. Clients install chain in `NodeKeyManager::install_certificate(...)` which already validates signatures.
+- Provide via `ChainRequest` (0x0002) → `ChainResponse` (0x1002). Clients install chain in `NodeKeyManager::install_certificate(...)` which already validates signatures.
 
 Multiple Issuing CAs:
 - Support publishing multiple chains; clients trust any rooted at configured Root(s).
@@ -653,14 +726,14 @@ Approach:
 CRL-lite structure:
 ```rust
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct CaRevocationList {
+pub struct CrlResponse {
     pub issuing_ca_serial_hex: String,
     pub generated_at: u64,
     pub revoked_serials: Vec<Vec<u8>>, // big-endian
     pub signature: Vec<u8>,            // ECDSA P-256 DER
 }
 ```
-- Endpoint: `$ca/{network_id}/crl` (mTLS)
+- Endpoint: `CrlRequest` (0x0005) → `CrlResponse` (0x1005) (mTLS)
 - Clients fetch on startup and then periodically (e.g., 10 min). Cache in memory and persist if desired.
 - Transporter enforcement: after QUIC handshake, before finalizing peer connection, compare presented peer cert serial to cached denylist; drop connection if revoked. Use `NodeKeyManager::get_certificate_info()` to read peer subject/serial and a small adapter in transporter to consult the cache.
 
@@ -673,14 +746,14 @@ Monitoring:
 - Nodes also check via `get_certificate_status()` and log warnings at thresholds.
 
 Automatic renewal:
-- Nodes initiate renewal within 7 days of expiry via `$ca/{network_id}/renew` (mTLS). Policy may require key rotation.
+- Nodes initiate renewal within 7 days of expiry via `RenewRequest` (0x0003) → `RenewResponse` (0x1003) (mTLS). Policy may require key rotation.
 
 ### 14.7 Network integration and discovery
 
 - CA Nodes publish `$registry/ca/{network_id}/announces` with:
-  - bootstrap_bind, ca_bind, issuing_subject, issuing_serial_hex, features: [enroll, renew, revoke, crl].
+  - bootstrap_bind, authenticated_bind, issuing_subject, issuing_serial_hex, features: [enroll, renew, revoke, crl].
 - Clients subscribe or query to select a CA Node.
-- Multi-network: one process can serve multiple networks; endpoints are namespaced by `{network_id}`.
+- Multi-network: one process can serve multiple networks; network_id is validated per request.
 
 ### 14.8 Security and operations
 
@@ -700,7 +773,7 @@ Key rollover:
 - Rotate EA and Issuing CA periodically (6–12 months) or on compromise. Advertise next issuer during overlap.
 
 Monitoring & health:
-- `$ca/{network_id}/health` returns uptime, counters, last CRL generation.
+- `StatusRequest` (0x0006) → `StatusResponse` (0x1006) returns uptime, counters, last CRL generation.
 
 Backup & recovery:
 - Back up Issuing CA persisted state offline. Recovery verifies subject/serial consistency before serving.
@@ -709,19 +782,19 @@ Backup & recovery:
 
 1) Bootstrap enrollment (server-auth only)
    - Client: `NodeKeyManager::generate_csr()` + receive `EnrollmentToken` out-of-band.
-   - Call `$ca/{network_id}/enroll` with `CsrEnrollRequest` → receive `CsrEnrollResponse`.
+   - Send `CsrEnrollRequest` (0x0001) → receive `CsrEnrollResponse` (0x1001).
    - Install via `NodeKeyManager::install_certificate(...)`. From now on, full mTLS.
 
 2) Renewal (mTLS)
-   - Client: send `RenewRequest` within renewal window.
-   - CA Node: validate mTLS identity vs CSR CN; return `RenewResponse`.
+   - Client: send `RenewRequest` (0x0003) within renewal window.
+   - CA Node: validate mTLS identity vs CSR CN; return `RenewResponse` (0x1003).
 
 3) Revocation (mTLS)
-   - Admin: send `RevokeRequest` (authorized cert).
+   - Admin: send `RevokeRequest` (0x0004) (authorized cert).
    - CA Node: update CRL-lite and publish; clients fetch and transporter enforces denylist.
 
 4) Chain fetch (server-auth only)
-   - Client: `$ca/{network_id}/chain` → `ChainResponse` to bootstrap trust.
+   - Client: `ChainRequest` (0x0002) → `ChainResponse` (0x1002) to bootstrap trust.
 
 All structures and cryptographic operations use existing crates in the repo; no new dependencies are introduced.
 
@@ -781,14 +854,14 @@ Required certificate API (design):
 - CSR parseable with `x509-parser` and CN matches device compact_id.
 
 ### 15.5 Phase 4 – Enrollment over QUIC (server-auth only)
-- Client request to `$ca/{network_id}/enroll` with CBOR body:
-  - `CsrEnrollRequest { csr_der: csr.csr_der, enrollment_token }`
+- Client sends binary message: `[Header(8)] + [CBOR(CsrEnrollRequest)]`
+  - `CsrEnrollRequest { network_id, csr_der: csr.csr_der, enrollment_token }`
 - CA Node handler steps:
   1) Verify token signature (EA public key) and time window.
   2) Anti-replay and rate-limit checks (per remote+token_id/subject_hint).
   3) Parse CSR; validate CN equals `compact_id(public_key)` extracted from CSR.
   4) Issue device leaf certificate from Issuing CA (not CA), 7–30 days validity.
-  5) Respond `CsrEnrollResponse { certificate_der, issuing_ca_der, root_ca_der: Some(root_der), expires_at }`.
+  5) Respond `[Header(8)] + [CBOR(CsrEnrollResponse)]` with `{ certificate_der, issuing_ca_der, root_ca_der: Some(root_der), expires_at }`.
 - Client installs cert:
   - Convert to `NodeCertificateMessage` and call `mobile_node.install_certificate(...)`.
 - Assertions:
@@ -804,13 +877,13 @@ Required certificate API (design):
 
 ### 15.7 Phase 6 – Renewal (mTLS)
 - Trigger renewal when within renewal window (e.g., T-7d):
-  - `RenewRequest { csr_der }` sent over mTLS to `$ca/{network_id}/renew`.
+  - Send `[Header(8)] + [CBOR(RenewRequest)]` with `{ network_id, csr_der }` over mTLS.
   - CA Node validates mTLS identity vs CSR CN; issues new leaf cert.
   - Client installs new cert; validate `CertificateStatus::Valid` and updated serial/validity.
 
 ### 15.8 Phase 7 – Revocation + CRL-lite propagation
-- CA Node revokes old device certificate via `RevokeRequest { certificate_serial, reason }` from an authorized admin cert (mTLS).
-- CA Node publishes CRL-lite over QUIC: `$ca/{network_id}/crl` → `CaRevocationList` (CBOR, signed by Issuing CA or a dedicated revocation key).
+- CA Node revokes old device certificate via `[Header(8)] + [CBOR(RevokeRequest)]` with `{ network_id, certificate_serial, reason }` from an authorized admin cert (mTLS).
+- CA Node publishes CRL-lite over QUIC: `[Header(8)] + [CBOR(CrlResponse)]` (signed by Issuing CA or a dedicated revocation key).
 - Client fetches and caches denylist.
 - Transporter enforcement hook (post-handshake): deny connections whose peer serial appears in CRL-lite cache.
 - Assertions:
@@ -844,7 +917,7 @@ async fn test_e2e_mobile_enrollment_via_ca_node_quic() -> Result<()> {
   let csr = mobile_node.generate_csr()?;
 
   // 4) Enroll over QUIC (server-auth only)
-  let enroll_req = CsrEnrollRequest { csr_der: csr.csr_der.clone(), enrollment_token: token };
+  let enroll_req = CsrEnrollRequest { network_id: "network1".to_string(), csr_der: csr.csr_der.clone(), enrollment_token: token };
   let enroll_resp = ca_node.handle_enroll(enroll_req)?; // in-memory handler for test
   let msg = NodeCertificateMessage::from_enroll_response(&enroll_resp);
   mobile_node.install_certificate(msg)?;
@@ -856,15 +929,15 @@ async fn test_e2e_mobile_enrollment_via_ca_node_quic() -> Result<()> {
   let _ = PrivateKeyDer::try_from(cfg.private_key.secret_der().to_vec())?;
 
   // 6) Renewal (mTLS)
-  let renew_req = RenewRequest { csr_der: mobile_node.generate_csr()?.csr_der };
+  let renew_req = RenewRequest { network_id: "network1".to_string(), csr_der: mobile_node.generate_csr()?.csr_der };
   let renew_resp = ca_node.handle_renew(renew_req)?;
   let msg = NodeCertificateMessage::from_renew_response(&renew_resp);
   mobile_node.install_certificate(msg)?;
 
   // 7) Revocation + CRL-lite
   let old_serial = /* from first leaf cert */;
-  let _ = ca_node.handle_revoke(RevokeRequest { certificate_serial: old_serial, reason: "compromise".into() })?;
-  let crl = ca_node.handle_crl_request(/* mTLS */)?;
+  let _ = ca_node.handle_revoke(RevokeRequest { network_id: "network1".to_string(), certificate_serial: old_serial, reason: "compromise".into() })?;
+  let crl = ca_node.handle_crl_request(CrlRequest { network_id: "network1".to_string() })?;
   assert!(crl.revoked_serials.iter().any(|s| s == &old_serial));
 
   // 8) Profile keys

@@ -154,6 +154,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     // Generate CSR
     let csr = mobile_node.generate_csr()?;
     let csr_enroll_request = CsrEnrollRequest {
+        network_id: "test_network".to_string(),
         csr_der: csr.csr_der,
         enrollment_token: enrollment_token.clone(),
     };
@@ -194,6 +195,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     let mobile_node_ski = compact_id(&mobile_node_ski);
 
     let renew_request = RenewRequest {
+        network_id: "test_network".to_string(),
         csr_der: renewal_csr.csr_der,
     };
 
@@ -239,6 +241,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     let cert_serial = parsed_cert.serial.to_string();
 
     let revoke_request = RevokeRequest {
+        network_id: "test_network".to_string(),
         certificate_serial: cert_serial.clone().into(),
         reason: "testing".to_string(),
     };
@@ -390,6 +393,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
         let test_token = EnrollmentToken::generate(&ea_key, token_body)?;
 
         let test_request = CsrEnrollRequest {
+            network_id: "test_network".to_string(),
             csr_der: test_csr.csr_der,
             enrollment_token: test_token,
         };
@@ -438,6 +442,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     // Try to use revoked token
     let test_csr = mobile_node.generate_csr()?;
     let revoked_request = CsrEnrollRequest {
+        network_id: "test_network".to_string(),
         csr_der: test_csr.csr_der,
         enrollment_token: enrollment_token.clone(),
     };
@@ -477,6 +482,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
 
     let invalid_csr = mobile_node.generate_csr()?;
     let invalid_request = CsrEnrollRequest {
+        network_id: "test_network".to_string(),
         csr_der: invalid_csr.csr_der,
         enrollment_token: invalid_token,
     };
@@ -492,6 +498,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     let unauthorized_ski = "unauthorized_ski";
     let unauthorized_csr = mobile_node.generate_csr()?;
     let unauthorized_renew = RenewRequest {
+        network_id: "test_network".to_string(),
         csr_der: unauthorized_csr.csr_der,
     };
 

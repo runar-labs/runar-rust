@@ -14,6 +14,8 @@ pub struct CaErrorResponse {
 /// CSR enrollment request
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CsrEnrollRequest {
+    /// Network ID for the request
+    pub network_id: String,
     /// DER-encoded CSR
     pub csr_der: Vec<u8>,
     /// Enrollment token for authorization
@@ -36,6 +38,8 @@ pub struct CsrEnrollResponse {
 /// Certificate renewal request
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RenewRequest {
+    /// Network ID for the request
+    pub network_id: String,
     /// DER-encoded CSR for renewal
     pub csr_der: Vec<u8>,
 }
@@ -54,6 +58,8 @@ pub struct RenewResponse {
 /// Certificate revocation request
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RevokeRequest {
+    /// Network ID for the request
+    pub network_id: String,
     /// Certificate serial number to revoke
     pub certificate_serial: Vec<u8>,
     /// Reason for revocation
@@ -278,3 +284,30 @@ mod tests {
         assert_eq!(crl, deserialized);
     }
 }
+
+/// Chain request
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ChainRequest {
+    /// Network ID for the request
+    pub network_id: String,
+}
+
+/// CRL request
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CrlRequest {
+    /// Network ID for the request
+    pub network_id: String,
+}
+
+/// Status request
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct StatusRequest {
+    /// Network ID for the request
+    pub network_id: String,
+}
+
+/// CRL response (alias for CaRevocationList)
+pub type CrlResponse = CaRevocationList;
+
+/// Status response (alias for CaStatus)
+pub type StatusResponse = CaStatus;

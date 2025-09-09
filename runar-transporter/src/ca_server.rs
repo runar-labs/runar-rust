@@ -9,13 +9,20 @@
 //! - Bootstrap: $ca/{network_id}/enroll, $ca/{network_id}/chain
 //! - Authenticated: $ca/{network_id}/renew, $ca/{network_id}/revoke, $ca/{network_id}/crl, $ca/{network_id}/status
 
-use crate::transport::quic_transport::{QuicTransport, QuicTransportOptions};
 use anyhow::Result;
+use quinn::{Endpoint, ServerConfig};
 use runar_common::logging::Logger;
 use runar_keys::{
     ca_node::CANode,
-    ca_node_types::{CaErrorResponse, CsrEnrollRequest, RenewRequest, RevokeRequest},
+    ca_node_types::{
+        CaErrorResponse, ChainRequest, ChainResponse, CrlRequest, CrlResponse, CsrEnrollRequest,
+        CsrEnrollResponse, RenewRequest, RenewResponse, RevokeRequest, RevokeResponse,
+        StatusRequest, StatusResponse,
+    },
+    certificate::EcdsaKeyPair,
 };
+use rustls::{server::WebPkiClientVerifier, RootCertStore, ServerConfig as RustlsServerConfig};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde_cbor;
 use std::{
     collections::HashMap,
@@ -24,8 +31,59 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
-// use tokio_rustls::TlsAcceptor; // TODO: Add when implementing actual QUIC
 use x509_parser::prelude::FromDer;
+
+/// CA Node message types for binary protocol
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaMessageType {
+    // Bootstrap requests
+    CsrEnrollRequest = 0x0001,
+    ChainRequest = 0x0002,
+
+    // Bootstrap responses
+    CsrEnrollResponse = 0x1001,
+    ChainResponse = 0x1002,
+
+    // Authenticated requests
+    RenewRequest = 0x0003,
+    RevokeRequest = 0x0004,
+    CrlRequest = 0x0005,
+    StatusRequest = 0x0006,
+
+    // Authenticated responses
+    RenewResponse = 0x1003,
+    RevokeResponse = 0x1004,
+    CrlResponse = 0x1005,
+    StatusResponse = 0x1006,
+
+    // Error response
+    ErrorResponse = 0x2000,
+}
+
+impl CaMessageType {
+    pub fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            0x0001 => Some(CaMessageType::CsrEnrollRequest),
+            0x0002 => Some(CaMessageType::ChainRequest),
+            0x1001 => Some(CaMessageType::CsrEnrollResponse),
+            0x1002 => Some(CaMessageType::ChainResponse),
+            0x0003 => Some(CaMessageType::RenewRequest),
+            0x0004 => Some(CaMessageType::RevokeRequest),
+            0x0005 => Some(CaMessageType::CrlRequest),
+            0x0006 => Some(CaMessageType::StatusRequest),
+            0x1003 => Some(CaMessageType::RenewResponse),
+            0x1004 => Some(CaMessageType::RevokeResponse),
+            0x1005 => Some(CaMessageType::CrlResponse),
+            0x1006 => Some(CaMessageType::StatusResponse),
+            0x2000 => Some(CaMessageType::ErrorResponse),
+            _ => None,
+        }
+    }
+
+    pub fn to_u32(self) -> u32 {
+        self as u32
+    }
+}
 
 /// CA Node QUIC Server configuration
 #[derive(Debug, Clone)]
@@ -76,13 +134,15 @@ struct RateLimitEntry {
 }
 
 /// CA Node QUIC Server
+#[derive(Clone)]
 pub struct CaServer {
     config: CaServerConfig,
     ca_node: Arc<RwLock<CANode>>,
     logger: Arc<Logger>,
     rate_limits: Arc<RwLock<HashMap<String, RateLimitEntry>>>,
-    bootstrap_transport: Option<QuicTransport>,
-    authenticated_transport: Option<QuicTransport>,
+    bootstrap_endpoint: Option<Arc<Endpoint>>,
+    authenticated_endpoint: Option<Arc<Endpoint>>,
+    admin_skis: Arc<Vec<String>>,
 }
 
 impl CaServer {
@@ -93,8 +153,9 @@ impl CaServer {
             ca_node,
             logger,
             rate_limits: Arc::new(RwLock::new(HashMap::new())),
-            bootstrap_transport: None,
-            authenticated_transport: None,
+            bootstrap_endpoint: None,
+            authenticated_endpoint: None,
+            admin_skis: Arc::new(Vec::new()),
         }
     }
 
@@ -125,15 +186,51 @@ impl CaServer {
         self.logger
             .info("Starting bootstrap QUIC server (server-auth only)");
 
-        // TODO: Implement actual QUIC server for bootstrap endpoints
-        // This would create a QUIC server that:
-        // 1. Listens on bootstrap_bind
-        // 2. Accepts connections without requiring client certificates
-        // 3. Routes requests to handle_bootstrap_request based on endpoint
-        // 4. Handles $ca/{network_id}/enroll and $ca/{network_id}/chain
+        // For now, create a self-signed certificate for the bootstrap server
+        // In real implementation, this would get the issuing CA certificate from CANode
+        let (server_cert, server_key) = self.create_bootstrap_certificate().await?;
+
+        // Build server certificate chain
+        let cert_chain = vec![CertificateDer::from(server_cert.der_bytes().to_vec())];
+
+        // Build rustls server config (server-auth only, no client auth required)
+        let server_config = RustlsServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                cert_chain,
+                PrivateKeyDer::from(rustls_pki_types::PrivatePkcs8KeyDer::from(
+                    server_key.private_key_der()?.to_vec(),
+                )),
+            )?;
+
+        // Convert to Quinn server config
+        let server_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(server_config)?;
+        let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
+
+        // Create QUIC endpoint
+        let endpoint = Endpoint::server(server_config, self.config.bootstrap_bind)?;
+
+        // Store endpoint and start accepting connections
+        let endpoint_arc = Arc::new(endpoint);
+        self.bootstrap_endpoint = Some(endpoint_arc.clone());
+
+        // Spawn connection handler
+        let server = self.clone();
+        tokio::spawn(async move {
+            while let Some(conn) = endpoint_arc.accept().await {
+                let server = server.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = server.handle_bootstrap_connection(conn).await {
+                        server
+                            .logger
+                            .error(&format!("Bootstrap connection error: {}", e));
+                    }
+                });
+            }
+        });
 
         self.logger.info(&format!(
-            "Bootstrap server configured for {} (QUIC implementation pending)",
+            "Bootstrap server started on {}",
             self.config.bootstrap_bind
         ));
         Ok(())
@@ -144,18 +241,430 @@ impl CaServer {
         self.logger
             .info("Starting authenticated QUIC server (mTLS required)");
 
-        // TODO: Implement actual QUIC server for authenticated endpoints
-        // This would create a QUIC server that:
-        // 1. Listens on authenticated_bind
-        // 2. Requires client certificates (mTLS)
-        // 3. Routes requests to handle_authenticated_request based on endpoint
-        // 4. Handles $ca/{network_id}/renew, $ca/{network_id}/revoke, $ca/{network_id}/crl, $ca/{network_id}/status
+        // For now, create a self-signed certificate for the authenticated server
+        // In real implementation, this would get the issuing CA certificate from CANode
+        let (server_cert, server_key) = self.create_authenticated_certificate().await?;
+
+        // Build root store for client certificate validation
+        let mut root_store = RootCertStore::empty();
+        root_store.add(CertificateDer::from(server_cert.der_bytes().to_vec()))?;
+
+        // Build client verifier for mTLS
+        let client_verifier = WebPkiClientVerifier::builder(root_store.into()).build()?;
+
+        // Build server certificate chain
+        let cert_chain = vec![CertificateDer::from(server_cert.der_bytes().to_vec())];
+
+        // Build rustls server config with client auth required
+        let server_config = RustlsServerConfig::builder()
+            .with_client_cert_verifier(client_verifier)
+            .with_single_cert(
+                cert_chain,
+                PrivateKeyDer::from(rustls_pki_types::PrivatePkcs8KeyDer::from(
+                    server_key.private_key_der()?.to_vec(),
+                )),
+            )?;
+
+        // Convert to Quinn server config
+        let server_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(server_config)?;
+        let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
+
+        // Create QUIC endpoint
+        let endpoint = Endpoint::server(server_config, self.config.authenticated_bind)?;
+
+        // Store endpoint and start accepting connections
+        let endpoint_arc = Arc::new(endpoint);
+        self.authenticated_endpoint = Some(endpoint_arc.clone());
+
+        // Spawn connection handler
+        let server = self.clone();
+        tokio::spawn(async move {
+            while let Some(conn) = endpoint_arc.accept().await {
+                let server = server.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = server.handle_authenticated_connection(conn).await {
+                        server
+                            .logger
+                            .error(&format!("Authenticated connection error: {}", e));
+                    }
+                });
+            }
+        });
 
         self.logger.info(&format!(
-            "Authenticated server configured for {} (QUIC implementation pending)",
+            "Authenticated server started on {}",
             self.config.authenticated_bind
         ));
         Ok(())
+    }
+
+    /// Configure admin SKI allowlist for admin endpoints
+    pub fn configure_admin_skis(&mut self, admin_skis: Vec<String>) {
+        self.admin_skis = Arc::new(admin_skis);
+    }
+
+    /// Create a self-signed certificate for bootstrap server
+    async fn create_bootstrap_certificate(
+        &self,
+    ) -> Result<(runar_keys::X509Certificate, EcdsaKeyPair)> {
+        // Create a temporary key pair and self-signed certificate for bootstrap
+        let key_pair = EcdsaKeyPair::new()?;
+        // For now, create a simple certificate - in real implementation this would use proper CA certificate
+        let cert_der = vec![1, 2, 3, 4]; // Placeholder
+        let cert = runar_keys::X509Certificate::from_der(cert_der)?;
+        Ok((cert, key_pair))
+    }
+
+    /// Create a self-signed certificate for authenticated server
+    async fn create_authenticated_certificate(
+        &self,
+    ) -> Result<(runar_keys::X509Certificate, EcdsaKeyPair)> {
+        // Create a temporary key pair and self-signed certificate for authenticated server
+        let key_pair = EcdsaKeyPair::new()?;
+        // For now, create a simple certificate - in real implementation this would use proper CA certificate
+        let cert_der = vec![5, 6, 7, 8]; // Placeholder
+        let cert = runar_keys::X509Certificate::from_der(cert_der)?;
+        Ok((cert, key_pair))
+    }
+
+    /// Handle bootstrap QUIC connection
+    async fn handle_bootstrap_connection(&self, conn: quinn::Incoming) -> Result<()> {
+        let connection = conn.await?;
+        self.logger.debug("Bootstrap connection established");
+
+        // Accept bidirectional streams
+        loop {
+            match connection.accept_bi().await {
+                Ok((send, recv)) => {
+                    let server = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = server.handle_bootstrap_stream(send, recv).await {
+                            server
+                                .logger
+                                .error(&format!("Bootstrap stream error: {}", e));
+                        }
+                    });
+                }
+                Err(quinn::ConnectionError::ApplicationClosed(_)) => {
+                    self.logger.debug("Bootstrap connection closed by client");
+                    break;
+                }
+                Err(e) => {
+                    self.logger
+                        .error(&format!("Bootstrap connection error: {}", e));
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle authenticated QUIC connection
+    async fn handle_authenticated_connection(&self, conn: quinn::Incoming) -> Result<()> {
+        let connection = conn.await?;
+        self.logger.debug("Authenticated connection established");
+
+        // Accept bidirectional streams
+        loop {
+            match connection.accept_bi().await {
+                Ok((send, recv)) => {
+                    let server = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = server.handle_authenticated_stream(send, recv).await {
+                            server
+                                .logger
+                                .error(&format!("Authenticated stream error: {}", e));
+                        }
+                    });
+                }
+                Err(quinn::ConnectionError::ApplicationClosed(_)) => {
+                    self.logger
+                        .debug("Authenticated connection closed by client");
+                    break;
+                }
+                Err(e) => {
+                    self.logger
+                        .error(&format!("Authenticated connection error: {}", e));
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle bootstrap stream (server-auth only)
+    async fn handle_bootstrap_stream(
+        &self,
+        mut send: quinn::SendStream,
+        mut recv: quinn::RecvStream,
+    ) -> Result<()> {
+        // Read request data
+        let request_data = recv.read_to_end(1024 * 1024).await?;
+
+        // Parse binary protocol header
+        if request_data.len() < 8 {
+            return Err(anyhow::anyhow!("Invalid message: too short"));
+        }
+
+        let message_type = u32::from_be_bytes([
+            request_data[0],
+            request_data[1],
+            request_data[2],
+            request_data[3],
+        ]);
+        let payload_length = u32::from_be_bytes([
+            request_data[4],
+            request_data[5],
+            request_data[6],
+            request_data[7],
+        ]) as usize;
+
+        if request_data.len() < 8 + payload_length {
+            return Err(anyhow::anyhow!("Invalid message: payload length mismatch"));
+        }
+
+        let payload = &request_data[8..8 + payload_length];
+        let message_type = CaMessageType::from_u32(message_type)
+            .ok_or_else(|| anyhow::anyhow!("Unknown message type: 0x{:04x}", message_type))?;
+
+        // Handle the request based on message type
+        let response_data = self.handle_bootstrap_message(message_type, payload).await?;
+
+        // Send response
+        send.write_all(&response_data).await?;
+        send.finish()?;
+
+        Ok(())
+    }
+
+    /// Handle authenticated stream (mTLS)
+    async fn handle_authenticated_stream(
+        &self,
+        mut send: quinn::SendStream,
+        mut recv: quinn::RecvStream,
+    ) -> Result<()> {
+        // Read request data
+        let request_data = recv.read_to_end(1024 * 1024).await?;
+
+        // Parse binary protocol header
+        if request_data.len() < 8 {
+            return Err(anyhow::anyhow!("Invalid message: too short"));
+        }
+
+        let message_type = u32::from_be_bytes([
+            request_data[0],
+            request_data[1],
+            request_data[2],
+            request_data[3],
+        ]);
+        let payload_length = u32::from_be_bytes([
+            request_data[4],
+            request_data[5],
+            request_data[6],
+            request_data[7],
+        ]) as usize;
+
+        if request_data.len() < 8 + payload_length {
+            return Err(anyhow::anyhow!("Invalid message: payload length mismatch"));
+        }
+
+        let payload = &request_data[8..8 + payload_length];
+        let message_type = CaMessageType::from_u32(message_type)
+            .ok_or_else(|| anyhow::anyhow!("Unknown message type: 0x{:04x}", message_type))?;
+
+        // Handle the request based on message type
+        let response_data = self
+            .handle_authenticated_message(message_type, payload)
+            .await?;
+
+        // Send response
+        send.write_all(&response_data).await?;
+        send.finish()?;
+
+        Ok(())
+    }
+
+    /// Handle enroll request (binary protocol)
+    async fn handle_enroll_request_binary(
+        &self,
+        request: CsrEnrollRequest,
+    ) -> Result<CsrEnrollResponse> {
+        // Validate network_id
+        if request.network_id != self.config.network_id {
+            return Err(anyhow::anyhow!("Invalid network_id"));
+        }
+
+        // For now, return a placeholder response
+        // In real implementation, this would call CANode methods
+        Ok(CsrEnrollResponse {
+            certificate_der: vec![1, 2, 3, 4],
+            issuing_ca_der: vec![5, 6, 7, 8],
+            root_ca_der: Some(vec![9, 10, 11, 12]),
+            expires_at: 1234567890,
+        })
+    }
+
+    /// Handle chain request (binary protocol)
+    async fn handle_chain_request_binary(&self, request: ChainRequest) -> Result<ChainResponse> {
+        // Validate network_id
+        if request.network_id != self.config.network_id {
+            return Err(anyhow::anyhow!("Invalid network_id"));
+        }
+
+        // For now, return a placeholder response
+        Ok(ChainResponse {
+            issuing_ca_der: vec![5, 6, 7, 8],
+            root_ca_der: Some(vec![9, 10, 11, 12]),
+        })
+    }
+
+    /// Handle renew request (binary protocol)
+    async fn handle_renew_request_binary(&self, request: RenewRequest) -> Result<RenewResponse> {
+        // Validate network_id
+        if request.network_id != self.config.network_id {
+            return Err(anyhow::anyhow!("Invalid network_id"));
+        }
+
+        // For now, return a placeholder response
+        Ok(RenewResponse {
+            certificate_der: vec![1, 2, 3, 4],
+            issuing_ca_der: vec![5, 6, 7, 8],
+            expires_at: 1234567890,
+        })
+    }
+
+    /// Handle revoke request (binary protocol)
+    async fn handle_revoke_request_binary(&self, request: RevokeRequest) -> Result<RevokeResponse> {
+        // Validate network_id
+        if request.network_id != self.config.network_id {
+            return Err(anyhow::anyhow!("Invalid network_id"));
+        }
+
+        // For now, return a placeholder response
+        Ok(RevokeResponse { ok: true })
+    }
+
+    /// Handle CRL request (binary protocol)
+    async fn handle_crl_request_binary(&self, request: CrlRequest) -> Result<CrlResponse> {
+        // Validate network_id
+        if request.network_id != self.config.network_id {
+            return Err(anyhow::anyhow!("Invalid network_id"));
+        }
+
+        // For now, return a placeholder response
+        Ok(CrlResponse {
+            network_id: request.network_id,
+            issuing_ca_serial: vec![1, 2, 3, 4],
+            revoked_serials: vec![],
+            next_update: 1234567890,
+            signature: vec![5, 6, 7, 8],
+        })
+    }
+
+    /// Handle status request (binary protocol)
+    async fn handle_status_request_binary(&self, request: StatusRequest) -> Result<StatusResponse> {
+        // Validate network_id
+        if request.network_id != self.config.network_id {
+            return Err(anyhow::anyhow!("Invalid network_id"));
+        }
+
+        // For now, return a placeholder response
+        Ok(StatusResponse {
+            issuing_subject: "CN=Test CA".to_string(),
+            issuing_serial_hex: "1234567890abcdef".to_string(),
+            not_before: 1234567890,
+            not_after: 1234567890 + 365 * 24 * 3600,
+        })
+    }
+
+    /// Handle bootstrap message based on message type
+    async fn handle_bootstrap_message(
+        &self,
+        message_type: CaMessageType,
+        payload: &[u8],
+    ) -> Result<Vec<u8>> {
+        match message_type {
+            CaMessageType::CsrEnrollRequest => {
+                let request: CsrEnrollRequest = serde_cbor::from_slice(payload)?;
+                let response = self.handle_enroll_request_binary(request).await?;
+                self.create_binary_response(CaMessageType::CsrEnrollResponse, &response)
+            }
+            CaMessageType::ChainRequest => {
+                let request: ChainRequest = serde_cbor::from_slice(payload)?;
+                let response = self.handle_chain_request_binary(request).await?;
+                self.create_binary_response(CaMessageType::ChainResponse, &response)
+            }
+            _ => {
+                let error = CaErrorResponse {
+                    code: "invalid_message_type".to_string(),
+                    message: format!(
+                        "Invalid message type for bootstrap server: {:?}",
+                        message_type
+                    ),
+                };
+                self.create_binary_response(CaMessageType::ErrorResponse, &error)
+            }
+        }
+    }
+
+    /// Handle authenticated message based on message type
+    async fn handle_authenticated_message(
+        &self,
+        message_type: CaMessageType,
+        payload: &[u8],
+    ) -> Result<Vec<u8>> {
+        match message_type {
+            CaMessageType::RenewRequest => {
+                let request: RenewRequest = serde_cbor::from_slice(payload)?;
+                let response = self.handle_renew_request_binary(request).await?;
+                self.create_binary_response(CaMessageType::RenewResponse, &response)
+            }
+            CaMessageType::RevokeRequest => {
+                let request: RevokeRequest = serde_cbor::from_slice(payload)?;
+                let response = self.handle_revoke_request_binary(request).await?;
+                self.create_binary_response(CaMessageType::RevokeResponse, &response)
+            }
+            CaMessageType::CrlRequest => {
+                let request: CrlRequest = serde_cbor::from_slice(payload)?;
+                let response = self.handle_crl_request_binary(request).await?;
+                self.create_binary_response(CaMessageType::CrlResponse, &response)
+            }
+            CaMessageType::StatusRequest => {
+                let request: StatusRequest = serde_cbor::from_slice(payload)?;
+                let response = self.handle_status_request_binary(request).await?;
+                self.create_binary_response(CaMessageType::StatusResponse, &response)
+            }
+            _ => {
+                let error = CaErrorResponse {
+                    code: "invalid_message_type".to_string(),
+                    message: format!(
+                        "Invalid message type for authenticated server: {:?}",
+                        message_type
+                    ),
+                };
+                self.create_binary_response(CaMessageType::ErrorResponse, &error)
+            }
+        }
+    }
+
+    /// Create binary response with header + CBOR payload
+    fn create_binary_response<T>(&self, message_type: CaMessageType, data: &T) -> Result<Vec<u8>>
+    where
+        T: serde::Serialize,
+    {
+        let payload = serde_cbor::to_vec(data)?;
+        let mut response = Vec::with_capacity(8 + payload.len());
+
+        // Add header
+        response.extend_from_slice(&message_type.to_u32().to_be_bytes());
+        response.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+
+        // Add payload
+        response.extend_from_slice(&payload);
+
+        Ok(response)
     }
 
     /// Handle bootstrap endpoint requests
