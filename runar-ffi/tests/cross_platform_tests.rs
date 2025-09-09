@@ -57,8 +57,13 @@ fn test_core_node_initialization_flow() {
     // Initialize as node
     unsafe { init_as_node(keys) };
 
-    // Verify node functions work
+    // Generate keys first
+    let mut state = 0i32;
     let mut error = create_test_error();
+    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
+
+    // Verify node functions work
     let mut id_ptr: *mut i8 = ptr::null_mut();
     let mut id_len: usize = 0;
 

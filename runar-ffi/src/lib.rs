@@ -542,13 +542,12 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
         );
         if let Some(manager) = &inner.node_key_manager {
             let mgr = manager.read().unwrap();
-            let node_id = mgr.get_node_id();
-            let _ = runar_keys::keystore::persistence::wipe(
-                &cfg,
-                &runar_keys::keystore::persistence::Role::Node {
-                    node_id: &node_id.unwrap_or_else(|| "unknown".to_string()),
-                },
-            );
+            if let Some(node_id) = mgr.get_node_id() {
+                let _ = runar_keys::keystore::persistence::wipe(
+                    &cfg,
+                    &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
+                );
+            }
         }
     }
     0
@@ -2571,10 +2570,20 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
         }
     };
 
-    let node_pk = node_manager.get_node_public_key();
+    let node_pk = match node_manager.get_node_public_key() {
+        Some(pk) => pk,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Node public key not available - call rn_keys_node_get_keystore_state first",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
 
     let local_peer = PeerInfo {
-        public_key: node_pk.unwrap_or_default(),
+        public_key: node_pk,
         addresses,
     };
     let logger = keys_inner.logger.as_ref().clone();
@@ -3159,12 +3168,19 @@ pub extern "C" fn rn_keys_node_get_node_id(
         }
     };
 
-    let node_id = node_manager.get_node_id();
-    if !alloc_string(
-        out_str,
-        out_len,
-        &node_id.unwrap_or_else(|| "unknown".to_string()),
-    ) {
+    let node_id = match node_manager.get_node_id() {
+        Some(id) => id,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Node ID not available - call rn_keys_node_get_keystore_state first",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    if !alloc_string(out_str, out_len, &node_id) {
         set_error(err, 3, "invalid out pointers or string alloc failed");
         return 3;
     }
@@ -3676,7 +3692,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         let logger = keys_inner.logger.clone();
         options = options
             .with_key_manager(node_manager_for_transport)
-            .with_local_node_public_key(node_public_key.unwrap_or_default())
+            .with_local_node_public_key(node_public_key.unwrap())
             .with_logger(logger)
             .with_peer_connected_callback(pc_cb)
             .with_peer_disconnected_callback(pd_cb)
@@ -3758,18 +3774,165 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         .with_local_node_public_key(node_public_key);
 
     // Configure required callbacks for transport to work
-    let request_callback: runar_transporter::transport::RequestCallback = Arc::new(|_request| {
+    let req_tx = tx.clone();
+    let pending: Arc<
+        Mutex<
+            std::collections::HashMap<
+                String,
+                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
+            >,
+        >,
+    > = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let pending_cb = pending.clone();
+    let request_callback: runar_transporter::transport::RequestCallback = Arc::new(move |req| {
+        let req_tx = req_tx.clone();
+        let pending_cb = pending_cb.clone();
         Box::pin(async move {
-            Ok(runar_schemas::ResponseMessage {
-                request_id: "".to_string(),
-                response_data: vec![],
-                error: None,
-            })
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let (tx_resp, rx_resp) = oneshot::channel();
+            pending_cb.lock().await.insert(request_id.clone(), tx_resp);
+
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                serde_cbor::Value::Text("type".into()),
+                serde_cbor::Value::Text("RequestReceived".into()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("v".into()),
+                serde_cbor::Value::Integer(1),
+            );
+            map.insert(
+                serde_cbor::Value::Text("request_id".into()),
+                serde_cbor::Value::Text(request_id),
+            );
+            map.insert(
+                serde_cbor::Value::Text("path".into()),
+                serde_cbor::Value::Text(req.payload.path.clone()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("correlation_id".into()),
+                serde_cbor::Value::Text(req.payload.correlation_id.clone()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("payload".into()),
+                serde_cbor::Value::Bytes(req.payload.payload_bytes.clone()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("profile_public_key".into()),
+                serde_cbor::Value::Bytes(
+                    req.payload
+                        .profile_public_keys
+                        .first()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+            );
+            let _ = req_tx
+                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                .await;
+
+            match rx_resp.await {
+                Ok(resp) => Ok(resp),
+                Err(_) => Ok(runar_transporter::transport::NetworkMessage {
+                    source_node_id: String::new(),
+                    destination_node_id: String::new(),
+                    message_type: 5, // MESSAGE_TYPE_RESPONSE
+                    payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                        path: String::new(),
+                        payload_bytes: Vec::new(),
+                        correlation_id: String::new(),
+                        network_public_key: None,
+                        profile_public_keys: Vec::new(),
+                    },
+                }),
+            }
         })
     });
 
-    let event_callback: runar_transporter::transport::EventCallback =
-        Arc::new(|_event| Box::pin(async move { Ok(()) }));
+    let ev_tx = tx.clone();
+    let event_callback: runar_transporter::transport::EventCallback = Arc::new(move |ev| {
+        let ev_tx = ev_tx.clone();
+        Box::pin(async move {
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                serde_cbor::Value::Text("type".into()),
+                serde_cbor::Value::Text("EventReceived".into()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("v".into()),
+                serde_cbor::Value::Integer(1),
+            );
+            map.insert(
+                serde_cbor::Value::Text("path".into()),
+                serde_cbor::Value::Text(ev.payload.path.clone()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("correlation_id".into()),
+                serde_cbor::Value::Text(ev.payload.correlation_id.clone()),
+            );
+            map.insert(
+                serde_cbor::Value::Text("payload".into()),
+                serde_cbor::Value::Bytes(ev.payload.payload_bytes.clone()),
+            );
+            let _ = ev_tx
+                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                .await;
+            Ok(())
+        })
+    });
+
+    let pc_tx = tx.clone();
+    let peer_connected_callback: runar_transporter::transport::PeerConnectedCallback =
+        Arc::new(move |peer_id, node_info| {
+            let pc_tx = pc_tx.clone();
+            Box::pin(async move {
+                let mut map = std::collections::BTreeMap::new();
+                map.insert(
+                    serde_cbor::Value::Text("type".into()),
+                    serde_cbor::Value::Text("PeerConnected".into()),
+                );
+                map.insert(
+                    serde_cbor::Value::Text("v".into()),
+                    serde_cbor::Value::Integer(1),
+                );
+                map.insert(
+                    serde_cbor::Value::Text("peer_node_id".into()),
+                    serde_cbor::Value::Text(peer_id),
+                );
+                let ni = serde_cbor::to_vec(&node_info).unwrap_or_default();
+                map.insert(
+                    serde_cbor::Value::Text("node_info".into()),
+                    serde_cbor::Value::Bytes(ni),
+                );
+                let _ = pc_tx
+                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                    .await;
+            })
+        });
+
+    let pd_tx = tx.clone();
+    let peer_disconnected_callback: runar_transporter::transport::PeerDisconnectedCallback =
+        Arc::new(move |peer_id| {
+            let pd_tx = pd_tx.clone();
+            Box::pin(async move {
+                let mut map = std::collections::BTreeMap::new();
+                map.insert(
+                    serde_cbor::Value::Text("type".into()),
+                    serde_cbor::Value::Text("PeerDisconnected".into()),
+                );
+                map.insert(
+                    serde_cbor::Value::Text("v".into()),
+                    serde_cbor::Value::Integer(1),
+                );
+                map.insert(
+                    serde_cbor::Value::Text("peer_node_id".into()),
+                    serde_cbor::Value::Text(peer_id),
+                );
+                let _ = pd_tx
+                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                    .await;
+            })
+        });
 
     let logger = Arc::new(runar_common::logging::Logger::new_root(
         runar_common::logging::Component::Custom("ffi_transport"),
@@ -3778,6 +3941,8 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     options = options
         .with_request_callback(request_callback)
         .with_event_callback(event_callback)
+        .with_peer_connected_callback(peer_connected_callback)
+        .with_peer_disconnected_callback(peer_disconnected_callback)
         .with_logger(logger);
 
     // Construct transport

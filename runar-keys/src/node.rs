@@ -148,8 +148,14 @@ impl NodeKeyManager {
         // Update logger with node ID (only if not already set)
         let node_public_key = node_key_pair.public_key_bytes();
         let node_public_key_str = compact_id(&node_public_key);
-        if self.logger.node_id() == "unknown" {
+        // Only set node_id if it's not already set (OnceCell will panic if already set)
+        // We use std::panic::catch_unwind to safely check if node_id is already set
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.logger.set_node_id(node_public_key_str.clone());
+        }));
+        if result.is_err() {
+            // Node ID was already set, which is fine - we're idempotent
+            log_debug!(self.logger, "Node ID was already set in logger");
         }
 
         log_info!(
@@ -179,32 +185,30 @@ impl NodeKeyManager {
 
         // Use the same derivation scheme as MobileKeyManager
         let salt = b"RunarKeyDerivationSalt/v1";
-        let info_prefix = b"runar-v1:profile:agreement:";
 
         // Derive agreement key using HKDF-SHA-256 with rejection sampling
-        let mut counter = 0u32;
+        let ikm = node_key_pair.signing_key().to_bytes();
+        let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm.as_slice());
+        let mut counter: u32 = 0;
         let agreement_secret = loop {
-            let info = format!("{}{}", String::from_utf8_lossy(info_prefix), label);
-            if counter > 0 {
-                let _info = format!("{}{}", info, counter);
-            }
-
-            let ikm = node_key_pair.signing_key().to_bytes();
-            let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm.as_slice());
-            let mut key_bytes = [0u8; 32];
-            hk.expand(info.as_bytes(), &mut key_bytes)
+            let info = if counter == 0 {
+                format!("runar-v1:profile:agreement:{label}")
+            } else {
+                format!("runar-v1:profile:agreement:{label}:{counter}")
+            };
+            let mut candidate_bytes = [0u8; 32];
+            hk.expand(info.as_bytes(), &mut candidate_bytes)
                 .map_err(|e| KeyError::KeyDerivationError(format!("HKDF expansion failed: {e}")))?;
-
-            // Try to create P256 secret key with rejection sampling
-            if let Ok(secret_key) = P256SecretKey::from_slice(&key_bytes) {
-                break secret_key;
-            }
-
-            counter += 1;
-            if counter > 1000 {
-                return Err(KeyError::KeyDerivationError(
-                    "Failed to derive valid P256 key after 1000 attempts".to_string(),
-                ));
+            match P256SecretKey::from_slice(&candidate_bytes) {
+                Ok(sk) => break sk,
+                Err(_) => {
+                    counter = counter.saturating_add(1);
+                    if counter > 1000 {
+                        return Err(KeyError::KeyDerivationError(
+                            "Failed to derive valid P256 key after 1000 attempts".to_string(),
+                        ));
+                    }
+                }
             }
         };
 
@@ -228,46 +232,30 @@ impl NodeKeyManager {
         Ok(public_key_bytes)
     }
 
+    /// Generate a user profile key (legacy method name for compatibility)
+    pub fn generate_user_profile_key(&mut self, profile_id: &str) -> Result<Vec<u8>> {
+        self.derive_user_profile_key(profile_id)
+    }
+
     /// Decrypt envelope data using a specific profile key
     pub fn decrypt_with_profile(
         &self,
         env: &EnvelopeEncryptedData,
         profile_id: &str,
     ) -> Result<Vec<u8>> {
-        let Some(_profile_secret) = self.user_profile_agreements.get(profile_id) else {
-            return Err(KeyError::KeyNotFound(format!(
-                "Profile key not found for ID: {profile_id}"
-            )));
-        };
+        let profile_agreement = self
+            .user_profile_agreements
+            .get(profile_id)
+            .ok_or_else(|| KeyError::KeyNotFound(format!("Profile key not found: {profile_id}")))?;
 
-        let Some(encrypted_key) = env.profile_encrypted_keys.get(profile_id) else {
-            return Err(KeyError::DecryptionError(format!(
-                "No encrypted key found for profile: {profile_id}"
-            )));
-        };
+        let encrypted_envelope_key =
+            env.profile_encrypted_keys.get(profile_id).ok_or_else(|| {
+                KeyError::KeyNotFound(format!("Envelope key not found for profile: {profile_id}"))
+            })?;
 
-        // ECIES decrypt the key
-        let decrypted_key =
-            self.decrypt_key_with_ecdsa(encrypted_key, &self.node_key_pair.as_ref().unwrap())?;
-
-        // AES-GCM decrypt the payload
-        use aes_gcm::aead::Aead;
-        use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
-
-        if env.encrypted_data.len() < 12 {
-            return Err(KeyError::DecryptionError(
-                "Encrypted data too short for AES-GCM".to_string(),
-            ));
-        }
-
-        let (nonce_bytes, ciphertext) = env.encrypted_data.split_at(12);
-        let key = Key::<Aes256Gcm>::from_slice(&decrypted_key);
-        let nonce = Nonce::from_slice(nonce_bytes);
-        let cipher = Aes256Gcm::new(key);
-
-        cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| KeyError::DecryptionError(format!("AES-GCM decryption failed: {e}")))
+        let envelope_key =
+            self.decrypt_key_with_agreement(encrypted_envelope_key, profile_agreement)?;
+        self.decrypt_with_symmetric_key(&env.encrypted_data, &envelope_key)
     }
 
     /// Load node_id from separate file to break the state loading dependency cycle
@@ -1027,18 +1015,27 @@ impl NodeKeyManager {
     }
 
     /// Get statistics about the node key manager
-    pub fn get_statistics(&self) -> NodeKeyManagerStatistics {
-        NodeKeyManagerStatistics {
-            node_id: self.get_node_id().unwrap_or_else(|| "unknown".to_string()),
+    pub fn get_statistics(&self) -> Result<NodeKeyManagerStatistics> {
+        let node_id = self.get_node_id().ok_or_else(|| {
+            KeyError::InvalidOperation(
+                "Node ID not available - call generate_keys() first".to_string(),
+            )
+        })?;
+
+        let node_public_key = self.get_node_public_key().ok_or_else(|| {
+            KeyError::InvalidOperation(
+                "Node public key not available - call generate_keys() first".to_string(),
+            )
+        })?;
+
+        Ok(NodeKeyManagerStatistics {
+            node_id,
             has_certificate: self.node_certificate.is_some(),
             has_ca_certificate: self.ca_certificate.is_some(),
             certificate_status: self.get_certificate_status(),
             network_keys_count: self.network_agreements.len(),
-            node_public_key: self
-                .get_node_public_key()
-                .map(|pk| compact_id(&pk))
-                .unwrap_or_else(|| "unknown".to_string()),
-        }
+            node_public_key: compact_id(&node_public_key),
+        })
     }
 
     /// Sign data with the node's private key

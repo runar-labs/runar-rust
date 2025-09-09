@@ -658,10 +658,15 @@ fn test_node_get_agreement_public_key_wrong_manager_type() {
 fn test_node_get_id_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
+
+    // Generate keys first
+    let mut state = 0i32;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
+    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    assert_eq!(result, 0, "Should successfully get keystore state");
 
     let mut id_c: *mut i8 = ptr::null_mut();
     let mut id_len: usize = 0;
