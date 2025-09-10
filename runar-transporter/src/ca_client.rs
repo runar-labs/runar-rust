@@ -61,7 +61,7 @@ impl CaMessageType {
             0x0004 => Some(CaMessageType::RevokeRequest),
             0x0005 => Some(CaMessageType::CrlRequest),
             0x0006 => Some(CaMessageType::StatusRequest),
-            0x1003 => Some(CaMessageType::RenewRequest),
+            0x1003 => Some(CaMessageType::RenewResponse),
             0x1004 => Some(CaMessageType::RevokeResponse),
             0x1005 => Some(CaMessageType::CrlResponse),
             0x1006 => Some(CaMessageType::StatusResponse),
@@ -383,6 +383,18 @@ impl CaClient {
         }
 
         let response_payload = &response_data[8..8 + response_payload_length];
+
+        // Validate response message type matches expected response type
+        let expected_response_type = self.get_expected_response_type_for_request(request)?;
+        if response_message_type != expected_response_type.to_u32() {
+            return Err(anyhow::anyhow!(
+                "Response message type mismatch: expected 0x{:04x} ({:?}), got 0x{:04x}",
+                expected_response_type.to_u32(),
+                expected_response_type,
+                response_message_type
+            ));
+        }
+
         Ok(response_payload.to_vec())
     }
 
@@ -533,12 +545,45 @@ impl CaClient {
         }
 
         let response_payload = &response_data[8..8 + response_payload_length];
+
+        // Validate response message type matches expected response type
+        let expected_response_type = self.get_expected_response_type_for_request(request)?;
+        if response_message_type != expected_response_type.to_u32() {
+            return Err(anyhow::anyhow!(
+                "Response message type mismatch: expected 0x{:04x} ({:?}), got 0x{:04x}",
+                expected_response_type.to_u32(),
+                expected_response_type,
+                response_message_type
+            ));
+        }
+
         Ok(response_payload.to_vec())
     }
 
     /// Get the network ID for this client
     pub fn network_id(&self) -> &str {
         &self.config.network_id
+    }
+
+    /// Get the expected response type for a given request type
+    fn get_expected_response_type_for_request<T>(&self, request: &T) -> Result<CaMessageType>
+    where
+        T: serde::Serialize + 'static,
+    {
+        // Use the request message type to determine the expected response type
+        let request_message_type = self.get_message_type_for_request(request)?;
+        match request_message_type {
+            CaMessageType::CsrEnrollRequest => Ok(CaMessageType::CsrEnrollResponse),
+            CaMessageType::ChainRequest => Ok(CaMessageType::ChainResponse),
+            CaMessageType::RenewRequest => Ok(CaMessageType::RenewResponse),
+            CaMessageType::RevokeRequest => Ok(CaMessageType::RevokeResponse),
+            CaMessageType::CrlRequest => Ok(CaMessageType::CrlResponse),
+            CaMessageType::StatusRequest => Ok(CaMessageType::StatusResponse),
+            _ => Err(anyhow::anyhow!(
+                "Unknown request type: {:?}",
+                request_message_type
+            )),
+        }
     }
 
     /// Update the network ID

@@ -96,6 +96,8 @@ pub struct CaServerConfig {
     pub rate_limit_config: RateLimitConfig,
     /// Admin SKI allowlist for admin-only endpoints
     pub admin_skis: Vec<String>,
+    /// Additional CA certificates for client verification (for overlap periods)
+    pub additional_ca_certs: Vec<Vec<u8>>,
 }
 
 /// Rate limiting configuration for bootstrap endpoints
@@ -194,8 +196,8 @@ impl CaServer {
         self.logger
             .info("Starting bootstrap QUIC server (server-auth only)");
 
-        // For now, create a self-signed certificate for the bootstrap server
-        // In real implementation, this would get the issuing CA certificate from CANode
+        // Create a server certificate signed by the Issuing CA for the bootstrap server
+        // The certificate chain [leaf, issuing] is presented to clients
         let (server_cert, server_key) = self.create_bootstrap_certificate().await?;
 
         // Build server certificate chain [leaf, issuing]
@@ -269,6 +271,19 @@ impl CaServer {
             "Added issuing CA certificate to root store for client verification"
         );
 
+        // Add additional CA certificates for overlap periods
+        for additional_ca_cert in &self.config.additional_ca_certs {
+            let cert_der = CertificateDer::from(additional_ca_cert.clone());
+            if let Err(e) = root_store.add(cert_der) {
+                log_debug!(self.logger, "Failed to add additional CA certificate: {e}");
+            } else {
+                log_debug!(
+                    self.logger,
+                    "Added additional CA certificate to root store for overlap support"
+                );
+            }
+        }
+
         // Build client verifier for mTLS
         let client_verifier = WebPkiClientVerifier::builder(root_store.into()).build()?;
 
@@ -331,6 +346,21 @@ impl CaServer {
             self.logger,
             "Admin SKIs configured: {:?}",
             self.admin_skis.read().unwrap()
+        );
+    }
+
+    /// Configure additional CA certificates for client verification during overlap periods
+    pub fn configure_additional_ca_certs(&mut self, additional_ca_certs: Vec<Vec<u8>>) {
+        log_debug!(
+            self.logger,
+            "Configuring additional CA certificates: {} certs",
+            additional_ca_certs.len()
+        );
+        self.config.additional_ca_certs = additional_ca_certs;
+        log_debug!(
+            self.logger,
+            "Additional CA certificates configured: {} certs",
+            self.config.additional_ca_certs.len()
         );
     }
 
@@ -795,6 +825,11 @@ impl CaServer {
                 let request: RenewRequest = serde_cbor::from_slice(payload)?;
                 log_debug!(self.logger, "Parsed renew request successfully");
 
+                // Validate network_id
+                if request.network_id != self.config.network_id {
+                    return Err(anyhow::anyhow!("Invalid network_id"));
+                }
+
                 // Extract peer certificate for device-based authorization
                 let peer_cert_der = if let Some(cert_der) = peer_cert_der {
                     cert_der
@@ -831,6 +866,11 @@ impl CaServer {
                 log_debug!(self.logger, "Handling revoke request");
                 let request: RevokeRequest = serde_cbor::from_slice(payload)?;
                 log_debug!(self.logger, "Parsed revoke request successfully");
+
+                // Validate network_id
+                if request.network_id != self.config.network_id {
+                    return Err(anyhow::anyhow!("Invalid network_id"));
+                }
 
                 // Extract peer SKI and check admin authorization
                 let peer_ski = if let Some(cert_der) = peer_cert_der {
@@ -1210,6 +1250,7 @@ mod tests {
             network_id: "test_network".to_string(),
             rate_limit_config: RateLimitConfig::default(),
             admin_skis: vec!["test_admin_ski".to_string()],
+            additional_ca_certs: vec![],
         };
 
         let server = CaServerBuilder::new()
@@ -1255,6 +1296,7 @@ mod tests {
                 sustained_window: Duration::from_secs(3600),
             },
             admin_skis: vec![],
+            additional_ca_certs: vec![],
         };
 
         let server = CaServer::new(config, ca_node, logger);

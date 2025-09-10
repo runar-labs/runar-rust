@@ -583,7 +583,6 @@ impl NodeKeyManager {
         use p256::elliptic_curve::sec1::ToEncodedPoint;
         use p256::PublicKey;
         use sha2::Sha256;
-        use thread_rng;
 
         // Generate ephemeral key pair for ECDH
         let ephemeral_secret = EphemeralSecret::random(&mut thread_rng());

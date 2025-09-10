@@ -103,6 +103,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
         network_id: "test_network".to_string(),
         rate_limit_config: RateLimitConfig::default(),
         admin_skis: vec![],
+        additional_ca_certs: vec![],
     };
 
     // Create and start CA Server

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
 
+use p256::ecdsa::signature::Verifier;
 use x509_parser::prelude::*;
 
 use crate::{
@@ -226,6 +227,11 @@ impl CANode {
         request: RenewRequest,
         peer_cert_der: &[u8],
     ) -> Result<RenewResponse> {
+        // Validate network_id
+        if request.network_id != self.network_id {
+            return Err(KeyError::ValidationError("Network ID mismatch".to_string()));
+        }
+
         // Parse CSR to extract public key and validate
         let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(
             &request.csr_der,
@@ -300,6 +306,11 @@ impl CANode {
         request: RevokeRequest,
         peer_ski: &str,
     ) -> Result<RevokeResponse> {
+        // Validate network_id
+        if request.network_id != self.network_id {
+            return Err(KeyError::ValidationError("Network ID mismatch".to_string()));
+        }
+
         // Check admin authorization
         if !self.admin_ski_allowlist.contains(&peer_ski.to_string()) {
             return Err(KeyError::AuthorizationError(
@@ -455,6 +466,63 @@ impl CANode {
         Ok(crl)
     }
 
+    /// Verify CRL-lite signature
+    pub fn verify_crl_lite(&self, crl: &CaRevocationList) -> Result<bool> {
+        // Extract the issuing CA public key
+        let issuing_cert_der = self.issuing_ca_cert.der_bytes();
+        let (_, cert) = x509_parser::certificate::X509Certificate::from_der(issuing_cert_der)
+            .map_err(|e| {
+                KeyError::ValidationError(format!("Invalid issuing CA certificate: {e}"))
+            })?;
+
+        // Get the public key from the issuing CA certificate
+        let public_key_bytes = cert.public_key().subject_public_key.data.to_vec();
+        let public_key = p256::PublicKey::from_sec1_bytes(&public_key_bytes)
+            .map_err(|e| KeyError::ValidationError(format!("Invalid public key: {e}")))?;
+
+        // Verify the signer SKI matches the issuing CA SKI
+        let mut issuing_ca_ski = Vec::new();
+        for ext in cert.extensions() {
+            if let x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(ski) =
+                ext.parsed_extension()
+            {
+                issuing_ca_ski = ski.0.to_vec();
+                break;
+            }
+        }
+
+        if crl.signer_ski != issuing_ca_ski {
+            return Err(KeyError::ValidationError(
+                "CRL signer SKI does not match issuing CA SKI".to_string(),
+            ));
+        }
+
+        // Verify the signature algorithm
+        if crl.sig_alg != "p256-sha256-der" {
+            return Err(KeyError::ValidationError(
+                "Unsupported signature algorithm".to_string(),
+            ));
+        }
+
+        // Create a copy of the CRL without the signature for verification
+        let mut crl_for_verification = crl.clone();
+        crl_for_verification.signature = vec![];
+
+        // Serialize the CRL body (without signature) to CBOR
+        let crl_cbor = serde_cbor::to_vec(&crl_for_verification)
+            .map_err(|e| KeyError::ValidationError(format!("Failed to serialize CRL: {e}")))?;
+
+        // Verify the signature
+        let signature = p256::ecdsa::Signature::from_der(&crl.signature)
+            .map_err(|e| KeyError::ValidationError(format!("Invalid signature format: {e}")))?;
+
+        let verifier = p256::ecdsa::VerifyingKey::from(&public_key);
+        match verifier.verify(&crl_cbor, &signature) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
     /// Clean up expired entries from the replay ledger
     fn cleanup_expired_replay_entries(&mut self) {
         let now = SystemTime::now();
@@ -482,6 +550,36 @@ impl CANode {
         if self.is_certificate_revoked(&serial_bytes) {
             return Err(KeyError::ValidationError(format!(
                 "Certificate with serial {} is revoked",
+                cert.serial
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Validate certificate against CRL with signature verification
+    pub fn validate_certificate_against_crl_with_verification(
+        &self,
+        certificate_der: &[u8],
+        crl: &CaRevocationList,
+    ) -> Result<()> {
+        // First verify the CRL signature
+        if !self.verify_crl_lite(crl)? {
+            return Err(KeyError::ValidationError(
+                "CRL signature verification failed".to_string(),
+            ));
+        }
+
+        // Parse the certificate to extract serial number
+        let (_, cert) = x509_parser::certificate::X509Certificate::from_der(certificate_der)
+            .map_err(|e| KeyError::ValidationError(format!("Failed to parse certificate: {e}")))?;
+
+        let serial_bytes = cert.serial.to_bytes_be();
+
+        // Check if the certificate serial is in the CRL
+        if crl.revoked_serials.contains(&serial_bytes) {
+            return Err(KeyError::ValidationError(format!(
+                "Certificate with serial {} is revoked according to CRL",
                 cert.serial
             )));
         }
