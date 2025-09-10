@@ -3,6 +3,7 @@
 use std::{
     ffi::{c_void, CString},
     os::raw::c_char,
+    ptr,
     sync::{Arc, RwLock},
 };
 
@@ -4449,4 +4450,527 @@ pub unsafe extern "C" fn rn_keys_ensure_symmetric_key(
         return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
+}
+
+// ============================================================================
+// NEW DUAL-ROLE NODEKEYMANAGER FFI FUNCTIONS
+// ============================================================================
+
+/// Check if NodeKeyManager has keys (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_has_keys_v2(
+    keys: *mut c_void,
+    out_has_keys: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_has_keys.is_null() || err.is_null() {
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match node_manager.probe_and_load_state() {
+        Ok(ready) => {
+            unsafe {
+                *out_has_keys = if ready { 1 } else { 0 };
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to check key state: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Generate keys for NodeKeyManager (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_generate_keys_v2(
+    keys: *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || err.is_null() {
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match node_manager.generate_keys() {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate keys: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Get node ID (new API with proper null handling)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_node_id_v2(
+    keys: *mut c_void,
+    out_id: *mut *mut c_char,
+    out_has_id: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_id.is_null() || out_has_id.is_null() || err.is_null() {
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    match node_manager.get_node_id() {
+        Some(node_id) => match std::ffi::CString::new(node_id) {
+            Ok(c_string) => {
+                unsafe {
+                    *out_id = c_string.into_raw();
+                    *out_has_id = 1;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("Failed to create C string: {e}"),
+                );
+                RN_ERROR_OPERATION_FAILED
+            }
+        },
+        None => {
+            unsafe {
+                *out_id = std::ptr::null_mut();
+                *out_has_id = 0;
+            }
+            0
+        }
+    }
+}
+
+// ============================================================================
+// CA NODE FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Create new CA Node (new API)
+#[no_mangle]
+pub extern "C" fn rn_keys_ca_node_new(
+    logger: *mut c_void,
+    out_ca_node: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if logger.is_null() || out_ca_node.is_null() || err.is_null() {
+        return -1;
+    }
+
+    // For now, return an error indicating this needs proper implementation
+    // This will be implemented in Phase 3 of the FFI rewrite
+    set_error(
+        err,
+        RN_ERROR_OPERATION_FAILED,
+        "CA Node creation requires additional parameters - will be implemented in Phase 3",
+    );
+    RN_ERROR_OPERATION_FAILED
+}
+
+/// Free CA Node (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_free(ca_node: *mut c_void) {
+    if !ca_node.is_null() {
+        // Stub implementation - no actual cleanup needed
+    }
+}
+
+// ============================================================================
+// CA SERVER FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Create new CA Server (new API)
+#[no_mangle]
+pub extern "C" fn rn_transport_ca_server_new(
+    config: *const c_void, // Will be properly typed in Phase 4
+    ca_node: *mut c_void,
+    logger: *mut c_void,
+    out_server: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if config.is_null()
+        || ca_node.is_null()
+        || logger.is_null()
+        || out_server.is_null()
+        || err.is_null()
+    {
+        return -1;
+    }
+
+    // For now, return an error indicating this needs proper implementation
+    // This will be implemented in Phase 4 of the FFI rewrite
+    set_error(
+        err,
+        RN_ERROR_OPERATION_FAILED,
+        "CA Server creation requires additional parameters - will be implemented in Phase 4",
+    );
+    RN_ERROR_OPERATION_FAILED
+}
+
+/// Free CA Server (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_server_free(server: *mut c_void) {
+    if !server.is_null() {
+        // Stub implementation - no actual cleanup needed
+    }
+}
+
+// ============================================================================
+// PROFILE KEY MANAGEMENT FFI FUNCTIONS (PHASE 2)
+// ============================================================================
+
+/// Derive user profile key (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_derive_user_profile_key(
+    keys: *mut c_void,
+    label: *const c_char,
+    out_public_key: *mut *mut u8,
+    out_public_key_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null()
+        || label.is_null()
+        || out_public_key.is_null()
+        || out_public_key_len.is_null()
+        || err.is_null()
+    {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let label_str = match unsafe { std::ffi::CStr::from_ptr(label).to_str() } {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in label");
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    match manager.write().unwrap().derive_user_profile_key(label_str) {
+        Ok(public_key) => {
+            let public_key_len = public_key.len();
+            let public_key_ptr = Box::into_raw(public_key.into_boxed_slice()) as *mut u8;
+            unsafe {
+                *out_public_key = public_key_ptr;
+                *out_public_key_len = public_key_len;
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to derive profile key: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Decrypt envelope data using profile key (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_decrypt_with_profile(
+    keys: *mut c_void,
+    envelope_data: *const u8,
+    envelope_data_len: usize,
+    profile_id: *const c_char,
+    out_decrypted: *mut *mut u8,
+    out_decrypted_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null()
+        || envelope_data.is_null()
+        || profile_id.is_null()
+        || out_decrypted.is_null()
+        || out_decrypted_len.is_null()
+        || err.is_null()
+    {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let profile_id_str = match unsafe { std::ffi::CStr::from_ptr(profile_id).to_str() } {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in profile_id");
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse envelope data from CBOR
+    let envelope_bytes = unsafe { std::slice::from_raw_parts(envelope_data, envelope_data_len) };
+    let envelope_data: runar_keys::mobile::EnvelopeEncryptedData =
+        match serde_cbor::from_slice(envelope_bytes) {
+            Ok(env) => env,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("Failed to parse envelope data: {e}"),
+                );
+                return RN_ERROR_SERIALIZATION_FAILED;
+            }
+        };
+
+    match manager
+        .read()
+        .unwrap()
+        .decrypt_with_profile(&envelope_data, profile_id_str)
+    {
+        Ok(decrypted) => {
+            let decrypted_len = decrypted.len();
+            let decrypted_ptr = Box::into_raw(decrypted.into_boxed_slice()) as *mut u8;
+            unsafe {
+                *out_decrypted = decrypted_ptr;
+                *out_decrypted_len = decrypted_len;
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to decrypt with profile: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Install profile public key (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_install_profile_public_key(
+    keys: *mut c_void,
+    public_key: *const u8,
+    public_key_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || public_key.is_null() || err.is_null() {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let public_key_bytes =
+        unsafe { std::slice::from_raw_parts(public_key, public_key_len) }.to_vec();
+
+    manager
+        .write()
+        .unwrap()
+        .install_profile_public_key(public_key_bytes);
+    0
+}
+
+/// Get profile public key by label (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_profile_public_key_by_label(
+    keys: *mut c_void,
+    label: *const c_char,
+    out_public_key: *mut *mut u8,
+    out_public_key_len: *mut usize,
+    out_has_key: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null()
+        || label.is_null()
+        || out_public_key.is_null()
+        || out_public_key_len.is_null()
+        || out_has_key.is_null()
+        || err.is_null()
+    {
+        if !err.is_null() {
+            set_error(err, RN_ERROR_NULL_ARGUMENT, "Null argument provided");
+        }
+        return -1;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let label_str = match unsafe { std::ffi::CStr::from_ptr(label).to_str() } {
+        Ok(s) => s,
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8 in label");
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Get profile public key by label
+    if let Some(public_key) = manager
+        .read()
+        .unwrap()
+        .get_profile_public_key_by_label(label_str)
+    {
+        let public_key_len = public_key.len();
+        let public_key_ptr = Box::into_raw(public_key.clone().into_boxed_slice()) as *mut u8;
+        unsafe {
+            *out_public_key = public_key_ptr;
+            *out_public_key_len = public_key_len;
+            *out_has_key = 1;
+        }
+        return 0;
+    }
+
+    unsafe {
+        *out_public_key = ptr::null_mut();
+        *out_public_key_len = 0;
+        *out_has_key = 0;
+    }
+    0
+}
+
+// ============================================================================
+// CA CLIENT FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Create new CA Client (new API)
+#[no_mangle]
+pub extern "C" fn rn_transport_ca_client_new(
+    logger: *mut c_void,
+    out_client: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if logger.is_null() || out_client.is_null() || err.is_null() {
+        return -1;
+    }
+
+    // For now, return an error indicating this needs proper implementation
+    // This will be implemented in Phase 4 of the FFI rewrite
+    set_error(
+        err,
+        RN_ERROR_OPERATION_FAILED,
+        "CA Client creation requires additional parameters - will be implemented in Phase 4",
+    );
+    RN_ERROR_OPERATION_FAILED
+}
+
+/// Free CA Client (new API)
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_free(client: *mut c_void) {
+    if !client.is_null() {
+        // Stub implementation - no actual cleanup needed
+    }
 }

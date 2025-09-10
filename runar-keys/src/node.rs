@@ -225,6 +225,8 @@ impl NodeKeyManager {
         // Store the agreement secret and label mapping
         self.user_profile_agreements
             .insert(profile_id.clone(), agreement_secret);
+        self.profile_public_keys
+            .insert(profile_id.clone(), public_key_bytes.clone());
         self.label_to_pid.insert(label.to_string(), profile_id);
 
         log_debug!(self.logger, "Derived profile key for label: {label}");
@@ -1181,6 +1183,20 @@ impl NodeKeyManager {
     pub fn install_profile_public_key(&mut self, public_key: Vec<u8>) {
         let pid = compact_id(&public_key);
         self.profile_public_keys.insert(pid, public_key);
+    }
+
+    /// Get profile public key by label
+    pub fn get_profile_public_key_by_label(&self, label: &str) -> Option<&Vec<u8>> {
+        if let Some(profile_id) = self.label_to_pid.get(label) {
+            self.profile_public_keys.get(profile_id)
+        } else {
+            None
+        }
+    }
+
+    /// Check if a profile key exists for the given label
+    pub fn has_profile_key_for_label(&self, label: &str) -> bool {
+        self.get_profile_public_key_by_label(label).is_some()
     }
 }
 

@@ -404,6 +404,96 @@ int32_t rn_keys_ensure_symmetric_key(void *keys,
                                      size_t *out_len,
                                      struct RNAPIRnError *err);
 
+/**
+ * Check if NodeKeyManager has keys (new API)
+ */
+int32_t rn_keys_node_has_keys_v2(void *keys, int32_t *out_has_keys, struct RNAPIRnError *err);
+
+/**
+ * Generate keys for NodeKeyManager (new API)
+ */
+int32_t rn_keys_node_generate_keys_v2(void *keys, struct RNAPIRnError *err);
+
+/**
+ * Get node ID (new API with proper null handling)
+ */
+int32_t rn_keys_node_get_node_id_v2(void *keys,
+                                    char **out_id,
+                                    int32_t *out_has_id,
+                                    struct RNAPIRnError *err);
+
+/**
+ * Create new CA Node (new API)
+ */
+int32_t rn_keys_ca_node_new(void *logger, void **out_ca_node, struct RNAPIRnError *err);
+
+/**
+ * Free CA Node (new API)
+ */
+void rn_keys_ca_node_free(void *ca_node);
+
+/**
+ * Create new CA Server (new API)
+ */
+int32_t rn_transport_ca_server_new(const void *config,
+                                   void *ca_node,
+                                   void *logger,
+                                   void **out_server,
+                                   struct RNAPIRnError *err);
+
+/**
+ * Free CA Server (new API)
+ */
+void rn_transport_ca_server_free(void *server);
+
+/**
+ * Derive user profile key (new API)
+ */
+int32_t rn_keys_node_derive_user_profile_key(void *keys,
+                                             const char *label,
+                                             uint8_t **out_public_key,
+                                             size_t *out_public_key_len,
+                                             struct RNAPIRnError *err);
+
+/**
+ * Decrypt envelope data using profile key (new API)
+ */
+int32_t rn_keys_node_decrypt_with_profile(void *keys,
+                                          const uint8_t *envelope_data,
+                                          size_t envelope_data_len,
+                                          const char *profile_id,
+                                          uint8_t **out_decrypted,
+                                          size_t *out_decrypted_len,
+                                          struct RNAPIRnError *err);
+
+/**
+ * Install profile public key (new API)
+ */
+int32_t rn_keys_node_install_profile_public_key(void *keys,
+                                                const uint8_t *public_key,
+                                                size_t public_key_len,
+                                                struct RNAPIRnError *err);
+
+/**
+ * Get profile public key by label (new API)
+ */
+int32_t rn_keys_node_get_profile_public_key_by_label(void *keys,
+                                                     const char *label,
+                                                     uint8_t **out_public_key,
+                                                     size_t *out_public_key_len,
+                                                     int32_t *out_has_key,
+                                                     struct RNAPIRnError *err);
+
+/**
+ * Create new CA Client (new API)
+ */
+int32_t rn_transport_ca_client_new(void *logger, void **out_client, struct RNAPIRnError *err);
+
+/**
+ * Free CA Client (new API)
+ */
+void rn_transport_ca_client_free(void *client);
+
 #endif /* RUNAR_FFI_H */
 
 // End of runar_ffi
