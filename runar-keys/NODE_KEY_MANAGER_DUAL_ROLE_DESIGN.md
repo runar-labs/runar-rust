@@ -19,7 +19,7 @@ This design references only crates and versions already in this repository and u
 - **Clean, organized codebase** - No backward compatibility constraints for new implementation
 - **Design-compliant architecture** - Follow the final design specifications exactly
 - **Proper refactoring** - Make necessary changes to align with design, not workarounds
-- **Single source of truth** - Wire types in transporter, internal types in keys
+- **Single source of truth** - All types defined in runar-keys, no duplicate types
 - **Defense in depth** - Multiple validation layers for security
 
 ### **Architecture & Design**
@@ -649,9 +649,10 @@ pub struct RenewRequestContext {
 - Internal CA types remain decoupled and are used by CANode.
 
 **Implementation details:**
-- Create a new module in transporter, `runar-transporter/src/ca_types.rs`, defining all wire types (requests, responses, envelopes, error codes) with `network_id` and protocol `version`.
-- Keep `runar-keys::ca_node_types` for internal CA operations. Implement `From`/`TryFrom` conversions in the server to translate between wire and internal types.
-- Ensure versioning: `{ version: u16 }` in the header or per-message to allow future evolution.
+- Use `runar-keys::ca_node_types` as the single source of truth for all CA operations.
+- No wire types needed - client and server are both pure Rust in same codebase.
+- Add `network_id` and `version` fields to existing types in `runar-keys::ca_node_types`.
+- Remove duplicate type definitions - use only the types defined in `runar-keys`.
 
 **Serialization:**
 - Keep CBOR (`ciborium`) as specified in the design (binary protocol). Avoid ad-hoc binary framing; CBOR is already standard in the repo.
@@ -1402,16 +1403,16 @@ struct RequestContext {
 **Required Behavior**:
 - Wire protocol types are transport-facing and must include `network_id`, versioning, and message discriminants
 - Internal CA types remain decoupled and are used by CANode
-- Single source of truth for wire types in transporter
+- Single source of truth for all types in runar-keys
 
 **Implementation**:
-- Create `runar-transporter/src/ca_types.rs` defining all wire types with `network_id` and protocol `version`
-- Keep `runar-keys::ca_node_types` for internal CA operations
-- Implement `From`/`TryFrom` conversions in the server to translate between wire and internal types
+- Use `runar-keys::ca_node_types` as single source of truth
+- Add `network_id` and `version` fields to existing types
+- Remove duplicate type definitions in transporter
 
-**Wire Types Structure**:
+**Updated Types Structure**:
 ```rust
-// runar-transporter/src/ca_types.rs
+// runar-keys/src/ca_node_types.rs - Single source of truth
 pub const CA_PROTOCOL_VERSION: u16 = 1;
 
 pub struct CaMessageHeader {

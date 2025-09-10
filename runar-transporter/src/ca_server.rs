@@ -14,10 +14,9 @@ use quinn::{Endpoint, ServerConfig};
 use runar_common::logging::Logger;
 use std::net::SocketAddr;
 
-use crate::ca_types::{
-    CaErrorResponse, ChainRequest, ChainResponse, CrlRequest, CrlResponse, CsrEnrollRequest,
-    CsrEnrollResponse, RenewRequest, RenewRequestContext, RequestContext, RevokeRequest,
-    StatusRequest, StatusResponse,
+use runar_keys::ca_node_types::{
+    CaErrorResponse, CaStatus, ChainRequest, ChainResponse, CrlRequest, CrlResponse,
+    CsrEnrollRequest, CsrEnrollResponse, RenewRequest, RevokeRequest, StatusRequest,
 };
 use runar_keys::{ca_node::CANode, certificate::EcdsaKeyPair};
 use runar_macros_common::{log_debug, log_info};
@@ -27,9 +26,8 @@ use serde_cbor;
 use std::sync::RwLock;
 use std::{
     collections::HashMap,
-    net::SocketAddr,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use x509_parser::prelude::FromDer;
 
@@ -133,13 +131,24 @@ struct RateLimitEntry {
     sustained_reset: SystemTime,
 }
 
+/// Anti-replay cache entry
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct ReplayCacheEntry {
+    token_id: String,
+    nonce: [u8; 16],
+    expires_at: u64,
+}
+
 /// CA Node QUIC Server
 #[derive(Clone)]
+
 pub struct CaServer {
     config: CaServerConfig,
     ca_node: Arc<RwLock<CANode>>,
     logger: Arc<Logger>,
     rate_limits: Arc<RwLock<HashMap<String, RateLimitEntry>>>,
+    replay_cache: Arc<RwLock<HashMap<String, ReplayCacheEntry>>>,
     bootstrap_endpoint: Option<Arc<Endpoint>>,
     authenticated_endpoint: Option<Arc<Endpoint>>,
     admin_skis: Arc<RwLock<Vec<String>>>,
@@ -154,6 +163,7 @@ impl CaServer {
             ca_node,
             logger,
             rate_limits: Arc::new(RwLock::new(HashMap::new())),
+            replay_cache: Arc::new(RwLock::new(HashMap::new())),
             bootstrap_endpoint: None,
             authenticated_endpoint: None,
             admin_skis: Arc::new(RwLock::new(admin_skis)),
@@ -188,8 +198,14 @@ impl CaServer {
         // In real implementation, this would get the issuing CA certificate from CANode
         let (server_cert, server_key) = self.create_bootstrap_certificate().await?;
 
-        // Build server certificate chain
-        let cert_chain = vec![CertificateDer::from(server_cert.der_bytes().to_vec())];
+        // Build server certificate chain [leaf, issuing]
+        let ca_node = self.ca_node.read().unwrap();
+        let issuing_ca_cert = ca_node.issuing_ca_cert.clone();
+        drop(ca_node); // Release the lock
+        let cert_chain = vec![
+            CertificateDer::from(server_cert.der_bytes().to_vec()),
+            CertificateDer::from(issuing_ca_cert.der_bytes().to_vec()),
+        ];
 
         // Build rustls server config (server-auth only, no client auth required)
         let server_config = RustlsServerConfig::builder()
@@ -256,8 +272,11 @@ impl CaServer {
         // Build client verifier for mTLS
         let client_verifier = WebPkiClientVerifier::builder(root_store.into()).build()?;
 
-        // Build server certificate chain
-        let cert_chain = vec![CertificateDer::from(server_cert.der_bytes().to_vec())];
+        // Build server certificate chain [leaf, issuing]
+        let cert_chain = vec![
+            CertificateDer::from(server_cert.der_bytes().to_vec()),
+            CertificateDer::from(issuing_ca_cert.der_bytes().to_vec()),
+        ];
 
         // Build rustls server config with client auth required
         let server_config = RustlsServerConfig::builder()
@@ -639,10 +658,7 @@ impl CaServer {
 
         // Process enrollment via CA Node
         let mut ca_node = self.ca_node.write().unwrap();
-        let internal_request: runar_keys::ca_node_types::CsrEnrollRequest = request.into();
-        let internal_response =
-            ca_node.handle_enroll(internal_request, &remote_addr.to_string())?;
-        let response: CsrEnrollResponse = internal_response.into();
+        let response = ca_node.handle_enroll(request, &remote_addr.to_string())?;
         Ok(response)
     }
 
@@ -655,10 +671,9 @@ impl CaServer {
 
         // Process chain request via CA Node
         let ca_node = self.ca_node.read().unwrap();
-        let internal_request: runar_keys::ca_node_types::ChainRequest = request.into();
-        let internal_response = ca_node.handle_chain(request.network_id)?;
-        let response: ChainResponse = internal_response.into();
-        Ok(response)
+        let network_id = request.network_id.clone();
+        let internal_response = ca_node.handle_chain(network_id)?;
+        Ok(internal_response)
     }
 
     /// Handle CRL request (binary protocol)
@@ -670,14 +685,13 @@ impl CaServer {
 
         // Process CRL request via CA Node
         let ca_node = self.ca_node.read().unwrap();
-        let internal_request: runar_keys::ca_node_types::CrlRequest = request.into();
-        let internal_response = ca_node.handle_crl(request.network_id)?;
-        let response: CrlResponse = internal_response.into();
-        Ok(response)
+        let network_id = request.network_id.clone();
+        let internal_response = ca_node.handle_crl(network_id)?;
+        Ok(internal_response)
     }
 
     /// Handle status request (binary protocol)
-    async fn handle_status_request_binary(&self, request: StatusRequest) -> Result<StatusResponse> {
+    async fn handle_status_request_binary(&self, request: StatusRequest) -> Result<CaStatus> {
         // Validate network_id
         if request.network_id != self.config.network_id {
             return Err(anyhow::anyhow!("Invalid network_id"));
@@ -685,10 +699,9 @@ impl CaServer {
 
         // Process status request via CA Node
         let ca_node = self.ca_node.read().unwrap();
-        let internal_request: runar_keys::ca_node_types::StatusRequest = request.into();
-        let internal_response = ca_node.handle_status(request.network_id)?;
-        let response: StatusResponse = internal_response.into();
-        Ok(response)
+        let network_id = request.network_id.clone();
+        let internal_response = ca_node.handle_status(network_id)?;
+        Ok(internal_response)
     }
 
     /// Handle bootstrap message based on message type
@@ -712,6 +725,21 @@ impl CaServer {
                     };
                     return self.create_binary_response(CaMessageType::ErrorResponse, &error);
                 }
+
+                // Check for replay attack
+                if !self.check_replay_attack(
+                    &request.enrollment_token.body.token_id,
+                    &request.enrollment_token.body.nonce,
+                )? {
+                    let error = CaErrorResponse {
+                        code: "forbidden".to_string(),
+                        message: "Replay attack detected".to_string(),
+                    };
+                    return self.create_binary_response(CaMessageType::ErrorResponse, &error);
+                }
+
+                // Clean up expired entries periodically
+                self.cleanup_replay_cache();
 
                 let response = self
                     .handle_enroll_request_binary(request, remote_addr)
@@ -739,7 +767,7 @@ impl CaServer {
         message_type: CaMessageType,
         payload: &[u8],
         peer_cert_der: Option<&[u8]>,
-        remote_addr: SocketAddr,
+        _remote_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
         match message_type {
             CaMessageType::RenewRequest => {
@@ -764,9 +792,7 @@ impl CaServer {
                     self.logger,
                     "Calling ca_node.handle_renew with peer certificate"
                 );
-                let internal_request: runar_keys::ca_node_types::RenewRequest = request.into();
-                let internal_response = ca_node.handle_renew(internal_request, peer_cert_der)?;
-                let response: RenewResponse = internal_response.into();
+                let response = ca_node.handle_renew(request, peer_cert_der)?;
                 log_debug!(
                     self.logger,
                     "handle_renew succeeded, creating binary response"
@@ -810,9 +836,7 @@ impl CaServer {
                 );
 
                 let mut ca_node = self.ca_node.write().unwrap();
-                let internal_request: runar_keys::ca_node_types::RevokeRequest = request.into();
-                let internal_response = ca_node.handle_revoke(internal_request, &peer_ski)?;
-                let response: RevokeResponse = internal_response.into();
+                let response = ca_node.handle_revoke(request, &peer_ski)?;
                 log_debug!(
                     self.logger,
                     "handle_revoke succeeded, creating binary response"
@@ -857,6 +881,43 @@ impl CaServer {
         response.extend_from_slice(&payload);
 
         Ok(response)
+    }
+
+    /// Check for replay attack using token_id and nonce
+    fn check_replay_attack(&self, token_id: &str, nonce: &[u8; 16]) -> Result<bool> {
+        let mut cache = self.replay_cache.write().unwrap();
+        let cache_key = format!("{token_id}:{nonce:?}");
+
+        // Check if entry exists
+        if cache.contains_key(&cache_key) {
+            return Ok(false); // Replay detected
+        }
+
+        // Add entry to cache
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let entry = ReplayCacheEntry {
+            token_id: token_id.to_string(),
+            nonce: *nonce,
+            expires_at: now + 3600, // 1 hour TTL
+        };
+
+        cache.insert(cache_key, entry);
+        Ok(true) // No replay
+    }
+
+    /// Clean up expired entries from replay cache
+    fn cleanup_replay_cache(&self) {
+        let mut cache = self.replay_cache.write().unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        cache.retain(|_, entry| entry.expires_at > now);
     }
 
     /// Check rate limiting for bootstrap endpoints

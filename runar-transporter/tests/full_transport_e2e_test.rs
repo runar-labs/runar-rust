@@ -17,9 +17,9 @@ use runar_common::{
     compact_ids::compact_id,
     logging::{Component, LogLevel, Logger, LoggingConfig},
 };
+use runar_keys::ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest};
 use runar_keys::{
     ca_node::CANode,
-    ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest},
     certificate::{CertificateAuthority, CertificateRequest, EcdsaKeyPair},
     enrollment_token::{EnrollmentToken, EnrollmentTokenBody},
     mobile::MobileKeyManager,

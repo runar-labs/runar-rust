@@ -9,19 +9,71 @@
 //! - CBOR request/response serialization over QUIC
 //! - Certificate management and mTLS authentication
 
-use crate::ca_types::{
-    CaMessageType, ChainRequest, ChainResponse, CrlRequest, CsrEnrollRequest, CsrEnrollResponse,
-    RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, StatusRequest, StatusResponse,
-};
 use anyhow::Result;
 use quinn::{ClientConfig, Endpoint};
 use runar_common::logging::Logger;
+use runar_keys::ca_node_types::{
+    CaStatus, ChainRequest, ChainResponse, CrlRequest, CsrEnrollRequest, CsrEnrollResponse,
+    RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, StatusRequest,
+};
 use runar_keys::node::NodeKeyManager;
 use runar_macros_common::{log_debug, log_info, log_warn};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use rustls_pki_types::CertificateDer;
 use serde_cbor;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+
+/// CA Node message types for binary protocol
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaMessageType {
+    // Bootstrap requests
+    CsrEnrollRequest = 0x0001,
+    ChainRequest = 0x0002,
+
+    // Bootstrap responses
+    CsrEnrollResponse = 0x1001,
+    ChainResponse = 0x1002,
+
+    // Authenticated requests
+    RenewRequest = 0x0003,
+    RevokeRequest = 0x0004,
+    CrlRequest = 0x0005,
+    StatusRequest = 0x0006,
+
+    // Authenticated responses
+    RenewResponse = 0x1003,
+    RevokeResponse = 0x1004,
+    CrlResponse = 0x1005,
+    StatusResponse = 0x1006,
+
+    // Error response
+    ErrorResponse = 0x2000,
+}
+
+impl CaMessageType {
+    pub fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            0x0001 => Some(CaMessageType::CsrEnrollRequest),
+            0x0002 => Some(CaMessageType::ChainRequest),
+            0x1001 => Some(CaMessageType::CsrEnrollResponse),
+            0x1002 => Some(CaMessageType::ChainResponse),
+            0x0003 => Some(CaMessageType::RenewRequest),
+            0x0004 => Some(CaMessageType::RevokeRequest),
+            0x0005 => Some(CaMessageType::CrlRequest),
+            0x0006 => Some(CaMessageType::StatusRequest),
+            0x1003 => Some(CaMessageType::RenewRequest),
+            0x1004 => Some(CaMessageType::RevokeResponse),
+            0x1005 => Some(CaMessageType::CrlResponse),
+            0x1006 => Some(CaMessageType::StatusResponse),
+            0x2000 => Some(CaMessageType::ErrorResponse),
+            _ => None,
+        }
+    }
+
+    pub fn to_u32(self) -> u32 {
+        self as u32
+    }
+}
 
 /// CA Node QUIC Client configuration
 #[derive(Debug, Clone)]
@@ -178,7 +230,7 @@ impl CaClient {
     /// Get CA status (authenticated operation)
     pub async fn get_status(&self) -> Result<CaStatus> {
         let endpoint = format!("$ca/{}/status", self.config.network_id);
-        let request = runar_keys::ca_node_types::StatusRequest {
+        let request = StatusRequest {
             network_id: self.config.network_id.clone(),
         };
         let response_data = self.send_authenticated_request(&endpoint, &request).await?;
