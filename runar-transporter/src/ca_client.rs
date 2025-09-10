@@ -20,6 +20,7 @@ use runar_keys::{
     },
     node::NodeKeyManager,
 };
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use rustls_pki_types::CertificateDer;
 use serde_cbor;
@@ -95,10 +96,19 @@ impl CaClient {
     }
 
     /// Get message type for a request
-    fn get_message_type_for_request<T>(&self, _request: &T) -> Result<CaMessageType> {
-        // For now, we'll determine the message type based on the request type
-        // This is a simplified approach - in a real implementation, we'd use generics or traits
-        Ok(CaMessageType::CsrEnrollRequest)
+    fn get_message_type_for_request<T: 'static>(&self, _request: &T) -> Result<CaMessageType> {
+        // Determine message type based on the request type
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<CsrEnrollRequest>() {
+            Ok(CaMessageType::CsrEnrollRequest)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<RenewRequest>() {
+            Ok(CaMessageType::RenewRequest)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<RevokeRequest>() {
+            Ok(CaMessageType::RevokeRequest)
+        } else {
+            // For chain requests and other types, we need to handle them differently
+            // For now, assume it's a chain request if it's not one of the above
+            Ok(CaMessageType::ChainRequest)
+        }
     }
 
     /// Enroll a new device (bootstrap operation)
@@ -180,7 +190,7 @@ impl CaClient {
     /// Send a bootstrap request (server-auth only)
     async fn send_bootstrap_request<T>(&self, endpoint: &str, request: &T) -> Result<Vec<u8>>
     where
-        T: serde::Serialize,
+        T: serde::Serialize + 'static,
     {
         let payload = serde_cbor::to_vec(request)?;
 
@@ -189,6 +199,12 @@ impl CaClient {
 
         // Add header (message type + payload length)
         let message_type = self.get_message_type_for_request(request)?;
+        log_debug!(
+            self.logger,
+            "Sending request with message type: {:?} (0x{:04x})",
+            message_type,
+            message_type.to_u32()
+        );
         request_data.extend_from_slice(&message_type.to_u32().to_be_bytes());
         request_data.extend_from_slice(&(payload.len() as u32).to_be_bytes());
 
@@ -207,17 +223,29 @@ impl CaClient {
         // Add the root CA certificate to the trust store
         if let Some(root_ca_cert) = &self.root_ca_cert {
             if let Err(e) = root_store.add(CertificateDer::from(root_ca_cert.clone())) {
-                self.logger.warn(format!(
+                log_warn!(
+                    self.logger,
                     "Failed to add root CA certificate to root store: {e}"
-                ));
+                );
+            } else {
+                log_debug!(
+                    self.logger,
+                    "Successfully added root CA certificate to root store for bootstrap request"
+                );
             }
         }
         // Add the issuing CA certificate to the trust store
         if let Some(issuing_ca_cert) = &self.issuing_ca_cert {
             if let Err(e) = root_store.add(CertificateDer::from(issuing_ca_cert.clone())) {
-                self.logger.warn(format!(
+                log_warn!(
+                    self.logger,
                     "Failed to add issuing CA certificate to root store: {e}"
-                ));
+                );
+            } else {
+                log_debug!(
+                    self.logger,
+                    "Successfully added issuing CA certificate to root store for bootstrap request"
+                );
             }
         }
 
@@ -235,9 +263,19 @@ impl CaClient {
         endpoint.set_default_client_config(client_config);
 
         // Connect to bootstrap server
+        log_debug!(
+            self.logger,
+            "Connecting to bootstrap server at {}",
+            self.config.bootstrap_server
+        );
         let connection = endpoint
             .connect(self.config.bootstrap_server, "ca-node")?
             .await?;
+        log_info!(
+            self.logger,
+            "Bootstrap connection established to {}",
+            self.config.bootstrap_server
+        );
 
         // Open bidirectional stream
         let (mut send, mut recv) = connection.open_bi().await?;
@@ -259,6 +297,12 @@ impl CaClient {
             return Err(anyhow::anyhow!("Invalid response: too short"));
         }
 
+        log_debug!(
+            self.logger,
+            "Received authenticated response: {} bytes",
+            response_data.len()
+        );
+
         let response_message_type = u32::from_be_bytes([
             response_data[0],
             response_data[1],
@@ -272,6 +316,14 @@ impl CaClient {
             response_data[7],
         ]) as usize;
 
+        log_debug!(
+            self.logger,
+            "Received response with message type: {} (0x{:04x}), payload length: {}",
+            response_message_type,
+            response_message_type,
+            response_payload_length
+        );
+
         if response_data.len() < 8 + response_payload_length {
             return Err(anyhow::anyhow!("Invalid response: payload length mismatch"));
         }
@@ -283,9 +335,26 @@ impl CaClient {
     /// Send an authenticated request (mTLS required)
     async fn send_authenticated_request<T>(&self, endpoint: &str, request: &T) -> Result<Vec<u8>>
     where
-        T: serde::Serialize,
+        T: serde::Serialize + 'static,
     {
-        let request_data = serde_cbor::to_vec(request)?;
+        let payload = serde_cbor::to_vec(request)?;
+
+        // Create binary protocol message with header
+        let mut request_data = Vec::with_capacity(8 + payload.len());
+
+        // Add header (message type + payload length)
+        let message_type = self.get_message_type_for_request(request)?;
+        log_debug!(
+            self.logger,
+            "Sending authenticated request with message type: {:?} (0x{:04x})",
+            message_type,
+            message_type.to_u32()
+        );
+        request_data.extend_from_slice(&message_type.to_u32().to_be_bytes());
+        request_data.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+
+        // Add payload
+        request_data.extend_from_slice(&payload);
 
         // Check if we have a node key manager for mTLS
         let node_key_manager = self.node_key_manager.as_ref().ok_or_else(|| {
@@ -293,9 +362,10 @@ impl CaClient {
         })?;
 
         self.logger.debug(format!(
-            "Sending authenticated request to {}: {} bytes",
+            "Sending authenticated request to {}: {} bytes (header: 8, payload: {})",
             endpoint,
-            request_data.len()
+            request_data.len(),
+            payload.len()
         ));
 
         // Get client certificate from node key manager
@@ -320,11 +390,12 @@ impl CaClient {
         // Add the issuing CA certificate to the trust store
         if let Some(issuing_ca_cert) = &self.issuing_ca_cert {
             if let Err(e) = root_store.add(CertificateDer::from(issuing_ca_cert.clone())) {
-                self.logger.warn(format!(
+                log_warn!(
+                    self.logger,
                     "Failed to add issuing CA certificate to root store: {e}"
-                ));
+                );
             } else {
-                self.logger.debug("Successfully added issuing CA certificate to root store for authenticated request");
+                log_debug!(self.logger, "Successfully added issuing CA certificate to root store for authenticated request");
             }
         }
 
@@ -342,9 +413,19 @@ impl CaClient {
         endpoint.set_default_client_config(client_config);
 
         // Connect to authenticated server
+        log_debug!(
+            self.logger,
+            "Connecting to authenticated server at {}",
+            self.config.authenticated_server
+        );
         let connection = endpoint
             .connect(self.config.authenticated_server, "ca-node")?
             .await?;
+        log_info!(
+            self.logger,
+            "Authenticated connection established to {}",
+            self.config.authenticated_server
+        );
 
         // Open bidirectional stream
         let (mut send, mut recv) = connection.open_bi().await?;
@@ -361,7 +442,44 @@ impl CaClient {
             response_data.len()
         ));
 
-        Ok(response_data)
+        // Parse binary protocol response
+        if response_data.len() < 8 {
+            return Err(anyhow::anyhow!("Invalid response: too short"));
+        }
+
+        log_debug!(
+            self.logger,
+            "Received authenticated response: {} bytes",
+            response_data.len()
+        );
+
+        let response_message_type = u32::from_be_bytes([
+            response_data[0],
+            response_data[1],
+            response_data[2],
+            response_data[3],
+        ]);
+        let response_payload_length = u32::from_be_bytes([
+            response_data[4],
+            response_data[5],
+            response_data[6],
+            response_data[7],
+        ]) as usize;
+
+        log_debug!(
+            self.logger,
+            "Received response with message type: {} (0x{:04x}), payload length: {}",
+            response_message_type,
+            response_message_type,
+            response_payload_length
+        );
+
+        if response_data.len() < 8 + response_payload_length {
+            return Err(anyhow::anyhow!("Invalid response: payload length mismatch"));
+        }
+
+        let response_payload = &response_data[8..8 + response_payload_length];
+        Ok(response_payload.to_vec())
     }
 
     /// Get the network ID for this client

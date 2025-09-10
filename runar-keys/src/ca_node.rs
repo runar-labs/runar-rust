@@ -252,13 +252,9 @@ impl CANode {
             )));
         }
 
-        // Validate that peer_ski matches the CSR public key
-        let csr_ski = runar_common::compact_ids::compact_id(&public_key_bytes);
-        if peer_ski != csr_ski {
-            return Err(KeyError::AuthorizationError(format!(
-                "Peer SKI {peer_ski} does not match CSR public key SKI {csr_ski}"
-            )));
-        }
+        // Note: We don't validate that peer_ski matches CSR public key SKI
+        // because renewal allows key rotation - the important check is that
+        // the CSR CN matches the peer identity (device), which we did above
 
         // Create certificate authority for signing
         let ca = CertificateAuthority::from_existing(

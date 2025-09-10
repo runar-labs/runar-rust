@@ -20,6 +20,7 @@ use runar_keys::{
     },
     certificate::EcdsaKeyPair,
 };
+use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use rustls::{server::WebPkiClientVerifier, RootCertStore, ServerConfig as RustlsServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde_cbor;
@@ -141,12 +142,13 @@ pub struct CaServer {
     rate_limits: Arc<RwLock<HashMap<String, RateLimitEntry>>>,
     bootstrap_endpoint: Option<Arc<Endpoint>>,
     authenticated_endpoint: Option<Arc<Endpoint>>,
-    admin_skis: Arc<Vec<String>>,
+    admin_skis: Arc<RwLock<Vec<String>>>,
 }
 
 impl CaServer {
     /// Create a new CA Node QUIC Server
     pub fn new(config: CaServerConfig, ca_node: Arc<RwLock<CANode>>, logger: Arc<Logger>) -> Self {
+        let admin_skis = config.admin_skis.clone();
         Self {
             config,
             ca_node,
@@ -154,7 +156,7 @@ impl CaServer {
             rate_limits: Arc::new(RwLock::new(HashMap::new())),
             bootstrap_endpoint: None,
             authenticated_endpoint: None,
-            admin_skis: Arc::new(Vec::new()),
+            admin_skis: Arc::new(RwLock::new(admin_skis)),
         }
     }
 
@@ -242,8 +244,15 @@ impl CaServer {
         let (server_cert, server_key) = self.create_authenticated_certificate().await?;
 
         // Build root store for client certificate validation
+        // Add the issuing CA certificate (not the server certificate) since client certs are signed by the issuing CA
+        let ca_node = self.ca_node.read().unwrap();
+        let issuing_ca_cert = &ca_node.issuing_ca_cert;
         let mut root_store = RootCertStore::empty();
-        root_store.add(CertificateDer::from(server_cert.der_bytes().to_vec()))?;
+        root_store.add(CertificateDer::from(issuing_ca_cert.der_bytes().to_vec()))?;
+        log_debug!(
+            self.logger,
+            "Added issuing CA certificate to root store for client verification"
+        );
 
         // Build client verifier for mTLS
         let client_verifier = WebPkiClientVerifier::builder(root_store.into()).build()?;
@@ -295,7 +304,16 @@ impl CaServer {
 
     /// Configure admin SKI allowlist for admin endpoints
     pub fn configure_admin_skis(&mut self, admin_skis: Vec<String>) {
-        self.admin_skis = Arc::new(admin_skis);
+        log_debug!(self.logger, "Configuring admin SKIs: {:?}", admin_skis);
+        {
+            let mut admin_skis_guard = self.admin_skis.write().unwrap();
+            *admin_skis_guard = admin_skis;
+        }
+        log_debug!(
+            self.logger,
+            "Admin SKIs configured: {:?}",
+            self.admin_skis.read().unwrap()
+        );
     }
 
     /// Create a certificate for bootstrap server using the CA Node's issuing CA
@@ -305,6 +323,24 @@ impl CaServer {
         let ca_node = self.ca_node.read().unwrap();
         let issuing_ca_key = ca_node.issuing_ca_key.clone();
         let issuing_ca_cert = ca_node.issuing_ca_cert.clone();
+
+        println!("🔧 [SERVER] Creating bootstrap server certificate");
+        log_info!(self.logger, "Creating bootstrap server certificate");
+        log_debug!(
+            self.logger,
+            "Issuing CA Subject: {}",
+            issuing_ca_cert.subject()
+        );
+        log_debug!(
+            self.logger,
+            "Issuing CA Issuer: {}",
+            issuing_ca_cert.issuer()
+        );
+        log_debug!(
+            self.logger,
+            "Issuing CA Key ID: {:?}",
+            issuing_ca_key.public_key_bytes()
+        );
 
         // Create a CertificateAuthority from the issuing CA
         let issuing_ca_authority = runar_keys::certificate::CertificateAuthority::from_existing(
@@ -318,6 +354,10 @@ impl CaServer {
             &server_key,
             "CN=ca-node,O=Runar,C=US",
         )?;
+        log_debug!(
+            self.logger,
+            "Server CSR created for subject: CN=ca-node,O=Runar,C=US"
+        );
 
         // Sign the server certificate with the issuing CA
         let server_cert = issuing_ca_authority.sign_certificate_request_with_serial(
@@ -325,6 +365,15 @@ impl CaServer {
             365,  // 1 year validity
             None, // Auto-generate serial
         )?;
+
+        log_info!(self.logger, "Bootstrap server certificate created");
+        log_debug!(
+            self.logger,
+            "Certificate Subject: {}",
+            server_cert.subject()
+        );
+        log_debug!(self.logger, "Certificate Issuer: {}", server_cert.issuer());
+        log_debug!(self.logger, "Certificate created with 1 year validity");
 
         Ok((server_cert, server_key))
     }
@@ -337,6 +386,24 @@ impl CaServer {
         let issuing_ca_key = ca_node.issuing_ca_key.clone();
         let issuing_ca_cert = ca_node.issuing_ca_cert.clone();
 
+        println!("🔧 [SERVER] Creating authenticated server certificate");
+        log_info!(self.logger, "Creating authenticated server certificate");
+        log_debug!(
+            self.logger,
+            "Issuing CA Subject: {}",
+            issuing_ca_cert.subject()
+        );
+        log_debug!(
+            self.logger,
+            "Issuing CA Issuer: {}",
+            issuing_ca_cert.issuer()
+        );
+        log_debug!(
+            self.logger,
+            "Issuing CA Key ID: {:?}",
+            issuing_ca_key.public_key_bytes()
+        );
+
         // Create a CertificateAuthority from the issuing CA
         let issuing_ca_authority = runar_keys::certificate::CertificateAuthority::from_existing(
             issuing_ca_key,
@@ -349,6 +416,10 @@ impl CaServer {
             &server_key,
             "CN=ca-node,O=Runar,C=US",
         )?;
+        log_debug!(
+            self.logger,
+            "Server CSR created for subject: CN=ca-node,O=Runar,C=US"
+        );
 
         // Sign the server certificate with the issuing CA
         let server_cert = issuing_ca_authority.sign_certificate_request_with_serial(
@@ -357,13 +428,26 @@ impl CaServer {
             None, // Auto-generate serial
         )?;
 
+        log_info!(self.logger, "Authenticated server certificate created");
+        log_debug!(
+            self.logger,
+            "Certificate Subject: {}",
+            server_cert.subject()
+        );
+        log_debug!(self.logger, "Certificate Issuer: {}", server_cert.issuer());
+        log_debug!(self.logger, "Certificate created with 1 year validity");
+
         Ok((server_cert, server_key))
     }
 
     /// Handle bootstrap QUIC connection
     async fn handle_bootstrap_connection(&self, conn: quinn::Incoming) -> Result<()> {
         let connection = conn.await?;
-        self.logger.debug("Bootstrap connection established");
+        log_info!(
+            self.logger,
+            "Bootstrap connection established from {}",
+            connection.remote_address()
+        );
 
         // Accept bidirectional streams
         loop {
@@ -394,7 +478,11 @@ impl CaServer {
     /// Handle authenticated QUIC connection
     async fn handle_authenticated_connection(&self, conn: quinn::Incoming) -> Result<()> {
         let connection = conn.await?;
-        self.logger.debug("Authenticated connection established");
+        log_info!(
+            self.logger,
+            "Authenticated connection established from {}",
+            connection.remote_address()
+        );
 
         // Accept bidirectional streams
         loop {
@@ -456,7 +544,7 @@ impl CaServer {
             request_data[7],
         ]) as usize;
 
-        if request_data.len() < 8 + payload_length {
+        if request_data.len() != 8 + payload_length {
             return Err(anyhow::anyhow!("Invalid message: payload length mismatch"));
         }
 
@@ -502,7 +590,7 @@ impl CaServer {
             request_data[7],
         ]) as usize;
 
-        if request_data.len() < 8 + payload_length {
+        if request_data.len() != 8 + payload_length {
             return Err(anyhow::anyhow!("Invalid message: payload length mismatch"));
         }
 
@@ -629,7 +717,9 @@ impl CaServer {
     ) -> Result<Vec<u8>> {
         match message_type {
             CaMessageType::RenewRequest => {
+                log_debug!(self.logger, "Handling renew request");
                 let request: RenewRequest = serde_cbor::from_slice(payload)?;
+                log_debug!(self.logger, "Parsed renew request successfully");
 
                 // Extract peer SKI for device-based authorization
                 let peer_ski = if let Some(cert_der) = peer_cert_der {
@@ -637,14 +727,30 @@ impl CaServer {
                 } else {
                     return Err(anyhow::anyhow!("No peer certificate for renewal request"));
                 };
+                log_debug!(self.logger, "Extracted peer SKI: {}", peer_ski);
 
                 // Update the renew handler to use real peer SKI
                 let mut ca_node = self.ca_node.write().unwrap();
+                log_debug!(self.logger, "Calling ca_node.handle_renew");
                 let response = ca_node.handle_renew(request, &peer_ski)?;
-                self.create_binary_response(CaMessageType::RenewResponse, &response)
+                log_debug!(
+                    self.logger,
+                    "handle_renew succeeded, creating binary response"
+                );
+                let binary_response =
+                    self.create_binary_response(CaMessageType::RenewResponse, &response)?;
+                log_debug!(
+                    self.logger,
+                    "Created binary response: {} bytes, message type: {:?}",
+                    binary_response.len(),
+                    CaMessageType::RenewResponse
+                );
+                Ok(binary_response)
             }
             CaMessageType::RevokeRequest => {
+                log_debug!(self.logger, "Handling revoke request");
                 let request: RevokeRequest = serde_cbor::from_slice(payload)?;
+                log_debug!(self.logger, "Parsed revoke request successfully");
 
                 // Extract peer SKI and check admin authorization
                 let peer_ski = if let Some(cert_der) = peer_cert_der {
@@ -654,17 +760,27 @@ impl CaServer {
                         "No peer certificate for revocation request"
                     ));
                 };
+                log_debug!(self.logger, "Extracted peer SKI: {}", peer_ski);
 
                 if !self.is_admin_authorized(&peer_ski) {
+                    log_debug!(self.logger, "Admin SKI not authorized: {}", peer_ski);
                     let error = CaErrorResponse {
                         code: "forbidden".to_string(),
                         message: "Admin SKI not authorized".to_string(),
                     };
                     return self.create_binary_response(CaMessageType::ErrorResponse, &error);
                 }
+                log_debug!(
+                    self.logger,
+                    "Admin SKI authorized, calling ca_node.handle_revoke"
+                );
 
                 let mut ca_node = self.ca_node.write().unwrap();
                 let response = ca_node.handle_revoke(request, &peer_ski)?;
+                log_debug!(
+                    self.logger,
+                    "handle_revoke succeeded, creating binary response"
+                );
                 self.create_binary_response(CaMessageType::RevokeResponse, &response)
             }
             CaMessageType::CrlRequest => {
@@ -771,7 +887,16 @@ impl CaServer {
 
     /// Check if peer SKI is authorized for admin operations
     fn is_admin_authorized(&self, peer_ski: &str) -> bool {
-        self.config.admin_skis.contains(&peer_ski.to_string())
+        let admin_skis_guard = self.admin_skis.read().unwrap();
+        let is_authorized = admin_skis_guard.contains(&peer_ski.to_string());
+        log_debug!(
+            self.logger,
+            "Admin authorization check: peer_ski={}, admin_skis={:?}, authorized={}",
+            peer_ski,
+            *admin_skis_guard,
+            is_authorized
+        );
+        is_authorized
     }
 
     /// Extract peer certificate from QUIC connection for mTLS validation

@@ -15,7 +15,7 @@
 use anyhow::Result;
 use runar_common::{
     compact_ids::compact_id,
-    logging::{Component, Logger},
+    logging::{Component, LogLevel, Logger, LoggingConfig},
 };
 use runar_keys::{
     ca_node::CANode,
@@ -34,9 +34,17 @@ use std::time::SystemTime;
 use tokio::time::{sleep, Duration};
 use x509_parser::prelude::FromDer;
 
+fn setup_logging() {
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
+}
+
 /// Test the full CA Node infrastructure with REAL QUIC mTLS connections
 #[tokio::test]
 async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
+    // Set up logging
+    setup_logging();
+
     // Initialize rustls crypto provider
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
@@ -255,10 +263,48 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     println!("\n🚫 PHASE 6: Certificate Revocation via REAL QUIC mTLS");
 
     // Add mobile node SKI to admin allowlist for revocation
+    // Get the SKI from the certificate that will be used for mTLS authentication
+    let mobile_cert_ski = {
+        let mobile_node_guard = mobile_node_arc.read().unwrap();
+        let cert_config = mobile_node_guard.get_quic_certificate_config()?;
+        let cert_der = &cert_config.certificate_chain[0];
+        let (_, cert) = x509_parser::certificate::X509Certificate::from_der(cert_der)?;
+
+        // Extract SKI from Subject Key Identifier extension (same as server does)
+        let ski = cert
+            .extensions()
+            .iter()
+            .find(|ext| ext.oid == x509_parser::oid_registry::OID_X509_EXT_SUBJECT_KEY_IDENTIFIER)
+            .and_then(|ext| match ext.parsed_extension() {
+                x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(ski) => {
+                    Some(ski.0.to_vec())
+                }
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("No SKI found in peer certificate"))?;
+
+        ski.iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join("")
+    };
+
+    println!(
+        "🔑 Adding mobile cert SKI to server admin configuration: {}",
+        mobile_cert_ski
+    );
+
+    // Add SKI to both server's admin configuration AND CA node's admin allowlist
+    ca_server.configure_admin_skis(vec![mobile_cert_ski.clone()]);
+
+    // Also add to CA Node's admin allowlist
     {
         let mut ca_node_guard = ca_node_arc.write().unwrap();
-        ca_node_guard.add_admin_ski(mobile_node_ski.clone());
+        ca_node_guard.add_admin_ski(mobile_cert_ski);
     }
+
+    // Give the server time to update its configuration
+    sleep(Duration::from_millis(100)).await;
 
     // Get certificate serial for revocation
     let node_cert = {
