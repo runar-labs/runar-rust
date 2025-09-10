@@ -9,6 +9,7 @@
 //! - CBOR request/response serialization over QUIC
 //! - Certificate management and mTLS authentication
 
+use crate::ca_server::CaMessageType;
 use anyhow::Result;
 use quinn::{ClientConfig, Endpoint};
 use runar_common::logging::Logger;
@@ -55,7 +56,9 @@ impl Default for CaClientConfig {
 pub struct CaClient {
     config: CaClientConfig,
     logger: Arc<Logger>,
-    node_key_manager: Option<Arc<NodeKeyManager>>,
+    node_key_manager: Option<Arc<std::sync::RwLock<NodeKeyManager>>>,
+    root_ca_cert: Option<Vec<u8>>,
+    issuing_ca_cert: Option<Vec<u8>>,
 }
 
 impl CaClient {
@@ -65,13 +68,37 @@ impl CaClient {
             config,
             logger,
             node_key_manager: None,
+            root_ca_cert: None,
+            issuing_ca_cert: None,
         }
     }
 
     /// Set the node key manager for mTLS operations
-    pub fn with_node_key_manager(mut self, node_key_manager: Arc<NodeKeyManager>) -> Self {
+    pub fn with_node_key_manager(
+        mut self,
+        node_key_manager: Arc<std::sync::RwLock<NodeKeyManager>>,
+    ) -> Self {
         self.node_key_manager = Some(node_key_manager);
         self
+    }
+
+    /// Set the root CA certificate for server certificate validation
+    pub fn with_root_ca_cert(mut self, root_ca_cert: Vec<u8>) -> Self {
+        self.root_ca_cert = Some(root_ca_cert);
+        self
+    }
+
+    /// Set the issuing CA certificate for server certificate validation
+    pub fn with_issuing_ca_cert(mut self, issuing_ca_cert: Vec<u8>) -> Self {
+        self.issuing_ca_cert = Some(issuing_ca_cert);
+        self
+    }
+
+    /// Get message type for a request
+    fn get_message_type_for_request<T>(&self, _request: &T) -> Result<CaMessageType> {
+        // For now, we'll determine the message type based on the request type
+        // This is a simplified approach - in a real implementation, we'd use generics or traits
+        Ok(CaMessageType::CsrEnrollRequest)
     }
 
     /// Enroll a new device (bootstrap operation)
@@ -155,18 +182,44 @@ impl CaClient {
     where
         T: serde::Serialize,
     {
-        let request_data = serde_cbor::to_vec(request)?;
+        let payload = serde_cbor::to_vec(request)?;
+
+        // Create binary protocol message with header
+        let mut request_data = Vec::with_capacity(8 + payload.len());
+
+        // Add header (message type + payload length)
+        let message_type = self.get_message_type_for_request(request)?;
+        request_data.extend_from_slice(&message_type.to_u32().to_be_bytes());
+        request_data.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+
+        // Add payload
+        request_data.extend_from_slice(&payload);
 
         self.logger.debug(format!(
-            "Sending bootstrap request to {}: {} bytes",
+            "Sending bootstrap request to {}: {} bytes (header: 8, payload: {})",
             endpoint,
-            request_data.len()
+            request_data.len(),
+            payload.len()
         ));
 
         // Build root store for server certificate validation
-        let root_store = RootCertStore::empty();
-        // In real implementation, this would load the CA certificate
-        // For now, we'll create an empty store (insecure for testing)
+        let mut root_store = RootCertStore::empty();
+        // Add the root CA certificate to the trust store
+        if let Some(root_ca_cert) = &self.root_ca_cert {
+            if let Err(e) = root_store.add(CertificateDer::from(root_ca_cert.clone())) {
+                self.logger.warn(format!(
+                    "Failed to add root CA certificate to root store: {e}"
+                ));
+            }
+        }
+        // Add the issuing CA certificate to the trust store
+        if let Some(issuing_ca_cert) = &self.issuing_ca_cert {
+            if let Err(e) = root_store.add(CertificateDer::from(issuing_ca_cert.clone())) {
+                self.logger.warn(format!(
+                    "Failed to add issuing CA certificate to root store: {e}"
+                ));
+            }
+        }
 
         // Build rustls client config (server-auth only, no client cert)
         let client_config = RustlsClientConfig::builder()
@@ -201,7 +254,30 @@ impl CaClient {
             response_data.len()
         ));
 
-        Ok(response_data)
+        // Parse binary protocol response
+        if response_data.len() < 8 {
+            return Err(anyhow::anyhow!("Invalid response: too short"));
+        }
+
+        let response_message_type = u32::from_be_bytes([
+            response_data[0],
+            response_data[1],
+            response_data[2],
+            response_data[3],
+        ]);
+        let response_payload_length = u32::from_be_bytes([
+            response_data[4],
+            response_data[5],
+            response_data[6],
+            response_data[7],
+        ]) as usize;
+
+        if response_data.len() < 8 + response_payload_length {
+            return Err(anyhow::anyhow!("Invalid response: payload length mismatch"));
+        }
+
+        let response_payload = &response_data[8..8 + response_payload_length];
+        Ok(response_payload.to_vec())
     }
 
     /// Send an authenticated request (mTLS required)
@@ -223,15 +299,34 @@ impl CaClient {
         ));
 
         // Get client certificate from node key manager
-        let cert_config = node_key_manager.get_quic_certificate_config()?;
+        let cert_config = node_key_manager
+            .read()
+            .unwrap()
+            .get_quic_certificate_config()?;
         let certificate_chain: Vec<CertificateDer> =
             cert_config.certificate_chain.into_iter().collect();
         let private_key = cert_config.private_key;
 
         // Build root store for server certificate validation
-        let root_store = RootCertStore::empty();
-        // In real implementation, this would load the CA certificate
-        // For now, we'll create an empty store (insecure for testing)
+        let mut root_store = RootCertStore::empty();
+        // Add the root CA certificate to the trust store
+        if let Some(root_ca_cert) = &self.root_ca_cert {
+            if let Err(e) = root_store.add(CertificateDer::from(root_ca_cert.clone())) {
+                self.logger.warn(format!(
+                    "Failed to add root CA certificate to root store: {e}"
+                ));
+            }
+        }
+        // Add the issuing CA certificate to the trust store
+        if let Some(issuing_ca_cert) = &self.issuing_ca_cert {
+            if let Err(e) = root_store.add(CertificateDer::from(issuing_ca_cert.clone())) {
+                self.logger.warn(format!(
+                    "Failed to add issuing CA certificate to root store: {e}"
+                ));
+            } else {
+                self.logger.debug("Successfully added issuing CA certificate to root store for authenticated request");
+            }
+        }
 
         // Build rustls client config with client auth
         let client_config = RustlsClientConfig::builder()
@@ -294,7 +389,7 @@ impl CaClient {
 pub struct CaClientBuilder {
     config: Option<CaClientConfig>,
     logger: Option<Arc<Logger>>,
-    node_key_manager: Option<Arc<NodeKeyManager>>,
+    node_key_manager: Option<Arc<std::sync::RwLock<NodeKeyManager>>>,
 }
 
 impl CaClientBuilder {
@@ -316,7 +411,10 @@ impl CaClientBuilder {
         self
     }
 
-    pub fn with_node_key_manager(mut self, node_key_manager: Arc<NodeKeyManager>) -> Self {
+    pub fn with_node_key_manager(
+        mut self,
+        node_key_manager: Arc<std::sync::RwLock<NodeKeyManager>>,
+    ) -> Self {
         self.node_key_manager = Some(node_key_manager);
         self
     }
@@ -422,7 +520,7 @@ mod tests {
         let logger = Arc::new(Logger::new_root(Component::Transporter));
         let mut node_key_manager = NodeKeyManager::new(logger.clone())?;
         node_key_manager.generate_keys()?;
-        let node_key_manager = Arc::new(node_key_manager);
+        let node_key_manager = Arc::new(std::sync::RwLock::new(node_key_manager));
 
         let client = CaClientBuilder::new()
             .with_logger(logger)

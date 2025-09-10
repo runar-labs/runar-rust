@@ -16,21 +16,20 @@ use runar_keys::{
     ca_node::CANode,
     ca_node_types::{
         CaErrorResponse, ChainRequest, ChainResponse, CrlRequest, CrlResponse, CsrEnrollRequest,
-        CsrEnrollResponse, RenewRequest, RenewResponse, RevokeRequest, RevokeResponse,
-        StatusRequest, StatusResponse,
+        CsrEnrollResponse, RenewRequest, RevokeRequest, StatusRequest, StatusResponse,
     },
     certificate::EcdsaKeyPair,
 };
 use rustls::{server::WebPkiClientVerifier, RootCertStore, ServerConfig as RustlsServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde_cbor;
+use std::sync::RwLock;
 use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use tokio::sync::RwLock;
 use x509_parser::prelude::FromDer;
 
 /// CA Node message types for binary protocol
@@ -137,10 +136,8 @@ struct RateLimitEntry {
 #[derive(Clone)]
 pub struct CaServer {
     config: CaServerConfig,
-    #[allow(dead_code)]
     ca_node: Arc<RwLock<CANode>>,
     logger: Arc<Logger>,
-    #[allow(dead_code)]
     rate_limits: Arc<RwLock<HashMap<String, RateLimitEntry>>>,
     bootstrap_endpoint: Option<Arc<Endpoint>>,
     authenticated_endpoint: Option<Arc<Endpoint>>,
@@ -162,29 +159,27 @@ impl CaServer {
     }
 
     /// Start the CA Node server with both bootstrap and authenticated binds
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self) -> Result<(SocketAddr, SocketAddr)> {
         self.logger.info("Starting CA Node QUIC server");
 
         // Start bootstrap server (server-auth only)
-        self.start_bootstrap_server().await?;
-        self.logger.info(format!(
-            "Bootstrap server started on {}",
-            self.config.bootstrap_bind
-        ));
+        let bootstrap_addr = self.start_bootstrap_server().await?;
+        self.logger
+            .info(format!("Bootstrap server started on {}", bootstrap_addr));
 
         // Start authenticated server (mTLS required)
-        self.start_authenticated_server().await?;
+        let authenticated_addr = self.start_authenticated_server().await?;
         self.logger.info(format!(
             "Authenticated server started on {}",
-            self.config.authenticated_bind
+            authenticated_addr
         ));
 
         self.logger.info("CA Node QUIC server fully started");
-        Ok(())
+        Ok((bootstrap_addr, authenticated_addr))
     }
 
     /// Start the bootstrap server (server-auth only)
-    async fn start_bootstrap_server(&mut self) -> Result<()> {
+    async fn start_bootstrap_server(&mut self) -> Result<SocketAddr> {
         self.logger
             .info("Starting bootstrap QUIC server (server-auth only)");
 
@@ -211,6 +206,7 @@ impl CaServer {
 
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, self.config.bootstrap_bind)?;
+        let bound_addr = endpoint.local_addr()?;
 
         // Store endpoint and start accepting connections
         let endpoint_arc = Arc::new(endpoint);
@@ -231,15 +227,13 @@ impl CaServer {
             }
         });
 
-        self.logger.info(format!(
-            "Bootstrap server started on {}",
-            self.config.bootstrap_bind
-        ));
-        Ok(())
+        self.logger
+            .info(format!("Bootstrap server started on {}", bound_addr));
+        Ok(bound_addr)
     }
 
     /// Start the authenticated server (mTLS required)
-    async fn start_authenticated_server(&mut self) -> Result<()> {
+    async fn start_authenticated_server(&mut self) -> Result<SocketAddr> {
         self.logger
             .info("Starting authenticated QUIC server (mTLS required)");
 
@@ -273,6 +267,7 @@ impl CaServer {
 
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, self.config.authenticated_bind)?;
+        let bound_addr = endpoint.local_addr()?;
 
         // Store endpoint and start accepting connections
         let endpoint_arc = Arc::new(endpoint);
@@ -293,11 +288,9 @@ impl CaServer {
             }
         });
 
-        self.logger.info(format!(
-            "Authenticated server started on {}",
-            self.config.authenticated_bind
-        ));
-        Ok(())
+        self.logger
+            .info(format!("Authenticated server started on {}", bound_addr));
+        Ok(bound_addr)
     }
 
     /// Configure admin SKI allowlist for admin endpoints
@@ -305,28 +298,66 @@ impl CaServer {
         self.admin_skis = Arc::new(admin_skis);
     }
 
-    /// Create a self-signed certificate for bootstrap server
+    /// Create a certificate for bootstrap server using the CA Node's issuing CA
     async fn create_bootstrap_certificate(
         &self,
     ) -> Result<(runar_keys::X509Certificate, EcdsaKeyPair)> {
-        // Create a temporary key pair and self-signed certificate for bootstrap
-        let key_pair = EcdsaKeyPair::new()?;
-        // For now, create a simple certificate - in real implementation this would use proper CA certificate
-        let cert_der = vec![1, 2, 3, 4]; // Placeholder
-        let cert = runar_keys::X509Certificate::from_der(cert_der)?;
-        Ok((cert, key_pair))
+        let ca_node = self.ca_node.read().unwrap();
+        let issuing_ca_key = ca_node.issuing_ca_key.clone();
+        let issuing_ca_cert = ca_node.issuing_ca_cert.clone();
+
+        // Create a CertificateAuthority from the issuing CA
+        let issuing_ca_authority = runar_keys::certificate::CertificateAuthority::from_existing(
+            issuing_ca_key,
+            issuing_ca_cert,
+        );
+
+        // Create a server certificate signed by the issuing CA
+        let server_key = EcdsaKeyPair::new()?;
+        let server_csr = runar_keys::certificate::CertificateRequest::create(
+            &server_key,
+            "CN=ca-node,O=Runar,C=US",
+        )?;
+
+        // Sign the server certificate with the issuing CA
+        let server_cert = issuing_ca_authority.sign_certificate_request_with_serial(
+            &server_csr,
+            365,  // 1 year validity
+            None, // Auto-generate serial
+        )?;
+
+        Ok((server_cert, server_key))
     }
 
-    /// Create a self-signed certificate for authenticated server
+    /// Create a certificate for authenticated server using the CA Node's issuing CA
     async fn create_authenticated_certificate(
         &self,
     ) -> Result<(runar_keys::X509Certificate, EcdsaKeyPair)> {
-        // Create a temporary key pair and self-signed certificate for authenticated server
-        let key_pair = EcdsaKeyPair::new()?;
-        // For now, create a simple certificate - in real implementation this would use proper CA certificate
-        let cert_der = vec![5, 6, 7, 8]; // Placeholder
-        let cert = runar_keys::X509Certificate::from_der(cert_der)?;
-        Ok((cert, key_pair))
+        let ca_node = self.ca_node.read().unwrap();
+        let issuing_ca_key = ca_node.issuing_ca_key.clone();
+        let issuing_ca_cert = ca_node.issuing_ca_cert.clone();
+
+        // Create a CertificateAuthority from the issuing CA
+        let issuing_ca_authority = runar_keys::certificate::CertificateAuthority::from_existing(
+            issuing_ca_key,
+            issuing_ca_cert,
+        );
+
+        // Create a server certificate signed by the issuing CA
+        let server_key = EcdsaKeyPair::new()?;
+        let server_csr = runar_keys::certificate::CertificateRequest::create(
+            &server_key,
+            "CN=ca-node,O=Runar,C=US",
+        )?;
+
+        // Sign the server certificate with the issuing CA
+        let server_cert = issuing_ca_authority.sign_certificate_request_with_serial(
+            &server_csr,
+            365,  // 1 year validity
+            None, // Auto-generate serial
+        )?;
+
+        Ok((server_cert, server_key))
     }
 
     /// Handle bootstrap QUIC connection
@@ -370,8 +401,12 @@ impl CaServer {
             match connection.accept_bi().await {
                 Ok((send, recv)) => {
                     let server = self.clone();
+                    let connection_clone = connection.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = server.handle_authenticated_stream(send, recv).await {
+                        if let Err(e) = server
+                            .handle_authenticated_stream(send, recv, &connection_clone)
+                            .await
+                        {
                             server
                                 .logger
                                 .error(format!("Authenticated stream error: {e}"));
@@ -444,6 +479,7 @@ impl CaServer {
         &self,
         mut send: quinn::SendStream,
         mut recv: quinn::RecvStream,
+        connection: &quinn::Connection,
     ) -> Result<()> {
         // Read request data
         let request_data = recv.read_to_end(1024 * 1024).await?;
@@ -474,9 +510,14 @@ impl CaServer {
         let message_type = CaMessageType::from_u32(message_type)
             .ok_or_else(|| anyhow::anyhow!("Unknown message type: 0x{:04x}", message_type))?;
 
+        // Extract peer certificate from QUIC connection for mTLS validation
+        let peer_cert_der = self
+            .extract_peer_certificate_from_connection(&connection)
+            .await?;
+
         // Handle the request based on message type
         let response_data = self
-            .handle_authenticated_message(message_type, payload)
+            .handle_authenticated_message(message_type, payload, peer_cert_der.as_deref())
             .await?;
 
         // Send response
@@ -496,14 +537,10 @@ impl CaServer {
             return Err(anyhow::anyhow!("Invalid network_id"));
         }
 
-        // For now, return a placeholder response
-        // In real implementation, this would call CANode methods
-        Ok(CsrEnrollResponse {
-            certificate_der: vec![1, 2, 3, 4],
-            issuing_ca_der: vec![5, 6, 7, 8],
-            root_ca_der: Some(vec![9, 10, 11, 12]),
-            expires_at: 1234567890,
-        })
+        // Process enrollment via CA Node
+        let mut ca_node = self.ca_node.write().unwrap();
+        let response = ca_node.handle_enroll(request, "127.0.0.1:12345")?;
+        Ok(response)
     }
 
     /// Handle chain request (binary protocol)
@@ -513,37 +550,10 @@ impl CaServer {
             return Err(anyhow::anyhow!("Invalid network_id"));
         }
 
-        // For now, return a placeholder response
-        Ok(ChainResponse {
-            issuing_ca_der: vec![5, 6, 7, 8],
-            root_ca_der: Some(vec![9, 10, 11, 12]),
-        })
-    }
-
-    /// Handle renew request (binary protocol)
-    async fn handle_renew_request_binary(&self, request: RenewRequest) -> Result<RenewResponse> {
-        // Validate network_id
-        if request.network_id != self.config.network_id {
-            return Err(anyhow::anyhow!("Invalid network_id"));
-        }
-
-        // For now, return a placeholder response
-        Ok(RenewResponse {
-            certificate_der: vec![1, 2, 3, 4],
-            issuing_ca_der: vec![5, 6, 7, 8],
-            expires_at: 1234567890,
-        })
-    }
-
-    /// Handle revoke request (binary protocol)
-    async fn handle_revoke_request_binary(&self, request: RevokeRequest) -> Result<RevokeResponse> {
-        // Validate network_id
-        if request.network_id != self.config.network_id {
-            return Err(anyhow::anyhow!("Invalid network_id"));
-        }
-
-        // For now, return a placeholder response
-        Ok(RevokeResponse { ok: true })
+        // Process chain request via CA Node
+        let ca_node = self.ca_node.read().unwrap();
+        let response = ca_node.handle_chain()?;
+        Ok(response)
     }
 
     /// Handle CRL request (binary protocol)
@@ -553,14 +563,10 @@ impl CaServer {
             return Err(anyhow::anyhow!("Invalid network_id"));
         }
 
-        // For now, return a placeholder response
-        Ok(CrlResponse {
-            network_id: request.network_id,
-            issuing_ca_serial: vec![1, 2, 3, 4],
-            revoked_serials: vec![],
-            next_update: 1234567890,
-            signature: vec![5, 6, 7, 8],
-        })
+        // Process CRL request via CA Node
+        let ca_node = self.ca_node.read().unwrap();
+        let response = ca_node.handle_crl()?;
+        Ok(response)
     }
 
     /// Handle status request (binary protocol)
@@ -570,13 +576,10 @@ impl CaServer {
             return Err(anyhow::anyhow!("Invalid network_id"));
         }
 
-        // For now, return a placeholder response
-        Ok(StatusResponse {
-            issuing_subject: "CN=Test CA".to_string(),
-            issuing_serial_hex: "1234567890abcdef".to_string(),
-            not_before: 1234567890,
-            not_after: 1234567890 + 365 * 24 * 3600,
-        })
+        // Process status request via CA Node
+        let ca_node = self.ca_node.read().unwrap();
+        let response = ca_node.handle_status()?;
+        Ok(response)
     }
 
     /// Handle bootstrap message based on message type
@@ -588,6 +591,17 @@ impl CaServer {
         match message_type {
             CaMessageType::CsrEnrollRequest => {
                 let request: CsrEnrollRequest = serde_cbor::from_slice(payload)?;
+
+                // Apply rate limiting for enrollment requests
+                let rate_key = format!("127.0.0.1:{}", request.enrollment_token.body.token_id);
+                if !self.check_rate_limit(&rate_key).await? {
+                    let error = CaErrorResponse {
+                        code: "rate_limited".to_string(),
+                        message: "Rate limit exceeded".to_string(),
+                    };
+                    return self.create_binary_response(CaMessageType::ErrorResponse, &error);
+                }
+
                 let response = self.handle_enroll_request_binary(request).await?;
                 self.create_binary_response(CaMessageType::CsrEnrollResponse, &response)
             }
@@ -611,16 +625,46 @@ impl CaServer {
         &self,
         message_type: CaMessageType,
         payload: &[u8],
+        peer_cert_der: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         match message_type {
             CaMessageType::RenewRequest => {
                 let request: RenewRequest = serde_cbor::from_slice(payload)?;
-                let response = self.handle_renew_request_binary(request).await?;
+
+                // Extract peer SKI for device-based authorization
+                let peer_ski = if let Some(cert_der) = peer_cert_der {
+                    self.extract_peer_ski(cert_der)?
+                } else {
+                    return Err(anyhow::anyhow!("No peer certificate for renewal request"));
+                };
+
+                // Update the renew handler to use real peer SKI
+                let mut ca_node = self.ca_node.write().unwrap();
+                let response = ca_node.handle_renew(request, &peer_ski)?;
                 self.create_binary_response(CaMessageType::RenewResponse, &response)
             }
             CaMessageType::RevokeRequest => {
                 let request: RevokeRequest = serde_cbor::from_slice(payload)?;
-                let response = self.handle_revoke_request_binary(request).await?;
+
+                // Extract peer SKI and check admin authorization
+                let peer_ski = if let Some(cert_der) = peer_cert_der {
+                    self.extract_peer_ski(cert_der)?
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "No peer certificate for revocation request"
+                    ));
+                };
+
+                if !self.is_admin_authorized(&peer_ski) {
+                    let error = CaErrorResponse {
+                        code: "forbidden".to_string(),
+                        message: "Admin SKI not authorized".to_string(),
+                    };
+                    return self.create_binary_response(CaMessageType::ErrorResponse, &error);
+                }
+
+                let mut ca_node = self.ca_node.write().unwrap();
+                let response = ca_node.handle_revoke(request, &peer_ski)?;
                 self.create_binary_response(CaMessageType::RevokeResponse, &response)
             }
             CaMessageType::CrlRequest => {
@@ -663,200 +707,10 @@ impl CaServer {
         Ok(response)
     }
 
-    /// Handle bootstrap endpoint requests
-    #[allow(dead_code)]
-    async fn handle_bootstrap_request(
-        &self,
-        endpoint: &str,
-        request_data: &[u8],
-        peer_addr: SocketAddr,
-    ) -> Result<Vec<u8>> {
-        match endpoint {
-            "enroll" => self.handle_enroll_request(request_data, peer_addr).await,
-            "chain" => self.handle_chain_request(request_data, peer_addr).await,
-            _ => Err(anyhow::anyhow!("Unknown bootstrap endpoint: {}", endpoint)),
-        }
-    }
-
-    /// Handle authenticated endpoint requests
-    #[allow(dead_code)]
-    async fn handle_authenticated_request(
-        &self,
-        endpoint: &str,
-        request_data: &[u8],
-        peer_addr: SocketAddr,
-        peer_cert_der: &[u8],
-    ) -> Result<Vec<u8>> {
-        match endpoint {
-            "renew" => {
-                self.handle_renew_request(request_data, peer_addr, peer_cert_der)
-                    .await
-            }
-            "revoke" => {
-                self.handle_revoke_request(request_data, peer_addr, peer_cert_der)
-                    .await
-            }
-            "crl" => {
-                self.handle_crl_request(request_data, peer_addr, peer_cert_der)
-                    .await
-            }
-            "status" => {
-                self.handle_status_request(request_data, peer_addr, peer_cert_der)
-                    .await
-            }
-            _ => Err(anyhow::anyhow!(
-                "Unknown authenticated endpoint: {}",
-                endpoint
-            )),
-        }
-    }
-
-    /// Handle enrollment request (bootstrap endpoint)
-    #[allow(dead_code)]
-    async fn handle_enroll_request(
-        &self,
-        request_data: &[u8],
-        peer_addr: SocketAddr,
-    ) -> Result<Vec<u8>> {
-        // Parse request
-        let request: CsrEnrollRequest = serde_cbor::from_slice(request_data)
-            .map_err(|e| anyhow::anyhow!("Failed to parse enroll request: {}", e))?;
-
-        // Check rate limiting
-        let rate_key = format!("{}:{}", peer_addr, request.enrollment_token.body.token_id);
-        if !self.check_rate_limit(&rate_key).await? {
-            let error = CaErrorResponse {
-                code: "rate_limited".to_string(),
-                message: "Rate limit exceeded".to_string(),
-            };
-            return Ok(serde_cbor::to_vec(&error)?);
-        }
-
-        // Process enrollment via CA Node
-        let response = {
-            let mut ca_node = self.ca_node.write().await;
-            ca_node.handle_enroll(request, &peer_addr.to_string())?
-        };
-
-        // Serialize response
-        Ok(serde_cbor::to_vec(&response)?)
-    }
-
-    /// Handle chain request (bootstrap endpoint)
-    #[allow(dead_code)]
-    async fn handle_chain_request(
-        &self,
-        _request_data: &[u8],
-        _peer_addr: SocketAddr,
-    ) -> Result<Vec<u8>> {
-        // Process chain request via CA Node
-        let response = {
-            let ca_node = self.ca_node.read().await;
-            ca_node.handle_chain()?
-        };
-
-        // Serialize response
-        Ok(serde_cbor::to_vec(&response)?)
-    }
-
-    /// Handle renewal request (authenticated endpoint)
-    #[allow(dead_code)]
-    async fn handle_renew_request(
-        &self,
-        request_data: &[u8],
-        _peer_addr: SocketAddr,
-        peer_cert_der: &[u8],
-    ) -> Result<Vec<u8>> {
-        // Parse request
-        let request: RenewRequest = serde_cbor::from_slice(request_data)
-            .map_err(|e| anyhow::anyhow!("Failed to parse renew request: {}", e))?;
-
-        // Extract peer SKI for device-based authorization
-        let peer_ski = self.extract_peer_ski(peer_cert_der)?;
-
-        // Process renewal via CA Node
-        let response = {
-            let mut ca_node = self.ca_node.write().await;
-            ca_node.handle_renew(request, &peer_ski)?
-        };
-
-        // Serialize response
-        Ok(serde_cbor::to_vec(&response)?)
-    }
-
-    /// Handle revocation request (authenticated endpoint, admin-only)
-    #[allow(dead_code)]
-    async fn handle_revoke_request(
-        &self,
-        request_data: &[u8],
-        _peer_addr: SocketAddr,
-        peer_cert_der: &[u8],
-    ) -> Result<Vec<u8>> {
-        // Parse request
-        let request: RevokeRequest = serde_cbor::from_slice(request_data)
-            .map_err(|e| anyhow::anyhow!("Failed to parse revoke request: {}", e))?;
-
-        // Extract peer SKI and check admin authorization
-        let peer_ski = self.extract_peer_ski(peer_cert_der)?;
-        if !self.is_admin_authorized(&peer_ski) {
-            let error = CaErrorResponse {
-                code: "forbidden".to_string(),
-                message: "Admin SKI not authorized".to_string(),
-            };
-            return Ok(serde_cbor::to_vec(&error)?);
-        }
-
-        // Process revocation via CA Node
-        let response = {
-            let mut ca_node = self.ca_node.write().await;
-            ca_node.handle_revoke(request, &peer_ski)?
-        };
-
-        // Serialize response
-        Ok(serde_cbor::to_vec(&response)?)
-    }
-
-    /// Handle CRL request (authenticated endpoint)
-    #[allow(dead_code)]
-    async fn handle_crl_request(
-        &self,
-        _request_data: &[u8],
-        _peer_addr: SocketAddr,
-        _peer_cert_der: &[u8],
-    ) -> Result<Vec<u8>> {
-        // Process CRL request via CA Node
-        let response = {
-            let ca_node = self.ca_node.read().await;
-            ca_node.handle_crl()?
-        };
-
-        // Serialize response
-        Ok(serde_cbor::to_vec(&response)?)
-    }
-
-    /// Handle status request (authenticated endpoint)
-    #[allow(dead_code)]
-    async fn handle_status_request(
-        &self,
-        _request_data: &[u8],
-        _peer_addr: SocketAddr,
-        _peer_cert_der: &[u8],
-    ) -> Result<Vec<u8>> {
-        // Process status request via CA Node
-        let response = {
-            let ca_node = self.ca_node.read().await;
-            ca_node.handle_status()?
-        };
-
-        // Serialize response
-        Ok(serde_cbor::to_vec(&response)?)
-    }
-
     /// Check rate limiting for bootstrap endpoints
-    #[allow(dead_code)]
     async fn check_rate_limit(&self, rate_key: &str) -> Result<bool> {
         let now = SystemTime::now();
-        let mut rate_limits = self.rate_limits.write().await;
+        let mut rate_limits = self.rate_limits.write().unwrap();
 
         let entry = rate_limits
             .entry(rate_key.to_string())
@@ -892,7 +746,6 @@ impl CaServer {
     }
 
     /// Extract peer SKI from certificate DER
-    #[allow(dead_code)]
     fn extract_peer_ski(&self, cert_der: &[u8]) -> Result<String> {
         let (_, cert) = x509_parser::certificate::X509Certificate::from_der(cert_der)
             .map_err(|e| anyhow::anyhow!("Failed to parse peer certificate: {}", e))?;
@@ -917,19 +770,53 @@ impl CaServer {
     }
 
     /// Check if peer SKI is authorized for admin operations
-    #[allow(dead_code)]
     fn is_admin_authorized(&self, peer_ski: &str) -> bool {
         self.config.admin_skis.contains(&peer_ski.to_string())
+    }
+
+    /// Extract peer certificate from QUIC connection for mTLS validation
+    async fn extract_peer_certificate_from_connection(
+        &self,
+        connection: &quinn::Connection,
+    ) -> Result<Option<Vec<u8>>> {
+        // Get the TLS session from the QUIC connection
+        let tls_session = connection.peer_identity();
+
+        // Extract the peer certificate chain
+        if let Some(peer_certs) = tls_session {
+            // Cast to the expected type and get the leaf certificate
+            if let Ok(cert_chain) =
+                peer_certs.downcast::<Vec<rustls_pki_types::CertificateDer<'static>>>()
+            {
+                if let Some(leaf_cert) = cert_chain.first() {
+                    return Ok(Some(leaf_cert.as_ref().to_vec()));
+                }
+            }
+        }
+
+        // No peer certificate available (should not happen in mTLS)
+        Ok(None)
     }
 
     /// Stop the CA Node server
     pub async fn stop(&mut self) -> Result<()> {
         self.logger.info("Stopping CA Node QUIC server");
 
-        // TODO: Implement graceful shutdown
-        // - Close QUIC listeners
-        // - Wait for active connections to finish
-        // - Clean up resources
+        // Close QUIC listeners
+        if let Some(bootstrap_endpoint) = &self.bootstrap_endpoint {
+            bootstrap_endpoint.close(0u32.into(), b"Server shutdown");
+        }
+
+        if let Some(authenticated_endpoint) = &self.authenticated_endpoint {
+            authenticated_endpoint.close(0u32.into(), b"Server shutdown");
+        }
+
+        // Wait for active connections to finish (give them 5 seconds)
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // Clean up resources
+        self.bootstrap_endpoint = None;
+        self.authenticated_endpoint = None;
 
         self.logger.info("CA Node QUIC server stopped");
         Ok(())
