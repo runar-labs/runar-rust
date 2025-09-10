@@ -716,13 +716,14 @@ impl CaServer {
                 let request: CsrEnrollRequest = serde_cbor::from_slice(payload)?;
 
                 // Apply rate limiting for enrollment requests
-                let rate_key =
-                    format!("{}:{}", remote_addr, request.enrollment_token.body.token_id);
+                // Use only IP address (not port) for rate limiting to avoid ephemeral port issues
+                let rate_key = format!(
+                    "{}:{}",
+                    remote_addr.ip(),
+                    request.enrollment_token.body.token_id
+                );
                 if !self.check_rate_limit(&rate_key).await? {
-                    let error = CaErrorResponse {
-                        code: "rate_limited".to_string(),
-                        message: "Rate limit exceeded".to_string(),
-                    };
+                    let error = CaErrorResponse::rate_limited("Rate limit exceeded");
                     return self.create_binary_response(CaMessageType::ErrorResponse, &error);
                 }
 
@@ -731,31 +732,50 @@ impl CaServer {
                     &request.enrollment_token.body.token_id,
                     &request.enrollment_token.body.nonce,
                 )? {
-                    let error = CaErrorResponse {
-                        code: "forbidden".to_string(),
-                        message: "Replay attack detected".to_string(),
-                    };
+                    let error = CaErrorResponse::forbidden_with_reason(
+                        "Replay attack detected",
+                        "replay_detected",
+                    );
                     return self.create_binary_response(CaMessageType::ErrorResponse, &error);
                 }
 
                 // Clean up expired entries periodically
                 self.cleanup_replay_cache();
 
-                let response = self
+                match self
                     .handle_enroll_request_binary(request, remote_addr)
-                    .await?;
-                self.create_binary_response(CaMessageType::CsrEnrollResponse, &response)
+                    .await
+                {
+                    Ok(response) => {
+                        self.create_binary_response(CaMessageType::CsrEnrollResponse, &response)
+                    }
+                    Err(e) => {
+                        // Convert anyhow::Error to KeyError for mapping
+                        let key_error = runar_keys::error::KeyError::ValidationError(e.to_string());
+                        let error = Self::map_key_error_to_ca_error(key_error);
+                        self.create_binary_response(CaMessageType::ErrorResponse, &error)
+                    }
+                }
             }
             CaMessageType::ChainRequest => {
                 let request: ChainRequest = serde_cbor::from_slice(payload)?;
-                let response = self.handle_chain_request_binary(request).await?;
-                self.create_binary_response(CaMessageType::ChainResponse, &response)
+                match self.handle_chain_request_binary(request).await {
+                    Ok(response) => {
+                        self.create_binary_response(CaMessageType::ChainResponse, &response)
+                    }
+                    Err(e) => {
+                        // Convert anyhow::Error to KeyError for mapping
+                        let key_error = runar_keys::error::KeyError::ValidationError(e.to_string());
+                        let error = Self::map_key_error_to_ca_error(key_error);
+                        self.create_binary_response(CaMessageType::ErrorResponse, &error)
+                    }
+                }
             }
             _ => {
-                let error = CaErrorResponse {
-                    code: "invalid_message_type".to_string(),
-                    message: format!("Invalid message type for bootstrap server: {message_type:?}",),
-                };
+                let error = CaErrorResponse::bad_request_with_reason(
+                    &format!("Invalid message type for bootstrap server: {message_type:?}"),
+                    "invalid_message_type",
+                );
                 self.create_binary_response(CaMessageType::ErrorResponse, &error)
             }
         }
@@ -824,10 +844,10 @@ impl CaServer {
 
                 if !self.is_admin_authorized(&peer_ski) {
                     log_debug!(self.logger, "Admin SKI not authorized: {}", peer_ski);
-                    let error = CaErrorResponse {
-                        code: "forbidden".to_string(),
-                        message: "Admin SKI not authorized".to_string(),
-                    };
+                    let error = CaErrorResponse::forbidden_with_reason(
+                        "Admin SKI not authorized",
+                        "admin_not_authorized",
+                    );
                     return self.create_binary_response(CaMessageType::ErrorResponse, &error);
                 }
                 log_debug!(
@@ -845,21 +865,37 @@ impl CaServer {
             }
             CaMessageType::CrlRequest => {
                 let request: CrlRequest = serde_cbor::from_slice(payload)?;
-                let response = self.handle_crl_request_binary(request).await?;
-                self.create_binary_response(CaMessageType::CrlResponse, &response)
+                match self.handle_crl_request_binary(request).await {
+                    Ok(response) => {
+                        self.create_binary_response(CaMessageType::CrlResponse, &response)
+                    }
+                    Err(e) => {
+                        // Convert anyhow::Error to KeyError for mapping
+                        let key_error = runar_keys::error::KeyError::ValidationError(e.to_string());
+                        let error = Self::map_key_error_to_ca_error(key_error);
+                        self.create_binary_response(CaMessageType::ErrorResponse, &error)
+                    }
+                }
             }
             CaMessageType::StatusRequest => {
                 let request: StatusRequest = serde_cbor::from_slice(payload)?;
-                let response = self.handle_status_request_binary(request).await?;
-                self.create_binary_response(CaMessageType::StatusResponse, &response)
+                match self.handle_status_request_binary(request).await {
+                    Ok(response) => {
+                        self.create_binary_response(CaMessageType::StatusResponse, &response)
+                    }
+                    Err(e) => {
+                        // Convert anyhow::Error to KeyError for mapping
+                        let key_error = runar_keys::error::KeyError::ValidationError(e.to_string());
+                        let error = Self::map_key_error_to_ca_error(key_error);
+                        self.create_binary_response(CaMessageType::ErrorResponse, &error)
+                    }
+                }
             }
             _ => {
-                let error = CaErrorResponse {
-                    code: "invalid_message_type".to_string(),
-                    message: format!(
-                        "Invalid message type for authenticated server: {message_type:?}",
-                    ),
-                };
+                let error = CaErrorResponse::bad_request_with_reason(
+                    &format!("Invalid message type for authenticated server: {message_type:?}"),
+                    "invalid_message_type",
+                );
                 self.create_binary_response(CaMessageType::ErrorResponse, &error)
             }
         }
@@ -920,6 +956,48 @@ impl CaServer {
         cache.retain(|_, entry| entry.expires_at > now);
     }
 
+    /// Map internal KeyError to CaErrorResponse
+    fn map_key_error_to_ca_error(error: runar_keys::error::KeyError) -> CaErrorResponse {
+        use runar_keys::error::KeyError;
+        match error {
+            KeyError::ValidationError(msg) => {
+                if msg.contains("CSR CN") && msg.contains("does not match") {
+                    CaErrorResponse::bad_request_with_reason(&msg, "csr_cn_mismatch")
+                } else if msg.contains("Token nonce already used") {
+                    CaErrorResponse::forbidden_with_reason(&msg, "replay_detected")
+                } else if msg.contains("Token has been revoked") {
+                    CaErrorResponse::forbidden_with_reason(&msg, "token_revoked")
+                } else if msg.contains("Unknown enrollment authority") {
+                    CaErrorResponse::forbidden_with_reason(&msg, "invalid_token")
+                } else if msg.contains("Invalid CSR") {
+                    CaErrorResponse::bad_request_with_reason(&msg, "invalid_csr")
+                } else if msg.contains("Invalid peer certificate") {
+                    CaErrorResponse::bad_request_with_reason(&msg, "invalid_certificate")
+                } else {
+                    CaErrorResponse::bad_request(&msg)
+                }
+            }
+            KeyError::AuthorizationError(msg) => {
+                if msg.contains("Admin SKI not authorized") {
+                    CaErrorResponse::forbidden_with_reason(&msg, "admin_not_authorized")
+                } else {
+                    CaErrorResponse::forbidden(&msg)
+                }
+            }
+            KeyError::RateLimitError(msg) => CaErrorResponse::rate_limited(&msg),
+            KeyError::CertificateError(msg) => {
+                CaErrorResponse::bad_request_with_reason(&msg, "certificate_error")
+            }
+            KeyError::SigningError(msg) => {
+                CaErrorResponse::internal(&format!("Signing error: {msg}"))
+            }
+            KeyError::EncodingError(msg) => {
+                CaErrorResponse::internal(&format!("Encoding error: {msg}"))
+            }
+            _ => CaErrorResponse::internal(&format!("Internal error: {error}")),
+        }
+    }
+
     /// Check rate limiting for bootstrap endpoints
     async fn check_rate_limit(&self, rate_key: &str) -> Result<bool> {
         let now = SystemTime::now();
@@ -954,7 +1032,6 @@ impl CaServer {
         // Increment counters
         entry.burst_count += 1;
         entry.sustained_count += 1;
-
         Ok(true)
     }
 

@@ -5,10 +5,67 @@ use crate::enrollment_token::EnrollmentToken;
 /// Error response from CA Node operations
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CaErrorResponse {
-    /// Error code (e.g., "invalid_token", "csr_invalid", "rate_limited")
+    /// HTTP-style error code (e.g., "unauthorized", "forbidden", "bad_request", "rate_limited")
     pub code: String,
     /// Human-readable error message
     pub message: String,
+    /// Specific error reason for programmatic handling (e.g., "csr_cn_mismatch", "replay_detected")
+    pub reason: Option<String>,
+}
+
+impl CaErrorResponse {
+    /// Create a new error response
+    pub fn new(code: &str, message: &str) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.to_string(),
+            reason: None,
+        }
+    }
+
+    /// Create a new error response with specific reason
+    pub fn with_reason(code: &str, message: &str, reason: &str) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.to_string(),
+            reason: Some(reason.to_string()),
+        }
+    }
+
+    /// Unauthorized error (401)
+    pub fn unauthorized(message: &str) -> Self {
+        Self::new("unauthorized", message)
+    }
+
+    /// Forbidden error (403)
+    pub fn forbidden(message: &str) -> Self {
+        Self::new("forbidden", message)
+    }
+
+    /// Forbidden error with reason (403)
+    pub fn forbidden_with_reason(message: &str, reason: &str) -> Self {
+        Self::with_reason("forbidden", message, reason)
+    }
+
+    /// Bad request error (400)
+    pub fn bad_request(message: &str) -> Self {
+        Self::new("bad_request", message)
+    }
+
+    /// Bad request error with reason (400)
+    pub fn bad_request_with_reason(message: &str, reason: &str) -> Self {
+        Self::with_reason("bad_request", message, reason)
+    }
+
+    /// Rate limited error (429)
+    pub fn rate_limited(message: &str) -> Self {
+        Self::new("rate_limited", message)
+    }
+
+    /// Internal server error (500)
+    pub fn internal(message: &str) -> Self {
+        Self::new("internal", message)
+    }
 }
 
 /// CSR enrollment request

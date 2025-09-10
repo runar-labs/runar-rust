@@ -7,12 +7,52 @@ fn test_ca_error_response() {
     let error = CaErrorResponse {
         code: "invalid_token".to_string(),
         message: "Token validation failed".to_string(),
+        reason: None,
     };
 
     let serialized = serde_cbor::to_vec(&error).unwrap();
     let deserialized: CaErrorResponse = serde_cbor::from_slice(&serialized).unwrap();
 
     assert_eq!(error, deserialized);
+}
+
+#[test]
+fn test_ca_error_response_with_reason() {
+    let error = CaErrorResponse {
+        code: "bad_request".to_string(),
+        message: "CSR CN does not match peer certificate identity".to_string(),
+        reason: Some("csr_cn_mismatch".to_string()),
+    };
+
+    let serialized = serde_cbor::to_vec(&error).unwrap();
+    let deserialized: CaErrorResponse = serde_cbor::from_slice(&serialized).unwrap();
+
+    assert_eq!(error, deserialized);
+}
+
+#[test]
+fn test_ca_error_response_constructors() {
+    // Test constructor methods
+    let error1 = CaErrorResponse::new("unauthorized", "Missing authentication");
+    assert_eq!(error1.code, "unauthorized");
+    assert_eq!(error1.message, "Missing authentication");
+    assert_eq!(error1.reason, None);
+
+    let error2 =
+        CaErrorResponse::with_reason("forbidden", "Replay attack detected", "replay_detected");
+    assert_eq!(error2.code, "forbidden");
+    assert_eq!(error2.message, "Replay attack detected");
+    assert_eq!(error2.reason, Some("replay_detected".to_string()));
+
+    let error3 = CaErrorResponse::rate_limited("Rate limit exceeded");
+    assert_eq!(error3.code, "rate_limited");
+    assert_eq!(error3.message, "Rate limit exceeded");
+    assert_eq!(error3.reason, None);
+
+    let error4 = CaErrorResponse::bad_request_with_reason("CSR CN mismatch", "csr_cn_mismatch");
+    assert_eq!(error4.code, "bad_request");
+    assert_eq!(error4.message, "CSR CN mismatch");
+    assert_eq!(error4.reason, Some("csr_cn_mismatch".to_string()));
 }
 
 #[test]
