@@ -22,14 +22,14 @@ use runar_keys::{
     ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest},
     certificate::{CertificateAuthority, CertificateRequest, EcdsaKeyPair},
     enrollment_token::{EnrollmentToken, EnrollmentTokenBody},
-    mobile::{MobileKeyManager, NodeCertificateMessage},
+    mobile::MobileKeyManager,
     node::NodeKeyManager,
 };
 use runar_transporter::{
-    ca_client::{CaClient, CaClientBuilder, CaClientConfig},
-    ca_server::{CaServer, CaServerBuilder, CaServerConfig, RateLimitConfig},
+    ca_client::{CaClientBuilder, CaClientConfig},
+    ca_server::{CaServerBuilder, CaServerConfig, RateLimitConfig},
 };
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 use tokio::time::{sleep, Duration};
 use x509_parser::prelude::FromDer;
@@ -225,12 +225,12 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
 
     // Generate renewal CSR
     let renewal_csr = mobile_node_arc.write().unwrap().generate_csr()?;
-    let mobile_node_ski = mobile_node_arc
+    let _mobile_node_ski = mobile_node_arc
         .read()
         .unwrap()
         .get_node_public_key()
         .ok_or_else(|| anyhow::anyhow!("Node public key not available"))?;
-    let mobile_node_ski = compact_id(&mobile_node_ski);
+    let _mobile_node_ski = compact_id(&_mobile_node_ski);
 
     let renew_request = RenewRequest {
         network_id: "test_network".to_string(),
@@ -289,10 +289,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
             .join("")
     };
 
-    println!(
-        "🔑 Adding mobile cert SKI to server admin configuration: {}",
-        mobile_cert_ski
-    );
+    println!("🔑 Adding mobile cert SKI to server admin configuration: {mobile_cert_ski}");
 
     // Add SKI to both server's admin configuration AND CA node's admin allowlist
     ca_server.configure_admin_skis(vec![mobile_cert_ski.clone()]);
@@ -363,7 +360,10 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
 
     let crl_from_handler = ca_client.fetch_crl().await?;
     assert_eq!(crl.network_id, crl_from_handler.network_id);
-    assert_eq!(crl.issuing_ca_serial, crl_from_handler.issuing_ca_serial);
+    assert_eq!(
+        crl.issuing_ca_serial_hex,
+        crl_from_handler.issuing_ca_serial_hex
+    );
     assert_eq!(
         crl.revoked_serials.len(),
         crl_from_handler.revoked_serials.len()
@@ -555,14 +555,43 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     println!("   ✅ Invalid enrollment token rejected via REAL QUIC mTLS");
 
     // Test unauthorized renewal
-    let unauthorized_ski = "unauthorized_ski";
-    let unauthorized_csr = mobile_node_arc.write().unwrap().generate_csr()?;
+    // Create a new, unauthorized mobile node for this test
+    let unauthorized_logger = Arc::new(Logger::new_root(Component::Keys));
+    let mut unauthorized_mobile = MobileKeyManager::new(unauthorized_logger)?;
+    unauthorized_mobile.initialize_user_root_key()?;
+
+    let unauthorized_node_logger = Arc::new(Logger::new_root(Component::Keys));
+    let mut unauthorized_mobile_node = NodeKeyManager::new(unauthorized_node_logger)?;
+    unauthorized_mobile_node.generate_keys()?;
+    let unauthorized_mobile_node_arc = Arc::new(RwLock::new(unauthorized_mobile_node));
+
+    // Create a new CA client with the unauthorized mobile node
+    let unauthorized_client_config = CaClientConfig {
+        network_id: "test_network".to_string(),
+        bootstrap_server: bootstrap_addr,
+        authenticated_server: authenticated_addr,
+        request_timeout: Duration::from_secs(30),
+        max_retries: 3,
+    };
+
+    let unauthorized_ca_client = CaClientBuilder::new()
+        .with_config(unauthorized_client_config)
+        .with_node_key_manager(unauthorized_mobile_node_arc.clone())
+        .with_logger(Arc::new(Logger::new_root(Component::Transporter)))
+        .build()?
+        .with_root_ca_cert(root_ca_cert.der_bytes().to_vec())
+        .with_issuing_ca_cert(issuing_ca_cert.der_bytes().to_vec());
+
+    let unauthorized_csr = unauthorized_mobile_node_arc
+        .write()
+        .unwrap()
+        .generate_csr()?;
     let unauthorized_renew = RenewRequest {
         network_id: "test_network".to_string(),
         csr_der: unauthorized_csr.csr_der,
     };
 
-    let result = ca_client.renew(unauthorized_renew).await;
+    let result = unauthorized_ca_client.renew(unauthorized_renew).await;
     assert!(result.is_err(), "Unauthorized renewal should be rejected");
     println!("   ✅ Unauthorized renewal rejected via REAL QUIC mTLS");
 

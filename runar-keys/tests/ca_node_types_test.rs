@@ -43,6 +43,7 @@ fn test_csr_enroll_request_response() {
     };
 
     let response = CsrEnrollResponse {
+        network_id: "test_network".to_string(),
         certificate_der: vec![6, 7, 8, 9, 10],
         issuing_ca_der: vec![11, 12, 13, 14, 15],
         root_ca_der: Some(vec![16, 17, 18, 19, 20]),
@@ -86,14 +87,12 @@ fn test_rate_limiting() {
 fn test_crl_serialization() {
     let crl = CaRevocationList {
         network_id: "test_network".to_string(),
-        issuing_ca_serial: vec![1, 2, 3, 4],
-        revoked_serials: vec![RevokedSerial {
-            serial: vec![5, 6, 7, 8],
-            revocation_time: 1234567890,
-            reason: "compromise".to_string(),
-        }],
-        next_update: 1234567890 + 3600,
+        issuing_ca_serial_hex: "01020304".to_string(),
+        revoked_serials: vec![vec![5, 6, 7, 8]],
+        generated_at: 1234567890,
         signature: vec![9, 10, 11, 12],
+        signer_ski: vec![13, 14, 15, 16],
+        sig_alg: "p256-sha256-der".to_string(),
     };
 
     let serialized = serde_cbor::to_vec(&crl).unwrap();
@@ -109,6 +108,7 @@ fn test_renew_request_response() {
     };
 
     let response = RenewResponse {
+        network_id: "test_network".to_string(),
         certificate_der: vec![6, 7, 8, 9, 10],
         issuing_ca_der: vec![11, 12, 13, 14, 15],
         expires_at: 1234567890,
@@ -133,7 +133,10 @@ fn test_revoke_request_response() {
         reason: "compromise".to_string(),
     };
 
-    let response = RevokeResponse { ok: true };
+    let response = RevokeResponse {
+        network_id: "test_network".to_string(),
+        ok: true,
+    };
 
     // Test serialization/deserialization
     let request_serialized = serde_cbor::to_vec(&request).unwrap();
@@ -153,6 +156,7 @@ fn test_chain_request_response() {
     };
 
     let response = ChainResponse {
+        network_id: "test_network".to_string(),
         issuing_ca_der: vec![1, 2, 3, 4],
         root_ca_der: Some(vec![5, 6, 7, 8]),
     };
@@ -175,6 +179,7 @@ fn test_status_request_response() {
     };
 
     let response = CaStatus {
+        network_id: "test_network".to_string(),
         issuing_subject: "CN=Test CA".to_string(),
         issuing_serial_hex: "1234567890abcdef".to_string(),
         not_before: 1234567890,
@@ -199,14 +204,12 @@ fn test_crl_request_response() {
 
     let response = CaRevocationList {
         network_id: "test_network".to_string(),
-        issuing_ca_serial: vec![1, 2, 3, 4],
-        revoked_serials: vec![RevokedSerial {
-            serial: vec![5, 6, 7, 8],
-            revocation_time: 1234567890,
-            reason: "compromise".to_string(),
-        }],
-        next_update: 1234567890 + 3600,
+        issuing_ca_serial_hex: "01020304".to_string(),
+        revoked_serials: vec![vec![5, 6, 7, 8]],
+        generated_at: 1234567890,
         signature: vec![9, 10, 11, 12],
+        signer_ski: vec![13, 14, 15, 16],
+        sig_alg: "p256-sha256-der".to_string(),
     };
 
     // Test serialization/deserialization

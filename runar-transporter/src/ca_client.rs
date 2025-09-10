@@ -9,18 +9,15 @@
 //! - CBOR request/response serialization over QUIC
 //! - Certificate management and mTLS authentication
 
-use crate::ca_server::CaMessageType;
+use crate::ca_types::{
+    CaMessageType, ChainRequest, ChainResponse, CrlRequest, CsrEnrollRequest, CsrEnrollResponse,
+    RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, StatusRequest, StatusResponse,
+};
 use anyhow::Result;
 use quinn::{ClientConfig, Endpoint};
 use runar_common::logging::Logger;
-use runar_keys::{
-    ca_node_types::{
-        CaStatus, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, RenewRequest, RenewResponse,
-        RevokeRequest, RevokeResponse,
-    },
-    node::NodeKeyManager,
-};
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_keys::node::NodeKeyManager;
+use runar_macros_common::{log_debug, log_info, log_warn};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use rustls_pki_types::CertificateDer;
 use serde_cbor;
@@ -104,9 +101,14 @@ impl CaClient {
             Ok(CaMessageType::RenewRequest)
         } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<RevokeRequest>() {
             Ok(CaMessageType::RevokeRequest)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<CrlRequest>() {
+            Ok(CaMessageType::CrlRequest)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<StatusRequest>() {
+            Ok(CaMessageType::StatusRequest)
+        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<ChainRequest>() {
+            Ok(CaMessageType::ChainRequest)
         } else {
-            // For chain requests and other types, we need to handle them differently
-            // For now, assume it's a chain request if it's not one of the above
+            // Default to chain request for unknown types
             Ok(CaMessageType::ChainRequest)
         }
     }
@@ -125,10 +127,10 @@ impl CaClient {
     /// Fetch certificate chain (bootstrap operation)
     pub async fn fetch_chain(&self) -> Result<ChainResponse> {
         let endpoint = format!("$ca/{}/chain", self.config.network_id);
-        let request_data = serde_cbor::to_vec(&serde_json::Value::Object(serde_json::Map::new()))?;
-        let response_data = self
-            .send_bootstrap_request(&endpoint, &request_data)
-            .await?;
+        let request = ChainRequest {
+            network_id: self.config.network_id.clone(),
+        };
+        let response_data = self.send_bootstrap_request(&endpoint, &request).await?;
 
         let response: ChainResponse = serde_cbor::from_slice(&response_data)
             .map_err(|e| anyhow::anyhow!("Failed to parse chain response: {}", e))?;
@@ -161,10 +163,10 @@ impl CaClient {
     /// Fetch CRL (authenticated operation)
     pub async fn fetch_crl(&self) -> Result<runar_keys::ca_node_types::CaRevocationList> {
         let endpoint = format!("$ca/{}/crl", self.config.network_id);
-        let request_data = serde_cbor::to_vec(&serde_json::Value::Object(serde_json::Map::new()))?;
-        let response_data = self
-            .send_authenticated_request(&endpoint, &request_data)
-            .await?;
+        let request = runar_keys::ca_node_types::CrlRequest {
+            network_id: self.config.network_id.clone(),
+        };
+        let response_data = self.send_authenticated_request(&endpoint, &request).await?;
 
         let response: runar_keys::ca_node_types::CaRevocationList =
             serde_cbor::from_slice(&response_data)
@@ -176,10 +178,10 @@ impl CaClient {
     /// Get CA status (authenticated operation)
     pub async fn get_status(&self) -> Result<CaStatus> {
         let endpoint = format!("$ca/{}/status", self.config.network_id);
-        let request_data = serde_cbor::to_vec(&serde_json::Value::Object(serde_json::Map::new()))?;
-        let response_data = self
-            .send_authenticated_request(&endpoint, &request_data)
-            .await?;
+        let request = runar_keys::ca_node_types::StatusRequest {
+            network_id: self.config.network_id.clone(),
+        };
+        let response_data = self.send_authenticated_request(&endpoint, &request).await?;
 
         let response: CaStatus = serde_cbor::from_slice(&response_data)
             .map_err(|e| anyhow::anyhow!("Failed to parse status response: {}", e))?;

@@ -25,6 +25,8 @@ pub struct CsrEnrollRequest {
 /// CSR enrollment response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CsrEnrollResponse {
+    /// Network ID for the response
+    pub network_id: String,
     /// DER-encoded device certificate
     pub certificate_der: Vec<u8>,
     /// DER-encoded issuing CA certificate
@@ -47,6 +49,8 @@ pub struct RenewRequest {
 /// Certificate renewal response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RenewResponse {
+    /// Network ID for the response
+    pub network_id: String,
     /// DER-encoded renewed certificate
     pub certificate_der: Vec<u8>,
     /// DER-encoded issuing CA certificate
@@ -69,6 +73,8 @@ pub struct RevokeRequest {
 /// Certificate revocation response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RevokeResponse {
+    /// Network ID for the response
+    pub network_id: String,
     /// Whether revocation was successful
     pub ok: bool,
 }
@@ -76,6 +82,8 @@ pub struct RevokeResponse {
 /// CA certificate chain response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ChainResponse {
+    /// Network ID for the response
+    pub network_id: String,
     /// DER-encoded issuing CA certificate
     pub issuing_ca_der: Vec<u8>,
     /// DER-encoded root CA certificate (optional)
@@ -85,6 +93,8 @@ pub struct ChainResponse {
 /// CA Node status response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CaStatus {
+    /// Network ID for the response
+    pub network_id: String,
     /// Issuing CA subject
     pub issuing_subject: String,
     /// Issuing CA serial number (hex)
@@ -100,14 +110,18 @@ pub struct CaStatus {
 pub struct CaRevocationList {
     /// Network ID this CRL applies to
     pub network_id: String,
-    /// Issuing CA serial number (raw bytes)
-    pub issuing_ca_serial: Vec<u8>,
-    /// List of revoked certificate serials
-    pub revoked_serials: Vec<RevokedSerial>,
-    /// Next update time (UNIX seconds)
-    pub next_update: u64,
-    /// ECDSA P-256 DER signature
+    /// Issuing CA serial number (hex string)
+    pub issuing_ca_serial_hex: String,
+    /// List of revoked certificate serials (raw bytes)
+    pub revoked_serials: Vec<Vec<u8>>,
+    /// Generation time (UNIX seconds)
+    pub generated_at: u64,
+    /// ECDSA P-256 DER signature (raw DER bytes)
     pub signature: Vec<u8>,
+    /// Subject Key Identifier of signer
+    pub signer_ski: Vec<u8>,
+    /// Signature algorithm identifier
+    pub sig_alg: String,
 }
 
 /// Revoked certificate entry

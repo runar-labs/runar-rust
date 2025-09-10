@@ -179,7 +179,11 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     println!("   ✅ Mobile node SKI for device-based authorization: {mobile_node_ski}");
 
     // Process renewal via CA Node (now uses device-based auth, not admin)
-    let renew_response = ca_node.handle_renew(renew_request, &mobile_node_ski)?;
+    // For testing, we need to create a mock peer certificate
+    // In real implementation, this would come from the mTLS connection
+    let cert_config = mobile_node.get_quic_certificate_config()?;
+    let peer_cert_der = &cert_config.certificate_chain[0];
+    let renew_response = ca_node.handle_renew(renew_request, peer_cert_der)?;
     println!("   ✅ Certificate renewed by CA Node");
 
     // Convert renewal response
@@ -226,14 +230,17 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     // Generate CRL-lite
     let crl = ca_node.generate_crl_lite()?;
     assert_eq!(crl.revoked_serials.len(), 1);
-    assert_eq!(crl.revoked_serials[0].serial, cert_serial);
+    assert_eq!(crl.revoked_serials[0], cert_serial);
     assert!(!crl.signature.is_empty());
     println!("   ✅ CRL-lite generated with revoked certificate and signature");
 
     // Test CRL handler
-    let crl_from_handler = ca_node.handle_crl()?;
+    let crl_from_handler = ca_node.handle_crl("test_network".to_string())?;
     assert_eq!(crl.network_id, crl_from_handler.network_id);
-    assert_eq!(crl.issuing_ca_serial, crl_from_handler.issuing_ca_serial);
+    assert_eq!(
+        crl.issuing_ca_serial_hex,
+        crl_from_handler.issuing_ca_serial_hex
+    );
     assert_eq!(
         crl.revoked_serials.len(),
         crl_from_handler.revoked_serials.len()
@@ -241,7 +248,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     println!("   ✅ CRL handler working correctly");
 
     // Test CRL-lite serial format consistency (raw bytes, not hex)
-    assert!(!crl.issuing_ca_serial.is_empty()); // Should be raw bytes, not hex string
+    assert!(!crl.issuing_ca_serial_hex.is_empty()); // Should be hex string
     println!("   ✅ CRL-lite serial format is raw bytes (not hex string)");
 
     // ==========================================
@@ -250,7 +257,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     println!("\n📊 PHASE 6: CA Node API Status and Chain");
 
     // Get CA status
-    let status = ca_node.handle_status()?;
+    let status = ca_node.handle_status("test_network".to_string())?;
     println!("   ✅ CA Status retrieved:");
     println!("      Issuing Subject: {}", status.issuing_subject);
     println!("      Issuing Serial: {}", status.issuing_serial_hex);
@@ -258,7 +265,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     println!("      Not After: {}", status.not_after);
 
     // Get certificate chain
-    let chain = ca_node.handle_chain()?;
+    let chain = ca_node.handle_chain("test_network".to_string())?;
     assert!(!chain.issuing_ca_der.is_empty());
     assert!(chain.root_ca_der.is_some());
     println!("   ✅ Certificate chain retrieved");
@@ -434,7 +441,7 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     };
 
     assert!(ca_node
-        .handle_renew(unauthorized_renew, "unauthorized_ski")
+        .handle_renew(unauthorized_renew, b"unauthorized_ski")
         .is_err());
     println!("   ✅ Unauthorized renewal rejected");
 

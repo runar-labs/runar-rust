@@ -2,6 +2,7 @@
 
 pub mod ca_client;
 pub mod ca_server;
+pub mod ca_types;
 pub mod discovery;
 pub mod network_config;
 pub mod transport;

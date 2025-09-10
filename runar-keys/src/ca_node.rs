@@ -212,6 +212,7 @@ impl CANode {
             + (validity_days as u64 * 24 * 60 * 60);
 
         Ok(CsrEnrollResponse {
+            network_id: request.network_id,
             certificate_der: device_cert.der_bytes().to_vec(),
             issuing_ca_der: self.issuing_ca_cert.der_bytes().to_vec(),
             root_ca_der: Some(self.root_ca_cert.der_bytes().to_vec()),
@@ -219,24 +220,35 @@ impl CANode {
         })
     }
 
-    /// Handle certificate renewal request
-    pub fn handle_renew(&mut self, request: RenewRequest, peer_ski: &str) -> Result<RenewResponse> {
+    /// Handle certificate renewal request with device-based authorization
+    pub fn handle_renew(
+        &mut self,
+        request: RenewRequest,
+        peer_cert_der: &[u8],
+    ) -> Result<RenewResponse> {
         // Parse CSR to extract public key and validate
         let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(
             &request.csr_der,
         )
         .map_err(|e| KeyError::ValidationError(format!("Invalid CSR: {e}")))?;
 
-        // Extract public key from CSR
-        let public_key_bytes = csr
+        // Extract public key from CSR (not used, but kept for clarity)
+        let _csr_public_key_bytes = csr
             .certification_request_info
             .subject_pki
             .subject_public_key
             .data
             .to_vec();
 
-        // Validate that CSR CN matches the peer identity (device-based authorization)
-        let expected_cn = runar_common::compact_ids::compact_id(&public_key_bytes);
+        // Parse peer certificate to extract public key
+        let (_, peer_cert) = x509_parser::certificate::X509Certificate::from_der(peer_cert_der)
+            .map_err(|e| KeyError::ValidationError(format!("Invalid peer certificate: {e}")))?;
+
+        // Extract public key from peer certificate
+        let peer_public_key_bytes = peer_cert.public_key().subject_public_key.data.to_vec();
+
+        // Validate that CSR CN matches the peer certificate identity (device-based authorization)
+        let peer_compact_id = runar_common::compact_ids::compact_id(&peer_public_key_bytes);
         let csr_cn = csr
             .certification_request_info
             .subject
@@ -246,15 +258,15 @@ impl CANode {
             .as_str()
             .map_err(|e| KeyError::ValidationError(format!("Invalid CSR CN: {e}")))?;
 
-        if csr_cn != expected_cn {
+        if csr_cn != peer_compact_id {
             return Err(KeyError::AuthorizationError(format!(
-                "CSR CN {csr_cn} does not match peer identity {expected_cn}"
+                "CSR CN {csr_cn} does not match peer certificate identity {peer_compact_id}"
             )));
         }
 
         // Note: We don't validate that peer_ski matches CSR public key SKI
         // because renewal allows key rotation - the important check is that
-        // the CSR CN matches the peer identity (device), which we did above
+        // the CSR CN matches the peer certificate identity (device), which we did above
 
         // Create certificate authority for signing
         let ca = CertificateAuthority::from_existing(
@@ -275,6 +287,7 @@ impl CANode {
             + (validity_days as u64 * 24 * 60 * 60);
 
         Ok(RenewResponse {
+            network_id: request.network_id,
             certificate_der: renewed_cert.der_bytes().to_vec(),
             issuing_ca_der: self.issuing_ca_cert.der_bytes().to_vec(),
             expires_at,
@@ -307,19 +320,23 @@ impl CANode {
         self.revoked_certificates
             .insert(request.certificate_serial, revoked_serial);
 
-        Ok(RevokeResponse { ok: true })
+        Ok(RevokeResponse {
+            network_id: request.network_id,
+            ok: true,
+        })
     }
 
     /// Handle CA certificate chain request
-    pub fn handle_chain(&self) -> Result<ChainResponse> {
+    pub fn handle_chain(&self, network_id: String) -> Result<ChainResponse> {
         Ok(ChainResponse {
+            network_id,
             issuing_ca_der: self.issuing_ca_cert.der_bytes().to_vec(),
             root_ca_der: Some(self.root_ca_cert.der_bytes().to_vec()),
         })
     }
 
     /// Handle CA status request
-    pub fn handle_status(&self) -> Result<CaStatus> {
+    pub fn handle_status(&self, network_id: String) -> Result<CaStatus> {
         // Extract subject and serial from issuing CA certificate
         let issuing_cert_der = self.issuing_ca_cert.der_bytes();
         let (_, cert) = x509_parser::certificate::X509Certificate::from_der(issuing_cert_der)
@@ -333,6 +350,7 @@ impl CANode {
         let not_after = cert.validity().not_after.timestamp() as u64;
 
         Ok(CaStatus {
+            network_id,
             issuing_subject: subject,
             issuing_serial_hex: serial_hex,
             not_before,
@@ -342,27 +360,43 @@ impl CANode {
 
     /// Generate CRL-lite
     pub fn generate_crl_lite(&self) -> Result<CaRevocationList> {
-        let revoked_serials: Vec<RevokedSerial> =
-            self.revoked_certificates.values().cloned().collect();
-
-        // Get issuing CA serial
+        // Get issuing CA serial and SKI
         let issuing_cert_der = self.issuing_ca_cert.der_bytes();
         let (_, cert) = x509_parser::certificate::X509Certificate::from_der(issuing_cert_der)
             .map_err(|e| {
                 KeyError::ValidationError(format!("Invalid issuing CA certificate: {e}"))
             })?;
-        let issuing_ca_serial = cert.serial.to_bytes_be();
+        let issuing_ca_serial_hex = format!("{:x}", cert.serial);
+
+        // Extract SKI from issuing CA certificate
+        let mut signer_ski = Vec::new();
+        for ext in cert.extensions() {
+            if let x509_parser::extensions::ParsedExtension::SubjectKeyIdentifier(ski) =
+                ext.parsed_extension()
+            {
+                signer_ski = ski.0.to_vec();
+                break;
+            }
+        }
+
+        // Convert revoked certificates to simple serial list
+        let revoked_serials: Vec<Vec<u8>> = self
+            .revoked_certificates
+            .values()
+            .map(|revoked| revoked.serial.clone())
+            .collect();
 
         let mut crl = CaRevocationList {
             network_id: self.network_id.clone(),
-            issuing_ca_serial,
+            issuing_ca_serial_hex,
             revoked_serials,
-            next_update: SystemTime::now()
+            generated_at: SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs()
-                + 3600, // 1 hour from now
+                .as_secs(),
             signature: vec![], // Will be filled after signing
+            signer_ski,
+            sig_alg: "p256-sha256-der".to_string(),
         };
 
         // Sign the CRL-lite with the issuing CA key
@@ -415,8 +449,10 @@ impl CANode {
     }
 
     /// Handle CRL fetch request
-    pub fn handle_crl(&self) -> Result<CaRevocationList> {
-        self.generate_crl_lite()
+    pub fn handle_crl(&self, network_id: String) -> Result<CaRevocationList> {
+        let mut crl = self.generate_crl_lite()?;
+        crl.network_id = network_id;
+        Ok(crl)
     }
 
     /// Clean up expired entries from the replay ledger

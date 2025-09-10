@@ -15,12 +15,12 @@ This design references only crates and versions already in this repository and u
 - **Pass all clippy warnings** - Code must be lint-clean with no `#[allow]` attributes
 - **Comprehensive error handling** - Use `Result<>` and `Option<>` properly, no panics
 
-### **Backward Compatibility & Testing**
-- **DO NOT change test intent and scenarios** - Tests must continue to validate the same functionality
-- **All tests work before this change** - Current features must continue working
-- **Additive changes only** - Should not break existing functionality
-- **Each change must be justified** - Only changes required by design, not implementation issues
-- **Test changes must be minimal** - Only update what's necessary due to API changes
+### **Implementation Standards**
+- **Clean, organized codebase** - No backward compatibility constraints for new implementation
+- **Design-compliant architecture** - Follow the final design specifications exactly
+- **Proper refactoring** - Make necessary changes to align with design, not workarounds
+- **Single source of truth** - Wire types in transporter, internal types in keys
+- **Defense in depth** - Multiple validation layers for security
 
 ### **Architecture & Design**
 - **Proper Rust semantics** - Use `Option<>` for optional values, `Result<>` for errors
@@ -500,8 +500,26 @@ Error handling (CBOR):
 pub struct ErrorResponse {
     pub code: String,  // e.g., "invalid_token", "csr_invalid", "rate_limited"
     pub message: String,
+    pub reason: Option<String>, // e.g., "csr_cn_mismatch", "replay_detected", "admin_not_authorized"
 }
 ```
+
+**Error codes and messages:**
+- `unauthorized` (401): Missing/invalid mTLS for endpoints that require it (renew, revoke, crl/status if restricted).
+- `forbidden` (403): Token invalid, token revoked, replay detected, admin SKI not allowed.
+- `bad_request` (400): CSR CN mismatch, malformed CSR, algorithm mismatch, network_id mismatch.
+- `conflict` (409): Duplicate enrollment for same device within a restricted window (if you enforce uniqueness).
+- `rate_limited` (429): Exceeded rate limit for remote address or token.
+- `internal` (500): Unexpected errors.
+
+**Specific error reasons:**
+- For CSR CN continuity failures: return `bad_request` with reason `"csr_cn_mismatch"`.
+- For token replay: return `forbidden` with reason `"replay_detected"`.
+- For admin SKI not permitted (admin endpoints only): `forbidden` with `"admin_not_authorized"`.
+
+**Where to return these:**
+- Server prechecks return wire-level `CaError` immediately.
+- CANode returns internal errors mapped by the server to `CaError`.
 
 Rate limiting (bootstrap server):
 - Sliding-window counters keyed by (remote_addr, token_id) with burst/sustained limits (e.g., 5/min, 30/hour). Implement with in-memory maps and timestamps; no new crates.
@@ -551,7 +569,7 @@ Signing/verification:
 
 Issuer key options:
 1) Dedicated Enrollment Authority key (recommended)
-   - Pros: separation of duties; compromise doesn’t expose Issuing CA.
+   - Pros: separation of duties; compromise doesn't expose Issuing CA.
    - Cons: manage one more key.
 2) Reuse Issuing CA key for tokens
    - Pros: fewer keys.
@@ -565,12 +583,89 @@ Validation steps on CA Node:
 2) Check `network_id` matches configured network.
 3) Enforce `not_before <= now <= expires_at`.
 4) Rate-limit by (remote_addr, token_id) and (remote_addr, subject_hint).
-5) Optional anti-replay: cache `(token_id, nonce)` in memory until expiry.
+5) **CRITICAL**: Anti-replay cache - detect and drop repeated use of the same enrollment token/nonce pair within a TTL. Implement primary anti-replay at the server layer for performance (early drop before CA processing), backed by an in-memory TTL cache keyed by `(token_id, nonce)`. Use a periodic cleanup task.
 
 Token revocation:
 - Maintain in-memory denylist of `token_id` with TTL. Admin can push signed revocation messages over mTLS to invalidate early.
 
-### 14.3 API specifications (Binary Protocol over QUIC)
+### 14.3 Device-based Renewal Authorization (CRITICAL)
+
+**Required behavior:**
+- Renewals are initiated by the device over an mTLS-authenticated connection.
+- Authorize by continuity: CSR CN must equal `compact_id(peer_device_public_key)` extracted from the mTLS peer leaf certificate.
+
+**Exact approach:**
+- The server MUST extract the peer leaf certificate from the TLS session and pass it to `CANode::handle_renew` as part of a structured context. Do not trust any application-layer peer_id string.
+- Inside `CANode::handle_renew`, recompute `compact_id` from the provided peer certificate's subject public key info (SPKI) and compare to the CSR's CN. Reject on mismatch.
+
+**Implementation details:**
+- Extract the compact_id from the peer certificate's public key inside CANode. The server should pass the verified peer leaf certificate DER (or the full chain) to CANode. Do not pass a bare "peer compact_id" string from the server to CANode as the sole proof. This avoids TOCTOU and parameter spoofing and centralizes policy in CANode.
+- Additionally, the server MAY perform a lightweight precheck (compute compact_id from peer cert and compare to CSR CN) to fail fast before calling CANode. But CANode must enforce it authoritatively.
+
+**Inputs to CANode for renew:**
+```rust
+pub struct RenewRequestContext {
+    pub peer_leaf_cert_der: Vec<u8>,
+    pub csr_der: Vec<u8>,
+    pub network_id: String,
+    // ... other fields
+}
+```
+
+**In CANode, parse peer cert, extract P-256 public key, compute `compact_id`, compare to CSR CN (already parsed while validating CSR). Reject with a specific error when mismatch.**
+
+### 14.4 CRL-lite Signing (CRITICAL)
+
+**Required behavior:**
+- Sign the CBOR serialization of the revocation list body (with the `signature` field excluded) using the Issuing CA's P-256 key with SHA-256.
+- Include raw DER-encoded ECDSA signature bytes in the `signature` field.
+
+**Implementation details:**
+- Use the raw DER bytes of the ECDSA signature (ASN.1 DER of (r,s)). Do not hex-encode. We're already using a binary protocol with CBOR framing; keep the signature as a `Vec<u8>`.
+- Include `sig_alg` metadata (e.g., `p256-sha256-der`) and the signer's SKI (`signer_ski`) in the structure for deterministic verification.
+
+**Verification:**
+- Clients/peers verify by:
+  - Validating the Issuing CA chain against embedded Root.
+  - Checking that `signer_ski` matches the Issuing CA cert SKI.
+  - Reserializing the CRL-lite body without the signature, verifying the DER signature with the Issuing CA public key.
+
+### 14.5 Rate Limiting using Remote Address (IMPORTANT)
+
+**Required behavior:**
+- Rate limiting must be keyed by the actual remote address, not a placeholder.
+
+**Implementation details:**
+- Capture the remote address at the connection level and thread it into each handler call as part of a `RequestContext` (e.g., `{ remote_addr: SocketAddr, peer_leaf_cert_der: Option<Vec<u8>>, … }`). This is the cleanest boundary and avoids per-stream confusion.
+- Rate-limit by `(remote_ip, endpoint_kind)`; additionally, for enrollment, include `(token_id)` to block replay bursts by the same token across streams/sessions. Use a token bucket or sliding window with configurable limits.
+
+**Placement:**
+- Implement rate limiting in the server layer (transport). It prevents CPU-heavy CA work from being reached, reducing DoS surface.
+
+### 14.6 Type Alignment for Binary Protocol (IMPORTANT)
+
+**Required behavior:**
+- Wire protocol types are transport-facing and must include `network_id`, versioning, and message discriminants.
+- Internal CA types remain decoupled and are used by CANode.
+
+**Implementation details:**
+- Create a new module in transporter, `runar-transporter/src/ca_types.rs`, defining all wire types (requests, responses, envelopes, error codes) with `network_id` and protocol `version`.
+- Keep `runar-keys::ca_node_types` for internal CA operations. Implement `From`/`TryFrom` conversions in the server to translate between wire and internal types.
+- Ensure versioning: `{ version: u16 }` in the header or per-message to allow future evolution.
+
+**Serialization:**
+- Keep CBOR (`ciborium`) as specified in the design (binary protocol). Avoid ad-hoc binary framing; CBOR is already standard in the repo.
+
+### 14.7 Server Certificate Chains (NICE TO HAVE, recommended)
+
+**Required behavior:**
+- Always present the full chain `[leaf, issuing_ca]` for better interop and path building—even though clients embed Root.
+
+**Implementation details:**
+- Yes: modify both the bootstrap server and the authenticated server to present the full chain by using the rustls API that accepts a chain (`with_single_cert(chain, key)` where `chain` includes leaf then issuing).
+- This improves clients that don't preload intermediates and avoids extra fetch logic.
+
+### 14.8 API specifications (Binary Protocol over QUIC)
 
 Message Types:
 ```rust
@@ -730,7 +825,9 @@ pub struct CrlResponse {
     pub issuing_ca_serial_hex: String,
     pub generated_at: u64,
     pub revoked_serials: Vec<Vec<u8>>, // big-endian
-    pub signature: Vec<u8>,            // ECDSA P-256 DER
+    pub signature: Vec<u8>,            // ECDSA P-256 DER (raw DER bytes)
+    pub signer_ski: Vec<u8>,          // Subject Key Identifier of signer
+    pub sig_alg: String,              // e.g., "p256-sha256-der"
 }
 ```
 - Endpoint: `CrlRequest` (0x0005) → `CrlResponse` (0x1005) (mTLS)
@@ -1201,5 +1298,242 @@ pub struct AdminSignedEnvelope {
 - Bad signature or timestamp skew: `bad_signature`
 - Missing peer cert (should not happen after mTLS): `protocol_error`
 - All errors returned as `CaErrorResponse` (CBOR) with clear message.
+
+---
+
+## 19) Critical Implementation Fixes (Based on Code Review)
+
+This section contains the detailed implementation answers for critical fixes identified during code review. These fixes are required to make the CA Node implementation robust, design-compliant, and production-ready.
+
+### 19.1 Device-based Renewal Authorization (CRITICAL)
+
+**Current Issue**: `handle_renew` requires admin SKI allowlist and does not validate device identity continuity.
+
+**Required Behavior**:
+- Renewals are initiated by the device over an mTLS-authenticated connection
+- Authorize by continuity: CSR CN must equal `compact_id(peer_device_public_key)` extracted from the mTLS peer leaf certificate
+- Remove admin SKI requirement from renewal (admin SKI only for admin endpoints like revoke)
+
+**Implementation**:
+- Server MUST extract the peer leaf certificate from the TLS session and pass it to `CANode::handle_renew` as part of a structured context
+- Inside `CANode::handle_renew`, recompute `compact_id` from the provided peer certificate's subject public key info (SPKI) and compare to the CSR's CN
+- Reject on mismatch with specific error: `bad_request` with reason `"csr_cn_mismatch"`
+
+**Inputs to CANode for renew**:
+```rust
+struct RenewRequestContext {
+    peer_leaf_cert_der: Vec<u8>,
+    csr_der: Vec<u8>,
+    network_id: String,
+    // ... other fields
+}
+```
+
+**CANode Implementation**:
+1. Parse peer cert, extract P-256 public key
+2. Compute `compact_id` from peer cert public key
+3. Parse CSR and extract CN
+4. Compare CSR CN to computed `compact_id`
+5. Reject with specific error if mismatch
+
+### 19.2 CRL-lite Signing (CRITICAL)
+
+**Current Issue**: `generate_crl_lite` sets `signature: vec![]` (TODO placeholder).
+
+**Required Behavior**:
+- Sign the CBOR serialization of the revocation list body (with the `signature` field excluded) using the Issuing CA's P-256 key with SHA-256
+- Include raw DER-encoded ECDSA signature bytes in the `signature` field
+- Include `sig_alg` metadata (e.g., `"p256-sha256-der"`) and the signer's SKI (`signer_ski`) in the structure
+
+**Implementation**:
+```rust
+struct CaRevocationList {
+    // ... existing fields
+    signature: Vec<u8>,        // Raw DER-encoded ECDSA signature bytes
+    signer_ski: Vec<u8>,       // SKI of the signing key
+    sig_alg: String,           // e.g., "p256-sha256-der"
+}
+```
+
+**Signing Process**:
+1. Create CRL-lite body without `signature` field
+2. Serialize to CBOR
+3. Sign with Issuing CA private key using P-256 ECDSA with SHA-256
+4. Include raw DER signature bytes (not hex-encoded)
+5. Add `signer_ski` and `sig_alg` metadata
+
+**Verification**:
+- Clients verify by validating the Issuing CA chain against embedded Root
+- Check that `signer_ski` matches the Issuing CA cert SKI
+- Reserialize the CRL-lite body without the signature
+- Verify the DER signature with the Issuing CA public key
+
+### 19.3 Rate Limiting using Remote Address (IMPORTANT)
+
+**Current Issue**: Hard-coded placeholder "127.0.0.1:12345" for rate limiting.
+
+**Required Behavior**:
+- Rate limiting must be keyed by the actual remote address, not a placeholder
+- Rate-limit by `(remote_ip, endpoint_kind)` and `(token_id, nonce)` for enrollment
+
+**Implementation**:
+- Capture the remote address at the connection level and thread it into each handler call as part of a `RequestContext`
+- Implement rate limiting in the server layer (transport) to prevent CPU-heavy CA work from being reached
+
+**RequestContext Structure**:
+```rust
+struct RequestContext {
+    remote_addr: SocketAddr,
+    peer_leaf_cert_der: Option<Vec<u8>>,
+    // ... other fields
+}
+```
+
+**Rate Limiting Strategy**:
+- Use token bucket or sliding window with configurable limits
+- Key by `(remote_ip, endpoint)` for general rate limiting
+- Key by `(token_id, nonce)` for enrollment replay protection
+- Implement in server layer for DoS protection
+
+### 19.4 Type Alignment for Binary Protocol (IMPORTANT)
+
+**Current Issue**: Server imports request types from `runar-keys::ca_node_types`, causing type drift.
+
+**Required Behavior**:
+- Wire protocol types are transport-facing and must include `network_id`, versioning, and message discriminants
+- Internal CA types remain decoupled and are used by CANode
+- Single source of truth for wire types in transporter
+
+**Implementation**:
+- Create `runar-transporter/src/ca_types.rs` defining all wire types with `network_id` and protocol `version`
+- Keep `runar-keys::ca_node_types` for internal CA operations
+- Implement `From`/`TryFrom` conversions in the server to translate between wire and internal types
+
+**Wire Types Structure**:
+```rust
+// runar-transporter/src/ca_types.rs
+pub const CA_PROTOCOL_VERSION: u16 = 1;
+
+pub struct CaMessageHeader {
+    pub message_type: u32,
+    pub payload_length: u32,
+}
+
+pub enum CaMessageType {
+    CsrEnrollRequest = 1,
+    CsrEnrollResponse = 2,
+    RenewRequest = 3,
+    RenewResponse = 4,
+    // ... other message types
+}
+
+pub struct CsrEnrollRequest {
+    pub network_id: String,
+    pub version: u16,
+    pub csr_der: Vec<u8>,
+    pub token: EnrollmentToken,
+}
+
+// ... other wire types
+```
+
+**Conversion Pattern**:
+```rust
+impl From<WireCsrEnrollRequest> for InternalCsrEnrollRequest {
+    fn from(wire: WireCsrEnrollRequest) -> Self {
+        Self {
+            csr_der: wire.csr_der,
+            token: wire.token.into(),
+            // network_id handled at server layer
+        }
+    }
+}
+```
+
+### 19.5 Renewal CSR CN Continuity Checks (IMPORTANT)
+
+**Current Issue**: No CN continuity validation during renewal.
+
+**Required Behavior**:
+- Enforce continuity centrally and fail if CSR CN does not match the compact_id derived from the mTLS peer leaf certificate
+- Perform authoritative check inside CANode with optional fast-fail precheck in server
+
+**Implementation**:
+- CANode performs the authoritative check during `handle_renew`
+- Server may perform lightweight precheck for fast failure
+- Return clear, typed error when mismatch occurs: `bad_request` with reason `"csr_cn_mismatch"`
+
+**Validation Process**:
+1. Parse CSR and extract CN
+2. Extract peer certificate public key from mTLS session
+3. Compute `compact_id` from peer cert public key
+4. Compare CSR CN to computed `compact_id`
+5. Reject with specific error if mismatch
+
+### 19.6 Server Certificate Chains (RECOMMENDED)
+
+**Current Issue**: Servers present only leaf certificate, not full chain.
+
+**Required Behavior**:
+- Always present the full chain `[leaf, issuing_ca]` for better interop and path building
+
+**Implementation**:
+- Modify both bootstrap server and authenticated server to present the full chain
+- Use rustls API that accepts a chain: `with_single_cert(chain, key)` where `chain` includes leaf then issuing
+- This improves clients that don't preload intermediates
+
+### 19.7 Anti-replay Cache (OPTIONAL)
+
+**Current Issue**: No anti-replay protection for enrollment tokens.
+
+**Required Behavior**:
+- Detect and drop repeated use of the same enrollment token/nonce pair within a TTL
+- Implement primarily in server layer for performance
+
+**Implementation**:
+- In-memory TTL cache keyed by `(token_id, nonce)`
+- Periodic cleanup task
+- Optional defense-in-depth: semantic replay guard in CANode keyed by `token_id`
+
+### 19.8 Error Handling (SPECIFIC)
+
+**Required Behavior**:
+- Define precise error enum for each endpoint
+- Propagate to wire-level `CaError` with stable code and message
+
+**Error Codes**:
+- `unauthorized` (401): Missing/invalid mTLS for endpoints that require it
+- `forbidden` (403): Token invalid, token revoked, replay detected, admin SKI not allowed
+- `bad_request` (400): CSR CN mismatch, malformed CSR, algorithm mismatch, network_id mismatch
+- `conflict` (409): Duplicate enrollment for same device within restricted window
+- `rate_limited` (429): Exceeded rate limit for remote address or token
+- `internal` (500): Unexpected errors
+
+**Specific Error Mappings**:
+- CSR CN continuity failures: `bad_request` with reason `"csr_cn_mismatch"`
+- Token replay: `forbidden` with reason `"replay_detected"`
+- Admin SKI not permitted: `forbidden` with `"admin_not_authorized"`
+
+### 19.9 Implementation Priority Order
+
+1. **Critical** (blocking transport E2E):
+   - Device-based renewal authorization
+   - CRL-lite signing
+
+2. **Important**:
+   - Remote address rate limiting
+   - Binary protocol wire types alignment
+
+3. **Recommended**:
+   - Server certificate chains
+   - Anti-replay cache
+
+4. **Testing Updates**:
+   - Update primitives E2E test for new renewal auth
+   - Update full transport E2E test with real remote addresses
+   - Add negative tests for CN mismatch, replay detection
+   - Add signature verification for CRL-lite
+
+This implementation approach ensures a robust, design-compliant CA Node that is production-ready and free of shortcuts or workarounds.
 
 

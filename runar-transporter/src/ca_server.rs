@@ -12,15 +12,15 @@
 use anyhow::Result;
 use quinn::{Endpoint, ServerConfig};
 use runar_common::logging::Logger;
-use runar_keys::{
-    ca_node::CANode,
-    ca_node_types::{
-        CaErrorResponse, ChainRequest, ChainResponse, CrlRequest, CrlResponse, CsrEnrollRequest,
-        CsrEnrollResponse, RenewRequest, RevokeRequest, StatusRequest, StatusResponse,
-    },
-    certificate::EcdsaKeyPair,
+use std::net::SocketAddr;
+
+use crate::ca_types::{
+    CaErrorResponse, ChainRequest, ChainResponse, CrlRequest, CrlResponse, CsrEnrollRequest,
+    CsrEnrollResponse, RenewRequest, RenewRequestContext, RequestContext, RevokeRequest,
+    StatusRequest, StatusResponse,
 };
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_keys::{ca_node::CANode, certificate::EcdsaKeyPair};
+use runar_macros_common::{log_debug, log_info};
 use rustls::{server::WebPkiClientVerifier, RootCertStore, ServerConfig as RustlsServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde_cbor;
@@ -167,13 +167,12 @@ impl CaServer {
         // Start bootstrap server (server-auth only)
         let bootstrap_addr = self.start_bootstrap_server().await?;
         self.logger
-            .info(format!("Bootstrap server started on {}", bootstrap_addr));
+            .info(format!("Bootstrap server started on {bootstrap_addr}"));
 
         // Start authenticated server (mTLS required)
         let authenticated_addr = self.start_authenticated_server().await?;
         self.logger.info(format!(
-            "Authenticated server started on {}",
-            authenticated_addr
+            "Authenticated server started on {authenticated_addr}"
         ));
 
         self.logger.info("CA Node QUIC server fully started");
@@ -230,7 +229,7 @@ impl CaServer {
         });
 
         self.logger
-            .info(format!("Bootstrap server started on {}", bound_addr));
+            .info(format!("Bootstrap server started on {bound_addr}"));
         Ok(bound_addr)
     }
 
@@ -298,7 +297,7 @@ impl CaServer {
         });
 
         self.logger
-            .info(format!("Authenticated server started on {}", bound_addr));
+            .info(format!("Authenticated server started on {bound_addr}"));
         Ok(bound_addr)
     }
 
@@ -454,8 +453,12 @@ impl CaServer {
             match connection.accept_bi().await {
                 Ok((send, recv)) => {
                     let server = self.clone();
+                    let remote_addr = connection.remote_address();
                     tokio::spawn(async move {
-                        if let Err(e) = server.handle_bootstrap_stream(send, recv).await {
+                        if let Err(e) = server
+                            .handle_bootstrap_stream(send, recv, remote_addr)
+                            .await
+                        {
                             server.logger.error(format!("Bootstrap stream error: {e}"));
                         }
                     });
@@ -522,6 +525,7 @@ impl CaServer {
         &self,
         mut send: quinn::SendStream,
         mut recv: quinn::RecvStream,
+        remote_addr: SocketAddr,
     ) -> Result<()> {
         // Read request data
         let request_data = recv.read_to_end(1024 * 1024).await?;
@@ -553,7 +557,9 @@ impl CaServer {
             .ok_or_else(|| anyhow::anyhow!("Unknown message type: 0x{:04x}", message_type))?;
 
         // Handle the request based on message type
-        let response_data = self.handle_bootstrap_message(message_type, payload).await?;
+        let response_data = self
+            .handle_bootstrap_message(message_type, payload, remote_addr)
+            .await?;
 
         // Send response
         send.write_all(&response_data).await?;
@@ -600,12 +606,17 @@ impl CaServer {
 
         // Extract peer certificate from QUIC connection for mTLS validation
         let peer_cert_der = self
-            .extract_peer_certificate_from_connection(&connection)
+            .extract_peer_certificate_from_connection(connection)
             .await?;
 
         // Handle the request based on message type
         let response_data = self
-            .handle_authenticated_message(message_type, payload, peer_cert_der.as_deref())
+            .handle_authenticated_message(
+                message_type,
+                payload,
+                peer_cert_der.as_deref(),
+                connection.remote_address(),
+            )
             .await?;
 
         // Send response
@@ -619,6 +630,7 @@ impl CaServer {
     async fn handle_enroll_request_binary(
         &self,
         request: CsrEnrollRequest,
+        remote_addr: SocketAddr,
     ) -> Result<CsrEnrollResponse> {
         // Validate network_id
         if request.network_id != self.config.network_id {
@@ -627,7 +639,10 @@ impl CaServer {
 
         // Process enrollment via CA Node
         let mut ca_node = self.ca_node.write().unwrap();
-        let response = ca_node.handle_enroll(request, "127.0.0.1:12345")?;
+        let internal_request: runar_keys::ca_node_types::CsrEnrollRequest = request.into();
+        let internal_response =
+            ca_node.handle_enroll(internal_request, &remote_addr.to_string())?;
+        let response: CsrEnrollResponse = internal_response.into();
         Ok(response)
     }
 
@@ -640,7 +655,9 @@ impl CaServer {
 
         // Process chain request via CA Node
         let ca_node = self.ca_node.read().unwrap();
-        let response = ca_node.handle_chain()?;
+        let internal_request: runar_keys::ca_node_types::ChainRequest = request.into();
+        let internal_response = ca_node.handle_chain(request.network_id)?;
+        let response: ChainResponse = internal_response.into();
         Ok(response)
     }
 
@@ -653,7 +670,9 @@ impl CaServer {
 
         // Process CRL request via CA Node
         let ca_node = self.ca_node.read().unwrap();
-        let response = ca_node.handle_crl()?;
+        let internal_request: runar_keys::ca_node_types::CrlRequest = request.into();
+        let internal_response = ca_node.handle_crl(request.network_id)?;
+        let response: CrlResponse = internal_response.into();
         Ok(response)
     }
 
@@ -666,7 +685,9 @@ impl CaServer {
 
         // Process status request via CA Node
         let ca_node = self.ca_node.read().unwrap();
-        let response = ca_node.handle_status()?;
+        let internal_request: runar_keys::ca_node_types::StatusRequest = request.into();
+        let internal_response = ca_node.handle_status(request.network_id)?;
+        let response: StatusResponse = internal_response.into();
         Ok(response)
     }
 
@@ -675,13 +696,15 @@ impl CaServer {
         &self,
         message_type: CaMessageType,
         payload: &[u8],
+        remote_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
         match message_type {
             CaMessageType::CsrEnrollRequest => {
                 let request: CsrEnrollRequest = serde_cbor::from_slice(payload)?;
 
                 // Apply rate limiting for enrollment requests
-                let rate_key = format!("127.0.0.1:{}", request.enrollment_token.body.token_id);
+                let rate_key =
+                    format!("{}:{}", remote_addr, request.enrollment_token.body.token_id);
                 if !self.check_rate_limit(&rate_key).await? {
                     let error = CaErrorResponse {
                         code: "rate_limited".to_string(),
@@ -690,7 +713,9 @@ impl CaServer {
                     return self.create_binary_response(CaMessageType::ErrorResponse, &error);
                 }
 
-                let response = self.handle_enroll_request_binary(request).await?;
+                let response = self
+                    .handle_enroll_request_binary(request, remote_addr)
+                    .await?;
                 self.create_binary_response(CaMessageType::CsrEnrollResponse, &response)
             }
             CaMessageType::ChainRequest => {
@@ -714,6 +739,7 @@ impl CaServer {
         message_type: CaMessageType,
         payload: &[u8],
         peer_cert_der: Option<&[u8]>,
+        remote_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
         match message_type {
             CaMessageType::RenewRequest => {
@@ -721,18 +747,26 @@ impl CaServer {
                 let request: RenewRequest = serde_cbor::from_slice(payload)?;
                 log_debug!(self.logger, "Parsed renew request successfully");
 
-                // Extract peer SKI for device-based authorization
-                let peer_ski = if let Some(cert_der) = peer_cert_der {
-                    self.extract_peer_ski(cert_der)?
+                // Extract peer certificate for device-based authorization
+                let peer_cert_der = if let Some(cert_der) = peer_cert_der {
+                    cert_der
                 } else {
                     return Err(anyhow::anyhow!("No peer certificate for renewal request"));
                 };
-                log_debug!(self.logger, "Extracted peer SKI: {}", peer_ski);
+                log_debug!(
+                    self.logger,
+                    "Using peer certificate for device-based authorization"
+                );
 
-                // Update the renew handler to use real peer SKI
+                // Update the renew handler to use device-based authorization with peer certificate
                 let mut ca_node = self.ca_node.write().unwrap();
-                log_debug!(self.logger, "Calling ca_node.handle_renew");
-                let response = ca_node.handle_renew(request, &peer_ski)?;
+                log_debug!(
+                    self.logger,
+                    "Calling ca_node.handle_renew with peer certificate"
+                );
+                let internal_request: runar_keys::ca_node_types::RenewRequest = request.into();
+                let internal_response = ca_node.handle_renew(internal_request, peer_cert_der)?;
+                let response: RenewResponse = internal_response.into();
                 log_debug!(
                     self.logger,
                     "handle_renew succeeded, creating binary response"
@@ -776,7 +810,9 @@ impl CaServer {
                 );
 
                 let mut ca_node = self.ca_node.write().unwrap();
-                let response = ca_node.handle_revoke(request, &peer_ski)?;
+                let internal_request: runar_keys::ca_node_types::RevokeRequest = request.into();
+                let internal_response = ca_node.handle_revoke(internal_request, &peer_ski)?;
+                let response: RevokeResponse = internal_response.into();
                 log_debug!(
                     self.logger,
                     "handle_revoke succeeded, creating binary response"
