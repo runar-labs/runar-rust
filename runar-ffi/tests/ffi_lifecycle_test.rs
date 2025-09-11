@@ -67,8 +67,11 @@ fn test_complete_ffi_key_management_lifecycle() {
     unsafe { init_as_node(node_keys) };
 
     // Generate keys first
-    let mut state = 0i32;
-    let result = unsafe { rn_keys_node_get_keystore_state(node_keys, &mut state, &mut error) };
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
+    let result = unsafe {
+        rn_keys_node_get_keystore_state(node_keys, &mut state, &mut has_state, &mut error)
+    };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
@@ -515,11 +518,14 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     // Test 2: Get QUIC certificates from HYDRATED node (after serialization/deserialization)
     // In FFI, we test that the certificate was installed successfully by checking node state
-    let mut node_state = 0i32;
-    let result = unsafe { rn_keys_node_get_keystore_state(node_keys, &mut node_state, &mut error) };
+    let mut node_state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
+    let result = unsafe {
+        rn_keys_node_get_keystore_state(node_keys, &mut node_state, &mut has_state, &mut error)
+    };
     assert_eq!(result, 0, "Should successfully get node keystore state");
 
-    println!("   ✅ Node keystore state: {node_state}");
+    println!("   ✅ Node keystore state: {node_state:?}");
 
     // Additional local storage test
     let file_data_2 = b"This is secret file content to test after hydration.";

@@ -1,6 +1,11 @@
 ---
 alwaysApply: true
 ---
+
+Implement as per design 100%. no mocks, no stubs, no workarounds, no simplifications no hacks. stick to the deisgn 100% - no guesses, no assumnptions. read the code line by line to build a proper current undertnding -  All tests must test real funotinality. no mocks or stubs ever. 
+
+Before creating a test, check existin test properly - check carefully (no grep search, open each test file and check them all to make sure u dont duplicate tests and do not overlaping tests. keep it concise and organized)
+
 after making changes make sure the file compiles and all clippy warnings are fixed.
 
 run cargo clippy -p runar_node --all-targets --all-features -- -D warnings

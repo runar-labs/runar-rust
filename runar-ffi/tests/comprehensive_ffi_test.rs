@@ -410,12 +410,14 @@ fn test_node_encrypt_local_data_happy_path() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     let data = b"Secret data to encrypt";
@@ -486,13 +488,15 @@ fn test_node_get_keystore_state_happy_path() {
         message: ptr::null(),
     };
 
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
 
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
 
     // Should succeed (may return 0 or 1 depending on keystore state)
     assert!(result == 0, "Should succeed");
-    assert!(state == 0 || state == 1, "State should be 0 or 1");
+    assert!(has_state == 0 || has_state == 1, "State should be 0 or 1");
 
     destroy_keys_handle(keys);
 }
@@ -562,12 +566,14 @@ fn test_node_get_public_key_happy_path() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     let mut pk_ptr: *mut u8 = ptr::null_mut();
@@ -611,12 +617,14 @@ fn test_node_get_agreement_public_key_happy_path() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     let mut pk_ptr: *mut u8 = ptr::null_mut();
@@ -661,22 +669,24 @@ fn test_node_get_id_happy_path() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     let mut id_c: *mut i8 = ptr::null_mut();
-    let mut id_len: usize = 0;
+    let mut has_id: i32 = 0;
 
-    let result = rn_keys_node_get_node_id(keys, &mut id_c, &mut id_len, &mut error);
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut id_c, &mut has_id, &mut error) };
 
     assert_eq!(result, 0, "Should successfully get node ID");
     assert!(!id_c.is_null(), "Output should not be null");
-    assert!(id_len > 0, "Output length should be > 0");
+    assert_eq!(has_id, 1, "Should have node ID");
 
     // Clean up
     if !id_c.is_null() {
@@ -694,7 +704,9 @@ fn test_node_get_id_wrong_manager_type() {
         message: ptr::null(),
     };
 
-    let result = rn_keys_node_get_node_id(keys, ptr::null_mut(), ptr::null_mut(), &mut error);
+    let mut node_id: *mut i8 = ptr::null_mut();
+    let mut has_id: i32 = 0;
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, &mut error) };
 
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
@@ -930,8 +942,7 @@ fn test_node_get_node_id_v2_happy_path() {
     let mut node_id: *mut i8 = ptr::null_mut();
     let mut has_id = 0i32;
 
-    let result =
-        unsafe { rn_keys_node_get_node_id_v2(keys, &mut node_id, &mut has_id, &mut error) };
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, &mut error) };
 
     assert_eq!(result, 0, "Should successfully get node ID");
     assert_eq!(has_id, 1, "Should have a node ID");
@@ -951,16 +962,23 @@ fn test_node_get_node_id_v2_no_keys() {
     unsafe { init_as_node(keys) };
     let mut error = create_test_error();
 
-    // Don't generate keys, so there should be no node ID
+    // With new lifecycle, init_as_node automatically generates keys, so there should be a node ID
     let mut node_id: *mut i8 = ptr::null_mut();
     let mut has_id = 0i32;
 
-    let result =
-        unsafe { rn_keys_node_get_node_id_v2(keys, &mut node_id, &mut has_id, &mut error) };
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, &mut error) };
 
     assert_eq!(result, 0, "Should successfully check for node ID");
-    assert_eq!(has_id, 0, "Should not have a node ID");
-    assert!(node_id.is_null(), "Node ID should be null");
+    assert_eq!(
+        has_id, 1,
+        "Should have a node ID (keys generated by init_as_node)"
+    );
+    assert!(!node_id.is_null(), "Node ID should not be null");
+
+    // Clean up
+    if !node_id.is_null() {
+        rn_string_free(node_id);
+    }
 
     destroy_keys_handle(keys);
 }
@@ -970,29 +988,25 @@ fn test_node_get_node_id_v2_null_pointers() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
     let mut error = create_test_error();
+    let mut has_id = 0i32;
 
     // Test null keys handle
     let result = unsafe {
-        rn_keys_node_get_node_id_v2(
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &mut error,
-        )
+        rn_keys_node_get_node_id(ptr::null_mut(), ptr::null_mut(), &mut has_id, &mut error)
     };
-    assert_eq!(result, -1, "Should fail with null keys handle");
+    assert_eq!(result, 1, "Should fail with null keys handle");
 
     // Test null output pointers
     let result =
-        unsafe { rn_keys_node_get_node_id_v2(keys, ptr::null_mut(), ptr::null_mut(), &mut error) };
-    assert_eq!(result, -1, "Should fail with null output pointers");
+        unsafe { rn_keys_node_get_node_id(keys, ptr::null_mut(), &mut has_id, &mut error) };
+    assert_eq!(result, 1, "Should fail with null output pointers");
 
     // Test null error pointer
     let mut node_id: *mut i8 = ptr::null_mut();
     let mut has_id = 0i32;
     let result =
-        unsafe { rn_keys_node_get_node_id_v2(keys, &mut node_id, &mut has_id, ptr::null_mut()) };
-    assert_eq!(result, -1, "Should fail with null error pointer");
+        unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, ptr::null_mut()) };
+    assert_eq!(result, 1, "Should fail with null error pointer");
 
     destroy_keys_handle(keys);
 }
@@ -1006,8 +1020,7 @@ fn test_node_get_node_id_v2_wrong_manager_type() {
     let mut node_id: *mut i8 = ptr::null_mut();
     let mut has_id = 0i32;
 
-    let result =
-        unsafe { rn_keys_node_get_node_id_v2(keys, &mut node_id, &mut has_id, &mut error) };
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, &mut error) };
 
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
@@ -1026,8 +1039,7 @@ fn test_node_get_node_id_v2_not_initialized() {
     let mut node_id: *mut i8 = ptr::null_mut();
     let mut has_id = 0i32;
 
-    let result =
-        unsafe { rn_keys_node_get_node_id_v2(keys, &mut node_id, &mut has_id, &mut error) };
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, &mut error) };
 
     assert_eq!(
         result, RN_ERROR_NOT_INITIALIZED,
@@ -1677,7 +1689,7 @@ fn test_derive_user_profile_key_unicode_labels() {
     let unicode_labels = ["测试", "тест", "テスト", "🎯", "αβγ"];
     let mut derived_keys = Vec::new();
 
-    for label in &unicode_labels {
+    for label in unicode_labels.iter() {
         let label_cstr = create_cstring(label);
         let mut public_key: *mut u8 = ptr::null_mut();
         let mut public_key_len: usize = 0;
@@ -1700,7 +1712,7 @@ fn test_derive_user_profile_key_unicode_labels() {
     }
 
     // Verify all Unicode keys can be retrieved
-    for (_i, label) in unicode_labels.iter().enumerate() {
+    for label in unicode_labels.iter() {
         let label_cstr = create_cstring(label);
         let mut retrieved_key: *mut u8 = ptr::null_mut();
         let mut retrieved_key_len: usize = 0;
@@ -1838,7 +1850,7 @@ fn test_profile_key_workflow_multiple_labels() {
     let labels = ["profile1", "profile2", "profile3"];
     let mut derived_keys = Vec::new();
 
-    for label in &labels {
+    for label in labels.iter() {
         let label_cstr = create_cstring(label);
         let mut public_key: *mut u8 = ptr::null_mut();
         let mut public_key_len: usize = 0;
@@ -1861,7 +1873,7 @@ fn test_profile_key_workflow_multiple_labels() {
     }
 
     // Verify all keys can be retrieved by label
-    for (_i, label) in labels.iter().enumerate() {
+    for label in labels.iter() {
         let label_cstr = create_cstring(label);
         let mut retrieved_key: *mut u8 = ptr::null_mut();
         let mut retrieved_key_len: usize = 0;
@@ -2149,7 +2161,7 @@ fn test_profile_key_stress_test() {
     let mut derived_keys = Vec::new();
 
     for i in 0..num_keys {
-        let label = format!("stress-test-{}", i);
+        let label = format!("stress-test-{i}");
         let label_cstr = create_cstring(&label);
         let mut public_key: *mut u8 = ptr::null_mut();
         let mut public_key_len: usize = 0;
@@ -2170,7 +2182,7 @@ fn test_profile_key_stress_test() {
 
     // Verify all keys can be retrieved
     for i in 0..num_keys {
-        let label = format!("stress-test-{}", i);
+        let label = format!("stress-test-{i}");
         let label_cstr = create_cstring(&label);
         let mut retrieved_key: *mut u8 = ptr::null_mut();
         let mut retrieved_key_len: usize = 0;
@@ -2207,6 +2219,532 @@ fn test_profile_key_stress_test() {
 }
 
 // ============================================================================
+// CERTIFICATE MANAGEMENT TESTS (PHASE 2)
+// ============================================================================
+
+#[test]
+fn test_get_certificate_status_happy_path() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Generate keys first
+    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully generate keys");
+
+    let mut status: i32 = 0;
+    let result = unsafe { rn_keys_node_get_certificate_status(keys, &mut status, &mut error) };
+
+    assert_eq!(result, 0, "Should successfully get certificate status");
+    // Status should be 0 (None) since no certificate is installed yet
+    assert_eq!(status, 0, "Certificate status should be None");
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_get_certificate_status_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Test null keys handle
+    let result = unsafe {
+        rn_keys_node_get_certificate_status(ptr::null_mut(), ptr::null_mut(), &mut error)
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null keys handle"
+    );
+
+    // Test null status pointer
+    let result = unsafe { rn_keys_node_get_certificate_status(keys, ptr::null_mut(), &mut error) };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null status pointer"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_get_quic_certificate_config_no_certificate() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Generate keys first
+    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully generate keys");
+
+    let mut config: *mut u8 = ptr::null_mut();
+    let mut config_len: usize = 0;
+
+    // This should fail because no certificate is installed
+    let result = unsafe {
+        rn_keys_node_get_quic_certificate_config(keys, &mut config, &mut config_len, &mut error)
+    };
+    assert_eq!(
+        result, RN_ERROR_OPERATION_FAILED,
+        "Should fail when no certificate is installed"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_get_quic_certificate_config_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Test null keys handle
+    let result = unsafe {
+        rn_keys_node_get_quic_certificate_config(
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null keys handle"
+    );
+
+    // Test null config pointer
+    let result = unsafe {
+        rn_keys_node_get_quic_certificate_config(keys, ptr::null_mut(), ptr::null_mut(), &mut error)
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null config pointer"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_validate_peer_certificate_invalid_certificate() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Generate keys first
+    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully generate keys");
+
+    // Create invalid certificate data
+    let invalid_cert = b"not a valid certificate";
+    let result = unsafe {
+        rn_keys_node_validate_peer_certificate(
+            keys,
+            invalid_cert.as_ptr(),
+            invalid_cert.len(),
+            &mut error,
+        )
+    };
+
+    assert_eq!(
+        result, RN_ERROR_OPERATION_FAILED,
+        "Should fail with invalid certificate"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_validate_peer_certificate_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    let test_cert = b"test certificate";
+
+    // Test null keys handle
+    let result = unsafe {
+        rn_keys_node_validate_peer_certificate(
+            ptr::null_mut(),
+            test_cert.as_ptr(),
+            test_cert.len(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null keys handle"
+    );
+
+    // Test null certificate pointer
+    let result = unsafe {
+        rn_keys_node_validate_peer_certificate(keys, ptr::null(), test_cert.len(), &mut error)
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null certificate pointer"
+    );
+
+    // Test zero length
+    let result =
+        unsafe { rn_keys_node_validate_peer_certificate(keys, test_cert.as_ptr(), 0, &mut error) };
+    assert_eq!(
+        result, RN_ERROR_INVALID_ARGUMENT,
+        "Should fail with zero length"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+// ============================================================================
+// NETWORK KEY MANAGEMENT TESTS (PHASE 2)
+// ============================================================================
+
+#[test]
+fn test_install_network_key_invalid_message() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Generate keys first
+    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully generate keys");
+
+    // Create invalid network key message
+    let invalid_message = b"not valid cbor data";
+    let result = unsafe {
+        rn_keys_node_install_network_key(
+            keys,
+            invalid_message.as_ptr(),
+            invalid_message.len(),
+            &mut error,
+        )
+    };
+
+    assert_eq!(
+        result, RN_ERROR_SERIALIZATION_FAILED,
+        "Should fail with invalid message"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_install_network_key_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    let test_message = b"test message";
+
+    // Test null keys handle
+    let result = unsafe {
+        rn_keys_node_install_network_key(
+            ptr::null_mut(),
+            test_message.as_ptr(),
+            test_message.len(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null keys handle"
+    );
+
+    // Test null message pointer
+    let result = unsafe {
+        rn_keys_node_install_network_key(keys, ptr::null(), test_message.len(), &mut error)
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null message pointer"
+    );
+
+    // Test zero length
+    let result =
+        unsafe { rn_keys_node_install_network_key(keys, test_message.as_ptr(), 0, &mut error) };
+    assert_eq!(
+        result, RN_ERROR_INVALID_ARGUMENT,
+        "Should fail with zero length"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_get_network_agreement_no_key() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Generate keys first
+    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully generate keys");
+
+    // Try to get network agreement for non-existent key
+    let test_public_key = [0u8; 65];
+    let mut agreement: *mut u8 = ptr::null_mut();
+    let mut agreement_len: usize = 0;
+
+    let result = unsafe {
+        rn_keys_node_get_network_agreement(
+            keys,
+            test_public_key.as_ptr(),
+            test_public_key.len(),
+            &mut agreement,
+            &mut agreement_len,
+            &mut error,
+        )
+    };
+
+    assert_eq!(
+        result, RN_ERROR_OPERATION_FAILED,
+        "Should fail when network key doesn't exist"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_get_network_agreement_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    let test_public_key = [0u8; 65];
+
+    // Test null keys handle
+    let result = unsafe {
+        rn_keys_node_get_network_agreement(
+            ptr::null_mut(),
+            test_public_key.as_ptr(),
+            test_public_key.len(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null keys handle"
+    );
+
+    // Test null public key pointer
+    let result = unsafe {
+        rn_keys_node_get_network_agreement(
+            keys,
+            ptr::null(),
+            test_public_key.len(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null public key pointer"
+    );
+
+    // Test zero length
+    let result = unsafe {
+        rn_keys_node_get_network_agreement(
+            keys,
+            test_public_key.as_ptr(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with zero length (null output pointers)"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_has_network_private_key_no_key() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Generate keys first
+    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully generate keys");
+
+    // Check for non-existent network key
+    let test_public_key = [0u8; 65];
+    let mut has_key: i32 = 0;
+
+    let result = unsafe {
+        rn_keys_node_has_network_private_key(
+            keys,
+            test_public_key.as_ptr(),
+            test_public_key.len(),
+            &mut has_key,
+            &mut error,
+        )
+    };
+
+    assert_eq!(result, 0, "Should succeed");
+    assert_eq!(has_key, 0, "Should not have the key");
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_has_network_private_key_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    let test_public_key = [0u8; 65];
+
+    // Test null keys handle
+    let result = unsafe {
+        rn_keys_node_has_network_private_key(
+            ptr::null_mut(),
+            test_public_key.as_ptr(),
+            test_public_key.len(),
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null keys handle"
+    );
+
+    // Test null public key pointer
+    let result = unsafe {
+        rn_keys_node_has_network_private_key(
+            keys,
+            ptr::null(),
+            test_public_key.len(),
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null public key pointer"
+    );
+
+    // Test zero length
+    let result = unsafe {
+        rn_keys_node_has_network_private_key(
+            keys,
+            test_public_key.as_ptr(),
+            0,
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with zero length (null output pointer)"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_certificate_and_network_key_error_handling_consistency() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // Test that all certificate and network key functions use consistent error handling
+    let test_data = b"test data";
+    let mut status: i32 = 0;
+    let mut config: *mut u8 = ptr::null_mut();
+    let mut config_len: usize = 0;
+    let mut agreement: *mut u8 = ptr::null_mut();
+    let mut agreement_len: usize = 0;
+    let mut has_key: i32 = 0;
+
+    // Test certificate functions with null pointers
+    let result1 =
+        unsafe { rn_keys_node_get_certificate_status(ptr::null_mut(), &mut status, &mut error) };
+    assert_eq!(
+        result1, RN_ERROR_NULL_ARGUMENT,
+        "get_certificate_status should return RN_ERROR_NULL_ARGUMENT for null keys"
+    );
+
+    let result2 = unsafe {
+        rn_keys_node_get_quic_certificate_config(
+            ptr::null_mut(),
+            &mut config,
+            &mut config_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result2, RN_ERROR_NULL_ARGUMENT,
+        "get_quic_certificate_config should return RN_ERROR_NULL_ARGUMENT for null keys"
+    );
+
+    let result3 = unsafe {
+        rn_keys_node_validate_peer_certificate(
+            ptr::null_mut(),
+            test_data.as_ptr(),
+            test_data.len(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result3, RN_ERROR_NULL_ARGUMENT,
+        "validate_peer_certificate should return RN_ERROR_NULL_ARGUMENT for null keys"
+    );
+
+    // Test network key functions with null pointers
+    let result4 = unsafe {
+        rn_keys_node_install_network_key(
+            ptr::null_mut(),
+            test_data.as_ptr(),
+            test_data.len(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result4, RN_ERROR_NULL_ARGUMENT,
+        "install_network_key should return RN_ERROR_NULL_ARGUMENT for null keys"
+    );
+
+    let result5 = unsafe {
+        rn_keys_node_get_network_agreement(
+            ptr::null_mut(),
+            test_data.as_ptr(),
+            test_data.len(),
+            &mut agreement,
+            &mut agreement_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result5, RN_ERROR_NULL_ARGUMENT,
+        "get_network_agreement should return RN_ERROR_NULL_ARGUMENT for null keys"
+    );
+
+    let result6 = unsafe {
+        rn_keys_node_has_network_private_key(
+            ptr::null_mut(),
+            test_data.as_ptr(),
+            test_data.len(),
+            &mut has_key,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result6, RN_ERROR_NULL_ARGUMENT,
+        "has_network_private_key should return RN_ERROR_NULL_ARGUMENT for null keys"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+// ============================================================================
 // NEW CA NODE API TESTS (STUBS)
 // ============================================================================
 
@@ -2215,10 +2753,13 @@ fn test_ca_node_new_stub() {
     let mut error = create_test_error();
     let mut ca_node: *mut c_void = ptr::null_mut();
 
-    let result = rn_keys_ca_node_new(ptr::null_mut(), &mut ca_node, &mut error);
+    let result = unsafe { rn_keys_ca_node_new(ptr::null_mut(), &mut ca_node, &mut error) };
 
-    assert_eq!(result, -1, "Should fail as stub implementation");
-    assert!(ca_node.is_null(), "CA node should be null for stub");
+    assert_eq!(result, -1, "Should fail with null arguments");
+    assert!(
+        ca_node.is_null(),
+        "CA node should be null for null arguments"
+    );
 }
 
 #[test]
@@ -2237,16 +2778,22 @@ fn test_ca_server_new_stub() {
     let mut error = create_test_error();
     let mut server: *mut c_void = ptr::null_mut();
 
-    let result = rn_transport_ca_server_new(
-        ptr::null(),
-        ptr::null_mut(),
-        ptr::null_mut(),
-        &mut server,
-        &mut error,
-    );
+    let result = unsafe {
+        rn_transport_ca_server_new(
+            ptr::null(),
+            0, // config_len
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut server,
+            &mut error,
+        )
+    };
 
-    assert_eq!(result, -1, "Should fail as stub implementation");
-    assert!(server.is_null(), "Server should be null for stub");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null arguments"
+    );
+    assert!(server.is_null(), "Server should be null for null arguments");
 }
 
 #[test]
@@ -2265,10 +2812,13 @@ fn test_ca_client_new_stub() {
     let mut error = create_test_error();
     let mut client: *mut c_void = ptr::null_mut();
 
-    let result = rn_transport_ca_client_new(ptr::null_mut(), &mut client, &mut error);
+    let result = unsafe { rn_transport_ca_client_new(ptr::null_mut(), &mut client, &mut error) };
 
-    assert_eq!(result, -1, "Should fail as stub implementation");
-    assert!(client.is_null(), "Client should be null for stub");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null arguments"
+    );
+    assert!(client.is_null(), "Client should be null for null arguments");
 }
 
 #[test]
@@ -2311,8 +2861,7 @@ fn test_complete_v2_node_lifecycle() {
     // Step 4: Get node ID (may or may not exist depending on implementation)
     let mut node_id: *mut i8 = ptr::null_mut();
     let mut has_id = 0i32;
-    let result =
-        unsafe { rn_keys_node_get_node_id_v2(keys, &mut node_id, &mut has_id, &mut error) };
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, &mut error) };
     assert_eq!(result, 0, "Should successfully get node ID");
     // Node ID might not be available immediately after generation
     // This depends on the implementation details
@@ -2348,8 +2897,7 @@ fn test_v2_api_error_handling_consistency() {
 
     let mut node_id: *mut i8 = ptr::null_mut();
     let mut has_id = 0i32;
-    let result3 =
-        unsafe { rn_keys_node_get_node_id_v2(keys, &mut node_id, &mut has_id, &mut error) };
+    let result3 = unsafe { rn_keys_node_get_node_id(keys, &mut node_id, &mut has_id, &mut error) };
     assert_eq!(result3, 0, "get_node_id_v2 should succeed");
 
     // Clean up

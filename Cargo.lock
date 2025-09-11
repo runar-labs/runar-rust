@@ -3853,6 +3853,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "base64 0.21.7",
  "bincode",
  "cbindgen",
  "hex",

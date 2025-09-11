@@ -36,6 +36,22 @@
 
 #define RNAPIRN_ERROR_INVALID_ARGUMENT 11
 
+#define RNAPIRN_ERROR_CA_NODE_NOT_INITIALIZED 1001
+
+#define RNAPIRN_ERROR_CA_SERVER_NOT_RUNNING 1002
+
+#define RNAPIRN_ERROR_CA_CLIENT_CONNECTION_FAILED 1003
+
+#define RNAPIRN_ERROR_CERTIFICATE_VALIDATION_FAILED 1004
+
+#define RNAPIRN_ERROR_PROFILE_KEY_NOT_FOUND 1005
+
+#define RNAPIRN_ERROR_ENROLLMENT_TOKEN_INVALID 1006
+
+#define RNAPIRN_ERROR_RATE_LIMIT_EXCEEDED 1007
+
+#define RNAPIRN_ERROR_ADMIN_NOT_AUTHORIZED 1008
+
 typedef struct RNAPIKeysInner RNAPIKeysInner;
 
 typedef struct RNAPITransportInner RNAPITransportInner;
@@ -57,6 +73,45 @@ typedef struct RNAPIFfiKeysHandle {
 typedef struct RNAPIFfiTransportHandle {
   struct RNAPITransportInner *inner;
 } RNAPIFfiTransportHandle;
+
+/**
+ * CA Server Configuration (C-compatible)
+ */
+typedef struct RNAPICaServerConfig {
+  const char *bootstrap_bind;
+  const char *authenticated_bind;
+  const char *network_id;
+  uint32_t rate_limit_per_minute;
+  uint32_t rate_limit_per_hour;
+} RNAPICaServerConfig;
+
+/**
+ * CA Client Configuration (C-compatible)
+ */
+typedef struct RNAPICaClientConfig {
+  const uint8_t *root_ca_cert;
+  size_t root_ca_cert_len;
+  uint32_t timeout_seconds;
+} RNAPICaClientConfig;
+
+/**
+ * Certificate Status (C-compatible)
+ */
+typedef struct RNAPICertificateStatus {
+  int32_t is_valid;
+  uint64_t not_before;
+  uint64_t not_after;
+  char *serial_hex;
+} RNAPICertificateStatus;
+
+/**
+ * Profile Key Info (C-compatible)
+ */
+typedef struct RNAPIProfileKeyInfo {
+  char *profile_id;
+  uint8_t *public_key;
+  size_t public_key_len;
+} RNAPIProfileKeyInfo;
 
 void rn_free(uint8_t *_p, size_t _len);
 
@@ -81,7 +136,10 @@ int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RNAPIRnErro
 
 int32_t rn_keys_wipe_persistence(void *keys, struct RNAPIRnError *err);
 
-int32_t rn_keys_node_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
+int32_t rn_keys_node_get_keystore_state(void *keys,
+                                        char **out_state,
+                                        int32_t *out_has_state,
+                                        struct RNAPIRnError *err);
 
 int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
 
@@ -187,11 +245,6 @@ int32_t rn_keys_mobile_create_network_key_message(void *keys,
                                                   uint8_t **out_msg_cbor,
                                                   size_t *out_len,
                                                   struct RNAPIRnError *err);
-
-int32_t rn_keys_node_install_network_key(void *keys,
-                                         const uint8_t *nkm_cbor,
-                                         size_t nkm_len,
-                                         struct RNAPIRnError *err);
 
 int32_t rn_keys_decrypt_local_data(void *keys,
                                    const uint8_t *encrypted,
@@ -321,8 +374,8 @@ int32_t rn_keys_node_get_agreement_public_key(void *keys,
                                               struct RNAPIRnError *err);
 
 int32_t rn_keys_node_get_node_id(void *keys,
-                                 char **out_str,
-                                 size_t *out_len,
+                                 char **out_id,
+                                 int32_t *out_has_id,
                                  struct RNAPIRnError *err);
 
 int32_t rn_keys_node_generate_csr(void *keys,
@@ -415,14 +468,6 @@ int32_t rn_keys_node_has_keys_v2(void *keys, int32_t *out_has_keys, struct RNAPI
 int32_t rn_keys_node_generate_keys_v2(void *keys, struct RNAPIRnError *err);
 
 /**
- * Get node ID (new API with proper null handling)
- */
-int32_t rn_keys_node_get_node_id_v2(void *keys,
-                                    char **out_id,
-                                    int32_t *out_has_id,
-                                    struct RNAPIRnError *err);
-
-/**
  * Create new CA Node (new API)
  */
 int32_t rn_keys_ca_node_new(void *logger, void **out_ca_node, struct RNAPIRnError *err);
@@ -433,9 +478,93 @@ int32_t rn_keys_ca_node_new(void *logger, void **out_ca_node, struct RNAPIRnErro
 void rn_keys_ca_node_free(void *ca_node);
 
 /**
+ * Install issuing CA (new API)
+ */
+int32_t rn_keys_ca_node_install_issuing_ca(void *ca_node,
+                                           const uint8_t *issuing_ca_key,
+                                           size_t key_len,
+                                           const uint8_t *issuing_ca_cert,
+                                           size_t cert_len,
+                                           const uint8_t *root_ca_cert,
+                                           size_t root_cert_len,
+                                           const uint8_t *ea_public_keys,
+                                           size_t ea_keys_len,
+                                           struct RNAPIRnError *err);
+
+/**
+ * Configure enrollment authority (new API)
+ */
+int32_t rn_keys_ca_node_configure_enrollment_authority(void *ca_node,
+                                                       const uint8_t *ea_public_keys,
+                                                       size_t keys_len,
+                                                       struct RNAPIRnError *err);
+
+/**
+ * Handle enrollment request (new API)
+ */
+int32_t rn_keys_ca_node_handle_enroll(void *ca_node,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      const char *remote_addr,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RNAPIRnError *err);
+
+/**
+ * Handle renewal request (new API)
+ */
+int32_t rn_keys_ca_node_handle_renew(void *ca_node,
+                                     const uint8_t *request,
+                                     size_t request_len,
+                                     const uint8_t *peer_cert,
+                                     size_t cert_len,
+                                     uint8_t **out_response,
+                                     size_t *out_len,
+                                     struct RNAPIRnError *err);
+
+/**
+ * Handle revocation request (new API)
+ */
+int32_t rn_keys_ca_node_handle_revoke(void *ca_node,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      const char *admin_ski,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RNAPIRnError *err);
+
+/**
+ * Handle chain request (new API)
+ */
+int32_t rn_keys_ca_node_handle_chain(void *ca_node,
+                                     const char *network_id,
+                                     uint8_t **out_response,
+                                     size_t *out_len,
+                                     struct RNAPIRnError *err);
+
+/**
+ * Handle status request (new API)
+ */
+int32_t rn_keys_ca_node_handle_status(void *ca_node,
+                                      const char *network_id,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RNAPIRnError *err);
+
+/**
+ * Handle CRL request (new API)
+ */
+int32_t rn_keys_ca_node_handle_crl(void *ca_node,
+                                   const char *network_id,
+                                   uint8_t **out_response,
+                                   size_t *out_len,
+                                   struct RNAPIRnError *err);
+
+/**
  * Create new CA Server (new API)
  */
-int32_t rn_transport_ca_server_new(const void *config,
+int32_t rn_transport_ca_server_new(const uint8_t *config,
+                                   size_t _config_len,
                                    void *ca_node,
                                    void *logger,
                                    void **out_server,
@@ -447,12 +576,44 @@ int32_t rn_transport_ca_server_new(const void *config,
 void rn_transport_ca_server_free(void *server);
 
 /**
+ * Configure admin SKIs (new API)
+ */
+int32_t rn_transport_ca_server_configure_admin_skis(void *server,
+                                                    const uint8_t *admin_skis,
+                                                    size_t skis_len,
+                                                    struct RNAPIRnError *err);
+
+/**
+ * Start CA Server (new API)
+ */
+int32_t rn_transport_ca_server_start(void *server, struct RNAPIRnError *err);
+
+/**
+ * Stop CA Server (new API)
+ */
+int32_t rn_transport_ca_server_stop(void *server, struct RNAPIRnError *err);
+
+/**
+ * Get bootstrap address (new API)
+ */
+int32_t rn_transport_ca_server_get_bootstrap_addr(void *server,
+                                                  char **out_addr,
+                                                  struct RNAPIRnError *err);
+
+/**
+ * Get authenticated address (new API)
+ */
+int32_t rn_transport_ca_server_get_authenticated_addr(void *server,
+                                                      char **out_addr,
+                                                      struct RNAPIRnError *err);
+
+/**
  * Derive user profile key (new API)
  */
 int32_t rn_keys_node_derive_user_profile_key(void *keys,
                                              const char *label,
                                              uint8_t **out_public_key,
-                                             size_t *out_public_key_len,
+                                             size_t *out_len,
                                              struct RNAPIRnError *err);
 
 /**
@@ -460,10 +621,10 @@ int32_t rn_keys_node_derive_user_profile_key(void *keys,
  */
 int32_t rn_keys_node_decrypt_with_profile(void *keys,
                                           const uint8_t *envelope_data,
-                                          size_t envelope_data_len,
+                                          size_t envelope_len,
                                           const char *profile_id,
-                                          uint8_t **out_decrypted,
-                                          size_t *out_decrypted_len,
+                                          uint8_t **out_data,
+                                          size_t *out_len,
                                           struct RNAPIRnError *err);
 
 /**
@@ -485,6 +646,56 @@ int32_t rn_keys_node_get_profile_public_key_by_label(void *keys,
                                                      struct RNAPIRnError *err);
 
 /**
+ * Get certificate status
+ */
+int32_t rn_keys_node_get_certificate_status(void *keys,
+                                            int32_t *out_status,
+                                            struct RNAPIRnError *err);
+
+/**
+ * Get QUIC certificate configuration
+ */
+int32_t rn_keys_node_get_quic_certificate_config(void *keys,
+                                                 uint8_t **out_config,
+                                                 size_t *out_len,
+                                                 struct RNAPIRnError *err);
+
+/**
+ * Validate peer certificate
+ */
+int32_t rn_keys_node_validate_peer_certificate(void *keys,
+                                               const uint8_t *peer_cert,
+                                               size_t cert_len,
+                                               struct RNAPIRnError *err);
+
+/**
+ * Install network key (v2 API)
+ */
+int32_t rn_keys_node_install_network_key(void *keys,
+                                         const uint8_t *network_key_message,
+                                         size_t message_len,
+                                         struct RNAPIRnError *err);
+
+/**
+ * Get network agreement
+ */
+int32_t rn_keys_node_get_network_agreement(void *keys,
+                                           const uint8_t *network_public_key,
+                                           size_t key_len,
+                                           uint8_t **out_agreement,
+                                           size_t *out_len,
+                                           struct RNAPIRnError *err);
+
+/**
+ * Check if node has network private key
+ */
+int32_t rn_keys_node_has_network_private_key(void *keys,
+                                             const uint8_t *network_public_key,
+                                             size_t key_len,
+                                             int32_t *out_has_key,
+                                             struct RNAPIRnError *err);
+
+/**
  * Create new CA Client (new API)
  */
 int32_t rn_transport_ca_client_new(void *logger, void **out_client, struct RNAPIRnError *err);
@@ -493,6 +704,69 @@ int32_t rn_transport_ca_client_new(void *logger, void **out_client, struct RNAPI
  * Free CA Client (new API)
  */
 void rn_transport_ca_client_free(void *client);
+
+/**
+ * CA Client enroll (new API)
+ */
+int32_t rn_transport_ca_client_enroll(void *client,
+                                      const char *bootstrap_addr,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RNAPIRnError *err);
+
+/**
+ * CA Client renew (new API)
+ */
+int32_t rn_transport_ca_client_renew(void *client,
+                                     const char *authenticated_addr,
+                                     const uint8_t *request,
+                                     size_t request_len,
+                                     uint8_t **out_response,
+                                     size_t *out_len,
+                                     struct RNAPIRnError *err);
+
+/**
+ * CA Client revoke (new API)
+ */
+int32_t rn_transport_ca_client_revoke(void *client,
+                                      const char *authenticated_addr,
+                                      const uint8_t *request,
+                                      size_t request_len,
+                                      uint8_t **out_response,
+                                      size_t *out_len,
+                                      struct RNAPIRnError *err);
+
+/**
+ * CA Client get chain (new API)
+ */
+int32_t rn_transport_ca_client_get_chain(void *client,
+                                         const char *bootstrap_addr,
+                                         const char *network_id,
+                                         uint8_t **out_response,
+                                         size_t *out_len,
+                                         struct RNAPIRnError *err);
+
+/**
+ * CA Client get status (new API)
+ */
+int32_t rn_transport_ca_client_get_status(void *client,
+                                          const char *authenticated_addr,
+                                          const char *network_id,
+                                          uint8_t **out_response,
+                                          size_t *out_len,
+                                          struct RNAPIRnError *err);
+
+/**
+ * CA Client get CRL (new API)
+ */
+int32_t rn_transport_ca_client_get_crl(void *client,
+                                       const char *authenticated_addr,
+                                       const char *network_id,
+                                       uint8_t **out_response,
+                                       size_t *out_len,
+                                       struct RNAPIRnError *err);
 
 #endif /* RUNAR_FFI_H */
 

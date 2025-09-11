@@ -58,16 +58,18 @@ fn test_core_node_initialization_flow() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
     let mut error = create_test_error();
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     // Verify node functions work
     let mut id_ptr: *mut i8 = ptr::null_mut();
-    let mut id_len: usize = 0;
+    let mut has_id: i32 = 0;
 
-    let result = rn_keys_node_get_node_id(keys, &mut id_ptr, &mut id_len, &mut error);
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut id_ptr, &mut has_id, &mut error) };
     assert_eq!(result, 0, "Node function should work after node init");
 
     destroy_keys_handle(keys);
@@ -103,9 +105,9 @@ fn test_core_manager_type_isolation() {
     // Try to call node function - should fail with wrong manager type
     let mut error = create_test_error();
     let mut id_ptr: *mut i8 = ptr::null_mut();
-    let mut id_len: usize = 0;
+    let mut has_id: i32 = 0;
 
-    let result = rn_keys_node_get_node_id(keys, &mut id_ptr, &mut id_len, &mut error);
+    let result = unsafe { rn_keys_node_get_node_id(keys, &mut id_ptr, &mut has_id, &mut error) };
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
         "Node function should fail with mobile init"
@@ -147,9 +149,11 @@ fn test_core_basic_encryption_operations() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
     let mut error = create_test_error();
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     // Test local data encryption
@@ -186,9 +190,11 @@ fn test_core_basic_decryption_operations() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state = 0i32;
+    let mut state: *mut i8 = ptr::null_mut();
+    let mut has_state: i32 = 0;
     let mut error = create_test_error();
-    let result = unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut error) };
+    let result =
+        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
     assert_eq!(result, 0, "Should successfully get keystore state");
 
     // First encrypt some data

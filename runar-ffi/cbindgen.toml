@@ -9,5 +9,5 @@ trailer = "// End of runar_ffi"
 
 [export]
 prefix = "RNAPI"
-include = ["RnError", "FfiKeysHandle", "FfiTransportHandle"]
+include = ["RnError", "FfiKeysHandle", "FfiTransportHandle", "CaServerConfig", "CaClientConfig", "CertificateStatus", "ProfileKeyInfo"]
 

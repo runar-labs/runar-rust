@@ -31,9 +31,15 @@ fn two_transports_request_response() {
         );
 
         // Generate keys for A
-        let mut state = 0i32;
+        let mut state: *mut i8 = std::ptr::null_mut();
+        let mut has_state: i32 = 0;
         assert_eq!(
-            rn_keys_node_get_keystore_state(keys_a, &mut state, &mut err as *mut _ as *mut _),
+            rn_keys_node_get_keystore_state(
+                keys_a,
+                &mut state,
+                &mut has_state,
+                &mut err as *mut _ as *mut _
+            ),
             0
         );
 
@@ -47,7 +53,12 @@ fn two_transports_request_response() {
 
         // Generate keys for B
         assert_eq!(
-            rn_keys_node_get_keystore_state(keys_b, &mut state, &mut err as *mut _ as *mut _),
+            rn_keys_node_get_keystore_state(
+                keys_b,
+                &mut state,
+                &mut has_state,
+                &mut err as *mut _ as *mut _
+            ),
             0
         );
 
