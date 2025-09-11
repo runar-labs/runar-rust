@@ -172,6 +172,16 @@ impl CaServer {
         }
     }
 
+    /// Get the bootstrap bind address
+    pub fn bootstrap_bind(&self) -> SocketAddr {
+        self.config.bootstrap_bind
+    }
+
+    /// Get the authenticated bind address
+    pub fn authenticated_bind(&self) -> SocketAddr {
+        self.config.authenticated_bind
+    }
+
     /// Start the CA Node server with both bootstrap and authenticated binds
     pub async fn start(&mut self) -> Result<(SocketAddr, SocketAddr)> {
         self.logger.info("Starting CA Node QUIC server");

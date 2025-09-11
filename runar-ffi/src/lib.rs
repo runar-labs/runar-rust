@@ -5660,11 +5660,10 @@ pub unsafe extern "C" fn rn_transport_ca_server_get_bootstrap_addr(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let _server = &*(server as *const CaServer);
+    let server_ref = &*(server as *const CaServer);
 
-    // Get the bootstrap address from config
-    // Note: This is a simplified implementation - in practice, the server should store the actual bound addresses
-    let addr_str = "127.0.0.1:8443".to_string(); // Default bootstrap address
+    // Get the bootstrap address from server config
+    let addr_str = server_ref.bootstrap_bind().to_string();
     let addr_cstring = match std::ffi::CString::new(addr_str) {
         Ok(cstr) => cstr,
         Err(e) => {
@@ -5693,11 +5692,10 @@ pub unsafe extern "C" fn rn_transport_ca_server_get_authenticated_addr(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let _server = &*(server as *const CaServer);
+    let server_ref = &*(server as *const CaServer);
 
-    // Get the authenticated address from config
-    // Note: This is a simplified implementation - in practice, the server should store the actual bound addresses
-    let addr_str = "127.0.0.1:8444".to_string(); // Default authenticated address
+    // Get the authenticated address from server config
+    let addr_str = server_ref.authenticated_bind().to_string();
     let addr_cstring = match std::ffi::CString::new(addr_str) {
         Ok(cstr) => cstr,
         Err(e) => {
