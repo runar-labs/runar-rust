@@ -1,6 +1,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::{
+    error::Error,
     ffi::{c_void, CString},
     os::raw::c_char,
     ptr,
@@ -37,6 +38,13 @@ pub struct CaClientWrapper {
     pub root_ca_cert: Option<Vec<u8>>,
     pub issuing_ca_cert: Option<Vec<u8>>,
     pub node_key_manager: Option<Arc<std::sync::RwLock<NodeKeyManager>>>,
+}
+
+pub struct CaServerWrapper {
+    pub server: CaServer,
+    pub logger: Arc<Logger>,
+    pub bootstrap_addr: Option<String>,
+    pub authenticated_addr: Option<String>,
 }
 use serde_cbor as _; // keep dependency linked for now
                      // panic handling imports removed - no longer needed without ffi_guard
@@ -6370,9 +6378,16 @@ pub unsafe extern "C" fn rn_transport_ca_server_new(
     let ca_node_arc = Arc::new(RwLock::new(unsafe { std::ptr::read(ca_node) }));
     let server = CaServer::new(server_config, ca_node_arc, logger.clone());
 
-    let boxed_server = Box::new(server);
+    let wrapper = CaServerWrapper {
+        server,
+        logger: logger.clone(),
+        bootstrap_addr: None,
+        authenticated_addr: None,
+    };
+
+    let boxed_wrapper = Box::new(wrapper);
     unsafe {
-        *out_server = Box::into_raw(boxed_server) as *mut c_void;
+        *out_server = Box::into_raw(boxed_wrapper) as *mut c_void;
     }
 
     0
@@ -6382,7 +6397,7 @@ pub unsafe extern "C" fn rn_transport_ca_server_new(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_ca_server_free(server: *mut c_void) {
     if !server.is_null() {
-        let _ = Box::from_raw(server as *mut CaServer);
+        let _ = Box::from_raw(server as *mut CaServerWrapper);
     }
 }
 
@@ -6431,7 +6446,7 @@ pub unsafe extern "C" fn rn_transport_ca_server_start(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let server = &mut *(server as *mut CaServer);
+    let wrapper = &mut *(server as *mut CaServerWrapper);
 
     // Create a runtime for async operations
     let rt = match tokio::runtime::Runtime::new() {
@@ -6447,10 +6462,11 @@ pub unsafe extern "C" fn rn_transport_ca_server_start(
     };
 
     // Start the server
-    match rt.block_on(server.start()) {
-        Ok((_bootstrap_addr, _authenticated_addr)) => {
-            // Store the addresses in the server for later retrieval
-            // For now, we'll just return success
+    match rt.block_on(wrapper.server.start()) {
+        Ok((bootstrap_addr, authenticated_addr)) => {
+            // Store the addresses in the wrapper for later retrieval
+            wrapper.bootstrap_addr = Some(bootstrap_addr.to_string());
+            wrapper.authenticated_addr = Some(authenticated_addr.to_string());
             0
         }
         Err(e) => {
@@ -6475,7 +6491,7 @@ pub unsafe extern "C" fn rn_transport_ca_server_stop(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let server = &mut *(server as *mut CaServer);
+    let wrapper = &mut *(server as *mut CaServerWrapper);
 
     // Create a runtime for async operations
     let rt = match tokio::runtime::Runtime::new() {
@@ -6491,7 +6507,7 @@ pub unsafe extern "C" fn rn_transport_ca_server_stop(
     };
 
     // Stop the server
-    match rt.block_on(server.stop()) {
+    match rt.block_on(wrapper.server.stop()) {
         Ok(()) => 0,
         Err(e) => {
             set_error(
@@ -6516,11 +6532,21 @@ pub unsafe extern "C" fn rn_transport_ca_server_get_bootstrap_addr(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let server_ref = &*(server as *const CaServer);
+    let wrapper_ref = &*(server as *const CaServerWrapper);
 
-    // Get the bootstrap address from server config
-    let addr_str = server_ref.bootstrap_bind().to_string();
-    let addr_cstring = match std::ffi::CString::new(addr_str) {
+    // Get the bootstrap address from the wrapper (actual bound address)
+    let addr_str = match wrapper_ref.bootstrap_addr.as_ref() {
+        Some(addr) => addr,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Server not started or address not available",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    let addr_cstring = match std::ffi::CString::new(addr_str.as_str()) {
         Ok(cstr) => cstr,
         Err(e) => {
             set_error(
@@ -6548,11 +6574,21 @@ pub unsafe extern "C" fn rn_transport_ca_server_get_authenticated_addr(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let server_ref = &*(server as *const CaServer);
+    let wrapper_ref = &*(server as *const CaServerWrapper);
 
-    // Get the authenticated address from server config
-    let addr_str = server_ref.authenticated_bind().to_string();
-    let addr_cstring = match std::ffi::CString::new(addr_str) {
+    // Get the authenticated address from the wrapper (actual bound address)
+    let addr_str = match wrapper_ref.authenticated_addr.as_ref() {
+        Some(addr) => addr,
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Server not started or address not available",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+    let addr_cstring = match std::ffi::CString::new(addr_str.as_str()) {
         Ok(cstr) => cstr,
         Err(e) => {
             set_error(
@@ -7300,7 +7336,42 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
         }
     };
 
-    // Perform enrollment
+    // Perform enrollment (using configured bootstrap address from client config)
+    let bootstrap_addr_from_config = wrapper.config.bootstrap_server;
+    println!(
+        "DEBUG: FFI enroll - using bootstrap address from config: {}",
+        bootstrap_addr_from_config
+    );
+    println!(
+        "DEBUG: FFI enroll - bootstrap_addr parameter (ignored): {}",
+        _bootstrap_addr_str
+    );
+    println!(
+        "DEBUG: FFI enroll - client has root CA cert: {}",
+        wrapper.root_ca_cert.is_some()
+    );
+    println!(
+        "DEBUG: FFI enroll - client has issuing CA cert: {}",
+        wrapper.issuing_ca_cert.is_some()
+    );
+    println!(
+        "DEBUG: FFI enroll - client has node key manager: {}",
+        wrapper.node_key_manager.is_some()
+    );
+    println!(
+        "DEBUG: FFI enroll - network_id: {}",
+        wrapper.config.network_id
+    );
+    println!(
+        "DEBUG: FFI enroll - request_timeout: {:?}",
+        wrapper.config.request_timeout
+    );
+    println!(
+        "DEBUG: FFI enroll - max_retries: {}",
+        wrapper.config.max_retries
+    );
+
+    println!("DEBUG: Starting enrollment call...");
     match rt.block_on(client.enroll(enroll_request)) {
         Ok(response) => {
             // Serialize the response
@@ -7323,6 +7394,15 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
             }
         }
         Err(e) => {
+            println!("DEBUG: Enrollment error details: {:?}", e);
+            println!("DEBUG: Enrollment error chain:");
+            let mut source = e.source();
+            let mut level = 0;
+            while let Some(err) = source {
+                println!("DEBUG: Level {}: {}", level, err);
+                source = err.source();
+                level += 1;
+            }
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -7943,9 +8023,12 @@ pub unsafe extern "C" fn rn_transport_ca_client_configure(
         max_retries,
     };
 
-    // Update the existing wrapper's configuration
+    // Update the existing wrapper's configuration and recreate the client
     let wrapper = &mut *(client as *mut CaClientWrapper);
-    wrapper.config = config;
+    wrapper.config = config.clone();
+
+    // Recreate the client with the new configuration
+    wrapper.client = CaClient::new(config, wrapper.logger.clone());
 
     0
 }
@@ -7966,9 +8049,22 @@ pub unsafe extern "C" fn rn_transport_ca_client_set_root_ca_cert(
     // Copy certificate data
     let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
 
-    // Update the existing wrapper's root CA certificate
+    // Update the existing wrapper's root CA certificate and recreate the client
     let wrapper = &mut *(client as *mut CaClientWrapper);
-    wrapper.root_ca_cert = Some(cert_data);
+    wrapper.root_ca_cert = Some(cert_data.clone());
+
+    // Recreate the client with the updated configuration
+    let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
+    if let Some(node_key_manager) = &wrapper.node_key_manager {
+        new_client = new_client.with_node_key_manager(node_key_manager.clone());
+    }
+    if let Some(root_ca_cert) = &wrapper.root_ca_cert {
+        new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
+    }
+    if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
+        new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
+    }
+    wrapper.client = new_client;
 
     0
 }
@@ -7989,9 +8085,22 @@ pub unsafe extern "C" fn rn_transport_ca_client_set_issuing_ca_cert(
     // Copy certificate data
     let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
 
-    // Update the existing wrapper's issuing CA certificate
+    // Update the existing wrapper's issuing CA certificate and recreate the client
     let wrapper = &mut *(client as *mut CaClientWrapper);
-    wrapper.issuing_ca_cert = Some(cert_data);
+    wrapper.issuing_ca_cert = Some(cert_data.clone());
+
+    // Recreate the client with the updated configuration
+    let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
+    if let Some(node_key_manager) = &wrapper.node_key_manager {
+        new_client = new_client.with_node_key_manager(node_key_manager.clone());
+    }
+    if let Some(root_ca_cert) = &wrapper.root_ca_cert {
+        new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
+    }
+    if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
+        new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
+    }
+    wrapper.client = new_client;
 
     0
 }
@@ -8008,12 +8117,40 @@ pub unsafe extern "C" fn rn_transport_ca_client_set_node_key_manager(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let node_key_manager_arc =
-        &*(node_keys as *const std::sync::Arc<std::sync::RwLock<NodeKeyManager>>);
+    // Extract the NodeKeyManager from the FFI handle
+    let Some(inner) = with_keys_inner(node_keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
 
-    // Update the existing wrapper's node key manager
+    let node_key_manager_arc = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_HANDLE,
+                &format!("Invalid node manager: {:?}", e),
+            );
+            return RN_ERROR_INVALID_HANDLE;
+        }
+    };
+
+    // Update the existing wrapper's node key manager and recreate the client
     let wrapper = &mut *(client as *mut CaClientWrapper);
     wrapper.node_key_manager = Some(node_key_manager_arc.clone());
+
+    // Recreate the client with the updated configuration
+    let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
+    if let Some(node_key_manager) = &wrapper.node_key_manager {
+        new_client = new_client.with_node_key_manager(node_key_manager.clone());
+    }
+    if let Some(root_ca_cert) = &wrapper.root_ca_cert {
+        new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
+    }
+    if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
+        new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
+    }
+    wrapper.client = new_client;
 
     0
 }

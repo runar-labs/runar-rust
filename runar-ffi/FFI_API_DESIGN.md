@@ -1067,3 +1067,55 @@ This design provides a comprehensive update to the FFI API that:
 7. **Supports 100% of full_transport_e2e_test.rs functionality via FFI**
 
 The implementation should follow the phased approach to minimize risk and ensure each component is properly tested before moving to the next phase.
+
+## Helper Functions, Test Data Creation, Async Handling, Negative and Performance Tests
+
+### 6.1 Test Helper Functions (Rust test harness utilities)
+- `fn create_test_logger() -> *mut c_void`
+  - Construct `Arc<Logger>` and return opaque pointer.
+  - Used by: `rn_keys_ca_node_new`, `rn_transport_ca_server_new`, `rn_transport_ca_client_new`.
+- `fn create_test_error() -> RnError`
+  - Return zeroed `RnError` struct for FFI calls; pass `&mut err` everywhere.
+- `fn create_test_ecdsa_key_pair() -> Vec<u8>`
+  - Build P-256 keypair DER; used for Issuing CA and admin tests.
+- `fn create_test_certificate() -> Vec<u8>`
+  - Return DER certificate bytes (for invalid-cert negative tests).
+- `fn create_test_ea_public_keys() -> Vec<u8>`
+  - CBOR `Vec<Vec<u8>>` of EA public keys. Input for `rn_keys_ca_node_configure_enrollment_authority` and `rn_keys_ca_node_install_issuing_ca`.
+- `fn create_cstring(s: &str) -> CString`
+  - Build CStr for addresses, network_id, admin_ski, etc.
+
+### 6.2 Test Data Creation (precise usage)
+- `fn create_root_ca_certificate() -> Vec<u8>`
+  - DER root CA; pass as `root_ca_der` to `rn_keys_ca_node_install_issuing_ca`.
+- `fn create_issuing_ca_certificate() -> (Vec<u8>, Vec<u8>)`
+  - `(issuing_key_der, issuing_cert_der)`; pass to `rn_keys_ca_node_install_issuing_ca`.
+- `fn create_enrollment_token(network_id: &str, token_id: &str) -> Vec<u8>`
+  - CBOR `EnrollmentToken`; embed in `CsrEnrollRequest` passed to `rn_transport_ca_client_enroll`.
+- `fn create_test_csr(node_keys: *mut c_void) -> Vec<u8>`
+  - Calls `rn_keys_node_generate_csr` and returns the DER.
+
+### 6.3 Async Handling Strategy
+- All FFI are synchronous; async work is executed via internal runtimes.
+- Tests should call FFI serially. No external runtimes required.
+- Server readiness is ensured via `rn_transport_ca_server_get_*_addr`; short sleeps used only in rate-limit loops.
+
+### 6.4 Negative Test Cases (explicit API usage)
+- `test_invalid_enrollment_token()`
+  - Token: wrong `network_id` or expired.
+  - Call `rn_transport_ca_client_enroll(...)` → expect error; read `rn_last_error`.
+- `test_unauthorized_renewal()`
+  - Fresh node (no prior install), CSR via `rn_keys_node_generate_csr`.
+  - Call `rn_transport_ca_client_renew(...)` → expect error.
+- `test_rate_limit_exceeded()`
+  - 6 enroll calls with same token via `rn_transport_ca_client_enroll` in 1-minute window; last returns error.
+- `test_invalid_certificate()`
+  - Craft invalid `NodeCertificateMessage` CBOR and call `rn_keys_node_install_certificate` → expect error.
+
+### 6.5 Performance Validation
+- Time each FFI network call (enroll/renew/revoke/status/chain/crl) and assert under budget.
+- Burst tests: 100 enroll calls with distinct tokens; record p50/p95.
+- Memory: after each FFI that returns buffers, free via `rn_free`/`rn_string_free` and check for leaks.
+- Resilience: loop start/stop server while making client calls; enforce 45s test timeouts to catch deadlocks.
+
+All above use only the FFI APIs listed in the Authoritative Surface.

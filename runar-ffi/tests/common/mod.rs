@@ -120,3 +120,73 @@ pub fn create_test_ea_public_keys() -> Vec<u8> {
     let ea_keys = vec![public_key];
     serde_cbor::to_vec(&ea_keys).expect("Failed to serialize EA keys")
 }
+
+/// Create Root CA certificate
+#[allow(dead_code)]
+pub fn create_root_ca_certificate() -> Vec<u8> {
+    use runar_keys::certificate::CertificateAuthority;
+
+    let ca =
+        CertificateAuthority::new("CN=Test Root CA,O=Test,C=US").expect("Failed to create Root CA");
+    ca.ca_certificate().der_bytes().to_vec()
+}
+
+/// Create Issuing CA certificate (key and cert)
+#[allow(dead_code)]
+pub fn create_issuing_ca_certificate() -> (Vec<u8>, Vec<u8>) {
+    use runar_keys::certificate::{CertificateAuthority, CertificateRequest, EcdsaKeyPair};
+    use serde_cbor;
+
+    // Create Root CA
+    let root_ca =
+        CertificateAuthority::new("CN=Test Root CA,O=Test,C=US").expect("Failed to create Root CA");
+
+    // Create Issuing CA key
+    let issuing_key = EcdsaKeyPair::new().expect("Failed to create issuing CA key");
+
+    // Create Issuing CA CSR
+    let issuing_csr = CertificateRequest::create(&issuing_key, "CN=Test Issuing CA,O=Test,C=US")
+        .expect("Failed to create issuing CA CSR");
+
+    // Sign Issuing CA certificate
+    let issuing_cert = root_ca
+        .sign_ca_certificate_request_with_serial(&issuing_csr, 365, Some(1))
+        .expect("Failed to sign issuing CA certificate");
+
+    // Serialize key as CBOR (as expected by the FFI function)
+    let issuing_key_cbor =
+        serde_cbor::to_vec(&issuing_key).expect("Failed to serialize key as CBOR");
+
+    (issuing_key_cbor, issuing_cert.der_bytes().to_vec())
+}
+
+/// Create enrollment token
+#[allow(dead_code)]
+pub fn create_enrollment_token(network_id: &str, token_id: &str) -> Vec<u8> {
+    use runar_keys::certificate::EcdsaKeyPair;
+    use runar_keys::{EnrollmentToken, EnrollmentTokenBody};
+    use serde_cbor;
+    use std::time::SystemTime;
+
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let ea_key = EcdsaKeyPair::new().expect("Failed to create EA key");
+
+    let token_body = EnrollmentTokenBody::new(
+        token_id.to_string(),
+        network_id.to_string(),
+        Some("test_subject".to_string()),
+        now - 60,                                                // 1 minute ago
+        now + 3600,                                              // 1 hour
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], // nonce
+        vec!["enroll".to_string()],
+    );
+
+    let enrollment_token = EnrollmentToken::generate(&ea_key, token_body)
+        .expect("Failed to generate enrollment token");
+
+    serde_cbor::to_vec(&enrollment_token).expect("Failed to serialize enrollment token")
+}
