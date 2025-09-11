@@ -2749,17 +2749,39 @@ fn test_certificate_and_network_key_error_handling_consistency() {
 // ============================================================================
 
 #[test]
-fn test_ca_node_new_stub() {
+fn test_ca_node_new_happy_path() {
+    let logger = create_test_logger();
+    let mut error = create_test_error();
+    let mut ca_node: *mut c_void = ptr::null_mut();
+
+    let result = unsafe { rn_keys_ca_node_new(logger, &mut ca_node, &mut error) };
+
+    assert_eq!(result, 0, "Should successfully create CA node");
+    assert!(!ca_node.is_null(), "CA node should not be null");
+
+    // Clean up
+    unsafe { rn_keys_ca_node_free(ca_node) };
+}
+
+#[test]
+fn test_ca_node_new_null_logger() {
     let mut error = create_test_error();
     let mut ca_node: *mut c_void = ptr::null_mut();
 
     let result = unsafe { rn_keys_ca_node_new(ptr::null_mut(), &mut ca_node, &mut error) };
 
-    assert_eq!(result, -1, "Should fail with null arguments");
-    assert!(
-        ca_node.is_null(),
-        "CA node should be null for null arguments"
-    );
+    assert_eq!(result, -1, "Should fail with null logger");
+    assert!(ca_node.is_null(), "CA node should be null for null logger");
+}
+
+#[test]
+fn test_ca_node_new_null_output() {
+    let logger = create_test_logger();
+    let mut error = create_test_error();
+
+    let result = unsafe { rn_keys_ca_node_new(logger, ptr::null_mut(), &mut error) };
+
+    assert_eq!(result, -1, "Should fail with null output pointer");
 }
 
 #[test]
@@ -2767,6 +2789,74 @@ fn test_ca_node_free_null() {
     // Should handle null pointer gracefully
     unsafe { rn_keys_ca_node_free(ptr::null_mut()) };
     // No assertion needed - should not crash
+}
+
+#[test]
+fn test_ca_node_install_issuing_ca_happy_path() {
+    let logger = create_test_logger();
+    let mut error = create_test_error();
+    let mut ca_node: *mut c_void = ptr::null_mut();
+
+    // Create CA node first
+    let result = unsafe { rn_keys_ca_node_new(logger, &mut ca_node, &mut error) };
+    assert_eq!(result, 0, "Should successfully create CA node");
+    assert!(!ca_node.is_null(), "CA node should not be null");
+
+    // Create test certificates and keys
+    let test_key = create_test_ecdsa_key_pair();
+    let test_cert = create_test_certificate();
+    let test_root_cert = create_test_certificate();
+    let test_ea_keys = create_test_ea_public_keys();
+
+    // Install issuing CA
+    let result = unsafe {
+        rn_keys_ca_node_install_issuing_ca(
+            ca_node,
+            test_key.as_ptr(),
+            test_key.len(),
+            test_cert.as_ptr(),
+            test_cert.len(),
+            test_root_cert.as_ptr(),
+            test_root_cert.len(),
+            test_ea_keys.as_ptr(),
+            test_ea_keys.len(),
+            &mut error,
+        )
+    };
+
+    assert_eq!(result, 0, "Should successfully install issuing CA");
+
+    // Clean up
+    unsafe { rn_keys_ca_node_free(ca_node) };
+}
+
+#[test]
+fn test_ca_node_install_issuing_ca_null_ca_node() {
+    let mut error = create_test_error();
+    let test_key = create_test_ecdsa_key_pair();
+    let test_cert = create_test_certificate();
+    let test_root_cert = create_test_certificate();
+    let test_ea_keys = create_test_ea_public_keys();
+
+    let result = unsafe {
+        rn_keys_ca_node_install_issuing_ca(
+            ptr::null_mut(),
+            test_key.as_ptr(),
+            test_key.len(),
+            test_cert.as_ptr(),
+            test_cert.len(),
+            test_root_cert.as_ptr(),
+            test_root_cert.len(),
+            test_ea_keys.as_ptr(),
+            test_ea_keys.len(),
+            &mut error,
+        )
+    };
+
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null CA node"
+    );
 }
 
 // ============================================================================

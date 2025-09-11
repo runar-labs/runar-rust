@@ -79,3 +79,44 @@ pub fn create_test_error() -> RnError {
 pub fn create_cstring(s: &str) -> std::ffi::CString {
     std::ffi::CString::new(s).expect("Failed to create CString")
 }
+
+/// Create a test logger for CA operations
+#[allow(dead_code)]
+pub fn create_test_logger() -> *mut c_void {
+    use runar_common::logging::{Component, Logger};
+    use std::sync::Arc;
+
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
+    Box::into_raw(Box::new(logger)) as *mut c_void
+}
+
+/// Create test ECDSA key pair data
+#[allow(dead_code)]
+pub fn create_test_ecdsa_key_pair() -> Vec<u8> {
+    use runar_keys::certificate::EcdsaKeyPair;
+    use serde_cbor;
+
+    let key_pair = EcdsaKeyPair::new().expect("Failed to create test key pair");
+    serde_cbor::to_vec(&key_pair).expect("Failed to serialize key pair")
+}
+
+/// Create test certificate data
+#[allow(dead_code)]
+pub fn create_test_certificate() -> Vec<u8> {
+    use runar_keys::certificate::CertificateAuthority;
+
+    let ca = CertificateAuthority::new("CN=Test CA,O=Test,C=US").expect("Failed to create test CA");
+    ca.ca_certificate().der_bytes().to_vec()
+}
+
+/// Create test EA public keys data
+#[allow(dead_code)]
+pub fn create_test_ea_public_keys() -> Vec<u8> {
+    use runar_keys::certificate::EcdsaKeyPair;
+    use serde_cbor;
+
+    let key_pair = EcdsaKeyPair::new().expect("Failed to create test key pair");
+    let public_key = key_pair.public_key().as_bytes().to_vec();
+    let ea_keys = vec![public_key];
+    serde_cbor::to_vec(&ea_keys).expect("Failed to serialize EA keys")
+}
