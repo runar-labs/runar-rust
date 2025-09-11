@@ -269,6 +269,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             ca_node,
             renewal_request.as_ptr(),
             renewal_request.len(),
+            ptr::null(), // peer_cert - not needed for this test
+            0,           // cert_len
             &mut renewal_response_ptr,
             &mut renewal_response_len,
             &mut error,

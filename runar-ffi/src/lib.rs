@@ -44,6 +44,13 @@ use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
+// Serializable version of QuicCertificateConfig for FFI
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QuicConfigSerializable {
+    certificate_chain: Vec<Vec<u8>>,
+    private_key_der: Vec<u8>,
+}
+
 #[repr(C)]
 pub struct RnError {
     pub code: i32,
@@ -522,6 +529,41 @@ pub struct RnDeviceKeystoreCaps {
     pub flags: u32, // bitfield: 1=hardware_backed, 2=biometric_gate, 4=screenlock_required, 8=strongbox
 }
 
+/// Enrollment Token Parameters (C-compatible)
+#[repr(C)]
+pub struct EnrollmentTokenParams {
+    pub token_id: *const c_char,
+    pub network_id: *const c_char,
+    pub subject: *const c_char,
+    pub not_before: u64,
+    pub expires_at: u64,
+    pub nonce: *const u8,
+    pub nonce_len: usize,
+    pub permissions: *const u8,
+    pub permissions_len: usize,
+}
+
+/// Certificate Information (C-compatible)
+#[repr(C)]
+pub struct CertificateInfo {
+    pub cert_der: *mut u8,
+    pub cert_len: usize,
+    pub subject: *mut c_char,
+    pub serial_hex: *mut c_char,
+    pub ski_hex: *mut c_char,
+}
+
+/// Profile Key Encryption Parameters (C-compatible)
+#[repr(C)]
+pub struct ProfileKeyEncryptionParams {
+    pub data: *const u8,
+    pub data_len: usize,
+    pub network_key: *const u8,
+    pub network_key_len: usize,
+    pub profile_keys: *const u8,
+    pub profile_keys_len: usize,
+}
+
 fn map_caps(caps: keystore::DeviceKeystoreCaps) -> RnDeviceKeystoreCaps {
     let mut flags: u32 = 0;
     if caps.hardware_backed {
@@ -774,23 +816,7 @@ pub unsafe extern "C" fn rn_keys_node_get_keystore_state(
     if let Some(state) = state_result {
         match CString::new(state) {
             Ok(state_cstr) => {
-                let state_ptr = libc::malloc(state_cstr.as_bytes_with_nul().len()) as *mut c_char;
-                if state_ptr.is_null() {
-                    set_error(
-                        err,
-                        RN_ERROR_MEMORY_ALLOCATION,
-                        "failed to allocate memory for state",
-                    );
-                    return RN_ERROR_MEMORY_ALLOCATION;
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        state_cstr.as_ptr(),
-                        state_ptr,
-                        state_cstr.as_bytes_with_nul().len(),
-                    );
-                }
-                *out_state = state_ptr;
+                *out_state = state_cstr.into_raw();
             }
             Err(e) => {
                 set_error(
@@ -3666,60 +3692,6 @@ pub unsafe extern "C" fn rn_keys_mobile_from_renew_response(
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_install_certificate(
-    keys: *mut c_void,
-    ncm_cbor: *const u8,
-    ncm_len: usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
-        return 1;
-    };
-    if ncm_cbor.is_null() {
-        set_error(err, 4, "ncm_cbor is null");
-        return 4;
-    }
-    let slice = std::slice::from_raw_parts(ncm_cbor, ncm_len);
-    let msg: NodeCertificateMessage = match serde_cbor::from_slice(slice) {
-        Ok(m) => m,
-        Err(e) => {
-            set_error(
-                err,
-                2,
-                &format!("Failed to decode NodeCertificateMessage: {e}"),
-            );
-            return 2;
-        }
-    };
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    let mut node_manager = match manager.write() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    if let Err(e) = node_manager.install_certificate(msg) {
-        set_error(
-            err,
-            RN_ERROR_OPERATION_FAILED,
-            &format!("Failed to install certificate: {e}"),
-        );
-        return RN_ERROR_OPERATION_FAILED;
-    }
-    0
-}
-
 // Removed legacy state import/export APIs (no backwards compatibility)
 
 #[no_mangle]
@@ -5175,23 +5147,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -5263,23 +5222,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -5360,23 +5306,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -5440,23 +5373,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_chain(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -5520,23 +5440,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -5600,23 +5507,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -5791,21 +5685,11 @@ pub unsafe extern "C" fn rn_keys_ca_get_certificate_der(
     let ca = &*(ca as *const runar_keys::CertificateAuthority);
     let cert_der = ca.ca_certificate().der_bytes();
 
-    // Allocate memory for certificate DER
-    let cert_ptr = libc::malloc(cert_der.len()) as *mut u8;
-    if cert_ptr.is_null() {
-        set_error(
-            err,
-            RN_ERROR_MEMORY_ALLOCATION,
-            "Failed to allocate memory for certificate DER",
-        );
-        return RN_ERROR_MEMORY_ALLOCATION;
-    }
-
-    // Copy certificate data
-    std::ptr::copy_nonoverlapping(cert_der.as_ptr(), cert_ptr, cert_der.len());
+    // Allocate memory for certificate DER using Box::into_raw
+    let cert_len = cert_der.len();
+    let cert_ptr = Box::into_raw(cert_der.to_vec().into_boxed_slice()) as *mut u8;
     *out_cert = cert_ptr;
-    *out_len = cert_der.len();
+    *out_len = cert_len;
 
     0
 }
@@ -5838,24 +5722,8 @@ pub unsafe extern "C" fn rn_keys_ca_get_certificate_subject(
         }
     };
 
-    // Allocate memory for C string
-    let subject_ptr = libc::malloc(subject_cstr.as_bytes_with_nul().len()) as *mut c_char;
-    if subject_ptr.is_null() {
-        set_error(
-            err,
-            RN_ERROR_MEMORY_ALLOCATION,
-            "Failed to allocate memory for subject string",
-        );
-        return RN_ERROR_MEMORY_ALLOCATION;
-    }
-
-    // Copy string data
-    std::ptr::copy_nonoverlapping(
-        subject_cstr.as_ptr(),
-        subject_ptr,
-        subject_cstr.as_bytes_with_nul().len(),
-    );
-    *out_subject = subject_ptr;
+    // Allocate memory for C string using CString::into_raw
+    *out_subject = subject_cstr.into_raw();
 
     0
 }
@@ -5866,6 +5734,556 @@ pub unsafe extern "C" fn rn_keys_ca_free(ca: *mut c_void) {
     if !ca.is_null() {
         let _ = Box::from_raw(ca as *mut runar_keys::CertificateAuthority);
     }
+}
+
+// ============================================================================
+// ENROLLMENT TOKEN MANAGEMENT FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Generate enrollment token
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_enrollment_token_generate(
+    ea_key: *const u8,
+    key_len: usize,
+    token_id: *const c_char,
+    network_id: *const c_char,
+    subject: *const c_char,
+    not_before: u64,
+    expires_at: u64,
+    nonce: *const u8,
+    nonce_len: usize,
+    permissions: *const u8,
+    permissions_len: usize,
+    out_token: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key.is_null()
+        || token_id.is_null()
+        || network_id.is_null()
+        || subject.is_null()
+        || nonce.is_null()
+        || permissions.is_null()
+        || out_token.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse string parameters
+    let token_id_str = match std::ffi::CStr::from_ptr(token_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid token_id string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid network_id string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let subject_str = match std::ffi::CStr::from_ptr(subject).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid subject string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse nonce
+    let nonce_data = std::slice::from_raw_parts(nonce, nonce_len);
+    if nonce_data.len() != 16 {
+        set_error(
+            err,
+            RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+            "Nonce must be exactly 16 bytes",
+        );
+        return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+    }
+    let mut nonce_array = [0u8; 16];
+    nonce_array.copy_from_slice(nonce_data);
+
+    // Parse permissions
+    let permissions_data = std::slice::from_raw_parts(permissions, permissions_len);
+    let permissions_vec: Vec<String> = match serde_cbor::from_slice(permissions_data) {
+        Ok(p) => p,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to parse permissions: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Parse EA key using runar-keys function
+    let ea_key_data = std::slice::from_raw_parts(ea_key, key_len);
+    let ea_key_pair = match runar_keys::certificate::EcdsaKeyPair::from_pkcs8_der(ea_key_data) {
+        Ok(key_pair) => key_pair,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to parse EA key: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Create token body
+    let token_body = runar_keys::EnrollmentTokenBody {
+        token_id: token_id_str.to_string(),
+        network_id: network_id_str.to_string(),
+        subject_hint: Some(subject_str.to_string()),
+        not_before,
+        expires_at,
+        nonce: nonce_array,
+        permissions: permissions_vec,
+    };
+
+    // Generate token
+    let token = match runar_keys::EnrollmentToken::generate(&ea_key_pair, token_body) {
+        Ok(t) => t,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to generate enrollment token: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Serialize token to CBOR
+    let token_cbor = match serde_cbor::to_vec(&token) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED,
+                &format!("Failed to serialize token: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED;
+        }
+    };
+
+    // Allocate memory for token using Box::into_raw
+    let token_len = token_cbor.len();
+    let token_ptr = Box::into_raw(token_cbor.into_boxed_slice()) as *mut u8;
+    *out_token = token_ptr;
+    *out_len = token_len;
+
+    0
+}
+
+/// Validate enrollment token
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_enrollment_token_validate(
+    token: *const u8,
+    token_len: usize,
+    ea_public_key: *const u8,
+    key_len: usize,
+    out_valid: *mut i32,
+    err: *mut RnError,
+) -> i32 {
+    if token.is_null() || ea_public_key.is_null() || out_valid.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse token
+    let token_data = std::slice::from_raw_parts(token, token_len);
+    let enrollment_token = match serde_cbor::from_slice::<runar_keys::EnrollmentToken>(token_data) {
+        Ok(t) => t,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_INVALID,
+                &format!("Failed to parse token: {e}"),
+            );
+            return RN_ERROR_ENROLLMENT_TOKEN_INVALID;
+        }
+    };
+
+    // Parse EA public key
+    let ea_public_key_data = std::slice::from_raw_parts(ea_public_key, key_len);
+
+    // Validate token
+    match enrollment_token.verify(ea_public_key_data) {
+        Ok(_) => {
+            *out_valid = 1; // Valid
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_ENROLLMENT_TOKEN_INVALID,
+                &format!("Token validation failed: {e}"),
+            );
+            *out_valid = 0; // Invalid
+            RN_ERROR_ENROLLMENT_TOKEN_INVALID
+        }
+    }
+}
+
+// ============================================================================
+// CERTIFICATE MANAGEMENT FFI FUNCTIONS (NEW)
+// ============================================================================
+
+/// Get QUIC certificate configuration
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_quic_certificate_config(
+    keys: *mut c_void,
+    out_config: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_config.is_null() || out_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get QUIC certificate config
+    let quic_config = match node_manager.get_quic_certificate_config() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to get QUIC certificate config: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create a serializable representation of the QUIC config
+    let serializable_config = QuicConfigSerializable {
+        certificate_chain: quic_config
+            .certificate_chain
+            .iter()
+            .map(|cert| cert.as_ref().to_vec())
+            .collect(),
+        private_key_der: match &quic_config.private_key {
+            rustls_pki_types::PrivateKeyDer::Pkcs8(pkcs8) => pkcs8.secret_pkcs8_der().to_vec(),
+            _ => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    "Unsupported private key format",
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
+        },
+    };
+
+    // Serialize to CBOR
+    let config_cbor = match serde_cbor::to_vec(&serializable_config) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to serialize QUIC config: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Allocate memory for config using Box::into_raw
+    let config_len = config_cbor.len();
+    let config_ptr = Box::into_raw(config_cbor.into_boxed_slice()) as *mut u8;
+    *out_config = config_ptr;
+    *out_len = config_len;
+
+    0
+}
+
+/// Get node certificate
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
+    keys: *mut c_void,
+    out_cert: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_cert.is_null() || out_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Get node certificate
+    let cert_der = match node_manager.get_node_certificate() {
+        Some(cert) => cert.der_bytes(),
+        None => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "No node certificate installed",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Allocate memory for certificate using Box::into_raw
+    let cert_len = cert_der.len();
+    let cert_ptr = Box::into_raw(cert_der.to_vec().into_boxed_slice()) as *mut u8;
+    *out_cert = cert_ptr;
+    *out_len = cert_len;
+
+    0
+}
+
+/// Install certificate from certificate message
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_install_certificate(
+    keys: *mut c_void,
+    cert_message: *const u8,
+    cert_message_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || cert_message.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mut node_manager = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse certificate message
+    let cert_message_data = std::slice::from_raw_parts(cert_message, cert_message_len);
+    let cert_msg = match serde_cbor::from_slice::<runar_keys::mobile::NodeCertificateMessage>(
+        cert_message_data,
+    ) {
+        Ok(msg) => msg,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse certificate message: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Install certificate
+    match node_manager.install_certificate(cert_msg) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to install certificate: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Extract certificate SKI
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
+    cert: *const u8,
+    cert_len: usize,
+    out_ski: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if cert.is_null() || out_ski.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse certificate
+    let cert_data = std::slice::from_raw_parts(cert, cert_len);
+    let certificate = match runar_keys::certificate::X509Certificate::from_der(cert_data.to_vec()) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED,
+                &format!("Failed to parse certificate: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED;
+        }
+    };
+
+    // Extract SKI using runar-keys function
+    let ski_bytes = match runar_keys::certificate::CertificateValidator::extract_ski(&certificate) {
+        Ok(ski) => ski,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED,
+                &format!("Failed to extract SKI: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED;
+        }
+    };
+
+    // Convert to hex string
+    let ski_hex = ski_bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("");
+    let ski_cstr = match std::ffi::CString::new(ski_hex) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid SKI hex string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Allocate memory for SKI string using CString::into_raw
+    *out_ski = ski_cstr.into_raw();
+
+    0
+}
+
+/// Get certificate serial
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_certificate_get_serial(
+    cert: *const u8,
+    cert_len: usize,
+    out_serial: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if cert.is_null() || out_serial.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse certificate
+    let cert_data = std::slice::from_raw_parts(cert, cert_len);
+    let certificate = match runar_keys::certificate::X509Certificate::from_der(cert_data.to_vec()) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED,
+                &format!("Failed to parse certificate: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED;
+        }
+    };
+
+    // Get serial number using parsed certificate
+    let parsed_cert = match certificate.parsed() {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED,
+                &format!("Failed to parse certificate: {e}"),
+            );
+            return RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED;
+        }
+    };
+    let serial_bytes = parsed_cert.serial.to_bytes_be();
+    let serial_hex = serial_bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("");
+    let serial_cstr = match std::ffi::CString::new(serial_hex) {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid serial hex string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Allocate memory for serial string using CString::into_raw
+    *out_serial = serial_cstr.into_raw();
+
+    0
 }
 
 // ============================================================================
@@ -6507,58 +6925,6 @@ pub unsafe extern "C" fn rn_keys_node_get_certificate_serial(
     }
 }
 
-/// Get QUIC certificate configuration
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_get_quic_certificate_config(
-    keys: *mut c_void,
-    out_config: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    if keys.is_null() || out_config.is_null() || out_len.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    let _config = match manager.read().unwrap().get_quic_certificate_config() {
-        Ok(config) => config,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to get QUIC config: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // For now, return a simple success indicator since QuicCertificateConfig doesn't implement Serialize
-    // In a real implementation, you might want to create a serializable wrapper or extract specific fields
-    let config_bytes = b"QUIC_CERT_CONFIG_AVAILABLE".to_vec();
-
-    let config_len = config_bytes.len();
-    let config_ptr = Box::into_raw(config_bytes.into_boxed_slice()) as *mut u8;
-
-    unsafe {
-        *out_config = config_ptr;
-        *out_len = config_len;
-    }
-    0
-}
-
 /// Validate peer certificate
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_node_validate_peer_certificate(
@@ -6940,23 +7306,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -7038,23 +7391,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -7136,23 +7476,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_revoke(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -7219,23 +7546,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_chain(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -7302,23 +7616,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_status(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -7385,23 +7686,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_ptr = libc::malloc(response_data.len()) as *mut u8;
-                    if response_ptr.is_null() {
-                        set_error(
-                            err,
-                            RN_ERROR_MEMORY_ALLOCATION,
-                            "Failed to allocate memory for response",
-                        );
-                        return RN_ERROR_MEMORY_ALLOCATION;
-                    }
-
-                    std::ptr::copy_nonoverlapping(
-                        response_data.as_ptr(),
-                        response_ptr,
-                        response_data.len(),
-                    );
+                    let response_len = response_data.len();
+                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
-                    *out_len = response_data.len();
+                    *out_len = response_len;
                     0
                 }
                 Err(e) => {
@@ -7454,20 +7742,11 @@ pub unsafe extern "C" fn rn_keys_node_generate_csr_v2(
     match manager.write().unwrap().generate_csr() {
         Ok(csr) => {
             let csr_data = csr.csr_der;
-            let csr_ptr = libc::malloc(csr_data.len()) as *mut u8;
-            if csr_ptr.is_null() {
-                set_error(
-                    err,
-                    RN_ERROR_MEMORY_ALLOCATION,
-                    "Failed to allocate memory for CSR",
-                );
-                return RN_ERROR_MEMORY_ALLOCATION;
-            }
-
-            std::ptr::copy_nonoverlapping(csr_data.as_ptr(), csr_ptr, csr_data.len());
+            let csr_len = csr_data.len();
+            let csr_ptr = Box::into_raw(csr_data.into_boxed_slice()) as *mut u8;
             unsafe {
                 *out_csr = csr_ptr;
-                *out_len = csr_data.len();
+                *out_len = csr_len;
             }
             0
         }
@@ -7737,4 +8016,164 @@ pub unsafe extern "C" fn rn_transport_ca_client_set_node_key_manager(
     wrapper.node_key_manager = Some(node_key_manager_arc.clone());
 
     0
+}
+
+/// Get compact ID for profile key
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_get_compact_id(
+    public_key: *const u8,
+    key_len: usize,
+    out_id: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if public_key.is_null() || out_id.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let key_data = std::slice::from_raw_parts(public_key, key_len);
+
+    // Generate compact ID using runar-keys function
+    let compact_id = runar_common::compact_ids::compact_id(key_data);
+
+    // Convert to C string
+    match CString::new(compact_id) {
+        Ok(id_cstr) => {
+            *out_id = id_cstr.into_raw();
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to create compact ID string: {e}"),
+            );
+            RN_ERROR_INVALID_UTF8
+        }
+    }
+}
+
+/// Add admin SKI to CA Node
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
+    ca_node: *mut c_void,
+    ski: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || ski.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Parse SKI string
+    let ski_str = match std::ffi::CStr::from_ptr(ski).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid SKI string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Get CA Node reference
+    let ca_node = &mut *(ca_node as *mut CANode);
+
+    // Add admin SKI using runar-keys function
+    ca_node.add_admin_ski(ski_str.to_string());
+
+    0
+}
+
+/// Revoke enrollment token
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_revoke_token(
+    ca_node: *mut c_void,
+    token_id: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || token_id.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Parse token ID string
+    let token_id_str = match std::ffi::CStr::from_ptr(token_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid token ID string: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Get CA Node reference
+    let ca_node = &mut *(ca_node as *mut CANode);
+
+    // Revoke token using runar-keys function
+    match ca_node.revoke_token(token_id_str.to_string()) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to revoke token: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Generate CRL-lite
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_generate_crl_lite(
+    ca_node: *mut c_void,
+    out_crl: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || out_crl.is_null() || out_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Get CA Node reference
+    let ca_node = &*(ca_node as *const CANode);
+
+    // Generate CRL-lite using runar-keys function
+    match ca_node.generate_crl_lite() {
+        Ok(crl) => {
+            // Serialize CRL to CBOR
+            match serde_cbor::to_vec(&crl) {
+                Ok(crl_cbor) => {
+                    let crl_len = crl_cbor.len();
+                    let crl_ptr = Box::into_raw(crl_cbor.into_boxed_slice()) as *mut u8;
+                    *out_crl = crl_ptr;
+                    *out_len = crl_len;
+                    0
+                }
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to serialize CRL: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
+            }
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate CRL: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
 }

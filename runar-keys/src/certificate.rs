@@ -59,6 +59,13 @@ impl EcdsaKeyPair {
         }
     }
 
+    /// Create from PKCS#8 DER-encoded private key
+    pub fn from_pkcs8_der(private_key_der: &[u8]) -> Result<Self> {
+        let signing_key = SigningKey::from_pkcs8_der(private_key_der)
+            .map_err(|e| KeyError::InvalidKeyFormat(format!("Failed to parse PKCS#8 DER: {e}")))?;
+        Ok(Self::from_signing_key(signing_key))
+    }
+
     /// Get public key as raw bytes (uncompressed SEC1 point)
     pub fn public_key_bytes(&self) -> Vec<u8> {
         self.verifying_key

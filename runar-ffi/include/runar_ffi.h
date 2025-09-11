@@ -430,11 +430,6 @@ int32_t rn_keys_mobile_from_renew_response(void *mobile,
                                            size_t *out_len,
                                            struct RNAPIRnError *err);
 
-int32_t rn_keys_node_install_certificate(void *keys,
-                                         const uint8_t *ncm_cbor,
-                                         size_t ncm_len,
-                                         struct RNAPIRnError *err);
-
 int32_t rn_transport_new_with_keys(void *keys,
                                    const uint8_t *options_cbor,
                                    size_t options_len,
@@ -634,6 +629,74 @@ int32_t rn_keys_ca_get_certificate_subject(void *ca, char **out_subject, struct 
 void rn_keys_ca_free(void *ca);
 
 /**
+ * Generate enrollment token
+ */
+int32_t rn_keys_enrollment_token_generate(const uint8_t *ea_key,
+                                          size_t key_len,
+                                          const char *token_id,
+                                          const char *network_id,
+                                          const char *subject,
+                                          uint64_t not_before,
+                                          uint64_t expires_at,
+                                          const uint8_t *nonce,
+                                          size_t nonce_len,
+                                          const uint8_t *permissions,
+                                          size_t permissions_len,
+                                          uint8_t **out_token,
+                                          size_t *out_len,
+                                          struct RNAPIRnError *err);
+
+/**
+ * Validate enrollment token
+ */
+int32_t rn_keys_enrollment_token_validate(const uint8_t *token,
+                                          size_t token_len,
+                                          const uint8_t *ea_public_key,
+                                          size_t key_len,
+                                          int32_t *out_valid,
+                                          struct RNAPIRnError *err);
+
+/**
+ * Get QUIC certificate configuration
+ */
+int32_t rn_keys_node_get_quic_certificate_config(void *keys,
+                                                 uint8_t **out_config,
+                                                 size_t *out_len,
+                                                 struct RNAPIRnError *err);
+
+/**
+ * Get node certificate
+ */
+int32_t rn_keys_node_get_node_certificate(void *keys,
+                                          uint8_t **out_cert,
+                                          size_t *out_len,
+                                          struct RNAPIRnError *err);
+
+/**
+ * Install certificate from certificate message
+ */
+int32_t rn_keys_node_install_certificate(void *keys,
+                                         const uint8_t *cert_message,
+                                         size_t cert_message_len,
+                                         struct RNAPIRnError *err);
+
+/**
+ * Extract certificate SKI
+ */
+int32_t rn_keys_certificate_extract_ski(const uint8_t *cert,
+                                        size_t cert_len,
+                                        char **out_ski,
+                                        struct RNAPIRnError *err);
+
+/**
+ * Get certificate serial
+ */
+int32_t rn_keys_certificate_get_serial(const uint8_t *cert,
+                                       size_t cert_len,
+                                       char **out_serial,
+                                       struct RNAPIRnError *err);
+
+/**
  * Create new CA Server (new API)
  */
 int32_t rn_transport_ca_server_new(const uint8_t *config,
@@ -731,14 +794,6 @@ int32_t rn_keys_node_get_certificate_status(void *keys,
 int32_t rn_keys_node_get_certificate_serial(void *keys,
                                             char **out_serial,
                                             struct RNAPIRnError *err);
-
-/**
- * Get QUIC certificate configuration
- */
-int32_t rn_keys_node_get_quic_certificate_config(void *keys,
-                                                 uint8_t **out_config,
-                                                 size_t *out_len,
-                                                 struct RNAPIRnError *err);
 
 /**
  * Validate peer certificate
@@ -902,6 +957,32 @@ int32_t rn_transport_ca_client_set_issuing_ca_cert(void *client,
 int32_t rn_transport_ca_client_set_node_key_manager(void *client,
                                                     void *node_keys,
                                                     struct RNAPIRnError *err);
+
+/**
+ * Get compact ID for profile key
+ */
+int32_t rn_keys_get_compact_id(const uint8_t *public_key,
+                               size_t key_len,
+                               char **out_id,
+                               struct RNAPIRnError *err);
+
+/**
+ * Add admin SKI to CA Node
+ */
+int32_t rn_keys_ca_node_add_admin_ski(void *ca_node, const char *ski, struct RNAPIRnError *err);
+
+/**
+ * Revoke enrollment token
+ */
+int32_t rn_keys_ca_node_revoke_token(void *ca_node, const char *token_id, struct RNAPIRnError *err);
+
+/**
+ * Generate CRL-lite
+ */
+int32_t rn_keys_ca_node_generate_crl_lite(void *ca_node,
+                                          uint8_t **out_crl,
+                                          size_t *out_len,
+                                          struct RNAPIRnError *err);
 
 #endif /* RUNAR_FFI_H */
 
