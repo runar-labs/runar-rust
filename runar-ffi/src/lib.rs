@@ -36,8 +36,8 @@ pub struct CaClientWrapper {
     pub client: CaClient,
     pub config: runar_transporter::CaClientConfig,
     pub logger: Arc<Logger>,
-    pub root_ca_cert: Option<Vec<u8>>,
-    pub issuing_ca_cert: Option<Vec<u8>>,
+    pub root_ca_cert: Vec<u8>,    // Required, not optional
+    pub issuing_ca_cert: Vec<u8>, // Required, not optional
     pub node_key_manager: Option<Arc<std::sync::RwLock<NodeKeyManager>>>,
 }
 
@@ -6449,21 +6449,8 @@ pub unsafe extern "C" fn rn_transport_ca_server_start(
 
     let wrapper = &mut *(server as *mut CaServerWrapper);
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Start the server
-    match rt.block_on(wrapper.server.start()) {
+    // Start the server using shared runtime
+    match runtime().block_on(wrapper.server.start()) {
         Ok((bootstrap_addr, authenticated_addr)) => {
             // Store the addresses in the wrapper for later retrieval
             wrapper.bootstrap_addr = Some(bootstrap_addr.to_string());
@@ -6494,21 +6481,8 @@ pub unsafe extern "C" fn rn_transport_ca_server_stop(
 
     let wrapper = &mut *(server as *mut CaServerWrapper);
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Stop the server
-    match rt.block_on(wrapper.server.stop()) {
+    // Stop the server using shared runtime
+    match runtime().block_on(wrapper.server.stop()) {
         Ok(()) => 0,
         Err(e) => {
             set_error(
@@ -7237,8 +7211,8 @@ pub struct CaClientConfigAll {
     pub network_id: String,
     pub request_timeout_seconds: u32,
     pub max_retries: u32,
-    pub root_ca_der: Option<Vec<u8>>,
-    pub issuing_ca_der: Option<Vec<u8>>,
+    pub root_ca_der: Vec<u8>,    // Required, not optional
+    pub issuing_ca_der: Vec<u8>, // Required, not optional
 }
 
 /// Create new CA Client (new API)
@@ -7331,7 +7305,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
 
     // Create client with all configuration at once (following working test pattern)
     println!("DEBUG: FFI client creation - creating CaClientBuilder with config");
-    let mut client = match CaClientBuilder::new()
+    let client = match CaClientBuilder::new()
         .with_config(client_config.clone())
         .with_node_key_manager(node_key_manager_arc.clone())
         .with_logger(logger.clone())
@@ -7348,24 +7322,12 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
         }
     };
 
-    // Add certificates if provided (after build, like working test)
-    if let Some(root_ca_der) = &config.root_ca_der {
-        println!(
-            "DEBUG: FFI client creation - adding root CA cert ({} bytes)",
-            root_ca_der.len()
-        );
-        client = client.with_root_ca_cert(root_ca_der.clone());
-    }
+    // Add certificates after build, like working test
+    let client = client
+        .with_root_ca_cert(config.root_ca_der.clone())
+        .with_issuing_ca_cert(config.issuing_ca_der.clone());
 
-    if let Some(issuing_ca_der) = &config.issuing_ca_der {
-        println!(
-            "DEBUG: FFI client creation - adding issuing CA cert ({} bytes)",
-            issuing_ca_der.len()
-        );
-        client = client.with_issuing_ca_cert(issuing_ca_der.clone());
-    }
-
-    println!("DEBUG: FFI client creation - client created successfully");
+    println!("DEBUG: FFI client creation - client created successfully with certificates");
 
     let wrapper = CaClientWrapper {
         client,
@@ -7444,19 +7406,6 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
         }
     };
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
     // Perform enrollment (using configured bootstrap address from client config)
     let bootstrap_addr_from_config = wrapper.config.bootstrap_server;
     println!(
@@ -7468,12 +7417,12 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
         _bootstrap_addr_str
     );
     println!(
-        "DEBUG: FFI enroll - client has root CA cert: {}",
-        wrapper.root_ca_cert.is_some()
+        "DEBUG: FFI enroll - client has root CA cert: {} bytes",
+        wrapper.root_ca_cert.len()
     );
     println!(
-        "DEBUG: FFI enroll - client has issuing CA cert: {}",
-        wrapper.issuing_ca_cert.is_some()
+        "DEBUG: FFI enroll - client has issuing CA cert: {} bytes",
+        wrapper.issuing_ca_cert.len()
     );
     println!(
         "DEBUG: FFI enroll - client has node key manager: {}",
@@ -7508,7 +7457,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     println!("DEBUG: FFI enroll - calling client.enroll()...");
-    match rt.block_on(client.enroll(enroll_request)) {
+    match runtime().block_on(client.enroll(enroll_request)) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -7588,21 +7537,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
         }
     };
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Perform renewal
-    match rt.block_on(client.renew(renew_request)) {
+    // Perform renewal using shared runtime
+    match runtime().block_on(client.renew(renew_request)) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -7673,21 +7609,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_revoke(
         }
     };
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Perform revocation
-    match rt.block_on(client.revoke(revoke_request)) {
+    // Perform revocation using shared runtime
+    match runtime().block_on(client.revoke(revoke_request)) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -7743,21 +7666,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_chain(
     let wrapper = &*(client as *const CaClientWrapper);
     let client = &wrapper.client;
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Fetch chain
-    match rt.block_on(client.fetch_chain()) {
+    // Fetch chain using shared runtime
+    match runtime().block_on(client.fetch_chain()) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -7813,21 +7723,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_status(
     let wrapper = &*(client as *const CaClientWrapper);
     let client = &wrapper.client;
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Get status
-    match rt.block_on(client.get_status()) {
+    // Get status using shared runtime
+    match runtime().block_on(client.get_status()) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -7883,21 +7780,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
     let wrapper = &*(client as *const CaClientWrapper);
     let client = &wrapper.client;
 
-    // Create a runtime for async operations
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create runtime: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Fetch CRL
-    match rt.block_on(client.fetch_crl()) {
+    // Fetch CRL using shared runtime
+    match runtime().block_on(client.fetch_crl()) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {

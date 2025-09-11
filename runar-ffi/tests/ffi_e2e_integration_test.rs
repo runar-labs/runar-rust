@@ -28,8 +28,8 @@ struct CaClientConfigAll {
     pub network_id: String,
     pub request_timeout_seconds: u32,
     pub max_retries: u32,
-    pub root_ca_der: Option<Vec<u8>>,
-    pub issuing_ca_der: Option<Vec<u8>>,
+    pub root_ca_der: Vec<u8>,    // Required, not optional
+    pub issuing_ca_der: Vec<u8>, // Required, not optional
 }
 
 /// Validate certificate chain to ensure proper signing relationships
@@ -354,8 +354,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         network_id: "test_network".to_string(),
         request_timeout_seconds: 30,
         max_retries: 3,
-        root_ca_der: Some(root_ca_cert.clone()),
-        issuing_ca_der: Some(issuing_cert_der.clone()),
+        root_ca_der: root_ca_cert.clone(), // Required, not optional
+        issuing_ca_der: issuing_cert_der.clone(), // Required, not optional
     };
 
     let config_cbor = serde_cbor::to_vec(&config).expect("Failed to serialize config as CBOR");

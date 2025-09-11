@@ -1108,8 +1108,21 @@ The implementation should follow the phased approach to minimize risk and ensure
 - `fn create_test_csr(node_keys: *mut c_void) -> Vec<u8>`
   - Calls `rn_keys_node_generate_csr` and returns the DER.
 
-### 6.3 Async Handling Strategy
-- All FFI are synchronous; async work is executed via internal runtimes.
+### 6.3 Async Handling Strategy (CRITICAL)
+- All FFI are synchronous; async work is executed via a **single, shared Tokio runtime**.
+- **Root cause of QUIC handshake failures**: Multiple FFI functions create ad-hoc `Runtime::new()` per call, breaking QUIC/TLS state continuity.
+- **Solution**: Use existing global runtime pattern:
+  ```rust
+  static RUNTIME: OnceCell<Runtime> = OnceCell::new();
+  fn runtime() -> &'static Runtime { 
+      RUNTIME.get_or_init(|| Runtime::new().expect("tokio runtime")) 
+  }
+  ```
+- **Replace all local `Runtime::new()`** with `runtime().block_on(...)` and `runtime().spawn(...)`.
+- **Threading model for Swift/Kotlin**: FFI entrypoints remain synchronous; they run futures on the shared multi-thread Tokio runtime via `block_on`.
+- **Long-running services**: Server should spawn background tasks on `runtime()` and return immediately (addresses persisted in wrapper).
+- **Critical**: Do NOT hold locks across await - clone data (e.g., `Arc<RwLock<_>>` read → clone values) before `runtime().block_on` to avoid deadlocks.
+- **State consistency**: Once created, reject further config mutations to avoid state races.
 - Tests should call FFI serially. No external runtimes required.
 - Server readiness is ensured via `rn_transport_ca_server_get_*_addr`; short sleeps used only in rate-limit loops.
 
@@ -1171,3 +1184,49 @@ Exact FFI sequence and checklist:
    - Confirm token validity window and permissions include "enroll".
 
 By following the above, the same EA keypair is threaded through both server and client sides, preventing mismatches that cause token validation failures.
+
+### 6.7 Tokio Runtime Management (CRITICAL FIX)
+
+**Problem**: QUIC handshake timeouts in FFI tests due to per-call runtime creation breaking QUIC/TLS state continuity.
+
+**Root Cause**: Multiple FFI functions create ad-hoc `Runtime::new()` per call, while QUIC/TLS state must live on a single runtime.
+
+**Solution**: Use single, shared Tokio runtime for all async operations in FFI.
+
+#### Implementation Pattern
+```rust
+// Global runtime (already exists in lib.rs)
+static RUNTIME: OnceCell<Runtime> = OnceCell::new();
+fn runtime() -> &'static Runtime { 
+    RUNTIME.get_or_init(|| Runtime::new().expect("tokio runtime")) 
+}
+
+// Replace all local Runtime::new() with:
+runtime().block_on(async_operation)
+runtime().spawn(background_task)
+```
+
+#### Functions to Fix
+- **CA Server**:
+  - `rn_transport_ca_server_start`: Use `runtime().block_on(wrapper.server.start())`
+  - `rn_transport_ca_server_stop`: Use `runtime().block_on(wrapper.server.stop())`
+- **CA Client**:
+  - `rn_transport_ca_client_enroll`: Use `runtime().block_on(client.enroll(...))`
+  - `rn_transport_ca_client_renew`: Use `runtime().block_on(client.renew(...))`
+  - `rn_transport_ca_client_revoke`: Use `runtime().block_on(client.revoke(...))`
+  - `rn_transport_ca_client_get_chain`: Use `runtime().block_on(client.get_chain(...))`
+  - `rn_transport_ca_client_get_status`: Use `runtime().block_on(client.get_status(...))`
+  - `rn_transport_ca_client_get_crl`: Use `runtime().block_on(client.get_crl(...))`
+
+#### Critical Rules
+1. **No per-call runtimes**: Replace all `Runtime::new()` with `runtime()`
+2. **No lock holding across await**: Clone `Arc<RwLock<_>>` values before `block_on`
+3. **Single runtime for QUIC**: All QUIC objects created and used on shared runtime
+4. **State consistency**: Reject config mutations after creation
+5. **Background tasks**: Spawn long-running tasks on `runtime()` and return immediately
+
+#### Threading Model for Swift/Kotlin
+- FFI entrypoints remain synchronous
+- All async work runs on shared multi-thread Tokio runtime via `block_on`
+- No nested runtimes or external runtime management required
+- Matches how Rust test runs under single runtime
