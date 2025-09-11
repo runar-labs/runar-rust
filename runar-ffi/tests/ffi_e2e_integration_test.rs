@@ -165,6 +165,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ EA key pair created (will be used for both server config and token signing)");
 
     // Install issuing CA in CA Node
+    let network_id_cstr = create_cstring("test_network");
     let result = unsafe {
         rn_keys_ca_node_install_issuing_ca(
             ca_node,
@@ -176,6 +177,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             root_ca_cert.len(),
             ea_public_keys_cbor.as_ptr(),
             ea_public_keys_cbor.len(),
+            network_id_cstr.as_ptr(),
             &mut error,
         )
     };
@@ -297,7 +299,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Generate CSR on node
     let mut csr_ptr: *mut u8 = ptr::null_mut();
     let mut csr_len: usize = 0;
-    let result = rn_keys_node_generate_csr(node_keys, &mut csr_ptr, &mut csr_len, &mut error);
+    let result =
+        unsafe { rn_keys_node_generate_csr_v2(node_keys, &mut csr_ptr, &mut csr_len, &mut error) };
     assert_eq!(result, 0, "Failed to generate CSR");
     assert!(!csr_ptr.is_null(), "CSR should not be null");
     assert!(csr_len > 0, "CSR length should be positive");

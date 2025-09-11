@@ -524,6 +524,7 @@ int32_t rn_keys_ca_node_install_issuing_ca(void *ca_node,
                                            size_t root_cert_len,
                                            const uint8_t *ea_public_keys,
                                            size_t ea_keys_len,
+                                           const char *network_id,
                                            struct RNAPIRnError *err);
 
 /**

@@ -92,34 +92,59 @@ impl CANode {
 
     /// Validate an enrollment token
     pub fn validate_enrollment_token(&mut self, token: &EnrollmentToken) -> Result<()> {
+        println!("DEBUG: validate_enrollment_token called");
         // Check if token is revoked
         if self.revoked_tokens.contains_key(&token.body.token_id) {
+            println!("DEBUG: Token has been revoked");
             return Err(KeyError::ValidationError(
                 "Token has been revoked".to_string(),
             ));
         }
+        println!("DEBUG: Token not revoked");
 
         // Check anti-replay ledger
+        println!("DEBUG: Checking anti-replay ledger...");
         let replay_key = (token.body.token_id.clone(), token.body.nonce);
         if let Some(expiry_time) = self.token_replay_ledger.get(&replay_key) {
             if SystemTime::now() < *expiry_time {
+                println!("DEBUG: Token nonce already used (replay attack)");
                 return Err(KeyError::ValidationError(
                     "Token nonce already used (replay attack)".to_string(),
                 ));
             }
         }
+        println!("DEBUG: No replay attack detected");
 
         // Get the enrollment authority public key
+        println!(
+            "DEBUG: Looking up enrollment authority for signer_id: {}",
+            token.signer_id
+        );
+        println!(
+            "DEBUG: Available enrollment authorities: {:?}",
+            self.enrollment_authorities.keys().collect::<Vec<_>>()
+        );
         let ea_public_key = self
             .enrollment_authorities
             .get(&token.signer_id)
-            .ok_or_else(|| KeyError::ValidationError("Unknown enrollment authority".to_string()))?;
+            .ok_or_else(|| {
+                println!("DEBUG: Unknown enrollment authority: {}", token.signer_id);
+                KeyError::ValidationError("Unknown enrollment authority".to_string())
+            })?;
+        println!("DEBUG: Found enrollment authority public key");
 
         // Verify token signature
+        println!("DEBUG: Verifying token signature...");
         token.verify(ea_public_key)?;
+        println!("DEBUG: Token signature verification passed");
 
         // Validate token for enrollment
+        println!(
+            "DEBUG: Validating token for enrollment with network_id: {}",
+            self.network_id
+        );
         token.validate_for_enrollment(&self.network_id)?;
+        println!("DEBUG: Token validation for enrollment passed");
 
         // Add to anti-replay ledger with token expiry time
         self.token_replay_ledger.insert(
@@ -154,19 +179,30 @@ impl CANode {
         request: CsrEnrollRequest,
         remote_addr: &str,
     ) -> Result<CsrEnrollResponse> {
+        println!("DEBUG: CA Node handle_enroll called");
         // Validate enrollment token
+        println!("DEBUG: Validating enrollment token...");
         self.validate_enrollment_token(&request.enrollment_token)?;
+        println!("DEBUG: Enrollment token validation passed");
 
         // Check rate limiting
+        println!("DEBUG: Checking rate limiting...");
         self.check_rate_limit(remote_addr, &request.enrollment_token.body.token_id)?;
+        println!("DEBUG: Rate limiting check passed");
 
         // Parse and validate CSR
+        println!("DEBUG: Parsing CSR...");
         let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(
             &request.csr_der,
         )
-        .map_err(|e| KeyError::ValidationError(format!("Invalid CSR: {e}")))?;
+        .map_err(|e| {
+            println!("DEBUG: CSR parsing failed: {e}");
+            KeyError::ValidationError(format!("Invalid CSR: {e}"))
+        })?;
+        println!("DEBUG: CSR parsed successfully");
 
         // Extract CN from CSR subject
+        println!("DEBUG: Extracting CN from CSR subject...");
         let subject = &csr.certification_request_info.subject;
         let mut cn = None;
         for rdn in subject.iter_common_name() {
@@ -175,21 +211,29 @@ impl CANode {
                 break;
             }
         }
-        let cn = cn.ok_or_else(|| KeyError::ValidationError("CSR missing CN".to_string()))?;
+        let cn = cn.ok_or_else(|| {
+            println!("DEBUG: CSR missing CN");
+            KeyError::ValidationError("CSR missing CN".to_string())
+        })?;
+        println!("DEBUG: CSR CN extracted: {cn}");
 
         // Validate CN matches compact_id of public key in CSR
+        println!("DEBUG: Validating CN matches compact_id...");
         let public_key = &csr
             .certification_request_info
             .subject_pki
             .subject_public_key;
         let public_key_bytes = public_key.data.to_vec();
         let expected_cn = runar_common::compact_ids::compact_id(&public_key_bytes);
+        println!("DEBUG: Expected CN: {expected_cn}");
 
         if cn != expected_cn {
+            println!("DEBUG: CN mismatch: got {cn}, expected {expected_cn}");
             return Err(KeyError::ValidationError(format!(
                 "CSR CN {cn} does not match public key compact_id {expected_cn}"
             )));
         }
+        println!("DEBUG: CN validation passed");
 
         // Create certificate authority for signing
         let ca = CertificateAuthority::from_existing(

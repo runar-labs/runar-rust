@@ -4972,6 +4972,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_install_issuing_ca(
     root_cert_len: usize,
     ea_public_keys: *const u8,
     ea_keys_len: usize,
+    network_id: *const c_char,
     err: *mut RnError,
 ) -> i32 {
     if ca_node.is_null() || err.is_null() {
@@ -5036,6 +5037,22 @@ pub unsafe extern "C" fn rn_keys_ca_node_install_issuing_ca(
             return RN_ERROR_OPERATION_FAILED;
         }
     };
+
+    // Parse network ID
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse network ID: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Update CA Node network ID
+    ca_node.network_id = network_id_str;
 
     // Install the issuing CA
     match ca_node.install_issuing_ca(
@@ -5173,6 +5190,8 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
             }
         }
         Err(e) => {
+            println!("DEBUG: Enrollment error details: {e}");
+            println!("DEBUG: Enrollment error chain: {:#}", e);
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,

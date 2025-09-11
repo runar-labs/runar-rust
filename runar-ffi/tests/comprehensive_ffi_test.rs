@@ -2820,6 +2820,7 @@ fn test_ca_node_install_issuing_ca_happy_path() {
             test_root_cert.len(),
             test_ea_keys.as_ptr(),
             test_ea_keys.len(),
+            create_cstring("test_network").as_ptr(),
             &mut error,
         )
     };
@@ -2849,6 +2850,7 @@ fn test_ca_node_install_issuing_ca_null_ca_node() {
             test_root_cert.len(),
             test_ea_keys.as_ptr(),
             test_ea_keys.len(),
+            create_cstring("test_network").as_ptr(),
             &mut error,
         )
     };
