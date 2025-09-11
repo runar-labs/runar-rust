@@ -124,6 +124,19 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     validate_certificate_chain(&root_ca_cert, &issuing_cert_der);
     println!("   ✅ Certificate chain validation passed");
 
+    // Additional certificate diagnostics
+    println!("   🔍 Certificate diagnostics:");
+    println!("      Root CA cert: {} bytes", root_ca_cert.len());
+    println!("      Issuing CA cert: {} bytes", issuing_cert_der.len());
+    println!(
+        "      Root CA cert starts with: {}",
+        hex::encode(&root_ca_cert[0..8])
+    );
+    println!(
+        "      Issuing CA cert starts with: {}",
+        hex::encode(&issuing_cert_der[0..8])
+    );
+
     // Create EA key pair (will be used for both server config and token generation)
     // Following design section 6.6: Generate EA once and keep in shared test context
     let ea_key = runar_keys::certificate::EcdsaKeyPair::new().expect("Failed to create EA key");
@@ -241,6 +254,18 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ CA Server started with addresses");
     println!("      Bootstrap: {}", bootstrap_addr_str);
     println!("      Authenticated: {}", authenticated_addr_str);
+
+    // Test basic network connectivity
+    println!("   🔍 Testing basic network connectivity...");
+    match bootstrap_addr_str.parse::<std::net::SocketAddr>() {
+        Ok(addr) => println!("   ✅ Bootstrap address resolved: {}", addr),
+        Err(e) => println!("   ❌ Bootstrap address resolution failed: {}", e),
+    }
+
+    match authenticated_addr_str.parse::<std::net::SocketAddr>() {
+        Ok(addr) => println!("   ✅ Authenticated address resolved: {}", addr),
+        Err(e) => println!("   ❌ Authenticated address resolution failed: {}", e),
+    }
 
     // Recreate CStrings for the client configuration
     let bootstrap_addr_cstr = create_cstring(&bootstrap_addr_str);

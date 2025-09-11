@@ -7965,6 +7965,11 @@ pub unsafe extern "C" fn rn_transport_ca_client_configure(
         }
     };
 
+    println!(
+        "DEBUG: CaClient configure - bootstrap_addr: {}",
+        bootstrap_addr_str
+    );
+
     let authenticated_addr_str = match std::ffi::CStr::from_ptr(authenticated_server).to_str() {
         Ok(addr) => addr,
         Err(e) => {
@@ -7988,6 +7993,16 @@ pub unsafe extern "C" fn rn_transport_ca_client_configure(
             return RN_ERROR_INVALID_UTF8;
         }
     };
+
+    println!(
+        "DEBUG: CaClient configure - authenticated_addr: {}",
+        authenticated_addr_str
+    );
+    println!("DEBUG: CaClient configure - network_id: {}", network_id_str);
+    println!(
+        "DEBUG: CaClient configure - timeout: {}s, retries: {}",
+        request_timeout_seconds, max_retries
+    );
 
     // Parse addresses
     let bootstrap_addr = match bootstrap_addr_str.parse::<std::net::SocketAddr>() {
@@ -8049,22 +8064,38 @@ pub unsafe extern "C" fn rn_transport_ca_client_set_root_ca_cert(
     // Copy certificate data
     let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
 
+    println!(
+        "DEBUG: CaClient set_root_ca_cert - cert size: {} bytes",
+        cert_data.len()
+    );
+
     // Update the existing wrapper's root CA certificate and recreate the client
     let wrapper = &mut *(client as *mut CaClientWrapper);
     wrapper.root_ca_cert = Some(cert_data.clone());
 
     // Recreate the client with the updated configuration
+    println!("DEBUG: CaClient recreating with updated config");
     let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
     if let Some(node_key_manager) = &wrapper.node_key_manager {
+        println!("DEBUG: CaClient adding node_key_manager");
         new_client = new_client.with_node_key_manager(node_key_manager.clone());
     }
     if let Some(root_ca_cert) = &wrapper.root_ca_cert {
+        println!(
+            "DEBUG: CaClient adding root_ca_cert ({} bytes)",
+            root_ca_cert.len()
+        );
         new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
     }
     if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
+        println!(
+            "DEBUG: CaClient adding issuing_ca_cert ({} bytes)",
+            issuing_ca_cert.len()
+        );
         new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
     }
     wrapper.client = new_client;
+    println!("DEBUG: CaClient recreation completed");
 
     0
 }
@@ -8085,22 +8116,38 @@ pub unsafe extern "C" fn rn_transport_ca_client_set_issuing_ca_cert(
     // Copy certificate data
     let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
 
+    println!(
+        "DEBUG: CaClient set_issuing_ca_cert - cert size: {} bytes",
+        cert_data.len()
+    );
+
     // Update the existing wrapper's issuing CA certificate and recreate the client
     let wrapper = &mut *(client as *mut CaClientWrapper);
     wrapper.issuing_ca_cert = Some(cert_data.clone());
 
     // Recreate the client with the updated configuration
+    println!("DEBUG: CaClient recreating with updated config (issuing CA)");
     let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
     if let Some(node_key_manager) = &wrapper.node_key_manager {
+        println!("DEBUG: CaClient adding node_key_manager");
         new_client = new_client.with_node_key_manager(node_key_manager.clone());
     }
     if let Some(root_ca_cert) = &wrapper.root_ca_cert {
+        println!(
+            "DEBUG: CaClient adding root_ca_cert ({} bytes)",
+            root_ca_cert.len()
+        );
         new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
     }
     if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
+        println!(
+            "DEBUG: CaClient adding issuing_ca_cert ({} bytes)",
+            issuing_ca_cert.len()
+        );
         new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
     }
     wrapper.client = new_client;
+    println!("DEBUG: CaClient recreation completed (issuing CA)");
 
     0
 }

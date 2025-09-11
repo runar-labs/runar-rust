@@ -66,7 +66,15 @@ This section enumerates the complete, production-ready FFI API required for exte
 - `rn_transport_ca_server_get_authenticated_addr(server, out_cstr, err) -> i32`
 
 ### CA Client – QUIC Client
-- `rn_transport_ca_client_new(logger, out_client, err) -> i32`
+- `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, logger, out_client, err) -> i32`
+  - config_cbor = CaClientConfigAll (CBOR):
+    - bootstrap_server: String
+    - authenticated_server: String
+    - network_id: String
+    - request_timeout_seconds: u32
+    - max_retries: u32
+    - root_ca_der: Vec<u8>
+    - issuing_ca_der: Option<Vec<u8>>
 - `rn_transport_ca_client_free(client)`
 - `rn_transport_ca_client_enroll(client, bootstrap_addr_cstr, request_cbor, len, out_response_cbor, out_len, err) -> i32`
 - `rn_transport_ca_client_renew(client, authenticated_addr_cstr, request_cbor, len, out_response_cbor, out_len, err) -> i32`
@@ -132,13 +140,18 @@ All payloads denoted as CBOR must follow the same Rust-side structs used by tran
 2) Enrollment Token (Rust-side helper)
    - Construct `EnrollmentToken` using Rust helper; CBOR serialize.
 3) Build `CsrEnrollRequest` CBOR: `{ network_id: "test_network", csr_der, enrollment_token }`
-4) CA Client
-   - `rn_transport_ca_client_new(logger, &mut client, &mut err)`
+4) CA Client (one-shot creation with full config CBOR)
+   - Build `CaClientConfigAll` CBOR with:
+     - bootstrap_server, authenticated_server, network_id, request_timeout_seconds, max_retries
+     - root_ca_der (from Root CA)
+     - issuing_ca_der (from Issuing CA)
+   - `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, logger, &mut client, &mut err)`
+5) Enroll
    - `rn_transport_ca_client_enroll(client, bootstrap_addr_cstr, enroll_req_cbor, len, &mut resp_ptr, &mut resp_len, &mut err)` -> CBOR `CsrEnrollResponse`
-5) Convert and Install Certificate
+6) Convert and Install Certificate
    - `rn_keys_mobile_from_enroll_response(mobile_keys, resp_ptr, resp_len, &mut cert_msg_ptr, &mut cert_msg_len, &mut err)` -> CBOR `NodeCertificateMessage`
    - `rn_keys_node_install_certificate(node_keys, cert_msg_ptr, cert_msg_len, &mut err)`
-6) QUIC Cert Config Validation (optional asserts)
+7) QUIC Cert Config Validation (optional asserts)
    - `rn_keys_node_get_quic_certificate_config(node_keys, &mut cfg_ptr, &mut cfg_len, &mut err)`
 
 ### Phase 4: Renewal (Authenticated, mTLS)
@@ -1017,7 +1030,7 @@ The updated FFI API design now supports **100% of the functionality** required t
 #### Client Role (Mobile Node Operations)
 1. **Mobile Key Manager** - `rn_keys_init_as_mobile`, `rn_keys_mobile_initialize_user_root_key`
 2. **Node Key Manager** - `rn_keys_init_as_node`, `rn_keys_node_generate_keys`
-3. **CA Client Configuration** - `rn_transport_ca_client_new`, `rn_transport_ca_client_configure`
+3. **CA Client Configuration** - `rn_transport_ca_client_new_with_config`, `rn_transport_ca_client_configure`
 4. **Certificate Operations** - `rn_keys_node_generate_csr_v2`, `rn_keys_node_install_certificate_from_message`
 5. **Profile Key Operations** - `rn_keys_node_derive_user_profile_key`, `rn_keys_node_encrypt_with_envelope`
 6. **Certificate Analysis** - `rn_keys_certificate_extract_ski`, `rn_keys_certificate_get_serial`
