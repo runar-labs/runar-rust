@@ -768,6 +768,27 @@ int32_t rn_transport_ca_client_get_crl(void *client,
                                        size_t *out_len,
                                        struct RNAPIRnError *err);
 
+/**
+ * Generate CSR for certificate enrollment (v2)
+ */
+int32_t rn_keys_node_generate_csr_v2(void *keys,
+                                     uint8_t **out_csr,
+                                     size_t *out_len,
+                                     struct RNAPIRnError *err);
+
+/**
+ * Generate keys for node
+ */
+int32_t rn_keys_node_generate_keys(void *keys, struct RNAPIRnError *err);
+
+/**
+ * Install certificate for node key manager
+ */
+int32_t rn_keys_node_install_certificate_v2(void *keys,
+                                            const uint8_t *certificate_data,
+                                            size_t cert_len,
+                                            struct RNAPIRnError *err);
+
 #endif /* RUNAR_FFI_H */
 
 // End of runar_ffi

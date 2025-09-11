@@ -6915,3 +6915,146 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
         }
     }
 }
+
+/// Generate CSR for certificate enrollment (v2)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_generate_csr_v2(
+    keys: *mut c_void,
+    out_csr: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_csr.is_null() || out_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    match manager.write().unwrap().generate_csr() {
+        Ok(csr) => {
+            let csr_data = csr.csr_der;
+            let csr_ptr = libc::malloc(csr_data.len()) as *mut u8;
+            if csr_ptr.is_null() {
+                set_error(
+                    err,
+                    RN_ERROR_MEMORY_ALLOCATION,
+                    "Failed to allocate memory for CSR",
+                );
+                return RN_ERROR_MEMORY_ALLOCATION;
+            }
+
+            std::ptr::copy_nonoverlapping(csr_data.as_ptr(), csr_ptr, csr_data.len());
+            unsafe {
+                *out_csr = csr_ptr;
+                *out_len = csr_data.len();
+            }
+            0
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate CSR: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Generate keys for node
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_generate_keys(keys: *mut c_void, err: *mut RnError) -> i32 {
+    if keys.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    match manager.write().unwrap().generate_keys() {
+        Ok(_) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate keys: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Install certificate for node key manager
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_install_certificate_v2(
+    keys: *mut c_void,
+    certificate_data: *const u8,
+    cert_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || certificate_data.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let cert_data = std::slice::from_raw_parts(certificate_data, cert_len);
+
+    // Parse the certificate message
+    match serde_cbor::from_slice::<NodeCertificateMessage>(cert_data) {
+        Ok(cert_message) => match manager.write().unwrap().install_certificate(cert_message) {
+            Ok(_) => 0,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("Failed to install certificate: {e}"),
+                );
+                RN_ERROR_OPERATION_FAILED
+            }
+        },
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to parse certificate message: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}

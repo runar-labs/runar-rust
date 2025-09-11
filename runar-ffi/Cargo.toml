@@ -41,4 +41,5 @@ libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 hex = "0.4"
+rustls = "0.23"
 
