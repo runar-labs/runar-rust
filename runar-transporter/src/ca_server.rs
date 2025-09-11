@@ -184,18 +184,31 @@ impl CaServer {
 
     /// Start the CA Node server with both bootstrap and authenticated binds
     pub async fn start(&mut self) -> Result<(SocketAddr, SocketAddr)> {
+        println!("DEBUG: CA Server start() called");
         self.logger.info("Starting CA Node QUIC server");
+        log_debug!(
+            self.logger,
+            "Server configuration: network_id={}",
+            self.config.network_id
+        );
 
         // Start bootstrap server (server-auth only)
+        log_debug!(self.logger, "Starting bootstrap server...");
         let bootstrap_addr = self.start_bootstrap_server().await?;
         self.logger
             .info(format!("Bootstrap server started on {bootstrap_addr}"));
+        log_debug!(self.logger, "Bootstrap server listening for connections");
 
         // Start authenticated server (mTLS required)
+        log_debug!(self.logger, "Starting authenticated server...");
         let authenticated_addr = self.start_authenticated_server().await?;
         self.logger.info(format!(
             "Authenticated server started on {authenticated_addr}"
         ));
+        log_debug!(
+            self.logger,
+            "Authenticated server listening for connections"
+        );
 
         self.logger.info("CA Node QUIC server fully started");
         Ok((bootstrap_addr, authenticated_addr))
@@ -205,10 +218,17 @@ impl CaServer {
     async fn start_bootstrap_server(&mut self) -> Result<SocketAddr> {
         self.logger
             .info("Starting bootstrap QUIC server (server-auth only)");
+        log_debug!(
+            self.logger,
+            "Bootstrap server bind address: {}",
+            self.config.bootstrap_bind
+        );
 
         // Create a server certificate signed by the Issuing CA for the bootstrap server
         // The certificate chain [leaf, issuing] is presented to clients
+        log_debug!(self.logger, "Creating bootstrap server certificate...");
         let (server_cert, server_key) = self.create_bootstrap_certificate().await?;
+        log_debug!(self.logger, "Bootstrap server certificate created");
 
         // Build server certificate chain [leaf, issuing]
         let ca_node = self.ca_node.read().unwrap();
@@ -218,6 +238,17 @@ impl CaServer {
             CertificateDer::from(server_cert.der_bytes().to_vec()),
             CertificateDer::from(issuing_ca_cert.der_bytes().to_vec()),
         ];
+        println!("DEBUG: Server certificate chain:");
+        println!(
+            "  Leaf cert: {} bytes, subject: {}",
+            server_cert.der_bytes().len(),
+            server_cert.subject()
+        );
+        println!(
+            "  Issuing cert: {} bytes, subject: {}",
+            issuing_ca_cert.der_bytes().len(),
+            issuing_ca_cert.subject()
+        );
 
         // Build rustls server config (server-auth only, no client auth required)
         let server_config = RustlsServerConfig::builder()
@@ -236,15 +267,25 @@ impl CaServer {
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, self.config.bootstrap_bind)?;
         let bound_addr = endpoint.local_addr()?;
+        println!("DEBUG: Bootstrap server actually bound to: {}", bound_addr);
 
         // Store endpoint and start accepting connections
         let endpoint_arc = Arc::new(endpoint);
         self.bootstrap_endpoint = Some(endpoint_arc.clone());
 
         // Spawn connection handler
+        println!("DEBUG: Spawning bootstrap connection handler...");
+        log_debug!(self.logger, "Spawning bootstrap connection handler...");
         let server = self.clone();
         tokio::spawn(async move {
+            println!("DEBUG: Bootstrap server waiting for connections...");
+            log_debug!(server.logger, "Bootstrap server waiting for connections...");
             while let Some(conn) = endpoint_arc.accept().await {
+                println!("DEBUG: Bootstrap connection received, spawning handler...");
+                log_debug!(
+                    server.logger,
+                    "Bootstrap connection received, spawning handler..."
+                );
                 let server = server.clone();
                 tokio::spawn(async move {
                     if let Err(e) = server.handle_bootstrap_connection(conn).await {
@@ -258,6 +299,11 @@ impl CaServer {
 
         self.logger
             .info(format!("Bootstrap server started on {bound_addr}"));
+        log_debug!(
+            self.logger,
+            "Bootstrap server is now listening for connections on {}",
+            bound_addr
+        );
         Ok(bound_addr)
     }
 
@@ -500,6 +546,7 @@ impl CaServer {
 
     /// Handle bootstrap QUIC connection
     async fn handle_bootstrap_connection(&self, conn: quinn::Incoming) -> Result<()> {
+        log_debug!(self.logger, "Waiting for bootstrap connection...");
         let connection = conn.await?;
         log_info!(
             self.logger,
@@ -586,8 +633,20 @@ impl CaServer {
         mut recv: quinn::RecvStream,
         remote_addr: SocketAddr,
     ) -> Result<()> {
+        log_debug!(
+            self.logger,
+            "Handling bootstrap stream from {}",
+            remote_addr
+        );
+
         // Read request data
         let request_data = recv.read_to_end(1024 * 1024).await?;
+        log_debug!(
+            self.logger,
+            "Received {} bytes from {}",
+            request_data.len(),
+            remote_addr
+        );
 
         // Parse binary protocol header
         if request_data.len() < 8 {
@@ -691,14 +750,37 @@ impl CaServer {
         request: CsrEnrollRequest,
         remote_addr: SocketAddr,
     ) -> Result<CsrEnrollResponse> {
+        log_debug!(
+            self.logger,
+            "Processing enrollment request from {} for network_id: {}",
+            remote_addr,
+            request.network_id
+        );
+        log_debug!(
+            self.logger,
+            "Enrollment token ID: {}",
+            request.enrollment_token.body.token_id
+        );
+        log_debug!(self.logger, "CSR length: {} bytes", request.csr_der.len());
+
         // Validate network_id
         if request.network_id != self.config.network_id {
+            log_debug!(
+                self.logger,
+                "Invalid network_id: expected '{}', got '{}'",
+                self.config.network_id,
+                request.network_id
+            );
             return Err(anyhow::anyhow!("Invalid network_id"));
         }
 
+        log_debug!(self.logger, "Network ID validation passed");
+
         // Process enrollment via CA Node
+        log_debug!(self.logger, "Calling CA Node handle_enroll...");
         let mut ca_node = self.ca_node.write().unwrap();
         let response = ca_node.handle_enroll(request, &remote_addr.to_string())?;
+        log_debug!(self.logger, "CA Node handle_enroll completed successfully");
         Ok(response)
     }
 
@@ -751,9 +833,19 @@ impl CaServer {
         payload: &[u8],
         remote_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
+        log_debug!(
+            self.logger,
+            "Handling bootstrap message type: {:?} from {} (payload: {} bytes)",
+            message_type,
+            remote_addr,
+            payload.len()
+        );
+
         match message_type {
             CaMessageType::CsrEnrollRequest => {
+                log_debug!(self.logger, "Parsing CsrEnrollRequest from CBOR...");
                 let request: CsrEnrollRequest = serde_cbor::from_slice(payload)?;
+                log_debug!(self.logger, "CsrEnrollRequest parsed successfully");
 
                 // Apply rate limiting for enrollment requests
                 // Use only IP address (not port) for rate limiting to avoid ephemeral port issues

@@ -3869,7 +3869,6 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_cbor",
- "serde_json",
  "tokio",
  "uuid",
 ]

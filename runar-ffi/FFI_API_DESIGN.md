@@ -1119,3 +1119,42 @@ The implementation should follow the phased approach to minimize risk and ensure
 - Resilience: loop start/stop server while making client calls; enforce 45s test timeouts to catch deadlocks.
 
 All above use only the FFI APIs listed in the Authoritative Surface.
+
+### 6.6 CA Client Configuration and EA Key Consistency (Critical)
+
+Root cause to avoid: using different Enrollment Authority (EA) keys for server configuration and token signing. The same EA keypair MUST be used to:
+- Configure the CA Node (EA public keys)
+- Sign enrollment tokens (EA private key)
+
+Recommended test helper:
+- `fn create_enrollment_authority() -> (ea_private_key_der: Vec<u8>, ea_public_key_bytes: Vec<u8>)`
+
+Exact FFI sequence and checklist:
+1) Generate EA once and keep in shared test context:
+   - `(ea_sk_der, ea_pk) = create_enrollment_authority()`
+2) Configure CA Node with EA public keys:
+   - `ea_pubkeys_cbor = cbor::to_vec(vec![ea_pk])`
+   - `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_pubkeys_cbor.as_ptr(), ea_pubkeys_cbor.len(), &mut err)`
+   - Alternatively, pass the same `ea_pubkeys_cbor` to `rn_keys_ca_node_install_issuing_ca` when installing the issuer.
+3) Create tokens with the SAME EA private key:
+   - `token_cbor = create_enrollment_token_with_sk(ea_sk_der, body)`
+   - Embed `token_cbor` in `CsrEnrollRequest` CBOR for `rn_transport_ca_client_enroll`.
+4) Network alignment:
+   - Ensure `network_id` in token body matches CA Server config `network_id` and the request payloads.
+5) Address usage:
+   - Use `rn_transport_ca_server_get_bootstrap_addr` for enroll.
+   - Use `rn_transport_ca_server_get_authenticated_addr` for renew/revoke/status/crl.
+6) CA Client trust anchors (required for REAL QUIC mTLS):
+   - After client creation, set trust roots:
+     - `rn_transport_ca_client_set_root_ca_cert(client, root_ca_der.as_ptr(), root_ca_der.len(), &mut err)`
+     - `rn_transport_ca_client_set_issuing_ca_cert(client, issuing_ca_der.as_ptr(), issuing_ca_der.len(), &mut err)`
+   - If not yet implemented, add these FFI and call them before any network operation.
+7) Node identity for client-auth operations:
+   - Provide node key material to the client so it can present its device certificate over mTLS:
+     - `rn_transport_ca_client_set_node_key_manager(client, node_keys as *mut c_void, &mut err)`
+   - If not yet implemented, add this FFI and call it before renew/revoke/status/crl.
+8) Sanity checks before enroll:
+   - Compute `signer_id` from `ea_pk` (e.g., compact-id) and assert it matches `EnrollmentToken.signer_id`.
+   - Confirm token validity window and permissions include "enroll".
+
+By following the above, the same EA keypair is threaded through both server and client sides, preventing mismatches that cause token validation failures.

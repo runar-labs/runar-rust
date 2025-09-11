@@ -22,6 +22,7 @@ use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use rustls_pki_types::CertificateDer;
 use serde_cbor;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+use x509_parser;
 
 /// CA Node message types for binary protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,12 +277,22 @@ impl CaClient {
         let mut root_store = RootCertStore::empty();
         // Add the root CA certificate to the trust store
         if let Some(root_ca_cert) = &self.root_ca_cert {
+            println!(
+                "DEBUG: Adding root CA cert to trust store ({} bytes)",
+                root_ca_cert.len()
+            );
+            // Parse the certificate to get its subject
+            if let Ok(parsed_cert) = x509_parser::parse_x509_certificate(root_ca_cert) {
+                println!("DEBUG: Root CA cert subject: {}", parsed_cert.1.subject());
+            }
             if let Err(e) = root_store.add(CertificateDer::from(root_ca_cert.clone())) {
+                println!("DEBUG: Failed to add root CA cert to trust store: {:?}", e);
                 log_warn!(
                     self.logger,
                     "Failed to add root CA certificate to root store: {e}"
                 );
             } else {
+                println!("DEBUG: Successfully added root CA cert to trust store");
                 log_debug!(
                     self.logger,
                     "Successfully added root CA certificate to root store for bootstrap request"
@@ -290,12 +301,21 @@ impl CaClient {
         }
         // Add the issuing CA certificate to the trust store
         if let Some(issuing_ca_cert) = &self.issuing_ca_cert {
+            println!(
+                "DEBUG: Adding issuing CA cert to trust store ({} bytes)",
+                issuing_ca_cert.len()
+            );
             if let Err(e) = root_store.add(CertificateDer::from(issuing_ca_cert.clone())) {
+                println!(
+                    "DEBUG: Failed to add issuing CA cert to trust store: {:?}",
+                    e
+                );
                 log_warn!(
                     self.logger,
                     "Failed to add issuing CA certificate to root store: {e}"
                 );
             } else {
+                println!("DEBUG: Successfully added issuing CA cert to trust store");
                 log_debug!(
                     self.logger,
                     "Successfully added issuing CA certificate to root store for bootstrap request"
@@ -315,6 +335,7 @@ impl CaClient {
         // Create QUIC endpoint
         let mut endpoint = Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?;
         endpoint.set_default_client_config(client_config);
+        println!("DEBUG: Client endpoint created with config");
 
         // Connect to bootstrap server
         log_debug!(
@@ -322,9 +343,29 @@ impl CaClient {
             "Connecting to bootstrap server at {}",
             self.config.bootstrap_server
         );
-        let connection = endpoint
-            .connect(self.config.bootstrap_server, "ca-node")?
-            .await?;
+        println!(
+            "DEBUG: Client attempting to connect to bootstrap server at {}",
+            self.config.bootstrap_server
+        );
+        let connection = match endpoint.connect(self.config.bootstrap_server, "ca-node") {
+            Ok(conn_future) => {
+                println!("DEBUG: Connection future created, awaiting...");
+                match conn_future.await {
+                    Ok(conn) => {
+                        println!("DEBUG: Client successfully connected to bootstrap server");
+                        conn
+                    }
+                    Err(e) => {
+                        println!("DEBUG: Connection failed: {:?}", e);
+                        return Err(e.into());
+                    }
+                }
+            }
+            Err(e) => {
+                println!("DEBUG: Failed to create connection future: {:?}", e);
+                return Err(e.into());
+            }
+        };
         log_info!(
             self.logger,
             "Bootstrap connection established to {}",

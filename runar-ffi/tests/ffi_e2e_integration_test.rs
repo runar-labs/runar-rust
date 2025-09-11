@@ -23,8 +23,8 @@ use common::*;
 /// Test the full CA Node infrastructure using FFI API with REAL QUIC mTLS connections
 #[test]
 fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Error>> {
-    // Set up logging
-    rn_set_log_level(3); // Debug level
+    // Set up logging with trace level for detailed debugging
+    rn_set_log_level(4); // Trace level
 
     // Initialize rustls crypto provider
     rustls::crypto::aws_lc_rs::default_provider()
@@ -90,12 +90,13 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ Issuing CA certificate created");
 
     // Create EA key pair (will be used for both server config and token generation)
+    // Following design section 6.6: Generate EA once and keep in shared test context
     let ea_key = runar_keys::certificate::EcdsaKeyPair::new().expect("Failed to create EA key");
     let ea_public_key = ea_key.public_key().as_bytes().to_vec();
     let ea_public_keys = vec![ea_public_key];
     let ea_public_keys_cbor =
         serde_cbor::to_vec(&ea_public_keys).expect("Failed to serialize EA keys");
-    println!("   ✅ EA public keys created");
+    println!("   ✅ EA key pair created (will be used for both server config and token signing)");
 
     // Install issuing CA in CA Node
     let result = unsafe {
@@ -226,7 +227,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let csr_der = unsafe { std::slice::from_raw_parts(csr_ptr, csr_len) }.to_vec();
     println!("   ✅ CSR generated ({csr_len} bytes)");
 
-    // Create enrollment token using the same EA key
+    // Create enrollment token using the SAME EA key (following design section 6.6)
+    // Step 3: Create tokens with the SAME EA private key
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -246,7 +248,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         .expect("Failed to generate enrollment token");
     let enrollment_token =
         serde_cbor::to_vec(&enrollment_token_struct).expect("Failed to serialize enrollment token");
-    println!("   ✅ Enrollment token created");
+    println!("   ✅ Enrollment token created with SAME EA key used for server config");
 
     // Build CsrEnrollRequest CBOR (following working test pattern)
     let enroll_request_struct = runar_keys::ca_node_types::CsrEnrollRequest {
@@ -258,7 +260,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let enroll_request =
         serde_cbor::to_vec(&enroll_request_struct).expect("Failed to serialize enroll request");
 
-    // Create CA Client
+    // Create CA Client (following design section 6.6 exact sequence)
     let mut ca_client: *mut c_void = ptr::null_mut();
     let result = unsafe {
         rn_transport_ca_client_new(logger, &mut ca_client as *mut *mut c_void, &mut error)
@@ -266,8 +268,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert_eq!(result, 0, "Failed to create CA client");
     assert!(!ca_client.is_null(), "CA client should not be null");
 
-    // Configure CA Client
-    println!("   🔧 Configuring CA Client with:");
+    // Step 6: CA Client trust anchors (required for REAL QUIC mTLS)
+    // Following design section 6.6: After client creation, set trust roots
+    println!("   🔧 Configuring CA Client (following design section 6.6):");
     println!("      Bootstrap: {}", bootstrap_addr_str);
     println!("      Authenticated: {}", authenticated_addr_str);
     println!("      Network ID: test_network");
@@ -297,7 +300,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     }
     println!("   ✅ CA Client configured successfully");
 
-    // Set root CA certificate
+    // Set root CA certificate (required for REAL QUIC mTLS)
     println!(
         "   🔧 Setting root CA certificate ({} bytes)",
         root_ca_cert.len()
@@ -322,7 +325,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     }
     println!("   ✅ Root CA certificate set successfully");
 
-    // Set issuing CA certificate
+    // Set issuing CA certificate (required for REAL QUIC mTLS)
     println!(
         "   🔧 Setting issuing CA certificate ({} bytes)",
         issuing_cert_der.len()
@@ -347,8 +350,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     }
     println!("   ✅ Issuing CA certificate set successfully");
 
-    // Set node key manager
-    println!("   🔧 Setting node key manager");
+    // Step 7: Node identity for client-auth operations
+    // Provide node key material to the client so it can present its device certificate over mTLS
+    println!("   🔧 Setting node key manager for mTLS client-auth");
     let result =
         unsafe { rn_transport_ca_client_set_node_key_manager(ca_client, node_keys, &mut error) };
     if result != 0 {
@@ -362,8 +366,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         panic!("Failed to set node key manager");
     }
     println!("   ✅ Node key manager set successfully");
-
-    println!("   ✅ CA Client configured");
+    println!("   ✅ CA Client fully configured for REAL QUIC mTLS");
 
     // Enroll via CA Client
     println!("   🔧 Attempting enrollment with:");
