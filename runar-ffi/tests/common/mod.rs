@@ -131,11 +131,11 @@ pub fn create_root_ca_certificate() -> Vec<u8> {
     ca.ca_certificate().der_bytes().to_vec()
 }
 
-/// Create Issuing CA certificate (key and cert)
+/// Create Root CA and Issuing CA certificates with proper chain
+/// Returns (root_ca_cert_der, issuing_key_der, issuing_cert_der)
 #[allow(dead_code)]
-pub fn create_issuing_ca_certificate() -> (Vec<u8>, Vec<u8>) {
+pub fn create_ca_certificate_chain() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use runar_keys::certificate::{CertificateAuthority, CertificateRequest, EcdsaKeyPair};
-    use serde_cbor;
 
     // Create Root CA
     let root_ca =
@@ -148,16 +148,25 @@ pub fn create_issuing_ca_certificate() -> (Vec<u8>, Vec<u8>) {
     let issuing_csr = CertificateRequest::create(&issuing_key, "CN=Test Issuing CA,O=Test,C=US")
         .expect("Failed to create issuing CA CSR");
 
-    // Sign Issuing CA certificate
+    // Sign Issuing CA certificate with Root CA
     let issuing_cert = root_ca
         .sign_ca_certificate_request_with_serial(&issuing_csr, 365, Some(1))
         .expect("Failed to sign issuing CA certificate");
 
-    // Serialize key as CBOR (as expected by the FFI function)
+    // Export certificates and key
+    let root_ca_cert_der = root_ca.ca_certificate().der_bytes().to_vec();
     let issuing_key_cbor =
         serde_cbor::to_vec(&issuing_key).expect("Failed to serialize key as CBOR");
+    let issuing_cert_der = issuing_cert.der_bytes().to_vec();
 
-    (issuing_key_cbor, issuing_cert.der_bytes().to_vec())
+    (root_ca_cert_der, issuing_key_cbor, issuing_cert_der)
+}
+
+/// Create Issuing CA certificate (key and cert) - DEPRECATED, use create_ca_certificate_chain
+#[allow(dead_code)]
+pub fn create_issuing_ca_certificate() -> (Vec<u8>, Vec<u8>) {
+    let (_, issuing_key_cbor, issuing_cert_der) = create_ca_certificate_chain();
+    (issuing_key_cbor, issuing_cert_der)
 }
 
 /// Create enrollment token
