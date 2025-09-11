@@ -28,6 +28,16 @@ use runar_transporter::{
     ca_client::CaClient, ca_server::CaServer, NetworkTransport, NodeDiscovery, QuicTransport,
     QuicTransportOptions,
 };
+
+/// FFI wrapper for CA Client with configuration data
+pub struct CaClientWrapper {
+    pub client: CaClient,
+    pub config: runar_transporter::CaClientConfig,
+    pub logger: Arc<Logger>,
+    pub root_ca_cert: Option<Vec<u8>>,
+    pub issuing_ca_cert: Option<Vec<u8>>,
+    pub node_key_manager: Option<Arc<std::sync::RwLock<NodeKeyManager>>>,
+}
 use serde_cbor as _; // keep dependency linked for now
                      // panic handling imports removed - no longer needed without ffi_guard
 use std::sync::Mutex as StdMutex;
@@ -64,6 +74,15 @@ pub const RN_ERROR_PROFILE_KEY_NOT_FOUND: i32 = 1005;
 pub const RN_ERROR_ENROLLMENT_TOKEN_INVALID: i32 = 1006;
 pub const RN_ERROR_RATE_LIMIT_EXCEEDED: i32 = 1007;
 pub const RN_ERROR_ADMIN_NOT_AUTHORIZED: i32 = 1008;
+pub const RN_ERROR_CERTIFICATE_CREATION_FAILED: i32 = 1009;
+pub const RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED: i32 = 1010;
+pub const RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED: i32 = 1011;
+pub const RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED: i32 = 1012;
+pub const RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED: i32 = 1013;
+pub const RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED: i32 = 1014;
+pub const RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED: i32 = 1015;
+pub const RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED: i32 = 1016;
+pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
 
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
@@ -459,9 +478,11 @@ pub struct CaServerConfig {
 /// CA Client Configuration (C-compatible)
 #[repr(C)]
 pub struct CaClientConfig {
-    pub root_ca_cert: *const u8,
-    pub root_ca_cert_len: usize,
-    pub timeout_seconds: u32,
+    pub bootstrap_server: *const c_char,
+    pub authenticated_server: *const c_char,
+    pub network_id: *const c_char,
+    pub request_timeout_seconds: u32,
+    pub max_retries: u32,
 }
 
 /// Certificate Status (C-compatible)
@@ -3456,6 +3477,195 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
     0
 }
 
+/// Convert enrollment response to certificate message
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_from_enroll_response(
+    mobile: *mut c_void,
+    response: *const u8,
+    response_len: usize,
+    out_cert_message: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if mobile.is_null()
+        || response.is_null()
+        || out_cert_message.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(mobile) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "mobile handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse the enrollment response
+    let response_data = std::slice::from_raw_parts(response, response_len);
+    let enroll_response =
+        match serde_cbor::from_slice::<runar_keys::ca_node_types::CsrEnrollResponse>(response_data)
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                    &format!("Failed to parse enrollment response: {e}"),
+                );
+                return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+            }
+        };
+
+    // Convert to certificate message
+    let cert_message = match mobile_manager.from_enroll_response(&enroll_response) {
+        Ok(msg) => msg,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to convert enrollment response: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    // Serialize to CBOR
+    let cbor = match serde_cbor::to_vec(&cert_message) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to serialize certificate message: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_cert_message, out_len, &cbor) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "failed to allocate memory for certificate message",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Convert renewal response to certificate message
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_from_renew_response(
+    mobile: *mut c_void,
+    response: *const u8,
+    response_len: usize,
+    out_cert_message: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if mobile.is_null()
+        || response.is_null()
+        || out_cert_message.is_null()
+        || out_len.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(mobile) else {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "mobile handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    };
+
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    // Parse the renewal response
+    let response_data = std::slice::from_raw_parts(response, response_len);
+    let renew_response =
+        match serde_cbor::from_slice::<runar_keys::ca_node_types::RenewResponse>(response_data) {
+            Ok(resp) => resp,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                    &format!("Failed to parse renewal response: {e}"),
+                );
+                return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+            }
+        };
+
+    // Convert to certificate message
+    let cert_message = match mobile_manager.from_renew_response(&renew_response) {
+        Ok(msg) => msg,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to convert renewal response: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    // Serialize to CBOR
+    let cbor = match serde_cbor::to_vec(&cert_message) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED,
+                &format!("Failed to serialize certificate message: {e}"),
+            );
+            return RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED;
+        }
+    };
+
+    if !alloc_bytes(out_cert_message, out_len, &cbor) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "failed to allocate memory for certificate message",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_node_install_certificate(
     keys: *mut c_void,
@@ -6404,11 +6614,20 @@ pub unsafe extern "C" fn rn_transport_ca_client_new(
 
     // Create a new CA Client with default configuration
     let config = runar_transporter::CaClientConfig::default();
-    let client = CaClient::new(config, logger.clone());
+    let client = CaClient::new(config.clone(), logger.clone());
 
-    let boxed_client = Box::new(client);
+    let wrapper = CaClientWrapper {
+        client,
+        config,
+        logger: logger.clone(),
+        root_ca_cert: None,
+        issuing_ca_cert: None,
+        node_key_manager: None,
+    };
+
+    let boxed_wrapper = Box::new(wrapper);
     unsafe {
-        *out_client = Box::into_raw(boxed_client) as *mut c_void;
+        *out_client = Box::into_raw(boxed_wrapper) as *mut c_void;
     }
 
     0
@@ -6418,7 +6637,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_ca_client_free(client: *mut c_void) {
     if !client.is_null() {
-        let _ = Box::from_raw(client as *mut CaClient);
+        let _ = Box::from_raw(client as *mut CaClientWrapper);
     }
 }
 
@@ -6444,7 +6663,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let client = &*(client as *const CaClient);
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
 
     // Parse bootstrap address
     let _bootstrap_addr_str = match std::ffi::CStr::from_ptr(bootstrap_addr).to_str() {
@@ -6554,7 +6774,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let client = &*(client as *const CaClient);
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
 
     // Parse the renewal request
     let request_data = std::slice::from_raw_parts(request, request_len);
@@ -6651,7 +6872,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_revoke(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let client = &*(client as *const CaClient);
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
 
     // Parse the revocation request
     let request_data = std::slice::from_raw_parts(request, request_len);
@@ -6747,7 +6969,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_chain(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let client = &*(client as *const CaClient);
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
 
     // Create a runtime for async operations
     let rt = match tokio::runtime::Runtime::new() {
@@ -6829,7 +7052,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_status(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let client = &*(client as *const CaClient);
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
 
     // Create a runtime for async operations
     let rt = match tokio::runtime::Runtime::new() {
@@ -6911,7 +7135,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let client = &*(client as *const CaClient);
+    let wrapper = &*(client as *const CaClientWrapper);
+    let client = &wrapper.client;
 
     // Create a runtime for async operations
     let rt = match tokio::runtime::Runtime::new() {
@@ -7113,4 +7338,175 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate_v2(
             RN_ERROR_OPERATION_FAILED
         }
     }
+}
+
+// ============================================================================
+// CA Client Configuration APIs
+// ============================================================================
+
+/// Configure CA Client with server addresses and settings
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_configure(
+    client: *mut c_void,
+    bootstrap_server: *const c_char,
+    authenticated_server: *const c_char,
+    network_id: *const c_char,
+    request_timeout_seconds: u32,
+    max_retries: u32,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null()
+        || bootstrap_server.is_null()
+        || authenticated_server.is_null()
+        || network_id.is_null()
+        || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse server addresses
+    let bootstrap_addr_str = match std::ffi::CStr::from_ptr(bootstrap_server).to_str() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid bootstrap server address: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let authenticated_addr_str = match std::ffi::CStr::from_ptr(authenticated_server).to_str() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid authenticated server address: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(id) => id,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse addresses
+    let bootstrap_addr = match bootstrap_addr_str.parse::<std::net::SocketAddr>() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid bootstrap server address format: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    let authenticated_addr = match authenticated_addr_str.parse::<std::net::SocketAddr>() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid authenticated server address format: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    // Create new configuration
+    let config = runar_transporter::CaClientConfig {
+        bootstrap_server: bootstrap_addr,
+        authenticated_server: authenticated_addr,
+        network_id: network_id_str.to_string(),
+        request_timeout: std::time::Duration::from_secs(request_timeout_seconds as u64),
+        max_retries,
+    };
+
+    // Update the existing wrapper's configuration
+    let wrapper = &mut *(client as *mut CaClientWrapper);
+    wrapper.config = config;
+
+    0
+}
+
+/// Set root CA certificate for client
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_set_root_ca_cert(
+    client: *mut c_void,
+    cert: *const u8,
+    cert_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null() || cert.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Copy certificate data
+    let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
+
+    // Update the existing wrapper's root CA certificate
+    let wrapper = &mut *(client as *mut CaClientWrapper);
+    wrapper.root_ca_cert = Some(cert_data);
+
+    0
+}
+
+/// Set issuing CA certificate for client
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_set_issuing_ca_cert(
+    client: *mut c_void,
+    cert: *const u8,
+    cert_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null() || cert.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Copy certificate data
+    let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
+
+    // Update the existing wrapper's issuing CA certificate
+    let wrapper = &mut *(client as *mut CaClientWrapper);
+    wrapper.issuing_ca_cert = Some(cert_data);
+
+    0
+}
+
+/// Set node key manager for client
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_ca_client_set_node_key_manager(
+    client: *mut c_void,
+    node_keys: *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if client.is_null() || node_keys.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let node_key_manager_arc =
+        &*(node_keys as *const std::sync::Arc<std::sync::RwLock<NodeKeyManager>>);
+
+    // Update the existing wrapper's node key manager
+    let wrapper = &mut *(client as *mut CaClientWrapper);
+    wrapper.node_key_manager = Some(node_key_manager_arc.clone());
+
+    0
 }

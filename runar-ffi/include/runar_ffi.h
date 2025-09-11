@@ -52,6 +52,24 @@
 
 #define RNAPIRN_ERROR_ADMIN_NOT_AUTHORIZED 1008
 
+#define RNAPIRN_ERROR_CERTIFICATE_CREATION_FAILED 1009
+
+#define RNAPIRN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED 1010
+
+#define RNAPIRN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED 1011
+
+#define RNAPIRN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED 1012
+
+#define RNAPIRN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED 1013
+
+#define RNAPIRN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED 1014
+
+#define RNAPIRN_ERROR_PROFILE_KEY_DECRYPTION_FAILED 1015
+
+#define RNAPIRN_ERROR_CA_CLIENT_CONFIGURATION_FAILED 1016
+
+#define RNAPIRN_ERROR_CRL_GENERATION_FAILED 1017
+
 typedef struct RNAPIKeysInner RNAPIKeysInner;
 
 typedef struct RNAPITransportInner RNAPITransportInner;
@@ -89,9 +107,11 @@ typedef struct RNAPICaServerConfig {
  * CA Client Configuration (C-compatible)
  */
 typedef struct RNAPICaClientConfig {
-  const uint8_t *root_ca_cert;
-  size_t root_ca_cert_len;
-  uint32_t timeout_seconds;
+  const char *bootstrap_server;
+  const char *authenticated_server;
+  const char *network_id;
+  uint32_t request_timeout_seconds;
+  uint32_t max_retries;
 } RNAPICaClientConfig;
 
 /**
@@ -387,6 +407,26 @@ int32_t rn_keys_mobile_process_setup_token(void *keys,
                                            const uint8_t *st_cbor,
                                            size_t st_len,
                                            uint8_t **out_ncm_cbor,
+                                           size_t *out_len,
+                                           struct RNAPIRnError *err);
+
+/**
+ * Convert enrollment response to certificate message
+ */
+int32_t rn_keys_mobile_from_enroll_response(void *mobile,
+                                            const uint8_t *response,
+                                            size_t response_len,
+                                            uint8_t **out_cert_message,
+                                            size_t *out_len,
+                                            struct RNAPIRnError *err);
+
+/**
+ * Convert renewal response to certificate message
+ */
+int32_t rn_keys_mobile_from_renew_response(void *mobile,
+                                           const uint8_t *response,
+                                           size_t response_len,
+                                           uint8_t **out_cert_message,
                                            size_t *out_len,
                                            struct RNAPIRnError *err);
 
@@ -795,6 +835,40 @@ int32_t rn_keys_node_install_certificate_v2(void *keys,
                                             const uint8_t *certificate_data,
                                             size_t cert_len,
                                             struct RNAPIRnError *err);
+
+/**
+ * Configure CA Client with server addresses and settings
+ */
+int32_t rn_transport_ca_client_configure(void *client,
+                                         const char *bootstrap_server,
+                                         const char *authenticated_server,
+                                         const char *network_id,
+                                         uint32_t request_timeout_seconds,
+                                         uint32_t max_retries,
+                                         struct RNAPIRnError *err);
+
+/**
+ * Set root CA certificate for client
+ */
+int32_t rn_transport_ca_client_set_root_ca_cert(void *client,
+                                                const uint8_t *cert,
+                                                size_t cert_len,
+                                                struct RNAPIRnError *err);
+
+/**
+ * Set issuing CA certificate for client
+ */
+int32_t rn_transport_ca_client_set_issuing_ca_cert(void *client,
+                                                   const uint8_t *cert,
+                                                   size_t cert_len,
+                                                   struct RNAPIRnError *err);
+
+/**
+ * Set node key manager for client
+ */
+int32_t rn_transport_ca_client_set_node_key_manager(void *client,
+                                                    void *node_keys,
+                                                    struct RNAPIRnError *err);
 
 #endif /* RUNAR_FFI_H */
 
