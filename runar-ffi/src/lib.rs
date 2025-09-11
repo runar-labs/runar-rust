@@ -7228,31 +7228,126 @@ pub unsafe extern "C" fn rn_keys_node_has_network_private_key(
 // CA CLIENT FFI FUNCTIONS (NEW)
 // ============================================================================
 
+/// CA Client Configuration with all options (CBOR-serialized)
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CaClientConfigAll {
+    pub bootstrap_server: String,
+    pub authenticated_server: String,
+    pub network_id: String,
+    pub request_timeout_seconds: u32,
+    pub max_retries: u32,
+    pub root_ca_der: Option<Vec<u8>>,
+    pub issuing_ca_der: Option<Vec<u8>>,
+}
+
 /// Create new CA Client (new API)
 #[no_mangle]
-pub unsafe extern "C" fn rn_transport_ca_client_new(
+pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
+    config_cbor: *const u8,
+    config_len: usize,
+    node_keys: *mut c_void,
     logger: *mut c_void,
     out_client: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    if logger.is_null() || out_client.is_null() || err.is_null() {
+    if config_cbor.is_null()
+        || node_keys.is_null()
+        || logger.is_null()
+        || out_client.is_null()
+        || err.is_null()
+    {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
     let logger = unsafe { &*(logger as *const Arc<Logger>) };
 
-    // Create a new CA Client with default configuration
-    let config = runar_transporter::CaClientConfig::default();
-    let client = CaClient::new(config.clone(), logger.clone());
+    // Parse configuration CBOR
+    let config_data = std::slice::from_raw_parts(config_cbor, config_len);
+    let config: CaClientConfigAll = match serde_cbor::from_slice(config_data) {
+        Ok(config) => config,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse config CBOR: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    // Extract the NodeKeyManager from the FFI handle
+    let Some(inner) = with_keys_inner(node_keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let node_key_manager_arc = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_HANDLE,
+                &format!("Invalid node manager: {:?}", e),
+            );
+            return RN_ERROR_INVALID_HANDLE;
+        }
+    };
+
+    // Parse server addresses
+    let bootstrap_addr = match config.bootstrap_server.parse::<std::net::SocketAddr>() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid bootstrap server address: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    let authenticated_addr = match config.authenticated_server.parse::<std::net::SocketAddr>() {
+        Ok(addr) => addr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid authenticated server address: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    // Create CaClientConfig
+    let client_config = runar_transporter::CaClientConfig {
+        bootstrap_server: bootstrap_addr,
+        authenticated_server: authenticated_addr,
+        network_id: config.network_id,
+        request_timeout: std::time::Duration::from_secs(config.request_timeout_seconds as u64),
+        max_retries: config.max_retries,
+    };
+
+    // Create client with all configuration at once (following working test pattern)
+    let mut client = CaClient::new(client_config.clone(), logger.clone())
+        .with_node_key_manager(node_key_manager_arc.clone());
+
+    // Add certificates if provided
+    if let Some(root_ca_der) = &config.root_ca_der {
+        client = client.with_root_ca_cert(root_ca_der.clone());
+    }
+
+    if let Some(issuing_ca_der) = &config.issuing_ca_der {
+        client = client.with_issuing_ca_cert(issuing_ca_der.clone());
+    }
 
     let wrapper = CaClientWrapper {
         client,
-        config,
+        config: client_config,
         logger: logger.clone(),
-        root_ca_cert: None,
-        issuing_ca_cert: None,
-        node_key_manager: None,
+        root_ca_cert: config.root_ca_der,
+        issuing_ca_cert: config.issuing_ca_der,
+        node_key_manager: Some(node_key_manager_arc.clone()),
     };
 
     let boxed_wrapper = Box::new(wrapper);
@@ -7930,277 +8025,6 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate_v2(
 // ============================================================================
 // CA Client Configuration APIs
 // ============================================================================
-
-/// Configure CA Client with server addresses and settings
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_ca_client_configure(
-    client: *mut c_void,
-    bootstrap_server: *const c_char,
-    authenticated_server: *const c_char,
-    network_id: *const c_char,
-    request_timeout_seconds: u32,
-    max_retries: u32,
-    err: *mut RnError,
-) -> i32 {
-    if client.is_null()
-        || bootstrap_server.is_null()
-        || authenticated_server.is_null()
-        || network_id.is_null()
-        || err.is_null()
-    {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Parse server addresses
-    let bootstrap_addr_str = match std::ffi::CStr::from_ptr(bootstrap_server).to_str() {
-        Ok(addr) => addr,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_UTF8,
-                &format!("Invalid bootstrap server address: {e}"),
-            );
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-
-    println!(
-        "DEBUG: CaClient configure - bootstrap_addr: {}",
-        bootstrap_addr_str
-    );
-
-    let authenticated_addr_str = match std::ffi::CStr::from_ptr(authenticated_server).to_str() {
-        Ok(addr) => addr,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_UTF8,
-                &format!("Invalid authenticated server address: {e}"),
-            );
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-
-    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
-        Ok(id) => id,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_UTF8,
-                &format!("Invalid network ID: {e}"),
-            );
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-
-    println!(
-        "DEBUG: CaClient configure - authenticated_addr: {}",
-        authenticated_addr_str
-    );
-    println!("DEBUG: CaClient configure - network_id: {}", network_id_str);
-    println!(
-        "DEBUG: CaClient configure - timeout: {}s, retries: {}",
-        request_timeout_seconds, max_retries
-    );
-
-    // Parse addresses
-    let bootstrap_addr = match bootstrap_addr_str.parse::<std::net::SocketAddr>() {
-        Ok(addr) => addr,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_ARGUMENT,
-                &format!("Invalid bootstrap server address format: {e}"),
-            );
-            return RN_ERROR_INVALID_ARGUMENT;
-        }
-    };
-
-    let authenticated_addr = match authenticated_addr_str.parse::<std::net::SocketAddr>() {
-        Ok(addr) => addr,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_ARGUMENT,
-                &format!("Invalid authenticated server address format: {e}"),
-            );
-            return RN_ERROR_INVALID_ARGUMENT;
-        }
-    };
-
-    // Create new configuration
-    let config = runar_transporter::CaClientConfig {
-        bootstrap_server: bootstrap_addr,
-        authenticated_server: authenticated_addr,
-        network_id: network_id_str.to_string(),
-        request_timeout: std::time::Duration::from_secs(request_timeout_seconds as u64),
-        max_retries,
-    };
-
-    // Update the existing wrapper's configuration and recreate the client
-    let wrapper = &mut *(client as *mut CaClientWrapper);
-    wrapper.config = config.clone();
-
-    // Recreate the client with the new configuration
-    wrapper.client = CaClient::new(config, wrapper.logger.clone());
-
-    0
-}
-
-/// Set root CA certificate for client
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_ca_client_set_root_ca_cert(
-    client: *mut c_void,
-    cert: *const u8,
-    cert_len: usize,
-    err: *mut RnError,
-) -> i32 {
-    if client.is_null() || cert.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Copy certificate data
-    let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
-
-    println!(
-        "DEBUG: CaClient set_root_ca_cert - cert size: {} bytes",
-        cert_data.len()
-    );
-
-    // Update the existing wrapper's root CA certificate and recreate the client
-    let wrapper = &mut *(client as *mut CaClientWrapper);
-    wrapper.root_ca_cert = Some(cert_data.clone());
-
-    // Recreate the client with the updated configuration
-    println!("DEBUG: CaClient recreating with updated config");
-    let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
-    if let Some(node_key_manager) = &wrapper.node_key_manager {
-        println!("DEBUG: CaClient adding node_key_manager");
-        new_client = new_client.with_node_key_manager(node_key_manager.clone());
-    }
-    if let Some(root_ca_cert) = &wrapper.root_ca_cert {
-        println!(
-            "DEBUG: CaClient adding root_ca_cert ({} bytes)",
-            root_ca_cert.len()
-        );
-        new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
-    }
-    if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
-        println!(
-            "DEBUG: CaClient adding issuing_ca_cert ({} bytes)",
-            issuing_ca_cert.len()
-        );
-        new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
-    }
-    wrapper.client = new_client;
-    println!("DEBUG: CaClient recreation completed");
-
-    0
-}
-
-/// Set issuing CA certificate for client
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_ca_client_set_issuing_ca_cert(
-    client: *mut c_void,
-    cert: *const u8,
-    cert_len: usize,
-    err: *mut RnError,
-) -> i32 {
-    if client.is_null() || cert.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Copy certificate data
-    let cert_data = std::slice::from_raw_parts(cert, cert_len).to_vec();
-
-    println!(
-        "DEBUG: CaClient set_issuing_ca_cert - cert size: {} bytes",
-        cert_data.len()
-    );
-
-    // Update the existing wrapper's issuing CA certificate and recreate the client
-    let wrapper = &mut *(client as *mut CaClientWrapper);
-    wrapper.issuing_ca_cert = Some(cert_data.clone());
-
-    // Recreate the client with the updated configuration
-    println!("DEBUG: CaClient recreating with updated config (issuing CA)");
-    let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
-    if let Some(node_key_manager) = &wrapper.node_key_manager {
-        println!("DEBUG: CaClient adding node_key_manager");
-        new_client = new_client.with_node_key_manager(node_key_manager.clone());
-    }
-    if let Some(root_ca_cert) = &wrapper.root_ca_cert {
-        println!(
-            "DEBUG: CaClient adding root_ca_cert ({} bytes)",
-            root_ca_cert.len()
-        );
-        new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
-    }
-    if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
-        println!(
-            "DEBUG: CaClient adding issuing_ca_cert ({} bytes)",
-            issuing_ca_cert.len()
-        );
-        new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
-    }
-    wrapper.client = new_client;
-    println!("DEBUG: CaClient recreation completed (issuing CA)");
-
-    0
-}
-
-/// Set node key manager for client
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_ca_client_set_node_key_manager(
-    client: *mut c_void,
-    node_keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    if client.is_null() || node_keys.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Extract the NodeKeyManager from the FFI handle
-    let Some(inner) = with_keys_inner(node_keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    let node_key_manager_arc = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_HANDLE,
-                &format!("Invalid node manager: {:?}", e),
-            );
-            return RN_ERROR_INVALID_HANDLE;
-        }
-    };
-
-    // Update the existing wrapper's node key manager and recreate the client
-    let wrapper = &mut *(client as *mut CaClientWrapper);
-    wrapper.node_key_manager = Some(node_key_manager_arc.clone());
-
-    // Recreate the client with the updated configuration
-    let mut new_client = CaClient::new(wrapper.config.clone(), wrapper.logger.clone());
-    if let Some(node_key_manager) = &wrapper.node_key_manager {
-        new_client = new_client.with_node_key_manager(node_key_manager.clone());
-    }
-    if let Some(root_ca_cert) = &wrapper.root_ca_cert {
-        new_client = new_client.with_root_ca_cert(root_ca_cert.clone());
-    }
-    if let Some(issuing_ca_cert) = &wrapper.issuing_ca_cert {
-        new_client = new_client.with_issuing_ca_cert(issuing_ca_cert.clone());
-    }
-    wrapper.client = new_client;
-
-    0
-}
 
 /// Get compact ID for profile key
 #[no_mangle]

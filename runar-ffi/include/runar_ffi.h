@@ -833,7 +833,12 @@ int32_t rn_keys_node_has_network_private_key(void *keys,
 /**
  * Create new CA Client (new API)
  */
-int32_t rn_transport_ca_client_new(void *logger, void **out_client, struct RNAPIRnError *err);
+int32_t rn_transport_ca_client_new_with_config(const uint8_t *config_cbor,
+                                               size_t config_len,
+                                               void *node_keys,
+                                               void *logger,
+                                               void **out_client,
+                                               struct RNAPIRnError *err);
 
 /**
  * Free CA Client (new API)
@@ -923,40 +928,6 @@ int32_t rn_keys_node_install_certificate_v2(void *keys,
                                             const uint8_t *certificate_data,
                                             size_t cert_len,
                                             struct RNAPIRnError *err);
-
-/**
- * Configure CA Client with server addresses and settings
- */
-int32_t rn_transport_ca_client_configure(void *client,
-                                         const char *bootstrap_server,
-                                         const char *authenticated_server,
-                                         const char *network_id,
-                                         uint32_t request_timeout_seconds,
-                                         uint32_t max_retries,
-                                         struct RNAPIRnError *err);
-
-/**
- * Set root CA certificate for client
- */
-int32_t rn_transport_ca_client_set_root_ca_cert(void *client,
-                                                const uint8_t *cert,
-                                                size_t cert_len,
-                                                struct RNAPIRnError *err);
-
-/**
- * Set issuing CA certificate for client
- */
-int32_t rn_transport_ca_client_set_issuing_ca_cert(void *client,
-                                                   const uint8_t *cert,
-                                                   size_t cert_len,
-                                                   struct RNAPIRnError *err);
-
-/**
- * Set node key manager for client
- */
-int32_t rn_transport_ca_client_set_node_key_manager(void *client,
-                                                    void *node_keys,
-                                                    struct RNAPIRnError *err);
 
 /**
  * Get compact ID for profile key

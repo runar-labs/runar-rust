@@ -2902,7 +2902,16 @@ fn test_ca_client_new_stub() {
     let mut error = create_test_error();
     let mut client: *mut c_void = ptr::null_mut();
 
-    let result = unsafe { rn_transport_ca_client_new(ptr::null_mut(), &mut client, &mut error) };
+    let result = unsafe {
+        rn_transport_ca_client_new_with_config(
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut client,
+            &mut error,
+        )
+    };
 
     assert_eq!(
         result, RN_ERROR_NULL_ARGUMENT,

@@ -20,6 +20,18 @@ use std::ptr;
 mod common;
 use common::*;
 
+/// CA Client Configuration with all options (CBOR-serialized)
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CaClientConfigAll {
+    pub bootstrap_server: String,
+    pub authenticated_server: String,
+    pub network_id: String,
+    pub request_timeout_seconds: u32,
+    pub max_retries: u32,
+    pub root_ca_der: Option<Vec<u8>>,
+    pub issuing_ca_der: Option<Vec<u8>>,
+}
+
 /// Validate certificate chain to ensure proper signing relationships
 fn validate_certificate_chain(root_ca_der: &[u8], issuing_ca_der: &[u8]) {
     // Basic validation: ensure certificates are not empty and have reasonable sizes
@@ -320,113 +332,51 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let enroll_request =
         serde_cbor::to_vec(&enroll_request_struct).expect("Failed to serialize enroll request");
 
-    // Create CA Client (following design section 6.6 exact sequence)
-    let mut ca_client: *mut c_void = ptr::null_mut();
-    let result = unsafe {
-        rn_transport_ca_client_new(logger, &mut ca_client as *mut *mut c_void, &mut error)
-    };
-    assert_eq!(result, 0, "Failed to create CA client");
-    assert!(!ca_client.is_null(), "CA client should not be null");
-
-    // Step 6: CA Client trust anchors (required for REAL QUIC mTLS)
-    // Following design section 6.6: After client creation, set trust roots
-    println!("   🔧 Configuring CA Client (following design section 6.6):");
+    // Create CA Client with all configuration at once (following design section 6.6)
+    println!("   🔧 Creating CA Client with all configuration (following design section 6.6):");
     println!("      Bootstrap: {}", bootstrap_addr_str);
     println!("      Authenticated: {}", authenticated_addr_str);
     println!("      Network ID: test_network");
     println!("      Timeout: 30s, Max retries: 3");
+    println!("      Root CA cert: {} bytes", root_ca_cert.len());
+    println!("      Issuing CA cert: {} bytes", issuing_cert_der.len());
 
-    let result = unsafe {
-        rn_transport_ca_client_configure(
-            ca_client,
-            bootstrap_addr_cstr.as_ptr(),
-            authenticated_addr_cstr.as_ptr(),
-            create_cstring("test_network").as_ptr(),
-            30, // request_timeout_seconds
-            3,  // max_retries
-            &mut error,
-        )
+    // Create configuration CBOR
+    let config = CaClientConfigAll {
+        bootstrap_server: bootstrap_addr_str.clone(),
+        authenticated_server: authenticated_addr_str.clone(),
+        network_id: "test_network".to_string(),
+        request_timeout_seconds: 30,
+        max_retries: 3,
+        root_ca_der: Some(root_ca_cert.clone()),
+        issuing_ca_der: Some(issuing_cert_der.clone()),
     };
 
-    if result != 0 {
-        println!(
-            "   ❌ CA Client configuration failed with error code: {}",
-            result
-        );
-        println!("   ❌ Error message: {}", unsafe {
-            std::ffi::CStr::from_ptr(error.message).to_string_lossy()
-        });
-        panic!("Failed to configure CA client");
-    }
-    println!("   ✅ CA Client configured successfully");
+    let config_cbor = serde_cbor::to_vec(&config).expect("Failed to serialize config as CBOR");
 
-    // Set root CA certificate (required for REAL QUIC mTLS)
-    println!(
-        "   🔧 Setting root CA certificate ({} bytes)",
-        root_ca_cert.len()
-    );
+    let mut ca_client: *mut c_void = ptr::null_mut();
     let result = unsafe {
-        rn_transport_ca_client_set_root_ca_cert(
-            ca_client,
-            root_ca_cert.as_ptr(),
-            root_ca_cert.len(),
+        rn_transport_ca_client_new_with_config(
+            config_cbor.as_ptr(),
+            config_cbor.len(),
+            node_keys,
+            logger,
+            &mut ca_client,
             &mut error,
         )
     };
     if result != 0 {
         println!(
-            "   ❌ Failed to set root CA cert with error code: {}",
+            "   ❌ Failed to create CA client with error code: {}",
             result
         );
         println!("   ❌ Error message: {}", unsafe {
             std::ffi::CStr::from_ptr(error.message).to_string_lossy()
         });
-        panic!("Failed to set root CA cert");
+        panic!("Failed to create CA client");
     }
-    println!("   ✅ Root CA certificate set successfully");
-
-    // Set issuing CA certificate (required for REAL QUIC mTLS)
-    println!(
-        "   🔧 Setting issuing CA certificate ({} bytes)",
-        issuing_cert_der.len()
-    );
-    let result = unsafe {
-        rn_transport_ca_client_set_issuing_ca_cert(
-            ca_client,
-            issuing_cert_der.as_ptr(),
-            issuing_cert_der.len(),
-            &mut error,
-        )
-    };
-    if result != 0 {
-        println!(
-            "   ❌ Failed to set issuing CA cert with error code: {}",
-            result
-        );
-        println!("   ❌ Error message: {}", unsafe {
-            std::ffi::CStr::from_ptr(error.message).to_string_lossy()
-        });
-        panic!("Failed to set issuing CA cert");
-    }
-    println!("   ✅ Issuing CA certificate set successfully");
-
-    // Step 7: Node identity for client-auth operations
-    // Provide node key material to the client so it can present its device certificate over mTLS
-    println!("   🔧 Setting node key manager for mTLS client-auth");
-    let result =
-        unsafe { rn_transport_ca_client_set_node_key_manager(ca_client, node_keys, &mut error) };
-    if result != 0 {
-        println!(
-            "   ❌ Failed to set node key manager with error code: {}",
-            result
-        );
-        println!("   ❌ Error message: {}", unsafe {
-            std::ffi::CStr::from_ptr(error.message).to_string_lossy()
-        });
-        panic!("Failed to set node key manager");
-    }
-    println!("   ✅ Node key manager set successfully");
-    println!("   ✅ CA Client fully configured for REAL QUIC mTLS");
+    assert!(!ca_client.is_null(), "CA client should not be null");
+    println!("   ✅ CA Client created with all configuration for REAL QUIC mTLS");
 
     // Enroll via CA Client
     println!("   🔧 Attempting enrollment with:");
