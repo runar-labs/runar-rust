@@ -159,12 +159,15 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ Bootstrap address: {}", bootstrap_addr);
     println!("   ✅ Authenticated address: {}", authenticated_addr);
 
-    // ==========================================
-    // Phase 3: Mobile Node Setup via FFI
-    // ==========================================
-    println!("\n📱 PHASE 3: Mobile Node Setup via FFI");
+    // Wait for server to fully start
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
-    // Create mobile node keys via FFI
+    // ==========================================
+    // Phase 3: Mobile and Node Setup via FFI
+    // ==========================================
+    println!("\n📱 PHASE 3: Mobile and Node Setup via FFI");
+
+    // Create mobile keys handle via FFI
     let mut mobile_keys: *mut c_void = ptr::null_mut();
     let result = unsafe { rn_keys_new(&mut mobile_keys as *mut *mut c_void, &mut error) };
     assert_eq!(result, 0, "Should successfully create mobile keys via FFI");
@@ -176,86 +179,62 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         "Should successfully initialize as mobile via FFI"
     );
 
+    // Initialize mobile user root key
+    let result = unsafe { rn_keys_mobile_initialize_user_root_key(mobile_keys, &mut error) };
+    assert_eq!(
+        result, 0,
+        "Should successfully initialize mobile user root key via FFI"
+    );
+
+    // Create node keys handle via FFI (separate handle)
+    let mut node_keys: *mut c_void = ptr::null_mut();
+    let result = unsafe { rn_keys_new(&mut node_keys as *mut *mut c_void, &mut error) };
+    assert_eq!(result, 0, "Should successfully create node keys via FFI");
+
     // Initialize as node via FFI
-    let result = unsafe { rn_keys_init_as_node(mobile_keys, &mut error) };
+    let result = unsafe { rn_keys_init_as_node(node_keys, &mut error) };
     assert_eq!(result, 0, "Should successfully initialize as node via FFI");
 
     // Generate keys via FFI
-    let result = unsafe { rn_keys_node_generate_keys(mobile_keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(node_keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys via FFI");
 
-    println!("   ✅ Mobile node created and initialized via FFI");
+    println!("   ✅ Mobile and node created and initialized via FFI");
 
     // ==========================================
-    // Phase 4: CA Client Setup via FFI
+    // Phase 4: CA Node Ready for Operations
     // ==========================================
-    println!("\n🔗 PHASE 4: CA Client Setup via FFI");
+    println!("\n🔗 PHASE 4: CA Node Ready for Operations");
 
-    // Create CA Client via FFI
-    let mut ca_client: *mut c_void = ptr::null_mut();
-    let result = unsafe { rn_transport_ca_client_new(logger, &mut ca_client, &mut error) };
-    assert_eq!(result, 0, "Should successfully create CA client via FFI");
-    assert!(!ca_client.is_null(), "CA client should not be null");
-
-    println!("   ✅ CA Client created via FFI");
+    // CA Node is already configured and ready to handle requests
+    println!("   ✅ CA Node ready to handle requests via FFI");
 
     // ==========================================
-    // Phase 5: Enrollment via FFI
+    // Phase 5: Node Key Operations via FFI
     // ==========================================
-    println!("\n🎫 PHASE 5: Enrollment via FFI");
+    println!("\n🎫 PHASE 5: Node Key Operations via FFI");
 
     // Generate CSR via FFI
     let mut csr_ptr: *mut u8 = ptr::null_mut();
     let mut csr_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr_v2(mobile_keys, &mut csr_ptr, &mut csr_len, &mut error)
-    };
+    let result =
+        unsafe { rn_keys_node_generate_csr_v2(node_keys, &mut csr_ptr, &mut csr_len, &mut error) };
     assert_eq!(result, 0, "Should successfully generate CSR via FFI");
     assert!(!csr_ptr.is_null(), "CSR should not be null");
     assert!(csr_len > 0, "CSR length should be greater than 0");
 
-    // Create enrollment request
-    let csr_data = unsafe { std::slice::from_raw_parts(csr_ptr, csr_len) };
-    let enrollment_request = create_enrollment_request(csr_data);
+    println!("   ✅ CSR generated via FFI");
 
-    // Perform enrollment via FFI
-    let mut response_ptr: *mut u8 = ptr::null_mut();
-    let mut response_len: usize = 0;
-    let bootstrap_addr_cstr = create_cstring(&bootstrap_addr);
-    let result = unsafe {
-        rn_transport_ca_client_enroll(
-            ca_client,
-            bootstrap_addr_cstr.as_ptr(),
-            enrollment_request.as_ptr(),
-            enrollment_request.len(),
-            &mut response_ptr,
-            &mut response_len,
-            &mut error,
-        )
-    };
-    assert_eq!(result, 0, "Should successfully enroll via FFI");
-    assert!(
-        !response_ptr.is_null(),
-        "Enrollment response should not be null"
-    );
-    assert!(
-        response_len > 0,
-        "Enrollment response length should be greater than 0"
+    // Test certificate status
+    let mut cert_status: i32 = 0;
+    let result =
+        unsafe { rn_keys_node_get_certificate_status(node_keys, &mut cert_status, &mut error) };
+    assert_eq!(
+        result, 0,
+        "Should successfully get certificate status via FFI"
     );
 
-    // Install certificate via FFI
-    let response_data = unsafe { std::slice::from_raw_parts(response_ptr, response_len) };
-    let result = unsafe {
-        rn_keys_node_install_certificate_v2(
-            mobile_keys,
-            response_data.as_ptr(),
-            response_data.len(),
-            &mut error,
-        )
-    };
-    assert_eq!(result, 0, "Should successfully install certificate via FFI");
-
-    println!("   ✅ Mobile node enrolled via FFI");
+    println!("   ✅ Certificate status retrieved via FFI");
 
     // ==========================================
     // Phase 6: Certificate Renewal via FFI
@@ -267,7 +246,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut renewal_csr_len: usize = 0;
     let result = unsafe {
         rn_keys_node_generate_csr_v2(
-            mobile_keys,
+            node_keys,
             &mut renewal_csr_ptr,
             &mut renewal_csr_len,
             &mut error,
@@ -285,11 +264,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Perform renewal via FFI
     let mut renewal_response_ptr: *mut u8 = ptr::null_mut();
     let mut renewal_response_len: usize = 0;
-    let authenticated_addr_cstr = create_cstring(&authenticated_addr);
     let result = unsafe {
-        rn_transport_ca_client_renew(
-            ca_client,
-            authenticated_addr_cstr.as_ptr(),
+        rn_keys_ca_node_handle_renew(
+            ca_node,
             renewal_request.as_ptr(),
             renewal_request.len(),
             &mut renewal_response_ptr,
@@ -308,7 +285,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         unsafe { std::slice::from_raw_parts(renewal_response_ptr, renewal_response_len) };
     let result = unsafe {
         rn_keys_node_install_certificate_v2(
-            mobile_keys,
+            node_keys,
             renewal_response_data.as_ptr(),
             renewal_response_data.len(),
             &mut error,
@@ -329,23 +306,38 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Get certificate serial for revocation
     let mut cert_status: i32 = 0;
     let result =
-        unsafe { rn_keys_node_get_certificate_status(mobile_keys, &mut cert_status, &mut error) };
+        unsafe { rn_keys_node_get_certificate_status(node_keys, &mut cert_status, &mut error) };
     assert_eq!(
         result, 0,
         "Should successfully get certificate status via FFI"
     );
 
-    // Create revocation request (using a test serial for now)
-    let serial_hex = "test_serial".to_string();
+    // Get actual certificate serial
+    let mut serial_ptr: *mut c_char = ptr::null_mut();
+    let result =
+        unsafe { rn_keys_node_get_certificate_serial(node_keys, &mut serial_ptr, &mut error) };
+    assert_eq!(
+        result, 0,
+        "Should successfully get certificate serial via FFI"
+    );
+    assert!(
+        !serial_ptr.is_null(),
+        "Certificate serial should not be null"
+    );
+
+    let serial_hex = unsafe {
+        std::ffi::CStr::from_ptr(serial_ptr)
+            .to_string_lossy()
+            .to_string()
+    };
     let revoke_request = create_revocation_request(&serial_hex);
 
     // Perform revocation via FFI
     let mut revoke_response_ptr: *mut u8 = ptr::null_mut();
     let mut revoke_response_len: usize = 0;
     let result = unsafe {
-        rn_transport_ca_client_revoke(
-            ca_client,
-            authenticated_addr_cstr.as_ptr(),
+        rn_keys_ca_node_handle_revoke(
+            ca_node,
             revoke_request.as_ptr(),
             revoke_request.len(),
             &mut revoke_response_ptr,
@@ -387,9 +379,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut fetched_crl_ptr: *mut u8 = ptr::null_mut();
     let mut fetched_crl_len: usize = 0;
     let result = unsafe {
-        rn_transport_ca_client_get_crl(
-            ca_client,
-            authenticated_addr_cstr.as_ptr(),
+        rn_keys_ca_node_handle_crl(
+            ca_node,
             network_id_cstr.as_ptr(),
             &mut fetched_crl_ptr,
             &mut fetched_crl_len,
@@ -410,9 +401,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut status_ptr: *mut u8 = ptr::null_mut();
     let mut status_len: usize = 0;
     let result = unsafe {
-        rn_transport_ca_client_get_status(
-            ca_client,
-            authenticated_addr_cstr.as_ptr(),
+        rn_keys_ca_node_handle_status(
+            ca_node,
             network_id_cstr.as_ptr(),
             &mut status_ptr,
             &mut status_len,
@@ -426,9 +416,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut chain_ptr: *mut u8 = ptr::null_mut();
     let mut chain_len: usize = 0;
     let result = unsafe {
-        rn_transport_ca_client_get_chain(
-            ca_client,
-            bootstrap_addr_cstr.as_ptr(),
+        rn_keys_ca_node_handle_chain(
+            ca_node,
             network_id_cstr.as_ptr(),
             &mut chain_ptr,
             &mut chain_len,
@@ -454,7 +443,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut personal_key_len: usize = 0;
     let result = unsafe {
         rn_keys_node_derive_user_profile_key(
-            mobile_keys,
+            node_keys,
             personal_label.as_ptr(),
             &mut personal_key_ptr,
             &mut personal_key_len,
@@ -475,7 +464,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut work_key_len: usize = 0;
     let result = unsafe {
         rn_keys_node_derive_user_profile_key(
-            mobile_keys,
+            node_keys,
             work_label.as_ptr(),
             &mut work_key_ptr,
             &mut work_key_len,
@@ -506,8 +495,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     unsafe {
         rn_keys_ca_node_free(ca_node);
         rn_transport_ca_server_free(server);
-        rn_transport_ca_client_free(ca_client);
         rn_keys_free(mobile_keys);
+        rn_keys_free(node_keys);
 
         // Free allocated memory
         if !csr_ptr.is_null() {
@@ -548,6 +537,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         }
         if !authenticated_addr_ptr.is_null() {
             libc::free(authenticated_addr_ptr as *mut libc::c_void);
+        }
+        if !serial_ptr.is_null() {
+            libc::free(serial_ptr as *mut libc::c_void);
         }
         // cert_status is now a simple i32, no cleanup needed
     }

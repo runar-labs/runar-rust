@@ -653,6 +653,13 @@ int32_t rn_keys_node_get_certificate_status(void *keys,
                                             struct RNAPIRnError *err);
 
 /**
+ * Get certificate serial number
+ */
+int32_t rn_keys_node_get_certificate_serial(void *keys,
+                                            char **out_serial,
+                                            struct RNAPIRnError *err);
+
+/**
  * Get QUIC certificate configuration
  */
 int32_t rn_keys_node_get_quic_certificate_config(void *keys,

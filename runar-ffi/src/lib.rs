@@ -6013,6 +6013,62 @@ pub unsafe extern "C" fn rn_keys_node_get_certificate_status(
     0
 }
 
+/// Get certificate serial number
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_certificate_serial(
+    keys: *mut c_void,
+    out_serial: *mut *mut c_char,
+    err: *mut RnError,
+) -> i32 {
+    if keys.is_null() || out_serial.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    match manager.read().unwrap().get_node_certificate() {
+        Some(cert) => match cert.parsed() {
+            Ok(parsed_cert) => {
+                let serial_hex = parsed_cert.serial.to_string();
+                if alloc_string_simple(out_serial, &serial_hex) {
+                    0
+                } else {
+                    set_error(
+                        err,
+                        RN_ERROR_MEMORY_ALLOCATION,
+                        "Failed to allocate serial string",
+                    );
+                    RN_ERROR_MEMORY_ALLOCATION
+                }
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("Failed to parse certificate: {e}"),
+                );
+                RN_ERROR_OPERATION_FAILED
+            }
+        },
+        None => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "No certificate installed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
 /// Get QUIC certificate configuration
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_node_get_quic_certificate_config(
