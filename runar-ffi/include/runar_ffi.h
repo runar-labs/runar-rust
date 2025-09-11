@@ -601,6 +601,39 @@ int32_t rn_keys_ca_node_handle_crl(void *ca_node,
                                    struct RNAPIRnError *err);
 
 /**
+ * Create Root CA certificate
+ */
+int32_t rn_keys_ca_create_root_ca(const char *subject, void **out_ca, struct RNAPIRnError *err);
+
+/**
+ * Create Issuing CA certificate (signed by Root CA)
+ */
+int32_t rn_keys_ca_create_issuing_ca(void *root_ca,
+                                     const char *subject,
+                                     uint32_t validity_days,
+                                     uint64_t serial,
+                                     void **out_ca,
+                                     struct RNAPIRnError *err);
+
+/**
+ * Get CA certificate DER bytes
+ */
+int32_t rn_keys_ca_get_certificate_der(void *ca,
+                                       uint8_t **out_cert,
+                                       size_t *out_len,
+                                       struct RNAPIRnError *err);
+
+/**
+ * Get CA certificate subject
+ */
+int32_t rn_keys_ca_get_certificate_subject(void *ca, char **out_subject, struct RNAPIRnError *err);
+
+/**
+ * Free CA resources
+ */
+void rn_keys_ca_free(void *ca);
+
+/**
  * Create new CA Server (new API)
  */
 int32_t rn_transport_ca_server_new(const uint8_t *config,
