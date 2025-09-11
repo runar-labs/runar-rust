@@ -74,7 +74,7 @@ This section enumerates the complete, production-ready FFI API required for exte
     - request_timeout_seconds: u32
     - max_retries: u32
     - root_ca_der: Vec<u8>
-    - issuing_ca_der: Option<Vec<u8>>
+    - issuing_ca_der: Vec<u8>
 - `rn_transport_ca_client_free(client)`
 - `rn_transport_ca_client_enroll(client, bootstrap_addr_cstr, request_cbor, len, out_response_cbor, out_len, err) -> i32`
 - `rn_transport_ca_client_renew(client, authenticated_addr_cstr, request_cbor, len, out_response_cbor, out_len, err) -> i32`
