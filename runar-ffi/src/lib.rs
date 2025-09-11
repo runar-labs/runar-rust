@@ -26,8 +26,9 @@ use runar_schemas::NodeInfo;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions, MulticastDiscovery};
 use runar_transporter::{
-    ca_client::CaClient, ca_server::CaServer, NetworkTransport, NodeDiscovery, QuicTransport,
-    QuicTransportOptions,
+    ca_client::{CaClient, CaClientBuilder},
+    ca_server::CaServer,
+    NetworkTransport, NodeDiscovery, QuicTransport, QuicTransportOptions,
 };
 
 /// FFI wrapper for CA Client with configuration data
@@ -7329,17 +7330,42 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
     };
 
     // Create client with all configuration at once (following working test pattern)
-    let mut client = CaClient::new(client_config.clone(), logger.clone())
-        .with_node_key_manager(node_key_manager_arc.clone());
+    println!("DEBUG: FFI client creation - creating CaClientBuilder with config");
+    let mut client = match CaClientBuilder::new()
+        .with_config(client_config.clone())
+        .with_node_key_manager(node_key_manager_arc.clone())
+        .with_logger(logger.clone())
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to build CA client: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
 
-    // Add certificates if provided
+    // Add certificates if provided (after build, like working test)
     if let Some(root_ca_der) = &config.root_ca_der {
+        println!(
+            "DEBUG: FFI client creation - adding root CA cert ({} bytes)",
+            root_ca_der.len()
+        );
         client = client.with_root_ca_cert(root_ca_der.clone());
     }
 
     if let Some(issuing_ca_der) = &config.issuing_ca_der {
+        println!(
+            "DEBUG: FFI client creation - adding issuing CA cert ({} bytes)",
+            issuing_ca_der.len()
+        );
         client = client.with_issuing_ca_cert(issuing_ca_der.clone());
     }
+
+    println!("DEBUG: FFI client creation - client created successfully");
 
     let wrapper = CaClientWrapper {
         client,
@@ -7467,6 +7493,21 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
     );
 
     println!("DEBUG: Starting enrollment call...");
+    println!(
+        "DEBUG: FFI enroll - client config: bootstrap={}, authenticated={}, network_id={}",
+        wrapper.config.bootstrap_server,
+        wrapper.config.authenticated_server,
+        wrapper.config.network_id
+    );
+    println!(
+        "DEBUG: FFI enroll - request timeout: {:?}, max_retries: {}",
+        wrapper.config.request_timeout, wrapper.config.max_retries
+    );
+
+    // Add a small delay to ensure server is ready
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    println!("DEBUG: FFI enroll - calling client.enroll()...");
     match rt.block_on(client.enroll(enroll_request)) {
         Ok(response) => {
             // Serialize the response

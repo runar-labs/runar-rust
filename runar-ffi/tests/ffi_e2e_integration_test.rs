@@ -67,8 +67,12 @@ fn validate_certificate_chain(root_ca_der: &[u8], issuing_ca_der: &[u8]) {
 /// Test the full CA Node infrastructure using FFI API with REAL QUIC mTLS connections
 #[test]
 fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Error>> {
-    // Set up logging with trace level for detailed debugging
-    rn_set_log_level(4); // Trace level
+    // Set up logging exactly like the working test
+    use runar_common::logging::{Component, LogLevel, Logger, LoggingConfig};
+    use std::sync::Arc;
+
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    logging_config.apply();
 
     // Initialize rustls crypto provider
     rustls::crypto::aws_lc_rs::default_provider()
@@ -82,8 +86,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // ==========================================
     println!("\n🏗️  PHASE 1: Setup");
 
-    // Create test logger
-    let logger = create_test_logger();
+    // Create test logger with proper component (like working test)
+    // The working test uses Component::Transporter for network operations
+    let logger = Arc::new(Logger::new_root(Component::Transporter));
+    let logger_ptr = Box::into_raw(Box::new(logger)) as *mut c_void;
 
     // Create keys handles
     let mut node_keys: *mut c_void = ptr::null_mut();
@@ -121,7 +127,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Create CA Node
     let mut ca_node: *mut c_void = ptr::null_mut();
     let result =
-        unsafe { rn_keys_ca_node_new(logger, &mut ca_node as *mut *mut c_void, &mut error) };
+        unsafe { rn_keys_ca_node_new(logger_ptr, &mut ca_node as *mut *mut c_void, &mut error) };
     assert_eq!(result, 0, "Failed to create CA node");
     assert!(!ca_node.is_null(), "CA node should not be null");
 
@@ -216,7 +222,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             server_config.as_ptr(),
             server_config.len(),
             ca_node,
-            logger,
+            logger_ptr,
             &mut ca_server as *mut *mut c_void,
             &mut error,
         )
@@ -360,7 +366,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             config_cbor.as_ptr(),
             config_cbor.len(),
             node_keys,
-            logger,
+            logger_ptr,
             &mut ca_client,
             &mut error,
         )
