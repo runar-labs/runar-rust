@@ -3871,7 +3871,6 @@ dependencies = [
  "serde_cbor",
  "tokio",
  "uuid",
- "x509-parser",
 ]
 
 [[package]]
