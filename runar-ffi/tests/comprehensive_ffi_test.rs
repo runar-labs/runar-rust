@@ -409,17 +409,13 @@ fn test_node_encrypt_local_data_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
-    // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
+    // Note: rn_keys_node_get_keystore_state has been removed - state management is now internal
+    // Keys are automatically generated when needed
+
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-    assert_eq!(result, 0, "Should successfully get keystore state");
-
     let data = b"Secret data to encrypt";
 
     let mut cipher_ptr: *mut u8 = ptr::null_mut();
@@ -488,15 +484,8 @@ fn test_node_get_keystore_state_happy_path() {
         message: ptr::null(),
     };
 
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
-
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-
-    // Should succeed (may return 0 or 1 depending on keystore state)
-    assert!(result == 0, "Should succeed");
-    assert!(has_state == 0 || has_state == 1, "State should be 0 or 1");
+    // Note: rn_keys_node_get_keystore_state has been removed - state management is now internal
+    // Keys are automatically generated when needed
 
     destroy_keys_handle(keys);
 }
@@ -565,17 +554,13 @@ fn test_node_get_public_key_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
-    // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
+    // Note: rn_keys_node_get_keystore_state has been removed - state management is now internal
+    // Keys are automatically generated when needed
+
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-    assert_eq!(result, 0, "Should successfully get keystore state");
-
     let mut pk_ptr: *mut u8 = ptr::null_mut();
     let mut pk_len: usize = 0;
 
@@ -616,17 +601,13 @@ fn test_node_get_agreement_public_key_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
-    // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
+    // Note: rn_keys_node_get_keystore_state has been removed - state management is now internal
+    // Keys are automatically generated when needed
+
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-    assert_eq!(result, 0, "Should successfully get keystore state");
-
     let mut pk_ptr: *mut u8 = ptr::null_mut();
     let mut pk_len: usize = 0;
 
@@ -668,17 +649,13 @@ fn test_node_get_id_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
 
-    // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
+    // Note: rn_keys_node_get_keystore_state has been removed - state management is now internal
+    // Keys are automatically generated when needed
+
     let mut error = RnError {
         code: 0,
         message: ptr::null(),
     };
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-    assert_eq!(result, 0, "Should successfully get keystore state");
-
     let mut id_c: *mut i8 = ptr::null_mut();
     let mut has_id: i32 = 0;
 

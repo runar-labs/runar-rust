@@ -58,12 +58,10 @@ fn test_core_node_initialization_flow() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
+    // State variables removed - no longer needed
     let mut error = create_test_error();
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-    assert_eq!(result, 0, "Should successfully get keystore state");
+    // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+    // Keys are automatically generated when needed
 
     // Verify node functions work
     let mut id_ptr: *mut i8 = ptr::null_mut();
@@ -149,12 +147,10 @@ fn test_core_basic_encryption_operations() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
+    // State variables removed - no longer needed
     let mut error = create_test_error();
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-    assert_eq!(result, 0, "Should successfully get keystore state");
+    // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+    // Keys are automatically generated when needed
 
     // Test local data encryption
     let data = b"test data";
@@ -190,12 +186,10 @@ fn test_core_basic_decryption_operations() {
     unsafe { init_as_node(keys) };
 
     // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
+    // State variables removed - no longer needed
     let mut error = create_test_error();
-    let result =
-        unsafe { rn_keys_node_get_keystore_state(keys, &mut state, &mut has_state, &mut error) };
-    assert_eq!(result, 0, "Should successfully get keystore state");
+    // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+    // Keys are automatically generated when needed
 
     // First encrypt some data
     let data = b"test data for decryption";

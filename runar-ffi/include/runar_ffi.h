@@ -156,11 +156,6 @@ int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RNAPIRnErro
 
 int32_t rn_keys_wipe_persistence(void *keys, struct RNAPIRnError *err);
 
-int32_t rn_keys_node_get_keystore_state(void *keys,
-                                        char **out_state,
-                                        int32_t *out_has_state,
-                                        struct RNAPIRnError *err);
-
 int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
 
 int32_t rn_keys_get_keystore_caps(void *keys,

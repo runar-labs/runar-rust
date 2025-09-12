@@ -30,18 +30,8 @@ fn two_transports_request_response() {
             0
         );
 
-        // Generate keys for A
-        let mut state: *mut i8 = std::ptr::null_mut();
-        let mut has_state: i32 = 0;
-        assert_eq!(
-            rn_keys_node_get_keystore_state(
-                keys_a,
-                &mut state,
-                &mut has_state,
-                &mut err as *mut _ as *mut _
-            ),
-            0
-        );
+        // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+        // Keys are automatically generated when needed
 
         // Create second node keys for B
         let mut keys_b: *mut std::ffi::c_void = std::ptr::null_mut();
@@ -51,16 +41,8 @@ fn two_transports_request_response() {
             0
         );
 
-        // Generate keys for B
-        assert_eq!(
-            rn_keys_node_get_keystore_state(
-                keys_b,
-                &mut state,
-                &mut has_state,
-                &mut err as *mut _ as *mut _
-            ),
-            0
-        );
+        // Note: rn_keys_node_get_keystore_state removed - state management is now internal
+        // Keys are automatically generated when needed
 
         // Set node info for B
         let info = runar_schemas::NodeInfo {

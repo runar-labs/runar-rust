@@ -709,140 +709,6 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_get_keystore_state(
-    keys: *mut c_void,
-    out_state: *mut *mut c_char,
-    out_has_state: *mut i32,
-    err: *mut RnError,
-) -> i32 {
-    // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_state.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_state pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Validate handle upfront
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    // Validate manager upfront - exit early on errors
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    // Main logic - manager is guaranteed to exist
-    let mut node_manager = match manager.write() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    // Get the keystore state as Option<String>
-    let state_result = match node_manager.probe_and_load_state() {
-        Ok(true) => {
-            // State was loaded - export the state as a string
-            let state = node_manager.export_state();
-            match serde_cbor::to_vec(&state) {
-                Ok(state_bytes) => {
-                    // Base64 encode the CBOR data to make it a valid string
-                    let state_string = base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        state_bytes,
-                    );
-                    Some(state_string)
-                }
-                Err(e) => {
-                    set_error(
-                        err,
-                        RN_ERROR_OPERATION_FAILED,
-                        &format!("failed to serialize state: {e}"),
-                    );
-                    return RN_ERROR_OPERATION_FAILED;
-                }
-            }
-        }
-        Ok(false) => {
-            // No state found - generate keys first
-            match node_manager.generate_keys() {
-                Ok(()) => {
-                    // After generating keys, export the state
-                    let state = node_manager.export_state();
-                    match serde_cbor::to_vec(&state) {
-                        Ok(state_bytes) => {
-                            // Base64 encode the CBOR data to make it a valid string
-                            let state_string = base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                state_bytes,
-                            );
-                            Some(state_string)
-                        }
-                        Err(e) => {
-                            set_error(
-                                err,
-                                RN_ERROR_OPERATION_FAILED,
-                                &format!("failed to serialize state: {e}"),
-                            );
-                            return RN_ERROR_OPERATION_FAILED;
-                        }
-                    }
-                }
-                Err(e) => {
-                    set_error(
-                        err,
-                        RN_ERROR_KEYSTORE_FAILED,
-                        &format!("failed to generate keys: {e}"),
-                    );
-                    return RN_ERROR_KEYSTORE_FAILED;
-                }
-            }
-        }
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("probe_and_load_state failed: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Set the output parameters
-    *out_has_state = if state_result.is_some() { 1 } else { 0 };
-
-    if let Some(state) = state_result {
-        match CString::new(state) {
-            Ok(state_cstr) => {
-                *out_state = state_cstr.into_raw();
-            }
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_INVALID_ARGUMENT,
-                    &format!("invalid state string: {e}"),
-                );
-                return RN_ERROR_INVALID_ARGUMENT;
-            }
-        }
-    } else {
-        *out_state = std::ptr::null_mut();
-    }
-
-    0
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state(
     keys: *mut c_void,
     out_state: *mut i32,
@@ -2737,7 +2603,7 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
-                "Node public key not available - call rn_keys_node_get_keystore_state first",
+                "Node public key not available - call rn_keys_node_generate_keys first",
             );
             return RN_ERROR_OPERATION_FAILED;
         }
@@ -3268,7 +3134,7 @@ pub extern "C" fn rn_keys_node_get_public_key(
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
-                "Node keys not available - call rn_keys_node_get_keystore_state first",
+                "Node keys not available - call rn_keys_node_generate_keys first",
             );
             return RN_ERROR_OPERATION_FAILED;
         }

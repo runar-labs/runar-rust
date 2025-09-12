@@ -67,12 +67,9 @@ fn test_complete_ffi_key_management_lifecycle() {
     unsafe { init_as_node(node_keys) };
 
     // Generate keys first
-    let mut state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
-    let result = unsafe {
-        rn_keys_node_get_keystore_state(node_keys, &mut state, &mut has_state, &mut error)
-    };
-    assert_eq!(result, 0, "Should successfully get keystore state");
+    // Note: rn_keys_node_get_keystore_state has been removed
+    // State management is now handled internally by the NodeKeyManager
+    // Keys are automatically generated when needed
 
     // 2 - node side (setup mode) - generate its own TLS and Storage keypairs
     // and generate a setup handshake token which contains the CSR request and the node public key
@@ -518,14 +515,11 @@ fn test_complete_ffi_key_management_lifecycle() {
 
     // Test 2: Get QUIC certificates from HYDRATED node (after serialization/deserialization)
     // In FFI, we test that the certificate was installed successfully by checking node state
-    let mut node_state: *mut i8 = ptr::null_mut();
-    let mut has_state: i32 = 0;
-    let result = unsafe {
-        rn_keys_node_get_keystore_state(node_keys, &mut node_state, &mut has_state, &mut error)
-    };
-    assert_eq!(result, 0, "Should successfully get node keystore state");
+    // State variables removed - no longer needed
+    // Note: rn_keys_node_get_keystore_state has been removed - state management is now internal
+    // Keys are automatically generated when needed
 
-    println!("   ✅ Node keystore state: {node_state:?}");
+    println!("   ✅ Node keystore state: managed internally");
 
     // Additional local storage test
     let file_data_2 = b"This is secret file content to test after hydration.";

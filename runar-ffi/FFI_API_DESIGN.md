@@ -11,6 +11,34 @@ This section enumerates the complete, production-ready FFI API required for exte
 - Any C string returned by FFI must be freed via `rn_string_free`.
 - Complex inputs/outputs are CBOR-encoded.
 
+### State Management (CRITICAL CHANGE)
+**REMOVED**: `rn_keys_node_get_keystore_state` - This function is obsolete and must be removed.
+
+**NEW APPROACH**: State management is now handled entirely in the Rust layer using device keystore integration:
+1. **`rn_keys_node_probe_and_load_state(keys, out_loaded, err)`** - Returns boolean indicating if state was loaded
+2. **`rn_keys_node_generate_keys(keys, err)`** - Explicit key generation when no state exists
+3. **Device keystore integration** - State is automatically persisted using OS key store (Keychain/Keyring)
+4. **No manual state export/import** - The FFI layer only provides core crypto operations
+
+**Usage Pattern**:
+```c
+// 1. Create and configure NodeKeyManager
+rn_keys_new(&keys, &err);
+rn_keys_set_persistence_dir(keys, "/path/to/persistence", &err);
+rn_keys_register_device_keystore(keys, device_keystore, &err);
+
+// 2. Try to load existing state
+int32_t state_loaded = 0;
+rn_keys_node_probe_and_load_state(keys, &state_loaded, &err);
+
+if (state_loaded) {
+    // State loaded successfully - keys are ready
+} else {
+    // No existing state - generate new keys
+    rn_keys_node_generate_keys(keys, &err);
+}
+```
+
 ### Common Utilities
 - `rn_free(ptr, len)`
 - `rn_string_free(cstr)`
@@ -23,10 +51,12 @@ This section enumerates the complete, production-ready FFI API required for exte
 - `rn_keys_new(out_keys, err) -> i32`
 - `rn_keys_free(keys)`
 - `rn_keys_set_persistence_dir(keys, dir_cstr, err) -> i32`
+- `rn_keys_register_device_keystore(keys, keystore, err) -> i32`
 - `rn_keys_enable_auto_persist(keys, enable_i32, err) -> i32`
 - `rn_keys_wipe_persistence(keys, err) -> i32`
 - `rn_keys_init_as_node(keys, err) -> i32`
-- `rn_keys_node_get_keystore_state(keys, out_state_cbor_ptr, out_len, err) -> i32`
+- `rn_keys_node_probe_and_load_state(keys, out_loaded, err) -> i32` (NEW - replaces get_keystore_state)
+- `rn_keys_node_generate_keys(keys, err) -> i32` (NEW - explicit key generation)
 - `rn_keys_node_get_public_key(keys, out_ptr, out_len, err) -> i32`
 - `rn_keys_node_get_agreement_public_key(keys, out_ptr, out_len, err) -> i32`
 - `rn_keys_node_get_node_id(keys, out_cstr, err) -> i32`
