@@ -12,7 +12,12 @@ This section enumerates the complete, production-ready FFI API required for exte
 - Complex inputs/outputs are CBOR-encoded.
 
 ### State Management (CRITICAL CHANGE)
-**REMOVED**: `rn_keys_node_get_keystore_state` - This function is obsolete and must be removed.
+**REMOVED**: The following functions are obsolete and have been removed from the FFI:
+- `rn_keys_node_get_keystore_state` - Node state retrieval function
+- `rn_keys_mobile_get_keystore_state` - Mobile state retrieval function  
+- `rn_keys_flush_state` - Manual state flush function
+
+**REASON**: State management is now handled entirely in the Rust layer using device keystore integration.
 
 **NEW APPROACH**: State management is now handled entirely in the Rust layer using device keystore integration:
 1. **`rn_keys_node_probe_and_load_state(keys, out_loaded, err)`** - Returns boolean indicating if state was loaded

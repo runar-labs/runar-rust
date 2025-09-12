@@ -156,13 +156,9 @@ int32_t rn_keys_enable_auto_persist(void *keys, bool enabled, struct RNAPIRnErro
 
 int32_t rn_keys_wipe_persistence(void *keys, struct RNAPIRnError *err);
 
-int32_t rn_keys_mobile_get_keystore_state(void *keys, int32_t *out_state, struct RNAPIRnError *err);
-
 int32_t rn_keys_get_keystore_caps(void *keys,
                                   struct RNAPIRnDeviceKeystoreCaps *out_caps,
                                   struct RNAPIRnError *err);
-
-int32_t rn_keys_flush_state(void *keys, struct RNAPIRnError *err);
 
 int32_t rn_keys_register_apple_device_keystore(void *keys,
                                                const char *label,

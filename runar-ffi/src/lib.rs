@@ -709,63 +709,6 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_mobile_get_keystore_state(
-    keys: *mut c_void,
-    out_state: *mut i32,
-    err: *mut RnError,
-) -> i32 {
-    // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_state.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "out_state pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Validate handle upfront
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    // Validate manager upfront - exit early on errors
-    let manager = match validate_mobile_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    // Main logic - manager is guaranteed to exist
-    let mut mobile_manager = match manager.write() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    let ready = match mobile_manager.probe_and_load_state() {
-        Ok(true) => 1i32,
-        Ok(false) => 0i32,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("probe_and_load_state failed: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    *out_state = ready;
-    0
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn rn_keys_get_keystore_caps(
     keys: *mut c_void,
     out_caps: *mut RnDeviceKeystoreCaps,
@@ -792,42 +735,6 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
         return RN_ERROR_NOT_INITIALIZED;
     };
     unsafe { *out_caps = map_caps(caps) };
-    0
-}
-
-// Explicit flush of state persistence
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnError) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    // Flush state on whichever manager exists
-    if let Some(manager) = &inner.node_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.flush_state() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("node flush_state: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    } else if let Some(manager) = &inner.mobile_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.flush_state() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("mobile flush_state: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    } else {
-        set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
-        return RN_ERROR_NOT_INITIALIZED;
-    }
     0
 }
 

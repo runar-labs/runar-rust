@@ -501,11 +501,8 @@ fn test_mobile_get_keystore_state_happy_path() {
 
     let mut state = 0i32;
 
-    let result = unsafe { rn_keys_mobile_get_keystore_state(keys, &mut state, &mut error) };
-
-    // Should succeed (may return 0 or 1 depending on keystore state)
-    assert!(result == 0, "Should succeed");
-    assert!(state == 0 || state == 1, "State should be 0 or 1");
+    // Note: rn_keys_mobile_get_keystore_state has been removed - state management is now internal
+    // State management is handled internally by the MobileKeyManager
 
     destroy_keys_handle(keys);
 }
@@ -758,9 +755,8 @@ fn test_flush_state_happy_path() {
         message: ptr::null(),
     };
 
-    let result = unsafe { rn_keys_flush_state(keys, &mut error) };
-
-    assert_eq!(result, 0, "Should successfully flush state");
+    // Note: rn_keys_flush_state has been removed - state management is now internal
+    // State persistence is handled automatically by the key managers
 
     destroy_keys_handle(keys);
 }

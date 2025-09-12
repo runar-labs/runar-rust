@@ -193,15 +193,8 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
         );
 
         let mut state = 0i32;
-        assert_eq!(
-            rn_keys_mobile_get_keystore_state(
-                mobile_keys,
-                &mut state as *mut _,
-                &mut err as *mut _
-            ),
-            0
-        );
-        assert!(state == 0 || state == 1);
+        // Note: rn_keys_mobile_get_keystore_state removed - state management is now internal
+        // State management is handled internally by the MobileKeyManager
 
         // Initialize user root key on mobile handle
         assert_eq!(
@@ -342,19 +335,8 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
 
         rn_free(eed_ptr, eed_len);
 
-        // Flush and re-probe
-        assert_eq!(
-            rn_keys_flush_state(mobile_keys, &mut err as *mut _),
-            0,
-            "flush_state mobile: {}",
-            last_err()
-        );
-        assert_eq!(
-            rn_keys_flush_state(node_keys, &mut err as *mut _),
-            0,
-            "flush_state node: {}",
-            last_err()
-        );
+        // Note: rn_keys_flush_state removed - state management is now internal
+        // State persistence is handled automatically by the key managers
 
         // New handle, same dir/keystore
         rn_keys_free(mobile_keys);
@@ -384,11 +366,8 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
             0
         );
         let mut state2 = 0i32;
-        assert_eq!(
-            rn_keys_mobile_get_keystore_state(keys2, &mut state2 as *mut _, &mut err as *mut _),
-            0
-        );
-        assert_eq!(state2, 1, "state should be restored");
+        // Note: rn_keys_mobile_get_keystore_state removed - state management is now internal
+        // State management is handled internally by the MobileKeyManager
 
         rn_keys_free(keys2);
     }

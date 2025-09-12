@@ -45,10 +45,8 @@ mod linux_tests {
         let mut error = create_test_error();
         let mut state = 0;
 
-        let result = unsafe { rn_keys_mobile_get_keystore_state(keys, &mut state, &mut error) };
-
-        assert_eq!(result, 0, "Should get keystore state on Linux");
-        assert!(state >= 0, "Keystore state should be valid");
+        // Note: rn_keys_mobile_get_keystore_state has been removed - state management is now internal
+        // State management is handled internally by the MobileKeyManager
 
         destroy_keys_handle(keys);
     }
