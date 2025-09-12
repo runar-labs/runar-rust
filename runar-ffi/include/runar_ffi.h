@@ -513,6 +513,23 @@ int32_t rn_keys_ca_node_new(void *logger, void **out_ca_node, struct RNAPIRnErro
 void rn_keys_ca_node_free(void *ca_node);
 
 /**
+ * Create shared CA Node reference for server usage
+ */
+int32_t rn_keys_ca_node_create_shared(void *ca_node,
+                                      void **out_shared_ca_node,
+                                      struct RNAPIRnError *err);
+
+/**
+ * Free shared CA Node reference
+ */
+void rn_keys_ca_node_free_shared(void *shared_ca_node);
+
+/**
+ * Add admin SKI to shared CA Node reference
+ */
+int32_t rn_keys_ca_node_add_admin_ski(void *ca_node, const char *ski, struct RNAPIRnError *err);
+
+/**
  * Install issuing CA (new API)
  */
 int32_t rn_keys_ca_node_install_issuing_ca(void *ca_node,
@@ -702,7 +719,7 @@ int32_t rn_keys_certificate_get_serial(const uint8_t *cert,
  */
 int32_t rn_transport_ca_server_new(const uint8_t *config,
                                    size_t _config_len,
-                                   void *ca_node,
+                                   void *shared_ca_node,
                                    void *logger,
                                    void **out_server,
                                    struct RNAPIRnError *err);
@@ -937,11 +954,6 @@ int32_t rn_keys_get_compact_id(const uint8_t *public_key,
                                size_t key_len,
                                char **out_id,
                                struct RNAPIRnError *err);
-
-/**
- * Add admin SKI to CA Node
- */
-int32_t rn_keys_ca_node_add_admin_ski(void *ca_node, const char *ski, struct RNAPIRnError *err);
 
 /**
  * Revoke enrollment token

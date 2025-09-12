@@ -1,7 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::{
-    error::Error,
     ffi::{c_void, CString},
     os::raw::c_char,
     ptr,
@@ -4960,6 +4959,96 @@ pub unsafe extern "C" fn rn_keys_ca_node_free(ca_node: *mut c_void) {
     }
 }
 
+/// Create shared CA Node reference for server usage
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_create_shared(
+    ca_node: *mut c_void,
+    out_shared_ca_node: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || out_shared_ca_node.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Create a clone of the CA Node for the shared reference
+    // This avoids moving the original CA Node
+    let ca_node_ref = unsafe { &*(ca_node as *const CANode) };
+
+    println!("DEBUG: Creating shared CA Node reference");
+    println!(
+        "DEBUG: Original CA Node Issuing CA Subject: {}",
+        ca_node_ref.issuing_ca_cert.subject()
+    );
+    println!(
+        "DEBUG: Original CA Node Root CA Subject: {}",
+        ca_node_ref.root_ca_cert.subject()
+    );
+
+    // Create a new CANode with the same data
+    let new_ca_node = CANode {
+        issuing_ca_key: ca_node_ref.issuing_ca_key.clone(),
+        issuing_ca_cert: ca_node_ref.issuing_ca_cert.clone(),
+        root_ca_cert: ca_node_ref.root_ca_cert.clone(),
+        network_id: ca_node_ref.network_id.clone(),
+        enrollment_authorities: ca_node_ref.enrollment_authorities.clone(),
+        revoked_tokens: ca_node_ref.revoked_tokens.clone(),
+        rate_limits: ca_node_ref.rate_limits.clone(),
+        revoked_certificates: ca_node_ref.revoked_certificates.clone(),
+        admin_ski_allowlist: ca_node_ref.admin_ski_allowlist.clone(),
+        token_replay_ledger: ca_node_ref.token_replay_ledger.clone(),
+    };
+
+    let ca_node_arc = Arc::new(RwLock::new(new_ca_node));
+
+    unsafe {
+        *out_shared_ca_node = Box::into_raw(Box::new(ca_node_arc)) as *mut c_void;
+    }
+
+    0
+}
+
+/// Free shared CA Node reference
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_free_shared(shared_ca_node: *mut c_void) {
+    if !shared_ca_node.is_null() {
+        let _ = Box::from_raw(shared_ca_node as *mut Arc<RwLock<CANode>>);
+    }
+}
+
+/// Add admin SKI to shared CA Node reference
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
+    ca_node: *mut c_void,
+    ski: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || ski.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ski_str = match std::ffi::CStr::from_ptr(ski).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid SKI string: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    // This function now expects a shared CA Node (Arc<RwLock<CANode>>)
+    // The caller should pass the shared_ca_node from rn_keys_ca_node_create_shared
+    let ca_node_arc = unsafe { &*(ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = ca_node_arc.write().unwrap();
+    ca_node_guard.add_admin_ski(ski_str.to_string());
+
+    0
+}
+
 /// Install issuing CA (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_install_issuing_ca(
@@ -5055,6 +5144,9 @@ pub unsafe extern "C" fn rn_keys_ca_node_install_issuing_ca(
     ca_node.network_id = network_id_str;
 
     // Install the issuing CA
+    println!("DEBUG: Installing issuing CA in CA Node");
+    println!("DEBUG: Issuing CA Subject: {}", issuing_ca_cert.subject());
+    println!("DEBUG: Root CA Subject: {}", root_ca_cert.subject());
     match ca_node.install_issuing_ca(
         issuing_ca_key_pair,
         issuing_ca_cert,
@@ -6323,13 +6415,13 @@ pub unsafe extern "C" fn rn_keys_certificate_get_serial(
 pub unsafe extern "C" fn rn_transport_ca_server_new(
     config: *const u8,
     _config_len: usize,
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     logger: *mut c_void,
     out_server: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
     if config.is_null()
-        || ca_node.is_null()
+        || shared_ca_node.is_null()
         || logger.is_null()
         || out_server.is_null()
         || err.is_null()
@@ -6339,7 +6431,7 @@ pub unsafe extern "C" fn rn_transport_ca_server_new(
     }
 
     let logger = unsafe { &*(logger as *const Arc<Logger>) };
-    let ca_node = unsafe { &*(ca_node as *const CANode) };
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
 
     // Parse the server configuration from the provided config data
     let config_data = std::slice::from_raw_parts(config, _config_len);
@@ -6394,9 +6486,8 @@ pub unsafe extern "C" fn rn_transport_ca_server_new(
         additional_ca_certs: vec![],
     };
 
-    // Create the CA server
-    let ca_node_arc = Arc::new(RwLock::new(unsafe { std::ptr::read(ca_node) }));
-    let server = CaServer::new(server_config, ca_node_arc, logger.clone());
+    // Create the CA server using the shared CA Node reference
+    let server = CaServer::new(server_config, ca_node_arc.clone(), logger.clone());
 
     let wrapper = CaServerWrapper {
         server,
@@ -8003,40 +8094,6 @@ pub unsafe extern "C" fn rn_keys_get_compact_id(
             RN_ERROR_INVALID_UTF8
         }
     }
-}
-
-/// Add admin SKI to CA Node
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
-    ca_node: *mut c_void,
-    ski: *const c_char,
-    err: *mut RnError,
-) -> i32 {
-    if ca_node.is_null() || ski.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
-        return RN_ERROR_INVALID_ARGUMENT;
-    }
-
-    // Parse SKI string
-    let ski_str = match std::ffi::CStr::from_ptr(ski).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_UTF8,
-                &format!("Invalid SKI string: {e}"),
-            );
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-
-    // Get CA Node reference
-    let ca_node = &mut *(ca_node as *mut CANode);
-
-    // Add admin SKI using runar-keys function
-    ca_node.add_admin_ski(ski_str.to_string());
-
-    0
 }
 
 /// Revoke enrollment token

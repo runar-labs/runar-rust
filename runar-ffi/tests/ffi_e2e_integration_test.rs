@@ -196,6 +196,17 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     println!("   ✅ CA Node configured with issuing CA and enrollment authority");
 
+    // Create shared CA Node reference for server usage AFTER configuring the CA Node
+    let mut shared_ca_node: *mut c_void = ptr::null_mut();
+    let result = unsafe {
+        rn_keys_ca_node_create_shared(ca_node, &mut shared_ca_node as *mut *mut c_void, &mut error)
+    };
+    assert_eq!(result, 0, "Failed to create shared CA node reference");
+    assert!(
+        !shared_ca_node.is_null(),
+        "Shared CA node should not be null"
+    );
+
     // Create CA Server config CBOR
     #[derive(serde::Serialize)]
     struct CustomCaServerConfig {
@@ -217,13 +228,13 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let server_config =
         serde_cbor::to_vec(&custom_config).expect("Failed to serialize server config");
 
-    // Create CA Server
+    // Create CA Server using shared CA Node reference
     let mut ca_server: *mut c_void = ptr::null_mut();
     let result = unsafe {
         rn_transport_ca_server_new(
             server_config.as_ptr(),
             server_config.len(),
-            ca_node,
+            shared_ca_node,
             logger_ptr,
             &mut ca_server as *mut *mut c_void,
             &mut error,
@@ -236,9 +247,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // We'll use a dummy SKI for now since we don't have a real admin certificate yet
     let dummy_admin_ski = "dummy_admin_ski_for_testing";
     let dummy_ski_cstr = create_cstring(dummy_admin_ski);
-    let result =
-        unsafe { rn_keys_ca_node_add_admin_ski(ca_node, dummy_ski_cstr.as_ptr(), &mut error) };
-    assert_eq!(result, 0, "Failed to add dummy admin SKI to CA Node");
+    let result = unsafe {
+        rn_keys_ca_node_add_admin_ski(shared_ca_node, dummy_ski_cstr.as_ptr(), &mut error)
+    };
+    assert_eq!(result, 0, "Failed to add dummy admin SKI to shared CA Node");
 
     // Start CA Server
     let result = unsafe { rn_transport_ca_server_start(ca_server, &mut error) };
@@ -609,9 +621,166 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Phase 5: Certificate Revocation + CRL-lite via REAL QUIC mTLS
     // ==========================================
     println!("\n🚫 PHASE 5: Certificate Revocation + CRL-lite via REAL QUIC mTLS");
-    println!("   ⚠️  Skipping revocation phase due to admin SKI authorization issue");
-    println!("   ⚠️  This is a known issue that needs to be fixed in the CA Node implementation");
-    println!("   ✅ Phase 5 skipped (revocation functionality needs admin SKI fix)");
+
+    // Extract SKI from the client's certificate for admin authorization
+    let mut client_cert_der: *mut u8 = ptr::null_mut();
+    let mut client_cert_len: usize = 0;
+    let result = unsafe {
+        rn_keys_node_get_node_certificate(
+            node_keys,
+            &mut client_cert_der as *mut *mut u8,
+            &mut client_cert_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to get client certificate");
+    assert!(
+        !client_cert_der.is_null(),
+        "Client certificate should not be null"
+    );
+
+    // Extract SKI from client certificate
+    let mut client_ski_cstr: *mut c_char = ptr::null_mut();
+    let result = unsafe {
+        rn_keys_certificate_extract_ski(
+            client_cert_der,
+            client_cert_len,
+            &mut client_ski_cstr as *mut *mut c_char,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to extract client certificate SKI");
+    assert!(!client_ski_cstr.is_null(), "Client SKI should not be null");
+
+    let client_ski = unsafe { std::ffi::CStr::from_ptr(client_ski_cstr).to_string_lossy() };
+    println!("   📋 Client certificate SKI: {}", client_ski);
+
+    // Add client SKI to shared CA Node (which is what the server actually uses)
+    let client_ski_cstr = create_cstring(&client_ski);
+    let result = unsafe {
+        rn_keys_ca_node_add_admin_ski(shared_ca_node, client_ski_cstr.as_ptr(), &mut error)
+    };
+    assert_eq!(
+        result, 0,
+        "Failed to add client SKI to shared CA Node admin allowlist"
+    );
+
+    // Also configure admin SKIs on the server
+    let admin_skis = vec![client_ski.clone()];
+    let admin_skis_cbor = serde_cbor::to_vec(&admin_skis).expect("Failed to serialize admin SKIs");
+    let result = unsafe {
+        rn_transport_ca_server_configure_admin_skis(
+            ca_server,
+            admin_skis_cbor.as_ptr(),
+            admin_skis_cbor.len(),
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to configure admin SKIs on server");
+
+    println!("   ✅ Admin SKI configured for revocation: {}", client_ski);
+
+    // Generate renewal CSR for revocation
+    let mut renewal_csr_ptr: *mut u8 = ptr::null_mut();
+    let mut renewal_csr_len: usize = 0;
+    let result = unsafe {
+        rn_keys_node_generate_csr_v2(
+            node_keys,
+            &mut renewal_csr_ptr as *mut *mut u8,
+            &mut renewal_csr_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to generate renewal CSR");
+    assert!(!renewal_csr_ptr.is_null(), "Renewal CSR should not be null");
+
+    let _renewal_csr = unsafe { std::slice::from_raw_parts(renewal_csr_ptr, renewal_csr_len) };
+
+    // Get certificate serial for revocation
+    let mut cert_serial_cstr: *mut c_char = ptr::null_mut();
+    let result = unsafe {
+        rn_keys_certificate_get_serial(
+            client_cert_der,
+            client_cert_len,
+            &mut cert_serial_cstr as *mut *mut c_char,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to get certificate serial");
+    assert!(
+        !cert_serial_cstr.is_null(),
+        "Certificate serial should not be null"
+    );
+
+    let cert_serial = unsafe { std::ffi::CStr::from_ptr(cert_serial_cstr).to_string_lossy() };
+    println!("   📋 Certificate serial for revocation: {}", cert_serial);
+
+    // Create RevokeRequest
+    #[derive(serde::Serialize)]
+    struct RevokeRequest {
+        network_id: String,
+        certificate_serial: Vec<u8>, // Convert hex string to bytes
+        reason: String,
+    }
+
+    let revoke_request = RevokeRequest {
+        network_id: "test_network".to_string(),
+        certificate_serial: hex::decode(&*cert_serial)
+            .expect("Failed to decode certificate serial"),
+        reason: "testing".to_string(),
+    };
+
+    let revoke_request_cbor =
+        serde_cbor::to_vec(&revoke_request).expect("Failed to serialize revoke request");
+
+    // Revoke certificate via client (mTLS)
+    let mut revoke_response_ptr: *mut u8 = ptr::null_mut();
+    let mut revoke_response_len: usize = 0;
+    let result = unsafe {
+        rn_transport_ca_client_revoke(
+            ca_client,
+            authenticated_addr_cstr.as_ptr(),
+            revoke_request_cbor.as_ptr(),
+            revoke_request_cbor.len(),
+            &mut revoke_response_ptr as *mut *mut u8,
+            &mut revoke_response_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to revoke certificate");
+    assert!(
+        !revoke_response_ptr.is_null(),
+        "Revoke response should not be null"
+    );
+
+    let _revoke_response =
+        unsafe { std::slice::from_raw_parts(revoke_response_ptr, revoke_response_len) };
+    println!("   ✅ Certificate revoked successfully");
+
+    // Generate CRL-lite
+    let mut crl_ptr: *mut u8 = ptr::null_mut();
+    let mut crl_len: usize = 0;
+    let result = unsafe {
+        rn_keys_ca_node_handle_crl(
+            ca_node,
+            network_id_cstr.as_ptr(),
+            &mut crl_ptr as *mut *mut u8,
+            &mut crl_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to generate CRL-lite");
+    assert!(!crl_ptr.is_null(), "CRL should not be null");
+
+    let _crl_data = unsafe { std::slice::from_raw_parts(crl_ptr, crl_len) };
+    println!("   ✅ CRL-lite generated successfully");
+
+    // Free allocated memory
+    // Note: rn_free is a no-op, so we don't need to call it
+    // client_ski_cstr is a local CString, not allocated by FFI, so we don't free it
+    rn_string_free(cert_serial_cstr);
+
+    println!("   ✅ Phase 5 completed: Certificate revocation and CRL-lite generation");
 
     // ==========================================
     // Phase 6: Status and Chain via REAL QUIC mTLS
@@ -1062,6 +1231,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_transport_ca_client_free(ca_client);
         rn_keys_free(node_keys);
         rn_keys_free(mobile_keys);
+        rn_keys_ca_node_free_shared(shared_ca_node);
         rn_keys_ca_node_free(ca_node);
     }
 
