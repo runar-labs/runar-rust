@@ -6,7 +6,10 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 use runar_common::logging::{Component, Logger};
-use runar_keys::{CANode, EnvelopeCrypto, MobileKeyManager, NodeKeyManager};
+use runar_keys::{
+    CANode, CsrEnrollRequest, EnvelopeCrypto, MobileKeyManager, NodeKeyManager, RenewRequest,
+    RevokeRequest,
+};
 use runar_schemas::NodeInfo;
 
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
@@ -782,6 +785,108 @@ impl Keys {
 
         Ok(Uint8Array::from(pk))
     }
+
+    /// Convert CA Node enrollment response to NodeCertificateMessage format for certificate installation
+    #[napi]
+    pub fn mobile_from_enroll_response(&self, response_cbor: Uint8Array) -> Result<Uint8Array> {
+        let inner = self.inner.lock().unwrap();
+
+        // Validate mobile manager exists
+        if inner.mobile_key_manager.is_none() {
+            return Err(Error::from_reason("Mobile manager not initialized"));
+        }
+
+        // Deserialize the enrollment response
+        let response: runar_keys::ca_node_types::CsrEnrollResponse =
+            cbor::from_slice(&response_cbor).map_err(|e| {
+                Error::from_reason(format!("Failed to parse enrollment response: {e}"))
+            })?;
+
+        // Convert to NodeCertificateMessage
+        let cert_message = inner
+            .mobile_key_manager
+            .as_ref()
+            .unwrap()
+            .read()
+            .unwrap()
+            .from_enroll_response(&response)
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to convert enrollment response: {e}"))
+            })?;
+
+        // Serialize the NodeCertificateMessage
+        cbor::to_vec(&cert_message)
+            .map(Uint8Array::from)
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to serialize certificate message: {e}"))
+            })
+    }
+
+    /// Convert CA Node renewal response to NodeCertificateMessage format for certificate installation
+    #[napi]
+    pub fn mobile_from_renew_response(&self, response_cbor: Uint8Array) -> Result<Uint8Array> {
+        let inner = self.inner.lock().unwrap();
+
+        // Validate mobile manager exists
+        if inner.mobile_key_manager.is_none() {
+            return Err(Error::from_reason("Mobile manager not initialized"));
+        }
+
+        // Deserialize the renewal response
+        let response: runar_keys::ca_node_types::RenewResponse = cbor::from_slice(&response_cbor)
+            .map_err(|e| {
+            Error::from_reason(format!("Failed to parse renewal response: {e}"))
+        })?;
+
+        // Convert to NodeCertificateMessage
+        let cert_message = inner
+            .mobile_key_manager
+            .as_ref()
+            .unwrap()
+            .read()
+            .unwrap()
+            .from_renew_response(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to convert renewal response: {e}")))?;
+
+        // Serialize the NodeCertificateMessage
+        cbor::to_vec(&cert_message)
+            .map(Uint8Array::from)
+            .map_err(|e| {
+                Error::from_reason(format!("Failed to serialize certificate message: {e}"))
+            })
+    }
+
+    /// Extract SKI (Subject Key Identifier) from DER-encoded certificate
+    #[napi]
+    pub fn certificate_extract_ski(cert_der: Uint8Array) -> Result<String> {
+        let cert = runar_keys::certificate::X509Certificate::from_der(cert_der.to_vec())
+            .map_err(|e| Error::from_reason(format!("Failed to parse certificate: {e}")))?;
+
+        let ski_bytes = runar_keys::certificate::CertificateValidator::extract_ski(&cert)
+            .map_err(|e| Error::from_reason(format!("Failed to extract SKI: {e}")))?;
+
+        // Convert to hex string
+        let ski_hex = ski_bytes
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join("");
+        Ok(ski_hex)
+    }
+
+    /// Extract serial number from DER-encoded certificate
+    #[napi]
+    pub fn certificate_get_serial(cert_der: Uint8Array) -> Result<String> {
+        let cert = runar_keys::certificate::X509Certificate::from_der(cert_der.to_vec())
+            .map_err(|e| Error::from_reason(format!("Failed to parse certificate: {e}")))?;
+
+        let parsed = cert
+            .parsed()
+            .map_err(|e| Error::from_reason(format!("Failed to parse certificate: {e}")))?;
+
+        let serial = parsed.tbs_certificate.serial.to_string();
+        Ok(serial)
+    }
 }
 
 #[cfg(all(feature = "linux-keystore", target_os = "linux"))]
@@ -1303,5 +1408,491 @@ impl Discovery {
         d.update_local_peer_info(peer)
             .await
             .map_err(|e| Error::from_reason(e.to_string()))
+    }
+}
+
+// CA Server Operations APIs
+#[napi]
+pub struct CaServer {
+    // Placeholder - will be properly implemented when CA Server is ready
+    _placeholder: String,
+}
+
+// CA Client Operations APIs
+#[napi]
+pub struct CaClient {
+    // Placeholder - will be properly implemented when CA Client is ready
+    _placeholder: String,
+}
+
+// Certificate Authority Creation APIs
+#[napi]
+pub struct CaCreator;
+
+#[napi]
+pub struct Ca {
+    // Placeholder - will be properly implemented when CA is ready
+    _placeholder: String,
+}
+
+// Enrollment Token Management APIs
+#[napi]
+pub struct EnrollmentToken;
+
+#[napi]
+impl CaServer {
+    #[napi(constructor)]
+    pub fn new() -> Result<Self> {
+        // Placeholder implementation - CA Server requires complex configuration
+        // This will be properly implemented when the CA Server API is ready
+        Ok(Self {
+            _placeholder: "CA Server placeholder".to_string(),
+        })
+    }
+
+    #[napi]
+    pub async fn start(&self, _bind_addr: String) -> Result<()> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Server not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn stop(&self) -> Result<()> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Server not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn get_addresses(&self) -> Result<Vec<String>> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Server not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn configure_admin_skis(&self, _admin_skis: Vec<String>) -> Result<()> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Server not yet implemented"))
+    }
+
+    #[napi]
+    pub fn free(&self) {
+        // NAPI-RS handles memory cleanup automatically
+    }
+}
+
+// CA Client Operations APIs
+#[napi]
+impl CaClient {
+    #[napi(constructor)]
+    pub fn new() -> Result<Self> {
+        // Placeholder implementation - CA Client requires complex configuration
+        // This will be properly implemented when the CA Client API is ready
+        Ok(Self {
+            _placeholder: "CA Client placeholder".to_string(),
+        })
+    }
+
+    #[napi]
+    pub async fn enroll(
+        &self,
+        _server_addr: String,
+        _csr_der: Uint8Array,
+        _enrollment_token: String,
+    ) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Client not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn renew(
+        &self,
+        _server_addr: String,
+        _csr_der: Uint8Array,
+        _peer_cert_der: Uint8Array,
+    ) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Client not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn revoke(
+        &self,
+        _server_addr: String,
+        _cert_der: Uint8Array,
+        _admin_ski: String,
+    ) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Client not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn get_chain(&self, _server_addr: String, _network_id: String) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Client not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn get_status(
+        &self,
+        _server_addr: String,
+        _network_id: String,
+    ) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Client not yet implemented"))
+    }
+
+    #[napi]
+    pub async fn get_crl(&self, _server_addr: String, _network_id: String) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA Client not yet implemented"))
+    }
+
+    #[napi]
+    pub fn free(&self) {
+        // NAPI-RS handles memory cleanup automatically
+    }
+}
+
+// Certificate Authority Creation APIs
+#[napi]
+impl CaCreator {
+    #[napi]
+    pub fn create_ca(
+        _key_der: Uint8Array,
+        _cert_der: Uint8Array,
+        _root_cert_der: Uint8Array,
+    ) -> Result<Ca> {
+        // Placeholder implementation
+        Ok(Ca {
+            _placeholder: "CA placeholder".to_string(),
+        })
+    }
+}
+
+#[napi]
+impl Ca {
+    #[napi]
+    pub fn get_certificate(&self) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_public_key(&self) -> Result<Uint8Array> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_ski(&self) -> Result<String> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_subject(&self) -> Result<String> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_issuer(&self) -> Result<String> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_serial_number(&self) -> Result<String> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_validity_period(&self) -> Result<(i64, i64)> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn is_ca(&self) -> Result<bool> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_key_usage(&self) -> Result<Vec<String>> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn get_extended_key_usage(&self) -> Result<Vec<String>> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn verify(&self, _issuer_cert: &Ca) -> Result<bool> {
+        // Placeholder implementation
+        Err(Error::from_reason("CA not yet implemented"))
+    }
+
+    #[napi]
+    pub fn free(&self) {
+        // NAPI-RS handles memory cleanup automatically
+    }
+}
+
+// Enrollment Token Management APIs
+#[napi]
+impl EnrollmentToken {
+    #[napi]
+    pub fn generate(network_id: String, validity_days: u32, admin_ski: String) -> Result<String> {
+        // Placeholder implementation
+        let token = format!("{network_id}_{validity_days}_{admin_ski}");
+        Ok(token)
+    }
+
+    #[napi]
+    pub fn validate(token: String) -> Result<bool> {
+        // Placeholder implementation
+        Ok(!token.is_empty())
+    }
+}
+
+// CA Node Management APIs
+#[napi]
+pub struct CaNode {
+    inner: Arc<AsyncMutex<CANode>>,
+}
+
+#[napi]
+impl CaNode {
+    #[napi(constructor)]
+    pub fn new() -> Result<Self> {
+        let ca_node = CANode::new(
+            runar_keys::certificate::EcdsaKeyPair::new()
+                .map_err(|e| Error::from_reason(format!("Failed to create CA key: {e}")))?,
+            runar_keys::certificate::X509Certificate::from_der(vec![])
+                .map_err(|e| Error::from_reason(format!("Failed to create CA cert: {e}")))?,
+            runar_keys::certificate::X509Certificate::from_der(vec![])
+                .map_err(|e| Error::from_reason(format!("Failed to create root cert: {e}")))?,
+            "default_network".to_string(),
+        );
+        Ok(Self {
+            inner: Arc::new(AsyncMutex::new(ca_node)),
+        })
+    }
+
+    #[napi]
+    pub async fn install_issuing_ca(&self, ca_cert_der: Uint8Array) -> Result<()> {
+        let _ca_cert = runar_keys::certificate::X509Certificate::from_der(ca_cert_der.to_vec())
+            .map_err(|e| Error::from_reason(format!("Failed to parse CA cert: {e}")))?;
+
+        let ca_node = self.inner.clone();
+        RT.spawn(async move {
+            let mut ca_node = ca_node.lock().await;
+            // For now, just add the cert to the admin SKI allowlist as a placeholder
+            // The full implementation would require more parameters
+            ca_node.add_admin_ski("placeholder".to_string());
+        })
+        .await
+        .map_err(|e| Error::from_reason(format!("Failed to install issuing CA: {e}")))?;
+
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn handle_enroll(&self, request_cbor: Uint8Array) -> Result<Uint8Array> {
+        let request: CsrEnrollRequest = cbor::from_slice(&request_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to deserialize request: {e}")))?;
+
+        let ca_node = self.inner.clone();
+        let result = RT
+            .spawn(async move {
+                let mut ca_node = ca_node.lock().await;
+                ca_node.handle_enroll(request, "127.0.0.1:8080")
+            })
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to handle enroll: {e}")))?;
+
+        let response =
+            result.map_err(|e| Error::from_reason(format!("Failed to handle enroll: {e}")))?;
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    #[napi]
+    pub async fn handle_renew(&self, request_cbor: Uint8Array) -> Result<Uint8Array> {
+        let request: RenewRequest = cbor::from_slice(&request_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to deserialize request: {e}")))?;
+
+        let ca_node = self.inner.clone();
+        let result = RT
+            .spawn(async move {
+                let mut ca_node = ca_node.lock().await;
+                ca_node.handle_renew(request, &[])
+            })
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to handle renew: {e}")))?;
+
+        let response =
+            result.map_err(|e| Error::from_reason(format!("Failed to handle renew: {e}")))?;
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    #[napi]
+    pub async fn handle_revoke(&self, request_cbor: Uint8Array) -> Result<Uint8Array> {
+        let request: RevokeRequest = cbor::from_slice(&request_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to deserialize request: {e}")))?;
+
+        let ca_node = self.inner.clone();
+        let result = RT
+            .spawn(async move {
+                let mut ca_node = ca_node.lock().await;
+                ca_node.handle_revoke(request, "admin_ski")
+            })
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to handle revoke: {e}")))?;
+
+        let response =
+            result.map_err(|e| Error::from_reason(format!("Failed to handle revoke: {e}")))?;
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    #[napi]
+    pub async fn get_chain(&self) -> Result<Uint8Array> {
+        let ca_node = self.inner.clone();
+        let result = RT
+            .spawn(async move {
+                let ca_node = ca_node.lock().await;
+                ca_node.handle_chain("default_network".to_string())
+            })
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to get chain: {e}")))?;
+
+        let chain = result.map_err(|e| Error::from_reason(format!("Failed to get chain: {e}")))?;
+        let chain_cbor = cbor::to_vec(&chain)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize chain: {e}")))?;
+
+        Ok(chain_cbor.into())
+    }
+
+    #[napi]
+    pub async fn get_status(&self) -> Result<Uint8Array> {
+        let ca_node = self.inner.clone();
+        let result = RT
+            .spawn(async move {
+                let ca_node = ca_node.lock().await;
+                ca_node.handle_status("default_network".to_string())
+            })
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to get status: {e}")))?;
+
+        let status =
+            result.map_err(|e| Error::from_reason(format!("Failed to get status: {e}")))?;
+        let status_cbor = cbor::to_vec(&status)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize status: {e}")))?;
+
+        Ok(status_cbor.into())
+    }
+
+    #[napi]
+    pub async fn get_crl(&self) -> Result<Uint8Array> {
+        let ca_node = self.inner.clone();
+        let result = RT
+            .spawn(async move {
+                let ca_node = ca_node.lock().await;
+                ca_node.handle_crl("default_network".to_string())
+            })
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to get CRL: {e}")))?;
+
+        let crl = result.map_err(|e| Error::from_reason(format!("Failed to get CRL: {e}")))?;
+        let crl_cbor = cbor::to_vec(&crl)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize CRL: {e}")))?;
+
+        Ok(crl_cbor.into())
+    }
+
+    #[napi]
+    pub async fn add_admin_ski(&self, admin_ski: String) -> Result<()> {
+        let ca_node = self.inner.clone();
+        RT.spawn(async move {
+            let mut ca_node = ca_node.lock().await;
+            ca_node.add_admin_ski(admin_ski);
+        })
+        .await
+        .map_err(|e| Error::from_reason(format!("Failed to add admin SKI: {e}")))?;
+
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn revoke_token(&self, token: String) -> Result<()> {
+        let ca_node = self.inner.clone();
+        RT.spawn(async move {
+            let mut ca_node = ca_node.lock().await;
+            let _ = ca_node.revoke_token(token);
+        })
+        .await
+        .map_err(|e| Error::from_reason(format!("Failed to revoke token: {e}")))?;
+
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn generate_crl(&self) -> Result<Uint8Array> {
+        let ca_node = self.inner.clone();
+        let result = RT
+            .spawn(async move {
+                let ca_node = ca_node.lock().await;
+                ca_node.generate_crl_lite()
+            })
+            .await
+            .map_err(|e| Error::from_reason(format!("Failed to generate CRL: {e}")))?;
+
+        let crl = result.map_err(|e| Error::from_reason(format!("Failed to generate CRL: {e}")))?;
+        let crl_cbor = cbor::to_vec(&crl)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize CRL: {e}")))?;
+
+        Ok(crl_cbor.into())
+    }
+
+    #[napi]
+    pub fn create_shared(&self) -> Result<CaNodeShared> {
+        Ok(CaNodeShared {
+            inner: self.inner.clone(),
+        })
+    }
+}
+
+// CA Node Shared Reference API
+#[napi]
+pub struct CaNodeShared {
+    inner: Arc<AsyncMutex<CANode>>,
+}
+
+#[napi]
+impl CaNodeShared {
+    #[napi]
+    pub async fn add_admin_ski(&self, admin_ski: String) -> Result<()> {
+        let ca_node = self.inner.clone();
+        RT.spawn(async move {
+            let mut ca_node = ca_node.lock().await;
+            ca_node.add_admin_ski(admin_ski);
+        })
+        .await
+        .map_err(|e| Error::from_reason(format!("Failed to add admin SKI: {e}")))?;
+
+        Ok(())
     }
 }
