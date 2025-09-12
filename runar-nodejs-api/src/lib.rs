@@ -6,7 +6,7 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 use runar_common::logging::{Component, Logger};
-use runar_keys::{EnvelopeCrypto, MobileKeyManager, NodeKeyManager};
+use runar_keys::{CANode, EnvelopeCrypto, MobileKeyManager, NodeKeyManager};
 use runar_schemas::NodeInfo;
 
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
