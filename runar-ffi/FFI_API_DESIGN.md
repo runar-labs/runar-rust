@@ -60,13 +60,13 @@ if (state_loaded) {
 - The "v2" suffix was misleading and caused confusion
 - Both v1 and v2 functions existed with different error handling approaches
 - v2 functions had better error handling (no unwraps, proper error codes)
-- v1 functions have been renamed to `_old` suffix and will be removed after validation
+- v1 functions have been removed (previously renamed to `_old` suffix)
 - The unified API uses the more robust implementations (formerly v2)
 
 **Current State**:
 - All functions now use unified names without version suffixes
 - All implementations use robust error handling (formerly v2 style)
-- Old implementations are preserved with `_old` suffix for reference
+- Old implementations have been removed to keep codebase clean
 - All tests use the unified function names
 
 **Future Maintenance**:

@@ -6022,70 +6022,6 @@ pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
     0
 }
 
-/// Install certificate from certificate message
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_install_certificate_old(
-    keys: *mut c_void,
-    cert_message: *const u8,
-    cert_message_len: usize,
-    err: *mut RnError,
-) -> i32 {
-    if keys.is_null() || cert_message.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    };
-
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    let mut node_manager = match manager.write() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    // Parse certificate message
-    let cert_message_data = std::slice::from_raw_parts(cert_message, cert_message_len);
-    let cert_msg = match serde_cbor::from_slice::<runar_keys::mobile::NodeCertificateMessage>(
-        cert_message_data,
-    ) {
-        Ok(msg) => msg,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to parse certificate message: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Install certificate
-    match node_manager.install_certificate(cert_msg) {
-        Ok(_) => 0,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to install certificate: {e}"),
-            );
-            RN_ERROR_OPERATION_FAILED
-        }
-    }
-}
-
 /// Extract certificate SKI
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
@@ -7724,43 +7660,6 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
                 err,
                 RN_ERROR_OPERATION_FAILED,
                 &format!("CRL fetch failed: {e}"),
-            );
-            RN_ERROR_OPERATION_FAILED
-        }
-    }
-}
-
-/// Generate keys for node
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_generate_keys_old(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    if keys.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    match manager.write().unwrap().generate_keys() {
-        Ok(_) => 0,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to generate keys: {e}"),
             );
             RN_ERROR_OPERATION_FAILED
         }

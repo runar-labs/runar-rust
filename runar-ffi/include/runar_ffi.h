@@ -684,14 +684,6 @@ int32_t rn_keys_node_get_node_certificate(void *keys,
                                           struct RNAPIRnError *err);
 
 /**
- * Install certificate from certificate message
- */
-int32_t rn_keys_node_install_certificate_old(void *keys,
-                                             const uint8_t *cert_message,
-                                             size_t cert_message_len,
-                                             struct RNAPIRnError *err);
-
-/**
  * Extract certificate SKI
  */
 int32_t rn_keys_certificate_extract_ski(const uint8_t *cert,
@@ -918,11 +910,6 @@ int32_t rn_transport_ca_client_get_crl(void *client,
                                        uint8_t **out_response,
                                        size_t *out_len,
                                        struct RNAPIRnError *err);
-
-/**
- * Generate keys for node
- */
-int32_t rn_keys_node_generate_keys_old(void *keys, struct RNAPIRnError *err);
 
 /**
  * Install certificate for node key manager
