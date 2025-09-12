@@ -288,12 +288,14 @@ fn register_keystore_with_managers(
     keystore: Arc<dyn keystore::DeviceKeystore>,
 ) {
     if let Some(manager) = &inner.node_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.register_device_keystore(keystore.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.register_device_keystore(Arc::clone(&keystore));
+        }
     }
     if let Some(manager) = &inner.mobile_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.register_device_keystore(keystore.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.register_device_keystore(Arc::clone(&keystore));
+        }
     }
     inner.device_keystore = Some(keystore);
 }
@@ -352,15 +354,17 @@ fn set_error(err: *mut RnError, code: i32, message: &str) {
     if err.is_null() {
         // still store the message globally
         let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-        let mut guard = cell.lock().unwrap();
-        *guard = Some(message.to_string());
+        if let Ok(mut guard) = cell.lock() {
+            *guard = Some(message.to_string());
+        }
         return;
     }
     let c_msg = CString::new(message).unwrap_or_else(|_| CString::new("ffi error").unwrap());
     // store message globally as well
     let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-    let mut guard = cell.lock().unwrap();
-    *guard = Some(message.to_string());
+    if let Ok(mut guard) = cell.lock() {
+        *guard = Some(message.to_string());
+    }
     unsafe {
         (*err).code = code;
         (*err).message = c_msg.into_raw();
@@ -419,7 +423,10 @@ pub unsafe extern "C" fn rn_last_error(out: *mut c_char, out_len: usize) -> i32 
         return 1;
     }
     let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-    let msg = cell.lock().unwrap().clone().unwrap_or_default();
+    let msg = cell
+        .lock()
+        .map(|guard| guard.clone().unwrap_or_default())
+        .unwrap_or_default();
     let bytes = msg.as_bytes();
     // ensure space for NUL terminator
     let copy_len = bytes.len().min(out_len.saturating_sub(1));
@@ -618,11 +625,13 @@ pub unsafe extern "C" fn rn_keys_set_persistence_dir(
 
     // Set persistence directory on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.set_persistence_dir(pb.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.set_persistence_dir(pb.clone());
+        }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.set_persistence_dir(pb.clone());
+        if let Ok(mut mgr) = manager.write() {
+            mgr.set_persistence_dir(pb.clone());
+        }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
         return RN_ERROR_NOT_INITIALIZED;
@@ -643,11 +652,13 @@ pub unsafe extern "C" fn rn_keys_enable_auto_persist(
 
     // Enable auto-persist on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.enable_auto_persist(enabled);
+        if let Ok(mut mgr) = manager.write() {
+            mgr.enable_auto_persist(enabled);
+        }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mut mgr = manager.write().unwrap();
-        mgr.enable_auto_persist(enabled);
+        if let Ok(mut mgr) = manager.write() {
+            mgr.enable_auto_persist(enabled);
+        }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
         return RN_ERROR_NOT_INITIALIZED;
@@ -665,24 +676,26 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
 
     // Wipe persistence from whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.wipe_persistence() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("node wipe_persistence: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.wipe_persistence() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("node wipe_persistence: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.wipe_persistence() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("mobile wipe_persistence: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.wipe_persistence() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("mobile wipe_persistence: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
@@ -696,12 +709,13 @@ pub unsafe extern "C" fn rn_keys_wipe_persistence(keys: *mut c_void, err: *mut R
             &runar_keys::keystore::persistence::Role::Mobile,
         );
         if let Some(manager) = &inner.node_key_manager {
-            let mgr = manager.read().unwrap();
-            if let Some(node_id) = mgr.get_node_id() {
-                let _ = runar_keys::keystore::persistence::wipe(
-                    &cfg,
-                    &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
-                );
+            if let Ok(mgr) = manager.read() {
+                if let Some(node_id) = mgr.get_node_id() {
+                    let _ = runar_keys::keystore::persistence::wipe(
+                        &cfg,
+                        &runar_keys::keystore::persistence::Role::Node { node_id: &node_id },
+                    );
+                }
             }
         }
     }
@@ -725,11 +739,17 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
 
     // Get capabilities from whichever manager exists
     let caps = if let Some(manager) = &inner.node_key_manager {
-        let mgr = manager.read().unwrap();
-        mgr.get_keystore_caps().unwrap_or_default()
+        if let Ok(mgr) = manager.read() {
+            mgr.get_keystore_caps().unwrap_or_default()
+        } else {
+            runar_keys::keystore::DeviceKeystoreCaps::default()
+        }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mgr = manager.read().unwrap();
-        mgr.get_keystore_caps().unwrap_or_default()
+        if let Ok(mgr) = manager.read() {
+            mgr.get_keystore_caps().unwrap_or_default()
+        } else {
+            runar_keys::keystore::DeviceKeystoreCaps::default()
+        }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
         return RN_ERROR_NOT_INITIALIZED;
@@ -748,24 +768,26 @@ pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnErro
 
     // Flush state on whichever manager exists
     if let Some(manager) = &inner.node_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.flush_state() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("node flush_state: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.flush_state() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("node flush_state: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else if let Some(manager) = &inner.mobile_key_manager {
-        let mgr = manager.write().unwrap();
-        if let Err(e) = mgr.flush_state() {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("mobile flush_state: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
+        if let Ok(mgr) = manager.write() {
+            if let Err(e) = mgr.flush_state() {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("mobile flush_state: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
         }
     } else {
         set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
@@ -3834,13 +3856,22 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         mgr.get_node_public_key()
     };
 
+    let Some(node_public_key) = node_public_key else {
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            "node public key not available",
+        );
+        return RN_ERROR_OPERATION_FAILED;
+    };
+
     // Wire callbacks and key manager
     {
         let node_manager_for_transport = manager.clone();
         let logger = keys_inner.logger.clone();
         options = options
             .with_key_manager(node_manager_for_transport)
-            .with_local_node_public_key(node_public_key.unwrap())
+            .with_local_node_public_key(node_public_key)
             .with_logger(logger)
             .with_peer_connected_callback(pc_cb)
             .with_peer_disconnected_callback(pd_cb)
@@ -4850,7 +4881,17 @@ pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
     // This function now expects a shared CA Node (Arc<RwLock<CANode>>)
     // The caller should pass the shared_ca_node from rn_keys_ca_node_create_shared
     let ca_node_arc = unsafe { &*(ca_node as *const Arc<RwLock<CANode>>) };
-    let mut ca_node_guard = ca_node_arc.write().unwrap();
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
     ca_node_guard.add_admin_ski(ski_str.to_string());
 
     0
@@ -6478,7 +6519,14 @@ pub unsafe extern "C" fn rn_keys_node_derive_user_profile_key(
         }
     };
 
-    match manager.write().unwrap().derive_user_profile_key(label_str) {
+    let mut mgr = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire write lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.derive_user_profile_key(label_str) {
         Ok(public_key) => {
             let public_key_len = public_key.len();
             let public_key_ptr = Box::into_raw(public_key.into_boxed_slice()) as *mut u8;
@@ -6559,11 +6607,14 @@ pub unsafe extern "C" fn rn_keys_node_decrypt_with_profile(
             }
         };
 
-    match manager
-        .read()
-        .unwrap()
-        .decrypt_with_profile(&envelope_data, profile_id_str)
-    {
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.decrypt_with_profile(&envelope_data, profile_id_str) {
         Ok(decrypted) => {
             let decrypted_len = decrypted.len();
             let decrypted_ptr = Box::into_raw(decrypted.into_boxed_slice()) as *mut u8;
@@ -6615,10 +6666,9 @@ pub unsafe extern "C" fn rn_keys_node_install_profile_public_key(
     let public_key_bytes =
         unsafe { std::slice::from_raw_parts(public_key, public_key_len) }.to_vec();
 
-    manager
-        .write()
-        .unwrap()
-        .install_profile_public_key(public_key_bytes);
+    if let Ok(mut mgr) = manager.write() {
+        mgr.install_profile_public_key(public_key_bytes);
+    }
     0
 }
 
@@ -6667,19 +6717,17 @@ pub unsafe extern "C" fn rn_keys_node_get_profile_public_key_by_label(
     };
 
     // Get profile public key by label
-    if let Some(public_key) = manager
-        .read()
-        .unwrap()
-        .get_profile_public_key_by_label(label_str)
-    {
-        let public_key_len = public_key.len();
-        let public_key_ptr = Box::into_raw(public_key.clone().into_boxed_slice()) as *mut u8;
-        unsafe {
-            *out_public_key = public_key_ptr;
-            *out_public_key_len = public_key_len;
-            *out_has_key = 1;
+    if let Ok(mgr) = manager.read() {
+        if let Some(public_key) = mgr.get_profile_public_key_by_label(label_str) {
+            let public_key_len = public_key.len();
+            let public_key_ptr = Box::into_raw(public_key.clone().into_boxed_slice()) as *mut u8;
+            unsafe {
+                *out_public_key = public_key_ptr;
+                *out_public_key_len = public_key_len;
+                *out_has_key = 1;
+            }
+            return 0;
         }
-        return 0;
     }
 
     unsafe {
@@ -6719,7 +6767,11 @@ pub unsafe extern "C" fn rn_keys_node_get_certificate_status(
         }
     };
 
-    let status = manager.read().unwrap().get_certificate_status();
+    let status = if let Ok(mgr) = manager.read() {
+        mgr.get_certificate_status()
+    } else {
+        runar_keys::node::CertificateStatus::None
+    };
     let status_code = match status {
         runar_keys::node::CertificateStatus::None => 0,
         runar_keys::node::CertificateStatus::Pending => 1,
@@ -6758,7 +6810,14 @@ pub unsafe extern "C" fn rn_keys_node_get_certificate_serial(
         }
     };
 
-    match manager.read().unwrap().get_node_certificate() {
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.get_node_certificate() {
         Some(cert) => match cert.parsed() {
             Ok(parsed_cert) => {
                 let serial_hex = parsed_cert.serial.to_string();
@@ -6836,11 +6895,14 @@ pub unsafe extern "C" fn rn_keys_node_validate_peer_certificate(
     };
 
     // Validate the certificate
-    match manager
-        .read()
-        .unwrap()
-        .validate_peer_certificate(&peer_cert)
-    {
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.validate_peer_certificate(&peer_cert) {
         Ok(()) => 0,
         Err(e) => {
             set_error(
@@ -6904,11 +6966,14 @@ pub unsafe extern "C" fn rn_keys_node_install_network_key(
         };
 
     // Install the network key
-    match manager
-        .write()
-        .unwrap()
-        .install_network_key(network_key_message)
-    {
+    let mut mgr = match manager.write() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire write lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.install_network_key(network_key_message) {
         Ok(()) => 0,
         Err(e) => {
             set_error(
@@ -6967,7 +7032,13 @@ pub unsafe extern "C" fn rn_keys_node_get_network_agreement(
         unsafe { std::slice::from_raw_parts(network_public_key, key_len) };
 
     // Get the network agreement
-    let manager_guard = manager.read().unwrap();
+    let manager_guard = match manager.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
     let agreement = match manager_guard.get_network_agreement(network_public_key_bytes) {
         Ok(agreement) => agreement,
         Err(e) => {
@@ -7032,11 +7103,14 @@ pub unsafe extern "C" fn rn_keys_node_has_network_private_key(
         unsafe { std::slice::from_raw_parts(network_public_key, key_len) };
 
     // Check if we have the network private key
-    match manager
-        .read()
-        .unwrap()
-        .has_network_private_key(network_public_key_bytes)
-    {
+    let mgr = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire read lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    match mgr.has_network_private_key(network_public_key_bytes) {
         Ok(_) => {
             unsafe {
                 *out_has_key = 1;
@@ -7696,17 +7770,26 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
 
     // Parse the certificate message
     match serde_cbor::from_slice::<NodeCertificateMessage>(cert_data) {
-        Ok(cert_message) => match manager.write().unwrap().install_certificate(cert_message) {
-            Ok(_) => 0,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_OPERATION_FAILED,
-                    &format!("Failed to install certificate: {e}"),
-                );
-                RN_ERROR_OPERATION_FAILED
+        Ok(cert_message) => {
+            let mut mgr = match manager.write() {
+                Ok(mgr) => mgr,
+                Err(_) => {
+                    set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire write lock");
+                    return RN_ERROR_LOCK_ERROR;
+                }
+            };
+            match mgr.install_certificate(cert_message) {
+                Ok(_) => 0,
+                Err(e) => {
+                    set_error(
+                        err,
+                        RN_ERROR_OPERATION_FAILED,
+                        &format!("Failed to install certificate: {e}"),
+                    );
+                    RN_ERROR_OPERATION_FAILED
+                }
             }
-        },
+        }
         Err(e) => {
             set_error(
                 err,
