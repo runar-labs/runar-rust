@@ -160,6 +160,8 @@ int32_t rn_keys_get_keystore_caps(void *keys,
                                   struct RNAPIRnDeviceKeystoreCaps *out_caps,
                                   struct RNAPIRnError *err);
 
+int32_t rn_keys_flush_state(void *keys, struct RNAPIRnError *err);
+
 int32_t rn_keys_register_apple_device_keystore(void *keys,
                                                const char *label,
                                                struct RNAPIRnError *err);

@@ -738,6 +738,43 @@ pub unsafe extern "C" fn rn_keys_get_keystore_caps(
     0
 }
 
+// Explicit flush of state persistence
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_flush_state(keys: *mut c_void, err: *mut RnError) -> i32 {
+    let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    // Flush state on whichever manager exists
+    if let Some(manager) = &inner.node_key_manager {
+        let mgr = manager.write().unwrap();
+        if let Err(e) = mgr.flush_state() {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("node flush_state: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    } else if let Some(manager) = &inner.mobile_key_manager {
+        let mgr = manager.write().unwrap();
+        if let Err(e) = mgr.flush_state() {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("mobile flush_state: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    } else {
+        set_error(err, RN_ERROR_NOT_INITIALIZED, "no key manager initialized");
+        return RN_ERROR_NOT_INITIALIZED;
+    }
+
+    0
+}
+
 #[cfg(all(
     feature = "apple-keystore",
     any(target_os = "macos", target_os = "ios")

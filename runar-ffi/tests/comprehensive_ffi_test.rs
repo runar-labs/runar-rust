@@ -755,8 +755,8 @@ fn test_flush_state_happy_path() {
         message: ptr::null(),
     };
 
-    // Note: rn_keys_flush_state has been removed - state management is now internal
-    // State persistence is handled automatically by the key managers
+    let result = unsafe { rn_keys_flush_state(keys, &mut error) };
+    assert_eq!(result, 0, "Should successfully flush state");
 
     destroy_keys_handle(keys);
 }

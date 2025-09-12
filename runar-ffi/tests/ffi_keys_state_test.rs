@@ -335,8 +335,19 @@ fn linux_keystore_end_to_end_mobile_node_flow() {
 
         rn_free(eed_ptr, eed_len);
 
-        // Note: rn_keys_flush_state removed - state management is now internal
-        // State persistence is handled automatically by the key managers
+        // Flush and re-probe
+        assert_eq!(
+            rn_keys_flush_state(mobile_keys, &mut err as *mut _),
+            0,
+            "flush_state mobile: {}",
+            last_err()
+        );
+        assert_eq!(
+            rn_keys_flush_state(node_keys, &mut err as *mut _),
+            0,
+            "flush_state node: {}",
+            last_err()
+        );
 
         // New handle, same dir/keystore
         rn_keys_free(mobile_keys);
