@@ -773,7 +773,7 @@ fn test_node_has_keys_v2_happy_path() {
 
     let mut has_keys = 0i32;
 
-    let result = unsafe { rn_keys_node_has_keys_v2(keys, &mut has_keys, &mut error) };
+    let result = unsafe { rn_keys_node_has_keys(keys, &mut has_keys, &mut error) };
 
     assert_eq!(result, 0, "Should successfully check if keys exist");
     // Keys may or may not exist initially, so we just check that the call succeeded
@@ -789,16 +789,16 @@ fn test_node_has_keys_v2_null_pointers() {
     let mut error = create_test_error();
 
     // Test null keys handle
-    let result = unsafe { rn_keys_node_has_keys_v2(ptr::null_mut(), ptr::null_mut(), &mut error) };
+    let result = unsafe { rn_keys_node_has_keys(ptr::null_mut(), ptr::null_mut(), &mut error) };
     assert_eq!(result, -1, "Should fail with null keys handle");
 
     // Test null output pointer
-    let result = unsafe { rn_keys_node_has_keys_v2(keys, ptr::null_mut(), &mut error) };
+    let result = unsafe { rn_keys_node_has_keys(keys, ptr::null_mut(), &mut error) };
     assert_eq!(result, -1, "Should fail with null output pointer");
 
     // Test null error pointer
     let mut has_keys = 0i32;
-    let result = unsafe { rn_keys_node_has_keys_v2(keys, &mut has_keys, ptr::null_mut()) };
+    let result = unsafe { rn_keys_node_has_keys(keys, &mut has_keys, ptr::null_mut()) };
     assert_eq!(result, -1, "Should fail with null error pointer");
 
     destroy_keys_handle(keys);
@@ -812,7 +812,7 @@ fn test_node_has_keys_v2_wrong_manager_type() {
 
     let mut has_keys = 0i32;
 
-    let result = unsafe { rn_keys_node_has_keys_v2(keys, &mut has_keys, &mut error) };
+    let result = unsafe { rn_keys_node_has_keys(keys, &mut has_keys, &mut error) };
 
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
@@ -830,7 +830,7 @@ fn test_node_has_keys_v2_not_initialized() {
 
     let mut has_keys = 0i32;
 
-    let result = unsafe { rn_keys_node_has_keys_v2(keys, &mut has_keys, &mut error) };
+    let result = unsafe { rn_keys_node_has_keys(keys, &mut has_keys, &mut error) };
 
     assert_eq!(
         result, RN_ERROR_NOT_INITIALIZED,
@@ -846,7 +846,7 @@ fn test_node_generate_keys_v2_happy_path() {
     unsafe { init_as_node(keys) };
     let mut error = create_test_error();
 
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
 
     assert_eq!(result, 0, "Should successfully generate keys");
 
@@ -860,11 +860,11 @@ fn test_node_generate_keys_v2_null_pointers() {
 
     // Test null keys handle
     let mut error = create_test_error();
-    let result = unsafe { rn_keys_node_generate_keys_v2(ptr::null_mut(), &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(ptr::null_mut(), &mut error) };
     assert_eq!(result, -1, "Should fail with null keys handle");
 
     // Test null error pointer
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, ptr::null_mut()) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, ptr::null_mut()) };
     assert_eq!(result, -1, "Should fail with null error pointer");
 
     destroy_keys_handle(keys);
@@ -876,7 +876,7 @@ fn test_node_generate_keys_v2_wrong_manager_type() {
     unsafe { init_as_mobile(keys) }; // Initialize as mobile
     let mut error = create_test_error();
 
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
 
     assert_eq!(
         result, RN_ERROR_WRONG_MANAGER_TYPE,
@@ -892,7 +892,7 @@ fn test_node_generate_keys_v2_not_initialized() {
     // Don't initialize
     let mut error = create_test_error();
 
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
 
     assert_eq!(
         result, RN_ERROR_NOT_INITIALIZED,
@@ -909,7 +909,7 @@ fn test_node_get_node_id_v2_happy_path() {
     let mut error = create_test_error();
 
     // Generate keys first to ensure we have a node ID
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     let mut node_id: *mut i8 = ptr::null_mut();
@@ -1033,7 +1033,7 @@ fn test_derive_user_profile_key_happy_path() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     let label = create_cstring("test-profile");
@@ -1172,7 +1172,7 @@ fn test_install_profile_public_key_happy_path() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Create a test public key (65 bytes for uncompressed P-256)
@@ -1233,7 +1233,7 @@ fn test_get_profile_public_key_by_label_happy_path() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Derive a profile key first
@@ -1293,7 +1293,7 @@ fn test_get_profile_public_key_by_label_not_found() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Try to get a non-existent profile key
@@ -1381,7 +1381,7 @@ fn test_decrypt_with_profile_happy_path() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Derive a profile key first
@@ -1442,7 +1442,7 @@ fn test_profile_key_workflow() {
     let mut error = create_test_error();
 
     // Step 1: Generate keys
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Step 2: Derive a profile key
@@ -1509,7 +1509,7 @@ fn test_derive_user_profile_key_empty_label() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     let empty_label = create_cstring("");
@@ -1548,7 +1548,7 @@ fn test_derive_user_profile_key_duplicate_label() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     let label = create_cstring("duplicate-test");
@@ -1614,7 +1614,7 @@ fn test_derive_user_profile_key_long_label() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Create a very long label
@@ -1655,7 +1655,7 @@ fn test_derive_user_profile_key_unicode_labels() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Test with Unicode labels
@@ -1770,7 +1770,7 @@ fn test_get_profile_public_key_by_label_after_install() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Install a profile public key
@@ -1816,7 +1816,7 @@ fn test_profile_key_workflow_multiple_labels() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Derive multiple profile keys with different labels
@@ -1897,7 +1897,7 @@ fn test_decrypt_with_profile_invalid_envelope_data() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Create invalid envelope data (not valid CBOR)
@@ -1933,7 +1933,7 @@ fn test_decrypt_with_profile_empty_envelope_data() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Create empty envelope data
@@ -2052,7 +2052,7 @@ fn test_profile_key_memory_management() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Derive multiple profile keys and ensure proper memory management
@@ -2126,7 +2126,7 @@ fn test_profile_key_stress_test() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Create many profile keys to test memory and performance
@@ -2202,7 +2202,7 @@ fn test_get_certificate_status_happy_path() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     let mut status: i32 = 0;
@@ -2247,7 +2247,7 @@ fn test_get_quic_certificate_config_no_certificate() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     let mut config: *mut u8 = ptr::null_mut();
@@ -2304,7 +2304,7 @@ fn test_validate_peer_certificate_invalid_certificate() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Create invalid certificate data
@@ -2379,7 +2379,7 @@ fn test_install_network_key_invalid_message() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Create invalid network key message
@@ -2450,7 +2450,7 @@ fn test_get_network_agreement_no_key() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Try to get network agreement for non-existent key
@@ -2543,7 +2543,7 @@ fn test_has_network_private_key_no_key() {
     let mut error = create_test_error();
 
     // Generate keys first
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Check for non-existent network key
@@ -2914,16 +2914,16 @@ fn test_complete_v2_node_lifecycle() {
 
     // Step 1: Check if keys exist (should be false initially)
     let mut has_keys = 0i32;
-    let result = unsafe { rn_keys_node_has_keys_v2(keys, &mut has_keys, &mut error) };
+    let result = unsafe { rn_keys_node_has_keys(keys, &mut has_keys, &mut error) };
     assert_eq!(result, 0, "Should successfully check keys state");
     // Keys may or may not exist initially
 
     // Step 2: Generate keys
-    let result = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result, 0, "Should successfully generate keys");
 
     // Step 3: Check if keys exist again (should be true now)
-    let result = unsafe { rn_keys_node_has_keys_v2(keys, &mut has_keys, &mut error) };
+    let result = unsafe { rn_keys_node_has_keys(keys, &mut has_keys, &mut error) };
     assert_eq!(result, 0, "Should successfully check keys state again");
     // Note: Keys might not be immediately available after generation
     // This depends on the implementation details
@@ -2963,10 +2963,10 @@ fn test_v2_api_error_handling_consistency() {
 
     // Test that all v2 APIs use consistent error handling
     let mut has_keys = 0i32;
-    let result1 = unsafe { rn_keys_node_has_keys_v2(keys, &mut has_keys, &mut error) };
+    let result1 = unsafe { rn_keys_node_has_keys(keys, &mut has_keys, &mut error) };
     assert_eq!(result1, 0, "has_keys_v2 should succeed");
 
-    let result2 = unsafe { rn_keys_node_generate_keys_v2(keys, &mut error) };
+    let result2 = unsafe { rn_keys_node_generate_keys(keys, &mut error) };
     assert_eq!(result2, 0, "generate_keys_v2 should succeed");
 
     let mut node_id: *mut i8 = ptr::null_mut();

@@ -4605,7 +4605,7 @@ pub unsafe extern "C" fn rn_keys_ensure_symmetric_key(
 
 /// Check if NodeKeyManager has keys (new API)
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_has_keys_v2(
+pub unsafe extern "C" fn rn_keys_node_has_keys(
     keys: *mut c_void,
     out_has_keys: *mut i32,
     err: *mut RnError,
@@ -4655,10 +4655,7 @@ pub unsafe extern "C" fn rn_keys_node_has_keys_v2(
 
 /// Generate keys for NodeKeyManager (new API)
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_generate_keys_v2(
-    keys: *mut c_void,
-    err: *mut RnError,
-) -> i32 {
+pub unsafe extern "C" fn rn_keys_node_generate_keys(keys: *mut c_void, err: *mut RnError) -> i32 {
     if keys.is_null() || err.is_null() {
         return -1;
     }
@@ -6027,7 +6024,7 @@ pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
 
 /// Install certificate from certificate message
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_install_certificate(
+pub unsafe extern "C" fn rn_keys_node_install_certificate_old(
     keys: *mut c_void,
     cert_message: *const u8,
     cert_message_len: usize,
@@ -7735,7 +7732,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
 
 /// Generate keys for node
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_generate_keys(keys: *mut c_void, err: *mut RnError) -> i32 {
+pub unsafe extern "C" fn rn_keys_node_generate_keys_old(
+    keys: *mut c_void,
+    err: *mut RnError,
+) -> i32 {
     if keys.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
@@ -7769,7 +7769,7 @@ pub unsafe extern "C" fn rn_keys_node_generate_keys(keys: *mut c_void, err: *mut
 
 /// Install certificate for node key manager
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_node_install_certificate_v2(
+pub unsafe extern "C" fn rn_keys_node_install_certificate(
     keys: *mut c_void,
     certificate_data: *const u8,
     cert_len: usize,

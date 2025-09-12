@@ -488,12 +488,12 @@ int32_t rn_keys_ensure_symmetric_key(void *keys,
 /**
  * Check if NodeKeyManager has keys (new API)
  */
-int32_t rn_keys_node_has_keys_v2(void *keys, int32_t *out_has_keys, struct RNAPIRnError *err);
+int32_t rn_keys_node_has_keys(void *keys, int32_t *out_has_keys, struct RNAPIRnError *err);
 
 /**
  * Generate keys for NodeKeyManager (new API)
  */
-int32_t rn_keys_node_generate_keys_v2(void *keys, struct RNAPIRnError *err);
+int32_t rn_keys_node_generate_keys(void *keys, struct RNAPIRnError *err);
 
 /**
  * Create new CA Node (new API)
@@ -686,10 +686,10 @@ int32_t rn_keys_node_get_node_certificate(void *keys,
 /**
  * Install certificate from certificate message
  */
-int32_t rn_keys_node_install_certificate(void *keys,
-                                         const uint8_t *cert_message,
-                                         size_t cert_message_len,
-                                         struct RNAPIRnError *err);
+int32_t rn_keys_node_install_certificate_old(void *keys,
+                                             const uint8_t *cert_message,
+                                             size_t cert_message_len,
+                                             struct RNAPIRnError *err);
 
 /**
  * Extract certificate SKI
@@ -922,15 +922,15 @@ int32_t rn_transport_ca_client_get_crl(void *client,
 /**
  * Generate keys for node
  */
-int32_t rn_keys_node_generate_keys(void *keys, struct RNAPIRnError *err);
+int32_t rn_keys_node_generate_keys_old(void *keys, struct RNAPIRnError *err);
 
 /**
  * Install certificate for node key manager
  */
-int32_t rn_keys_node_install_certificate_v2(void *keys,
-                                            const uint8_t *certificate_data,
-                                            size_t cert_len,
-                                            struct RNAPIRnError *err);
+int32_t rn_keys_node_install_certificate(void *keys,
+                                         const uint8_t *certificate_data,
+                                         size_t cert_len,
+                                         struct RNAPIRnError *err);
 
 /**
  * Get compact ID for profile key

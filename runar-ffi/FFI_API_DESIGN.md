@@ -46,7 +46,36 @@ if (state_loaded) {
 }
 ```
 
-### Common Utilities
+### API Unification and Versioning
+
+### Historical Note: v2 Function Naming Correction
+
+**IMPORTANT**: The FFI API previously had incorrectly named "v2" functions that have been unified to remove confusion:
+
+- `rn_keys_node_has_keys_v2()` → `rn_keys_node_has_keys()` (unified)
+- `rn_keys_node_generate_keys_v2()` → `rn_keys_node_generate_keys()` (unified)  
+- `rn_keys_node_install_certificate_v2()` → `rn_keys_node_install_certificate()` (unified)
+
+**Reason for Unification**:
+- The "v2" suffix was misleading and caused confusion
+- Both v1 and v2 functions existed with different error handling approaches
+- v2 functions had better error handling (no unwraps, proper error codes)
+- v1 functions have been renamed to `_old` suffix and will be removed after validation
+- The unified API uses the more robust implementations (formerly v2)
+
+**Current State**:
+- All functions now use unified names without version suffixes
+- All implementations use robust error handling (formerly v2 style)
+- Old implementations are preserved with `_old` suffix for reference
+- All tests use the unified function names
+
+**Future Maintenance**:
+- No version suffixes in function names
+- Single implementation per function
+- Consistent error handling across all functions
+- Clear, maintainable API without confusion
+
+## Common Utilities
 - `rn_free(ptr, len)`
 - `rn_string_free(cstr)`
 - `rn_last_error(out_buf, out_len) -> i32`
