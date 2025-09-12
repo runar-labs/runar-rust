@@ -16,6 +16,7 @@ async fn test_config_creation() {
         "test_network".to_string(),
         "test_public_key".to_string(),
         runar_cli::config::SetupServerConfig::default(),
+        config_dir.clone(),
     );
 
     // Test saving and loading config
@@ -63,6 +64,7 @@ fn test_config_exists_check() {
         "test_network".to_string(),
         "test_public_key".to_string(),
         runar_cli::config::SetupServerConfig::default(),
+        config_dir.clone(),
     );
     config.save(&config_dir).expect("Failed to save config");
 

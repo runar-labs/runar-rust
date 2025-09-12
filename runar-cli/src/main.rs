@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod config;
+mod device_keystore;
 mod init;
-mod key_store;
 mod setup_server;
 mod start;
 

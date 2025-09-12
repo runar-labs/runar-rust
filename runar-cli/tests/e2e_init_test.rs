@@ -407,6 +407,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
             network_id.clone(),            // Use actual network ID from mobile
             hex::encode(&node_public_key), // Use full hex-encoded public key bytes
             setup_config.get_setup_server().clone(),
+            config_dir.clone(), // Persistence directory
         )
     };
 
@@ -473,7 +474,7 @@ async fn test_e2e_cli_initialization() -> Result<()> {
     println!();
     println!("📊 CLI Test Statistics:");
     println!("   • Node ID: {node_id}");
-    println!("   • Keys Name: {}", setup_config.get_keys_name());
+    println!("   • Persistence Dir: {config_dir:?}");
     println!("   • Configuration: {config_dir:?}");
 
     Ok(())

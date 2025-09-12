@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
         "example_network".to_string(),
         "example_public_key_123".to_string(),
         runar_cli::config::SetupServerConfig::default(),
+        config_dir.clone(),
     );
 
     config.save(&config_dir)?;
@@ -42,7 +43,7 @@ async fn main() -> Result<()> {
     println!("✅ Configuration loaded:");
     println!("   Node ID: {}", loaded_config.node_id);
     println!("   Network: {}", loaded_config.default_network_id);
-    println!("   Keys Name: {}", loaded_config.keys_name);
+    println!("   Persistence Dir: {:?}", loaded_config.persistence_dir);
 
     // Example 3: Check if configuration exists
     println!("\n🔍 Example 3: Checking configuration existence");

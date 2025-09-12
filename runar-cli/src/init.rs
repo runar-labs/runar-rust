@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use hex::encode;
 use qrcode::{render::unicode::Dense1x2, QrCode};
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::Logger;
+use runar_common::logging::{Component, Logger};
 use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
 use runar_keys::node::{CertificateStatus, NodeKeyManager};
 use runar_macros_common::{log_debug, log_info};
@@ -18,10 +18,9 @@ use runar_macros_common::{log_debug, log_info};
 use serde_cbor::to_vec;
 use std::path::PathBuf;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::config::{NodeConfig, SetupServerConfig};
-use crate::key_store::OsKeyStore;
+use crate::device_keystore::create_device_keystore_for_platform;
 use crate::setup_server::{SetupData, SetupServer};
 
 pub struct InitCommand {
@@ -32,8 +31,6 @@ pub struct InitCommand {
 /// Temporary setup configuration for the initialization phase
 #[derive(Debug, Clone)]
 pub struct SetupConfig {
-    /// Unique ID for OS key store (format: runar_{uuid})
-    keys_name: String,
     /// Setup server configuration
     setup_server: SetupServerConfig,
     /// Node public key for reference
@@ -43,7 +40,6 @@ pub struct SetupConfig {
 impl SetupConfig {
     pub fn new(node_public_key: String) -> Self {
         Self {
-            keys_name: format!("runar_{}", Uuid::new_v4()),
             setup_server: SetupServerConfig::default(),
             node_public_key,
         }
@@ -55,10 +51,6 @@ impl SetupConfig {
 
     pub fn get_setup_server(&self) -> &SetupServerConfig {
         &self.setup_server
-    }
-
-    pub fn get_keys_name(&self) -> &str {
-        &self.keys_name
     }
 }
 
@@ -135,9 +127,30 @@ impl InitCommand {
     }
 
     fn generate_node_keys(&self) -> Result<(NodeKeyManager, SetupToken)> {
-        // Create node key manager
-        let mut node_key_manager = NodeKeyManager::new(self.logger.clone())
-            .context("Failed to create node key manager")?;
+        // Create NodeKeyManager with full persistence setup
+        let logger = Arc::new(Logger::new_root(Component::Keys));
+        let mut node_key_manager = NodeKeyManager::new(logger)?;
+
+        // Configure persistence directory
+        node_key_manager.set_persistence_dir(self.config_dir.clone());
+
+        // Register device keystore (OS integration)
+        let device_keystore = create_device_keystore_for_platform()
+            .context("Failed to create device keystore for platform")?;
+        node_key_manager.register_device_keystore(device_keystore);
+
+        // Check if already initialized
+        let state_loaded = node_key_manager
+            .probe_and_load_state()
+            .context("Failed to probe and load state")?;
+        if state_loaded {
+            return Err(anyhow::anyhow!("Node already initialized"));
+        }
+
+        // Generate keys for new node
+        node_key_manager
+            .generate_keys()
+            .context("Failed to generate node keys")?;
 
         // Generate CSR
         let _setup_token = node_key_manager
@@ -167,11 +180,7 @@ impl InitCommand {
         // Create temporary setup config with unique keys name for OS key store
         let setup_config = SetupConfig::new(compact_id(&node_public_key));
 
-        log_info!(
-            self.logger,
-            "Setup configuration created with keys name: {}",
-            setup_config.get_keys_name()
-        );
+        log_info!(self.logger, "Setup configuration created");
         log_debug!(
             self.logger,
             "Setup server will be available at: {}",
@@ -313,6 +322,7 @@ impl InitCommand {
             network_id.to_string(), // Use actual network ID from mobile
             node_public_key_hex,    // Full hex-encoded public key bytes
             setup_config.setup_server.clone(),
+            self.config_dir.clone(), // Persistence directory
         );
 
         // Save final configuration file
@@ -320,21 +330,13 @@ impl InitCommand {
             .save(&self.config_dir)
             .context("Failed to save configuration file")?;
 
-        // Export and save node state to OS key store
-        let node_state = node_key_manager.export_state();
-        let serialized_state = to_vec(&node_state).context("Failed to serialize node state")?;
-
-        // Store keys securely in OS key store
-        let key_store = OsKeyStore::new(self.logger.clone());
-        key_store
-            .store_node_keys(setup_config.get_keys_name(), &serialized_state)
-            .context("Failed to store node keys in OS key store")?;
+        // State is automatically persisted via auto_persist = true
+        // No manual export/store needed!
 
         log_info!(self.logger, "Configuration saved to {:?}", self.config_dir);
         log_info!(
             self.logger,
-            "Node keys stored securely in OS key store: {}",
-            setup_config.get_keys_name()
+            "Node keys automatically persisted to device keystore"
         );
         log_info!(self.logger, "Default network ID: {network_id}");
 
@@ -344,9 +346,9 @@ impl InitCommand {
     fn print_success_message(&self, setup_config: &SetupConfig) {
         println!("\n🎉 Runar node initialization completed successfully!");
         println!("📋 Setup Information:");
-        println!("   • Keys Name: {}", setup_config.keys_name);
         println!("   • Node Public Key: {}", setup_config.node_public_key);
         println!("   • Configuration: {:?}", self.config_dir);
+        println!("   • Persistence Dir: {:?}", self.config_dir);
         println!();
         println!("🚀 You can now start the node with: runar start");
         println!("📱 The node is ready to accept connections from mobile devices");

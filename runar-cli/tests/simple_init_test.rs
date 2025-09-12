@@ -81,7 +81,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     let setup_config = runar_cli::init::SetupConfig::new(compact_id(&node_public_key));
 
     println!("   ✅ Setup configuration created:");
-    println!("      Keys Name: {}", setup_config.get_keys_name());
+    println!("      Persistence Dir: {config_dir:?}");
     println!("      Server: {}", setup_config.get_setup_server_address());
 
     // ==========================================
@@ -145,6 +145,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
         format!("network_{}", Uuid::new_v4()),
         hex::encode(&node_public_key),
         setup_config.get_setup_server().clone(),
+        config_dir.clone(),
     );
 
     final_config
@@ -208,7 +209,7 @@ async fn test_simple_initialization_flow() -> Result<()> {
     println!();
     println!("📊 CLI Test Statistics:");
     println!("   • Node ID: {node_id}");
-    println!("   • Keys Name: {}", setup_config.get_keys_name());
+    println!("   • Persistence Dir: {config_dir:?}");
     println!("   • Configuration: {config_dir:?}");
 
     Ok(())
