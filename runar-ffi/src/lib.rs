@@ -202,7 +202,7 @@ fn validate_mobile_manager(
     inner
         .mobile_key_manager
         .as_ref()
-        .ok_or_else(|| RnErrorType::NotInitialized)
+        .ok_or(RnErrorType::NotInitialized)
 }
 
 /// Validate node key manager exists and mobile manager doesn't
@@ -218,7 +218,7 @@ fn validate_node_manager(inner: &KeysInner) -> Result<&Arc<RwLock<NodeKeyManager
     inner
         .node_key_manager
         .as_ref()
-        .ok_or_else(|| RnErrorType::NotInitialized)
+        .ok_or(RnErrorType::NotInitialized)
 }
 
 // Common keystore registration helpers
@@ -945,7 +945,7 @@ pub unsafe extern "C" fn rn_keys_node_encrypt_with_envelope(
     };
 
     // Process profile keys
-    let mut profiles: Vec<Vec<u8>> = Vec::new();
+    let mut profiles: Vec<Vec<u8>> = Vec::with_capacity(profiles_count);
     if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
         for i in 0..profiles_count {
             let pk_ptr = unsafe { *profile_pks.add(i) };
@@ -1083,7 +1083,7 @@ pub unsafe extern "C" fn rn_keys_mobile_encrypt_with_envelope(
     };
 
     // Process profile keys
-    let mut profiles: Vec<Vec<u8>> = Vec::new();
+    let mut profiles: Vec<Vec<u8>> = Vec::with_capacity(profiles_count);
     if profiles_count > 0 && !profile_pks.is_null() && !profile_lens.is_null() {
         for i in 0..profiles_count {
             let pk_ptr = unsafe { *profile_pks.add(i) };
@@ -2953,11 +2953,11 @@ pub unsafe extern "C" fn rn_keys_init_as_mobile(keys: *mut c_void, err: *mut RnE
     }
 
     // Initialize mobile manager
-    match MobileKeyManager::new(inner.logger.clone()) {
+    match MobileKeyManager::new(Arc::clone(&inner.logger)) {
         Ok(mut manager) => {
             // Apply existing configuration
             if let Some(ks) = &inner.device_keystore {
-                manager.register_device_keystore(ks.clone());
+                manager.register_device_keystore(Arc::clone(ks));
             }
             if let Some(dir) = &inner.persistence_dir {
                 manager.set_persistence_dir(dir.clone());
@@ -3003,11 +3003,11 @@ pub unsafe extern "C" fn rn_keys_init_as_node(keys: *mut c_void, err: *mut RnErr
     }
 
     // Initialize node manager following new lifecycle
-    match NodeKeyManager::new(inner.logger.clone()) {
+    match NodeKeyManager::new(Arc::clone(&inner.logger)) {
         Ok(mut manager) => {
             // Apply existing configuration first
             if let Some(ks) = &inner.device_keystore {
-                manager.register_device_keystore(ks.clone());
+                manager.register_device_keystore(Arc::clone(ks));
             }
             if let Some(dir) = &inner.persistence_dir {
                 manager.set_persistence_dir(dir.clone());
@@ -3630,7 +3630,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
                     // Inline certs (discouraged in production; for testing)
                     "cert_chain_der" => {
                         if let serde_cbor::Value::Array(arr) = v {
-                            let mut certs = Vec::new();
+                            let mut certs = Vec::with_capacity(arr.len());
                             for item in arr {
                                 if let serde_cbor::Value::Bytes(b) = item {
                                     certs.push(rustls_pki_types::CertificateDer::from(b));
@@ -3648,7 +3648,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
                     }
                     "root_certs_der" => {
                         if let serde_cbor::Value::Array(arr) = v {
-                            let mut certs = Vec::new();
+                            let mut certs = Vec::with_capacity(arr.len());
                             for item in arr {
                                 if let serde_cbor::Value::Bytes(b) = item {
                                     certs.push(rustls_pki_types::CertificateDer::from(b));
@@ -3867,8 +3867,8 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
 
     // Wire callbacks and key manager
     {
-        let node_manager_for_transport = manager.clone();
-        let logger = keys_inner.logger.clone();
+        let node_manager_for_transport = Arc::clone(manager);
+        let logger = Arc::clone(&keys_inner.logger);
         options = options
             .with_key_manager(node_manager_for_transport)
             .with_local_node_public_key(node_public_key)
@@ -3948,7 +3948,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
 
     // Configure mTLS options
     options = options
-        .with_key_manager(manager.clone())
+        .with_key_manager(Arc::clone(manager))
         .with_root_certificates(vec![ca_cert.clone()])
         .with_local_node_public_key(node_public_key);
 
@@ -5131,7 +5131,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
         }
         Err(e) => {
             println!("DEBUG: Enrollment error details: {e}");
-            println!("DEBUG: Enrollment error chain: {:#}", e);
+            println!("DEBUG: Enrollment error chain: {e:#}");
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -7190,7 +7190,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
             set_error(
                 err,
                 RN_ERROR_INVALID_HANDLE,
-                &format!("Invalid node manager: {:?}", e),
+                &format!("Invalid node manager: {e:?}"),
             );
             return RN_ERROR_INVALID_HANDLE;
         }
@@ -7234,7 +7234,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
     println!("DEBUG: FFI client creation - creating CaClientBuilder with config");
     let client = match CaClientBuilder::new()
         .with_config(client_config.clone())
-        .with_node_key_manager(node_key_manager_arc.clone())
+        .with_node_key_manager(Arc::clone(node_key_manager_arc))
         .with_logger(logger.clone())
         .build()
     {
@@ -7336,13 +7336,9 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
     // Perform enrollment (using configured bootstrap address from client config)
     let bootstrap_addr_from_config = wrapper.config.bootstrap_server;
     println!(
-        "DEBUG: FFI enroll - using bootstrap address from config: {}",
-        bootstrap_addr_from_config
+        "DEBUG: FFI enroll - using bootstrap address from config: {bootstrap_addr_from_config}",
     );
-    println!(
-        "DEBUG: FFI enroll - bootstrap_addr parameter (ignored): {}",
-        _bootstrap_addr_str
-    );
+    println!("DEBUG: FFI enroll - bootstrap_addr parameter (ignored): {_bootstrap_addr_str}",);
     println!(
         "DEBUG: FFI enroll - client has root CA cert: {} bytes",
         wrapper.root_ca_cert.len()
@@ -7406,12 +7402,12 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
             }
         }
         Err(e) => {
-            println!("DEBUG: Enrollment error details: {:?}", e);
+            println!("DEBUG: Enrollment error details: {e:?}");
             println!("DEBUG: Enrollment error chain:");
             let mut source = e.source();
             let mut level = 0;
             while let Some(err) = source {
-                println!("DEBUG: Level {}: {}", level, err);
+                println!("DEBUG: Level {level}: {err}");
                 source = err.source();
                 level += 1;
             }
