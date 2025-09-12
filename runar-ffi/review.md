@@ -199,9 +199,9 @@ fn runtime() -> &'static Runtime {
 | `rn_keys_node_get_keystore_state` signature | **CRITICAL** | CBOR output + length | C string only | ❌ **VIOLATION** |
 | `rn_keys_node_generate_csr` signature | **CRITICAL** | DER output | CBOR output | ❌ **VIOLATION** |
 | CA Server parameter order | **CRITICAL** | `ca_node` | `shared_ca_node` | ❌ **VIOLATION** |
-| Missing CA Client functions | **HIGH** | 6 functions | 0 functions | ❌ **MISSING** |
+| Missing CA Client functions | **RESOLVED** | 6 functions | 0 functions | ✅ **DESIGN UPDATED** |
 | E2E test completeness | **HIGH** | 12 phases | 4 phases | ❌ **INCOMPLETE** |
-| Admin SKI handling | **MEDIUM** | Real SKI extraction | Dummy SKI | ❌ **HACK** |
+| Admin SKI handling | **RESOLVED** | Real SKI extraction | Real SKI extraction | ✅ **FIXED** |
 
 ### **7. RECOMMENDATIONS**
 

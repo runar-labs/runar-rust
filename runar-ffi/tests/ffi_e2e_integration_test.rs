@@ -243,14 +243,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert_eq!(result, 0, "Failed to create CA server");
     assert!(!ca_server.is_null(), "CA server should not be null");
 
-    // Configure admin SKIs before starting the server
-    // We'll use a dummy SKI for now since we don't have a real admin certificate yet
-    let dummy_admin_ski = "dummy_admin_ski_for_testing";
-    let dummy_ski_cstr = create_cstring(dummy_admin_ski);
-    let result = unsafe {
-        rn_keys_ca_node_add_admin_ski(shared_ca_node, dummy_ski_cstr.as_ptr(), &mut error)
-    };
-    assert_eq!(result, 0, "Failed to add dummy admin SKI to shared CA Node");
+    // Note: Server starts with empty admin SKIs, real admin SKI will be added when needed for revocation
 
     // Start CA Server
     let result = unsafe { rn_transport_ca_server_start(ca_server, &mut error) };

@@ -94,7 +94,7 @@ if (state_loaded) {
 - `rn_keys_ca_node_handle_crl(ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
 
 ### CA Server – QUIC Servers (Bootstrap + Authenticated)
-- `rn_transport_ca_server_new(config_cbor, len, ca_node, logger, out_server, err) -> i32`
+- `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, logger, out_server, err) -> i32`
 - `rn_transport_ca_server_free(server)`
 - `rn_transport_ca_server_configure_admin_skis(server, admin_skis_cbor, len, err) -> i32`
 - `rn_transport_ca_server_start(server, err) -> i32`
@@ -166,7 +166,7 @@ All payloads denoted as CBOR must follow the same Rust-side structs used by tran
    - `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_pubkeys_cbor, len, &mut err)`
 3) QUIC Servers (bootstrap + authenticated)
    - Build CA server config CBOR: `{ bootstrap_bind: "127.0.0.1:0", authenticated_bind: "127.0.0.1:0", network_id: "test_network", rate_limit_per_minute: 5, rate_limit_per_hour: 30 }`
-   - `rn_transport_ca_server_new(config_cbor, len, ca_node, logger, &mut server, &mut err)`
+   - `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, logger, &mut server, &mut err)`
    - `rn_transport_ca_server_start(server, &mut err)`
    - `rn_transport_ca_server_get_bootstrap_addr(server, &mut bootstrap_cstr, &mut err)`
    - `rn_transport_ca_server_get_authenticated_addr(server, &mut authenticated_cstr, &mut err)`
@@ -471,7 +471,7 @@ pub extern "C" fn rn_keys_ca_node_handle_crl(
 pub extern "C" fn rn_transport_ca_server_new(
     config: *const u8,
     config_len: usize,
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     logger: *mut c_void,
     out_server: *mut *mut c_void,
     err: *mut RnError
@@ -716,55 +716,19 @@ pub extern "C" fn rn_keys_ca_node_generate_crl_lite(
 ) -> i32;
 ```
 
-### 4.7. CA Client Configuration APIs (NEW)
+### 4.7. CA Client Configuration APIs (REMOVED)
 
-#### CA Client Configuration
-```rust
-// Configure CA Client with server addresses and settings
-pub extern "C" fn rn_transport_ca_client_configure(
-    client: *mut c_void,
-    bootstrap_server: *const c_char,
-    authenticated_server: *const c_char,
-    network_id: *const c_char,
-    request_timeout_seconds: u32,
-    max_retries: u32,
-    err: *mut RnError
-) -> i32;
+**Note:** The step-by-step CA Client configuration functions (`rn_transport_ca_client_configure`, `rn_transport_ca_client_set_root_ca_cert`, `rn_transport_ca_client_set_issuing_ca_cert`, `rn_transport_ca_client_set_node_key_manager`) have been removed from the design as `rn_transport_ca_client_new_with_config` provides complete functionality in a single atomic operation.
 
-// Set root CA certificate for client
-pub extern "C" fn rn_transport_ca_client_set_root_ca_cert(
-    client: *mut c_void,
-    cert: *const u8,
-    cert_len: usize,
-    err: *mut RnError
-) -> i32;
-
-// Set issuing CA certificate for client
-pub extern "C" fn rn_transport_ca_client_set_issuing_ca_cert(
-    client: *mut c_void,
-    cert: *const u8,
-    cert_len: usize,
-    err: *mut RnError
-) -> i32;
-
-// Set node key manager for client
-pub extern "C" fn rn_transport_ca_client_set_node_key_manager(
-    client: *mut c_void,
-    node_keys: *mut c_void,
-    err: *mut RnError
-) -> i32;
-```
+**Reasoning:** All configuration options are available through the `CaClientConfigAll` CBOR structure passed to `rn_transport_ca_client_new_with_config`, making the step-by-step approach redundant and unused.
 
 ### 5. CA Client APIs (NEW)
 
 #### CA Client Management
 ```rust
 // CA Client creation and operations
-pub extern "C" fn rn_transport_ca_client_new(
-    logger: *mut c_void,
-    out_client: *mut *mut c_void,
-    err: *mut RnError
-) -> i32;
+// Note: rn_transport_ca_client_new (basic creation) is not implemented as 
+// rn_transport_ca_client_new_with_config provides complete functionality.
 
 pub extern "C" fn rn_transport_ca_client_enroll(
     client: *mut c_void,
@@ -1067,7 +1031,7 @@ The updated FFI API design now supports **100% of the functionality** required t
 #### Client Role (Mobile Node Operations)
 1. **Mobile Key Manager** - `rn_keys_init_as_mobile`, `rn_keys_mobile_initialize_user_root_key`
 2. **Node Key Manager** - `rn_keys_init_as_node`, `rn_keys_node_generate_keys`
-3. **CA Client Configuration** - `rn_transport_ca_client_new_with_config`, `rn_transport_ca_client_configure`
+3. **CA Client Configuration** - `rn_transport_ca_client_new_with_config`
 4. **Certificate Operations** - `rn_keys_node_generate_csr`, `rn_keys_node_install_certificate_from_message`
 5. **Profile Key Operations** - `rn_keys_node_derive_user_profile_key`, `rn_keys_node_encrypt_with_envelope`
 6. **Certificate Analysis** - `rn_keys_certificate_extract_ski`, `rn_keys_certificate_get_serial`
@@ -1208,14 +1172,10 @@ Exact FFI sequence and checklist:
    - Use `rn_transport_ca_server_get_bootstrap_addr` for enroll.
    - Use `rn_transport_ca_server_get_authenticated_addr` for renew/revoke/status/crl.
 6) CA Client trust anchors (required for REAL QUIC mTLS):
-   - After client creation, set trust roots:
-     - `rn_transport_ca_client_set_root_ca_cert(client, root_ca_der.as_ptr(), root_ca_der.len(), &mut err)`
-     - `rn_transport_ca_client_set_issuing_ca_cert(client, issuing_ca_der.as_ptr(), issuing_ca_der.len(), &mut err)`
-   - If not yet implemented, add these FFI and call them before any network operation.
+   - Trust anchors are set via the `CaClientConfigAll` CBOR structure when creating the client with `rn_transport_ca_client_new_with_config`
+   - The `root_ca_der` and `issuing_ca_der` fields in the config provide the trust anchors
 7) Node identity for client-auth operations:
-   - Provide node key material to the client so it can present its device certificate over mTLS:
-     - `rn_transport_ca_client_set_node_key_manager(client, node_keys as *mut c_void, &mut err)`
-   - If not yet implemented, add this FFI and call it before renew/revoke/status/crl.
+   - Node key material is provided via the `node_keys` parameter when creating the client with `rn_transport_ca_client_new_with_config`
 8) Sanity checks before enroll:
    - Compute `signer_id` from `ea_pk` (e.g., compact-id) and assert it matches `EnrollmentToken.signer_id`.
    - Confirm token validity window and permissions include "enroll".
