@@ -18,12 +18,12 @@
     "test": "bun test"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.0.0",
+    "@napi-rs/cli": "^3.2.0",
+    "@types/bun": "^1.0.0",
     "@types/node": "^22.9.0",
     "cbor-x": "^1.6.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3",
-    "@types/bun": "^1.0.0"
+    "typescript": "^5.6.3"
   },
   "dependencies": {
     "@peculiar/x509": "^1.13.0"
