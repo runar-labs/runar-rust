@@ -920,14 +920,6 @@ int32_t rn_transport_ca_client_get_crl(void *client,
                                        struct RNAPIRnError *err);
 
 /**
- * Generate CSR for certificate enrollment (v2)
- */
-int32_t rn_keys_node_generate_csr_v2(void *keys,
-                                     uint8_t **out_csr,
-                                     size_t *out_len,
-                                     struct RNAPIRnError *err);
-
-/**
  * Generate keys for node
  */
 int32_t rn_keys_node_generate_keys(void *keys, struct RNAPIRnError *err);

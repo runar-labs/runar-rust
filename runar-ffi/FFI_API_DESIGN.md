@@ -1068,7 +1068,7 @@ The updated FFI API design now supports **100% of the functionality** required t
 1. **Mobile Key Manager** - `rn_keys_init_as_mobile`, `rn_keys_mobile_initialize_user_root_key`
 2. **Node Key Manager** - `rn_keys_init_as_node`, `rn_keys_node_generate_keys`
 3. **CA Client Configuration** - `rn_transport_ca_client_new_with_config`, `rn_transport_ca_client_configure`
-4. **Certificate Operations** - `rn_keys_node_generate_csr_v2`, `rn_keys_node_install_certificate_from_message`
+4. **Certificate Operations** - `rn_keys_node_generate_csr`, `rn_keys_node_install_certificate_from_message`
 5. **Profile Key Operations** - `rn_keys_node_derive_user_profile_key`, `rn_keys_node_encrypt_with_envelope`
 6. **Certificate Analysis** - `rn_keys_certificate_extract_ski`, `rn_keys_certificate_get_serial`
 

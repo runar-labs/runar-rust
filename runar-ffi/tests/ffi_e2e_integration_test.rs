@@ -316,17 +316,27 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // ==========================================
     println!("\n📱 PHASE 3: Mobile Node CSR and Enrollment");
 
-    // Generate CSR on node
-    let mut csr_ptr: *mut u8 = ptr::null_mut();
-    let mut csr_len: usize = 0;
-    let result =
-        unsafe { rn_keys_node_generate_csr_v2(node_keys, &mut csr_ptr, &mut csr_len, &mut error) };
+    // Generate CSR on node (returns SetupToken CBOR)
+    let mut setup_token_ptr: *mut u8 = ptr::null_mut();
+    let mut setup_token_len: usize = 0;
+    let result = unsafe {
+        rn_keys_node_generate_csr(
+            node_keys,
+            &mut setup_token_ptr,
+            &mut setup_token_len,
+            &mut error,
+        )
+    };
     assert_eq!(result, 0, "Failed to generate CSR");
-    assert!(!csr_ptr.is_null(), "CSR should not be null");
-    assert!(csr_len > 0, "CSR length should be positive");
+    assert!(!setup_token_ptr.is_null(), "SetupToken should not be null");
+    assert!(setup_token_len > 0, "SetupToken length should be positive");
 
-    let csr_der = unsafe { std::slice::from_raw_parts(csr_ptr, csr_len) }.to_vec();
-    println!("   ✅ CSR generated ({csr_len} bytes)");
+    // Extract DER bytes from SetupToken CBOR
+    let setup_token_cbor = unsafe { std::slice::from_raw_parts(setup_token_ptr, setup_token_len) };
+    let setup_token: runar_keys::mobile::SetupToken =
+        serde_cbor::from_slice(setup_token_cbor).expect("Failed to deserialize SetupToken");
+    let csr_der = setup_token.csr_der.clone();
+    println!("   ✅ CSR generated ({} bytes)", csr_der.len());
 
     // Create enrollment token using the SAME EA key (following design section 6.6)
     // Step 3: Create tokens with the SAME EA private key
@@ -354,7 +364,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Build CsrEnrollRequest CBOR (following working test pattern)
     let enroll_request_struct = runar_keys::ca_node_types::CsrEnrollRequest {
         network_id: "test_network".to_string(),
-        csr_der,
+        csr_der: csr_der.clone(),
         enrollment_token: enrollment_token_struct.clone(),
     };
 
@@ -411,7 +421,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   🔧 Attempting enrollment with:");
     println!("      Bootstrap address: {}", bootstrap_addr_str);
     println!("      Request size: {} bytes", enroll_request.len());
-    println!("      CSR size: {} bytes", csr_len);
+    println!("      CSR size: {} bytes", csr_der.len());
 
     let mut enroll_response_ptr: *mut u8 = ptr::null_mut();
     let mut enroll_response_len: usize = 0;
@@ -513,24 +523,38 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // ==========================================
     println!("\n🔄 PHASE 4: Certificate Renewal via REAL QUIC mTLS");
 
-    // Generate renewal CSR
-    let mut renewal_csr_ptr: *mut u8 = ptr::null_mut();
-    let mut renewal_csr_len: usize = 0;
+    // Generate renewal CSR (returns SetupToken CBOR)
+    let mut renewal_setup_token_ptr: *mut u8 = ptr::null_mut();
+    let mut renewal_setup_token_len: usize = 0;
     let result = unsafe {
-        rn_keys_node_generate_csr_v2(
+        rn_keys_node_generate_csr(
             node_keys,
-            &mut renewal_csr_ptr,
-            &mut renewal_csr_len,
+            &mut renewal_setup_token_ptr,
+            &mut renewal_setup_token_len,
             &mut error,
         )
     };
     assert_eq!(result, 0, "Failed to generate renewal CSR");
-    assert!(!renewal_csr_ptr.is_null(), "Renewal CSR should not be null");
-    assert!(renewal_csr_len > 0, "Renewal CSR length should be positive");
+    assert!(
+        !renewal_setup_token_ptr.is_null(),
+        "Renewal SetupToken should not be null"
+    );
+    assert!(
+        renewal_setup_token_len > 0,
+        "Renewal SetupToken length should be positive"
+    );
 
-    let renewal_csr_der =
-        unsafe { std::slice::from_raw_parts(renewal_csr_ptr, renewal_csr_len) }.to_vec();
-    println!("   ✅ Renewal CSR generated ({renewal_csr_len} bytes)");
+    // Extract DER bytes from SetupToken CBOR
+    let renewal_setup_token_cbor =
+        unsafe { std::slice::from_raw_parts(renewal_setup_token_ptr, renewal_setup_token_len) };
+    let renewal_setup_token: runar_keys::mobile::SetupToken =
+        serde_cbor::from_slice(renewal_setup_token_cbor)
+            .expect("Failed to deserialize renewal SetupToken");
+    let renewal_csr_der = renewal_setup_token.csr_der;
+    println!(
+        "   ✅ Renewal CSR generated ({} bytes)",
+        renewal_csr_der.len()
+    );
 
     // Build RenewRequest CBOR
     let renew_request_struct = runar_keys::ca_node_types::RenewRequest {
@@ -680,21 +704,29 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     println!("   ✅ Admin SKI configured for revocation: {}", client_ski);
 
-    // Generate renewal CSR for revocation
-    let mut renewal_csr_ptr: *mut u8 = ptr::null_mut();
-    let mut renewal_csr_len: usize = 0;
+    // Generate renewal CSR for revocation (returns SetupToken CBOR)
+    let mut renewal_setup_token_ptr: *mut u8 = ptr::null_mut();
+    let mut renewal_setup_token_len: usize = 0;
     let result = unsafe {
-        rn_keys_node_generate_csr_v2(
+        rn_keys_node_generate_csr(
             node_keys,
-            &mut renewal_csr_ptr as *mut *mut u8,
-            &mut renewal_csr_len,
+            &mut renewal_setup_token_ptr,
+            &mut renewal_setup_token_len,
             &mut error,
         )
     };
     assert_eq!(result, 0, "Failed to generate renewal CSR");
-    assert!(!renewal_csr_ptr.is_null(), "Renewal CSR should not be null");
+    assert!(
+        !renewal_setup_token_ptr.is_null(),
+        "Renewal SetupToken should not be null"
+    );
 
-    let _renewal_csr = unsafe { std::slice::from_raw_parts(renewal_csr_ptr, renewal_csr_len) };
+    // Extract DER bytes from SetupToken CBOR (not used in this context, just for testing)
+    let renewal_setup_token_cbor =
+        unsafe { std::slice::from_raw_parts(renewal_setup_token_ptr, renewal_setup_token_len) };
+    let _renewal_setup_token: runar_keys::mobile::SetupToken =
+        serde_cbor::from_slice(renewal_setup_token_cbor)
+            .expect("Failed to deserialize renewal SetupToken");
 
     // Get certificate serial for revocation
     let mut cert_serial_cstr: *mut c_char = ptr::null_mut();
@@ -991,20 +1023,25 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Test rate limiting with multiple enrollment requests using the same token
     // Note: Rate limiting is per token_id, so subsequent requests with the same token should be rejected
     for i in 1..=3 {
-        let mut test_csr_ptr: *mut u8 = ptr::null_mut();
-        let mut test_csr_len: usize = 0;
+        let mut test_setup_token_ptr: *mut u8 = ptr::null_mut();
+        let mut test_setup_token_len: usize = 0;
         let result = unsafe {
-            rn_keys_node_generate_csr_v2(
+            rn_keys_node_generate_csr(
                 node_keys,
-                &mut test_csr_ptr,
-                &mut test_csr_len,
+                &mut test_setup_token_ptr,
+                &mut test_setup_token_len,
                 &mut error,
             )
         };
         assert_eq!(result, 0, "Failed to generate test CSR for rate limiting");
 
-        let test_csr_der =
-            unsafe { std::slice::from_raw_parts(test_csr_ptr, test_csr_len) }.to_vec();
+        // Extract DER bytes from SetupToken CBOR
+        let test_setup_token_cbor =
+            unsafe { std::slice::from_raw_parts(test_setup_token_ptr, test_setup_token_len) };
+        let test_setup_token: runar_keys::mobile::SetupToken =
+            serde_cbor::from_slice(test_setup_token_cbor)
+                .expect("Failed to deserialize test SetupToken");
+        let test_csr_der = test_setup_token.csr_der;
 
         // Use the same enrollment token for all requests (rate limiting is per token_id)
         let test_enroll_request_struct = runar_keys::ca_node_types::CsrEnrollRequest {
@@ -1063,17 +1100,28 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ Enrollment token revoked via REAL QUIC mTLS");
 
     // Try to use revoked token (should fail)
-    let mut test_csr_ptr: *mut u8 = ptr::null_mut();
-    let mut test_csr_len: usize = 0;
+    let mut test_setup_token_ptr: *mut u8 = ptr::null_mut();
+    let mut test_setup_token_len: usize = 0;
     let result = unsafe {
-        rn_keys_node_generate_csr_v2(node_keys, &mut test_csr_ptr, &mut test_csr_len, &mut error)
+        rn_keys_node_generate_csr(
+            node_keys,
+            &mut test_setup_token_ptr,
+            &mut test_setup_token_len,
+            &mut error,
+        )
     };
     assert_eq!(
         result, 0,
         "Failed to generate test CSR for revoked token test"
     );
 
-    let test_csr_der = unsafe { std::slice::from_raw_parts(test_csr_ptr, test_csr_len) }.to_vec();
+    // Extract DER bytes from SetupToken CBOR
+    let test_setup_token_cbor =
+        unsafe { std::slice::from_raw_parts(test_setup_token_ptr, test_setup_token_len) };
+    let test_setup_token: runar_keys::mobile::SetupToken =
+        serde_cbor::from_slice(test_setup_token_cbor)
+            .expect("Failed to deserialize test SetupToken");
+    let test_csr_der = test_setup_token.csr_der;
 
     let revoked_request_struct = runar_keys::ca_node_types::CsrEnrollRequest {
         network_id: "test_network".to_string(),
@@ -1120,20 +1168,25 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let invalid_token_struct = runar_keys::EnrollmentToken::generate(&ea_key, invalid_token_body)
         .expect("Failed to generate invalid enrollment token");
 
-    let mut invalid_csr_ptr: *mut u8 = ptr::null_mut();
-    let mut invalid_csr_len: usize = 0;
+    let mut invalid_setup_token_ptr: *mut u8 = ptr::null_mut();
+    let mut invalid_setup_token_len: usize = 0;
     let result = unsafe {
-        rn_keys_node_generate_csr_v2(
+        rn_keys_node_generate_csr(
             node_keys,
-            &mut invalid_csr_ptr,
-            &mut invalid_csr_len,
+            &mut invalid_setup_token_ptr,
+            &mut invalid_setup_token_len,
             &mut error,
         )
     };
     assert_eq!(result, 0, "Failed to generate invalid CSR");
 
-    let invalid_csr_der =
-        unsafe { std::slice::from_raw_parts(invalid_csr_ptr, invalid_csr_len) }.to_vec();
+    // Extract DER bytes from SetupToken CBOR
+    let invalid_setup_token_cbor =
+        unsafe { std::slice::from_raw_parts(invalid_setup_token_ptr, invalid_setup_token_len) };
+    let invalid_setup_token: runar_keys::mobile::SetupToken =
+        serde_cbor::from_slice(invalid_setup_token_cbor)
+            .expect("Failed to deserialize invalid SetupToken");
+    let invalid_csr_der = invalid_setup_token.csr_der;
 
     let invalid_request_struct = runar_keys::ca_node_types::CsrEnrollRequest {
         network_id: "test_network".to_string(),
@@ -1173,20 +1226,26 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let result = unsafe { rn_keys_init_as_node(unauthorized_keys, &mut error) };
     assert_eq!(result, 0, "Failed to initialize unauthorized keys as node");
 
-    let mut unauthorized_csr_ptr: *mut u8 = ptr::null_mut();
-    let mut unauthorized_csr_len: usize = 0;
+    let mut unauthorized_setup_token_ptr: *mut u8 = ptr::null_mut();
+    let mut unauthorized_setup_token_len: usize = 0;
     let result = unsafe {
-        rn_keys_node_generate_csr_v2(
+        rn_keys_node_generate_csr(
             unauthorized_keys,
-            &mut unauthorized_csr_ptr,
-            &mut unauthorized_csr_len,
+            &mut unauthorized_setup_token_ptr,
+            &mut unauthorized_setup_token_len,
             &mut error,
         )
     };
     assert_eq!(result, 0, "Failed to generate unauthorized CSR");
 
-    let unauthorized_csr_der =
-        unsafe { std::slice::from_raw_parts(unauthorized_csr_ptr, unauthorized_csr_len) }.to_vec();
+    // Extract DER bytes from SetupToken CBOR
+    let unauthorized_setup_token_cbor = unsafe {
+        std::slice::from_raw_parts(unauthorized_setup_token_ptr, unauthorized_setup_token_len)
+    };
+    let unauthorized_setup_token: runar_keys::mobile::SetupToken =
+        serde_cbor::from_slice(unauthorized_setup_token_cbor)
+            .expect("Failed to deserialize unauthorized SetupToken");
+    let unauthorized_csr_der = unauthorized_setup_token.csr_der;
 
     let unauthorized_renew_struct = runar_keys::ca_node_types::RenewRequest {
         network_id: "test_network".to_string(),
