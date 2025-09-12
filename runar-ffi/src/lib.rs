@@ -407,9 +407,8 @@ pub unsafe extern "C" fn rn_keys_set_local_node_info(
     let slice = std::slice::from_raw_parts(node_info_cbor, len);
     let info: NodeInfo = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
-        Err(e) => {
-            // Store human-readable error for debugging
-            set_error(std::ptr::null_mut(), 2, &format!("decode NodeInfo: {e}"));
+        Err(_) => {
+            // Return error code for invalid CBOR data
             return 2;
         }
     };
@@ -1395,7 +1394,7 @@ pub unsafe extern "C" fn rn_keys_mobile_initialize_user_root_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return 1;
     };
     let manager = match validate_mobile_manager(inner) {
@@ -1437,7 +1436,7 @@ pub unsafe extern "C" fn rn_keys_mobile_get_user_public_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return 1;
     };
     let manager = match validate_mobile_manager(inner) {
@@ -1484,11 +1483,11 @@ pub unsafe extern "C" fn rn_keys_mobile_derive_user_profile_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return 1;
     };
     if label.is_null() || out_pk.is_null() || out_len.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let manager = match validate_mobile_manager(inner) {
@@ -3075,7 +3074,7 @@ pub extern "C" fn rn_keys_node_get_public_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return 1;
     };
     let manager = match validate_node_manager(inner) {
@@ -3120,7 +3119,7 @@ pub extern "C" fn rn_keys_node_get_agreement_public_key(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return 1;
     };
     let manager = match validate_node_manager(inner) {
@@ -3151,8 +3150,8 @@ pub extern "C" fn rn_keys_node_get_agreement_public_key(
         }
     };
     if !alloc_bytes(out, out_len, &pk) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }
@@ -3204,8 +3203,12 @@ pub unsafe extern "C" fn rn_keys_node_get_node_id(
     match node_manager.get_node_id() {
         Some(node_id) => {
             if !alloc_string_simple(out_id, &node_id) {
-                set_error(err, 3, "invalid out pointers or string alloc failed");
-                return 3;
+                set_error(
+                    err,
+                    RN_ERROR_MEMORY_ALLOCATION,
+                    "invalid out pointers or string alloc failed",
+                );
+                return RN_ERROR_MEMORY_ALLOCATION;
             }
             unsafe {
                 *out_has_id = 1;
@@ -3230,7 +3233,7 @@ pub extern "C" fn rn_keys_node_generate_csr(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return 1;
     };
     let manager = match validate_node_manager(inner) {
@@ -3263,13 +3266,17 @@ pub extern "C" fn rn_keys_node_generate_csr(
     let cbor = match serde_cbor::to_vec(&token) {
         Ok(v) => v,
         Err(e) => {
-            set_error(err, 2, &format!("Failed to encode SetupToken: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to encode SetupToken: {e}"),
+            );
             return 2;
         }
     };
     if !alloc_bytes(out_st_cbor, out_len, &cbor) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }
@@ -3284,18 +3291,22 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
     err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "keys handle is null");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return 1;
     };
     if st_cbor.is_null() {
-        set_error(err, 4, "st_cbor is null");
-        return 4;
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "st_cbor is null");
+        return RN_ERROR_NULL_ARGUMENT;
     }
     let slice = std::slice::from_raw_parts(st_cbor, st_len);
     let token: SetupToken = match serde_cbor::from_slice(slice) {
         Ok(t) => t,
         Err(e) => {
-            set_error(err, 2, &format!("Failed to decode SetupToken: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to decode SetupToken: {e}"),
+            );
             return 2;
         }
     };
@@ -3337,8 +3348,8 @@ pub unsafe extern "C" fn rn_keys_mobile_process_setup_token(
         }
     };
     if !alloc_bytes(out_ncm_cbor, out_len, &cbor) {
-        set_error(err, 3, "invalid out pointers");
-        return 3;
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }
@@ -3543,13 +3554,13 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     err: *mut RnError,
 ) -> i32 {
     if keys.is_null() || options_cbor.is_null() || out_transport.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     // Read keys
     let Some(keys_inner) = with_keys_inner(keys) else {
-        set_error(err, 1, "invalid keys handle");
-        return 1;
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+        return RN_ERROR_INVALID_HANDLE;
     };
     // Parse options from CBOR map { bind_addr, timeouts, max_message_size }
     let slice = std::slice::from_raw_parts(options_cbor, options_len);
@@ -3558,7 +3569,11 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     let value: serde_cbor::Value = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
         Err(e) => {
-            set_error(err, 2, &format!("Failed to decode options: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to decode options: {e}"),
+            );
             return 2;
         }
     };
@@ -4128,7 +4143,11 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     let transport = match QuicTransport::new(options) {
         Ok(t) => Arc::new(t),
         Err(e) => {
-            set_error(err, 2, &format!("Failed to create transport: {e}"));
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create transport: {e}"),
+            );
             return 2;
         }
     };
@@ -4167,18 +4186,22 @@ fn runtime() -> &'static Runtime {
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_start(transport: *mut c_void, err: *mut RnError) -> i32 {
     if transport.is_null() {
-        set_error(err, 1, "transport is null");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let t = (&*handle.inner).transport.clone();
     let res = runtime().block_on(async move { Arc::clone(&t).start().await });
     if let Err(e) = res {
-        set_error(err, 2, &format!("Failed to start transport: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("Failed to start transport: {e}"),
+        );
         return 2;
     }
     0
@@ -4192,16 +4215,16 @@ pub unsafe extern "C" fn rn_transport_poll_event(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() {
-        set_error(err, 1, "transport is null");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
         return 1;
     }
     if out_event.is_null() || out_len.is_null() {
-        set_error(err, 1, "null out");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let inner = &*handle.inner;
@@ -4209,7 +4232,7 @@ pub unsafe extern "C" fn rn_transport_poll_event(
     match rx.try_recv() {
         Ok(buf) => {
             if !alloc_bytes(out_event, out_len, &buf) {
-                set_error(err, 3, "alloc failed");
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
                 return 3;
             }
             0
@@ -4220,7 +4243,7 @@ pub unsafe extern "C" fn rn_transport_poll_event(
             0
         }
         Err(_) => {
-            set_error(err, 2, "event channel closed");
+            set_error(err, RN_ERROR_OPERATION_FAILED, "event channel closed");
             2
         }
     }
@@ -4234,26 +4257,34 @@ pub unsafe extern "C" fn rn_transport_connect_peer(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || peer_info_cbor.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let slice = std::slice::from_raw_parts(peer_info_cbor, len);
     let peer: PeerInfo = match serde_cbor::from_slice(slice) {
         Ok(p) => p,
         Err(e) => {
-            set_error(err, 2, &format!("decode PeerInfo: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode PeerInfo: {e}"),
+            );
             return 2;
         }
     };
     let t = (&*handle.inner).transport.clone();
     let res = runtime().block_on(async move { Arc::clone(&t).connect_peer(peer).await });
     if let Err(e) = res {
-        set_error(err, 2, &format!("connect_peer failed: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("connect_peer failed: {e}"),
+        );
         return 2;
     }
     0
@@ -4266,24 +4297,28 @@ pub unsafe extern "C" fn rn_transport_disconnect_peer(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || peer_node_id.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let id = match std::ffi::CStr::from_ptr(peer_node_id).to_str() {
         Ok(s) => s.to_string(),
         Err(_) => {
-            set_error(err, 2, "invalid utf8");
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8");
             return 2;
         }
     };
     let res = runtime().block_on((&*handle.inner).transport.disconnect(&id));
     if let Err(e) = res {
-        set_error(err, 2, &format!("disconnect failed: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("disconnect failed: {e}"),
+        );
         return 2;
     }
     0
@@ -4297,18 +4332,18 @@ pub unsafe extern "C" fn rn_transport_is_connected(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || peer_node_id.is_null() || out_connected.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let id = match std::ffi::CStr::from_ptr(peer_node_id).to_str() {
         Ok(s) => s.to_string(),
         Err(_) => {
-            set_error(err, 2, "invalid utf8");
+            set_error(err, RN_ERROR_INVALID_UTF8, "invalid utf8");
             return 2;
         }
     };
@@ -4325,19 +4360,23 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || node_info_cbor.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let slice = std::slice::from_raw_parts(node_info_cbor, len);
     let node_info: NodeInfo = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
         Err(e) => {
-            set_error(err, 2, &format!("decode NodeInfo: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("decode NodeInfo: {e}"),
+            );
             return 2;
         }
     };
@@ -4349,7 +4388,11 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
     // Then notify transport runtime (now emits latest info)
     let res = runtime().block_on((&*handle.inner).transport.update_peers(node_info));
     if let Err(e) = res {
-        set_error(err, 2, &format!("update_peers failed: {e}"));
+        set_error(
+            err,
+            RN_ERROR_OPERATION_FAILED,
+            &format!("update_peers failed: {e}"),
+        );
         return 2;
     }
     0
@@ -4363,12 +4406,12 @@ pub unsafe extern "C" fn rn_transport_request(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || request_cbor.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
 
@@ -4377,7 +4420,7 @@ pub unsafe extern "C" fn rn_transport_request(
         match serde_cbor::from_slice(std::slice::from_raw_parts(request_cbor, request_len)) {
             Ok(r) => r,
             Err(_) => {
-                set_error(err, 2, "invalid request CBOR");
+                set_error(err, RN_ERROR_SERIALIZATION_FAILED, "invalid request CBOR");
                 return 2;
             }
         };
@@ -4431,12 +4474,12 @@ pub unsafe extern "C" fn rn_transport_publish(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || publish_cbor.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
 
@@ -4445,7 +4488,7 @@ pub unsafe extern "C" fn rn_transport_publish(
         match serde_cbor::from_slice(std::slice::from_raw_parts(publish_cbor, publish_len)) {
             Ok(p) => p,
             Err(_) => {
-                set_error(err, 2, "invalid publish CBOR");
+                set_error(err, RN_ERROR_SERIALIZATION_FAILED, "invalid publish CBOR");
                 return 2;
             }
         };
@@ -4472,12 +4515,12 @@ pub unsafe extern "C" fn rn_transport_complete_request(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() || complete_cbor.is_null() {
-        set_error(err, 1, "null argument");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
 
@@ -4513,12 +4556,12 @@ pub unsafe extern "C" fn rn_transport_complete_request(
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_stop(transport: *mut c_void, err: *mut RnError) -> i32 {
     if transport.is_null() {
-        set_error(err, 1, "transport is null");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let res = runtime().block_on((&*handle.inner).transport.stop());
@@ -4537,21 +4580,21 @@ pub unsafe extern "C" fn rn_transport_local_addr(
     err: *mut RnError,
 ) -> i32 {
     if transport.is_null() {
-        set_error(err, 1, "transport is null");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
         return 1;
     }
     if out_str.is_null() || out_len.is_null() {
-        set_error(err, 1, "null out");
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
         return 1;
     }
     let handle = &mut *(transport as *mut FfiTransportHandle);
     if handle.inner.is_null() {
-        set_error(err, 1, "invalid transport handle");
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return 1;
     }
     let addr = (&*handle.inner).transport.get_local_address();
     if !alloc_string(out_str, out_len, &addr) {
-        set_error(err, 3, "alloc failed");
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
         return 3;
     }
     0
