@@ -523,27 +523,76 @@ void rn_keys_ca_node_free_shared(void *shared_ca_node);
 int32_t rn_keys_ca_node_add_admin_ski(void *ca_node, const char *ski, struct RNAPIRnError *err);
 
 /**
- * Install issuing CA (new API)
- */
-int32_t rn_keys_ca_node_install_issuing_ca(void *ca_node,
-                                           const uint8_t *issuing_ca_key,
-                                           size_t key_len,
-                                           const uint8_t *issuing_ca_cert,
-                                           size_t cert_len,
-                                           const uint8_t *root_ca_cert,
-                                           size_t root_cert_len,
-                                           const uint8_t *ea_public_keys,
-                                           size_t ea_keys_len,
-                                           const char *network_id,
-                                           struct RNAPIRnError *err);
-
-/**
  * Configure enrollment authority (new API)
  */
 int32_t rn_keys_ca_node_configure_enrollment_authority(void *ca_node,
                                                        const uint8_t *ea_public_keys,
                                                        size_t keys_len,
                                                        struct RNAPIRnError *err);
+
+/**
+ * Complete CA Node setup with internal private key management (SECURE)
+ */
+int32_t rn_keys_ca_node_setup_complete(void *ca_node,
+                                       const char *root_ca_subject,
+                                       const char *issuing_ca_subject,
+                                       uint32_t validity_days,
+                                       uint64_t issuing_ca_serial,
+                                       const uint8_t *ea_public_keys,
+                                       size_t ea_keys_len,
+                                       const char *network_id,
+                                       struct RNAPIRnError *err);
+
+/**
+ * Create EA key pair (private key stays internal)
+ */
+int32_t rn_keys_ca_create_ea_key_pair(void **ea_key_handle, struct RNAPIRnError *err);
+
+/**
+ * Get EA public key (only public key exposed) in CBOR format
+ */
+int32_t rn_keys_ca_get_ea_public_key(void *ea_key_handle,
+                                     uint8_t **public_key,
+                                     size_t *public_key_len,
+                                     struct RNAPIRnError *err);
+
+/**
+ * Generate enrollment token (uses internal private key)
+ */
+int32_t rn_keys_ca_generate_enrollment_token(void *ea_key_handle,
+                                             const char *token_id,
+                                             const char *network_id,
+                                             const char *subject,
+                                             uint64_t valid_from,
+                                             uint64_t valid_until,
+                                             const uint8_t *nonce,
+                                             size_t nonce_len,
+                                             const char *const *capabilities,
+                                             size_t capabilities_len,
+                                             uint8_t **token_cbor,
+                                             size_t *token_len,
+                                             struct RNAPIRnError *err);
+
+/**
+ * Free EA key pair
+ */
+void rn_keys_ca_free_ea_key_pair(void *ea_key_handle);
+
+/**
+ * Get Root CA certificate from CA Node (public certificate only)
+ */
+int32_t rn_keys_ca_node_get_root_ca_certificate(void *ca_node,
+                                                uint8_t **certificate,
+                                                size_t *certificate_len,
+                                                struct RNAPIRnError *err);
+
+/**
+ * Get Issuing CA certificate from CA Node (public certificate only)
+ */
+int32_t rn_keys_ca_node_get_issuing_ca_certificate(void *ca_node,
+                                                   uint8_t **certificate,
+                                                   size_t *certificate_len,
+                                                   struct RNAPIRnError *err);
 
 /**
  * Handle enrollment request (new API)
@@ -605,21 +654,6 @@ int32_t rn_keys_ca_node_handle_crl(void *ca_node,
                                    uint8_t **out_response,
                                    size_t *out_len,
                                    struct RNAPIRnError *err);
-
-/**
- * Create Root CA certificate
- */
-int32_t rn_keys_ca_create_root_ca(const char *subject, void **out_ca, struct RNAPIRnError *err);
-
-/**
- * Create Issuing CA certificate (signed by Root CA)
- */
-int32_t rn_keys_ca_create_issuing_ca(void *root_ca,
-                                     const char *subject,
-                                     uint32_t validity_days,
-                                     uint64_t serial,
-                                     void **out_ca,
-                                     struct RNAPIRnError *err);
 
 /**
  * Get CA certificate DER bytes

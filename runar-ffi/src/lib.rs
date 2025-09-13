@@ -15,10 +15,10 @@ use runar_keys::keystore;
 use runar_keys::{
     ca_node::CANode,
     ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest},
-    certificate::{EcdsaKeyPair, X509Certificate},
+    certificate::{CertificateAuthority, CertificateRequest, EcdsaKeyPair},
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::NodeKeyManager,
-    EnvelopeCrypto,
+    EnrollmentToken, EnrollmentTokenBody, EnvelopeCrypto,
 };
 use runar_schemas::NodeInfo;
 
@@ -4948,122 +4948,6 @@ pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
     0
 }
 
-/// Install issuing CA (new API)
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_ca_node_install_issuing_ca(
-    ca_node: *mut c_void,
-    issuing_ca_key: *const u8,
-    key_len: usize,
-    issuing_ca_cert: *const u8,
-    cert_len: usize,
-    root_ca_cert: *const u8,
-    root_cert_len: usize,
-    ea_public_keys: *const u8,
-    ea_keys_len: usize,
-    network_id: *const c_char,
-    err: *mut RnError,
-) -> i32 {
-    if ca_node.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    let ca_node = &mut *(ca_node as *mut CANode);
-
-    // Parse the issuing CA key using runar-keys deserialization
-    let key_data = std::slice::from_raw_parts(issuing_ca_key, key_len);
-    let issuing_ca_key_pair = match serde_cbor::from_slice::<EcdsaKeyPair>(key_data) {
-        Ok(key_pair) => key_pair,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to parse issuing CA key: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Parse the issuing CA certificate
-    let cert_data = std::slice::from_raw_parts(issuing_ca_cert, cert_len);
-    let issuing_ca_cert = match X509Certificate::from_der(cert_data.to_vec()) {
-        Ok(cert) => cert,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to parse issuing CA certificate: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Parse the root CA certificate
-    let root_cert_data = std::slice::from_raw_parts(root_ca_cert, root_cert_len);
-    let root_ca_cert = match X509Certificate::from_der(root_cert_data.to_vec()) {
-        Ok(cert) => cert,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to parse root CA certificate: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Parse enrollment authority public keys
-    let ea_keys_data = std::slice::from_raw_parts(ea_public_keys, ea_keys_len);
-    let ea_public_keys_vec = match serde_cbor::from_slice::<Vec<Vec<u8>>>(ea_keys_data) {
-        Ok(keys) => keys,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to parse EA public keys: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Parse network ID
-    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
-        Ok(s) => s.to_string(),
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to parse network ID: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    // Update CA Node network ID
-    ca_node.network_id = network_id_str;
-
-    // Install the issuing CA
-    println!("DEBUG: Installing issuing CA in CA Node");
-    println!("DEBUG: Issuing CA Subject: {}", issuing_ca_cert.subject());
-    println!("DEBUG: Root CA Subject: {}", root_ca_cert.subject());
-    match ca_node.install_issuing_ca(
-        issuing_ca_key_pair,
-        issuing_ca_cert,
-        root_ca_cert,
-        ea_public_keys_vec,
-    ) {
-        Ok(()) => 0,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to install issuing CA: {e}"),
-            );
-            RN_ERROR_OPERATION_FAILED
-        }
-    }
-}
-
 /// Configure enrollment authority (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
@@ -5105,6 +4989,440 @@ pub unsafe extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
             RN_ERROR_OPERATION_FAILED
         }
     }
+}
+
+/// Complete CA Node setup with internal private key management (SECURE)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_setup_complete(
+    ca_node: *mut c_void,
+    root_ca_subject: *const c_char,
+    issuing_ca_subject: *const c_char,
+    validity_days: u32,
+    issuing_ca_serial: u64,
+    ea_public_keys: *const u8,
+    ea_keys_len: usize,
+    network_id: *const c_char,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse subjects
+    let root_subject = match std::ffi::CStr::from_ptr(root_ca_subject).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse root CA subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let issuing_subject = match std::ffi::CStr::from_ptr(issuing_ca_subject).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse issuing CA subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse enrollment authority public keys
+    let ea_keys_data = std::slice::from_raw_parts(ea_public_keys, ea_keys_len);
+    let ea_public_keys_vec = match serde_cbor::from_slice::<Vec<Vec<u8>>>(ea_keys_data) {
+        Ok(keys) => keys,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to parse EA public keys: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Create Root CA internally (private key never leaves Rust)
+    let root_ca = match CertificateAuthority::new(&root_subject) {
+        Ok(ca) => ca,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create Root CA: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create Issuing CA key internally (private key never leaves Rust)
+    let issuing_key = match EcdsaKeyPair::new() {
+        Ok(key) => key,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create Issuing CA key: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create and sign Issuing CA certificate internally
+    let issuing_csr = match CertificateRequest::create(&issuing_key, &issuing_subject) {
+        Ok(csr) => csr,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create Issuing CA CSR: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    let issuing_cert = match root_ca.sign_ca_certificate_request_with_serial(
+        &issuing_csr,
+        validity_days,
+        Some(issuing_ca_serial),
+    ) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to sign Issuing CA certificate: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Install everything in CA Node (no private keys exposed)
+    let ca_node = &mut *(ca_node as *mut CANode);
+    ca_node.network_id = network_id_str.clone();
+
+    match ca_node.install_issuing_ca(
+        issuing_key,
+        issuing_cert,
+        root_ca.ca_certificate().clone(),
+        ea_public_keys_vec,
+    ) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to install Issuing CA: {e}"),
+            );
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+/// Create EA key pair (private key stays internal)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_create_ea_key_pair(
+    ea_key_handle: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key_handle.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Create EA key pair internally (private key never leaves Rust)
+    let ea_key = match EcdsaKeyPair::new() {
+        Ok(key) => key,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create EA key pair: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Store the key pair in a Box and return handle
+    let boxed_key = Box::new(ea_key);
+    *ea_key_handle = Box::into_raw(boxed_key) as *mut c_void;
+    0
+}
+
+/// Get EA public key (only public key exposed) in CBOR format
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_get_ea_public_key(
+    ea_key_handle: *mut c_void,
+    public_key: *mut *mut u8,
+    public_key_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key_handle.is_null() || public_key.is_null() || public_key_len.is_null() || err.is_null()
+    {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ea_key = &*(ea_key_handle as *const EcdsaKeyPair);
+    let pub_key_bytes = ea_key.public_key().as_bytes().to_vec();
+
+    // Create EA keys array in CBOR format (array of public key bytes)
+    let ea_keys = vec![pub_key_bytes];
+    let cbor_data = match serde_cbor::to_vec(&ea_keys) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to serialize EA keys: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Allocate memory for the CBOR-encoded EA keys
+    if !alloc_bytes(public_key, public_key_len, &cbor_data) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for EA public keys",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Generate enrollment token (uses internal private key)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_generate_enrollment_token(
+    ea_key_handle: *mut c_void,
+    token_id: *const c_char,
+    network_id: *const c_char,
+    subject: *const c_char,
+    valid_from: u64,
+    valid_until: u64,
+    nonce: *const u8,
+    nonce_len: usize,
+    capabilities: *const *const c_char,
+    capabilities_len: usize,
+    token_cbor: *mut *mut u8,
+    token_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ea_key_handle.is_null() || token_cbor.is_null() || token_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Parse string parameters
+    let token_id_str = match std::ffi::CStr::from_ptr(token_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse token ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse network ID: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let subject_str = match std::ffi::CStr::from_ptr(subject).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Failed to parse subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Parse nonce
+    let nonce_data = std::slice::from_raw_parts(nonce, nonce_len);
+    let nonce_array: [u8; 16] = match nonce_data.try_into() {
+        Ok(arr) => arr,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                "Invalid nonce length, expected 16 bytes",
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Parse capabilities
+    let mut capabilities_vec = Vec::with_capacity(capabilities_len);
+    for i in 0..capabilities_len {
+        let cap_ptr = *capabilities.add(i);
+        let cap_str = match std::ffi::CStr::from_ptr(cap_ptr).to_str() {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_INVALID_UTF8,
+                    &format!("Failed to parse capability {i}: {e}"),
+                );
+                return RN_ERROR_INVALID_UTF8;
+            }
+        };
+        capabilities_vec.push(cap_str);
+    }
+
+    // Create token body
+    let token_body = EnrollmentTokenBody::new(
+        token_id_str,
+        network_id_str,
+        Some(subject_str),
+        valid_from,
+        valid_until,
+        nonce_array,
+        capabilities_vec,
+    );
+
+    // Generate token using internal private key
+    let ea_key = &*(ea_key_handle as *const EcdsaKeyPair);
+    let token = match EnrollmentToken::generate(ea_key, token_body) {
+        Ok(t) => t,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to generate enrollment token: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Serialize token to CBOR
+    let token_cbor_data = match serde_cbor::to_vec(&token) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to serialize token: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    // Allocate memory for the token
+    if !alloc_bytes(token_cbor, token_len, &token_cbor_data) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for token",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Free EA key pair
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_free_ea_key_pair(ea_key_handle: *mut c_void) {
+    if !ea_key_handle.is_null() {
+        let _ = Box::from_raw(ea_key_handle as *mut EcdsaKeyPair);
+    }
+}
+
+/// Get Root CA certificate from CA Node (public certificate only)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_get_root_ca_certificate(
+    ca_node: *mut c_void,
+    certificate: *mut *mut u8,
+    certificate_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node = &*(ca_node as *const CANode);
+
+    // Get the root CA certificate (public only)
+    let root_ca_cert = &ca_node.root_ca_cert;
+
+    let cert_der = root_ca_cert.der_bytes().to_vec();
+
+    if !alloc_bytes(certificate, certificate_len, &cert_der) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for certificate",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
+}
+
+/// Get Issuing CA certificate from CA Node (public certificate only)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_node_get_issuing_ca_certificate(
+    ca_node: *mut c_void,
+    certificate: *mut *mut u8,
+    certificate_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    if ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let ca_node = &*(ca_node as *const CANode);
+
+    // Get the issuing CA certificate (public only)
+    let issuing_ca_cert = &ca_node.issuing_ca_cert;
+
+    let cert_der = issuing_ca_cert.der_bytes().to_vec();
+
+    if !alloc_bytes(certificate, certificate_len, &cert_der) {
+        set_error(
+            err,
+            RN_ERROR_MEMORY_ALLOCATION,
+            "Failed to allocate memory for certificate",
+        );
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    0
 }
 
 /// Handle enrollment request (new API)
@@ -5556,137 +5874,6 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
 // ============================================================================
 // CA CREATION FFI FUNCTIONS (NEW)
 // ============================================================================
-
-/// Create Root CA certificate
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_ca_create_root_ca(
-    subject: *const c_char,
-    out_ca: *mut *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    if subject.is_null() || out_ca.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Parse subject string
-    let subject_str = match std::ffi::CStr::from_ptr(subject).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_UTF8,
-                &format!("Invalid subject string: {e}"),
-            );
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-
-    // Create Root CA
-    let ca = match runar_keys::CertificateAuthority::new(subject_str) {
-        Ok(ca) => ca,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_CERTIFICATE_CREATION_FAILED,
-                &format!("Failed to create Root CA: {e}"),
-            );
-            return RN_ERROR_CERTIFICATE_CREATION_FAILED;
-        }
-    };
-
-    // Box the CA and return pointer
-    let boxed_ca = Box::new(ca);
-    *out_ca = Box::into_raw(boxed_ca) as *mut c_void;
-
-    0
-}
-
-/// Create Issuing CA certificate (signed by Root CA)
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_ca_create_issuing_ca(
-    root_ca: *mut c_void,
-    subject: *const c_char,
-    validity_days: u32,
-    serial: u64,
-    out_ca: *mut *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    if root_ca.is_null() || subject.is_null() || out_ca.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Parse subject string
-    let subject_str = match std::ffi::CStr::from_ptr(subject).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_UTF8,
-                &format!("Invalid subject string: {e}"),
-            );
-            return RN_ERROR_INVALID_UTF8;
-        }
-    };
-
-    // Get the root CA
-    let root_ca = &*(root_ca as *const runar_keys::CertificateAuthority);
-
-    // Generate key pair for issuing CA
-    let issuing_key_pair = match runar_keys::certificate::EcdsaKeyPair::new() {
-        Ok(kp) => kp,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_CERTIFICATE_CREATION_FAILED,
-                &format!("Failed to generate issuing CA key pair: {e}"),
-            );
-            return RN_ERROR_CERTIFICATE_CREATION_FAILED;
-        }
-    };
-
-    // Create CSR for issuing CA
-    let csr_der =
-        match runar_keys::certificate::CertificateRequest::create(&issuing_key_pair, subject_str) {
-            Ok(csr) => csr,
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_CERTIFICATE_CREATION_FAILED,
-                    &format!("Failed to create issuing CA CSR: {e}"),
-                );
-                return RN_ERROR_CERTIFICATE_CREATION_FAILED;
-            }
-        };
-
-    // Sign the CSR to create issuing CA certificate
-    let issuing_cert = match root_ca.sign_ca_certificate_request_with_serial(
-        &csr_der,
-        validity_days,
-        Some(serial),
-    ) {
-        Ok(cert) => cert,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_CERTIFICATE_CREATION_FAILED,
-                &format!("Failed to sign issuing CA certificate: {e}"),
-            );
-            return RN_ERROR_CERTIFICATE_CREATION_FAILED;
-        }
-    };
-
-    // Create issuing CA from existing key pair and certificate
-    let issuing_ca =
-        runar_keys::CertificateAuthority::from_existing(issuing_key_pair, issuing_cert);
-
-    // Box the CA and return pointer
-    let boxed_ca = Box::new(issuing_ca);
-    *out_ca = Box::into_raw(boxed_ca) as *mut c_void;
-
-    0
-}
 
 /// Get CA certificate DER bytes
 #[no_mangle]

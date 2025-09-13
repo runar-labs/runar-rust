@@ -131,68 +131,60 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert_eq!(result, 0, "Failed to create CA node");
     assert!(!ca_node.is_null(), "CA node should not be null");
 
-    // Create Root CA and Issuing CA certificates with proper chain
-    // This ensures the issuing CA is signed by the same root CA that the client will trust
-    let (root_ca_cert, issuing_key_cbor, issuing_cert_der) = create_ca_certificate_chain();
-    println!("   ✅ Root CA certificate created");
-    println!("   ✅ Issuing CA certificate created (signed by Root CA)");
+    // Create EA key pair using new secure FFI (private key stays internal)
+    let mut ea_key_handle: *mut c_void = ptr::null_mut();
+    let result = unsafe { rn_keys_ca_create_ea_key_pair(&mut ea_key_handle, &mut error) };
+    assert_eq!(result, 0, "Failed to create EA key pair");
+    assert!(!ea_key_handle.is_null(), "EA key handle should not be null");
+    println!("   ✅ EA key pair created (private key stays internal)");
 
-    // Pre-handshake diagnostics: Validate certificate chain
-    println!("   🔍 Validating certificate chain...");
-    validate_certificate_chain(&root_ca_cert, &issuing_cert_der);
-    println!("   ✅ Certificate chain validation passed");
-
-    // Additional certificate diagnostics
-    println!("   🔍 Certificate diagnostics:");
-    println!("      Root CA cert: {} bytes", root_ca_cert.len());
-    println!("      Issuing CA cert: {} bytes", issuing_cert_der.len());
-    println!(
-        "      Root CA cert starts with: {}",
-        hex::encode(&root_ca_cert[0..8])
-    );
-    println!(
-        "      Issuing CA cert starts with: {}",
-        hex::encode(&issuing_cert_der[0..8])
-    );
-
-    // Create EA key pair (will be used for both server config and token generation)
-    // Following design section 6.6: Generate EA once and keep in shared test context
-    let ea_key = runar_keys::certificate::EcdsaKeyPair::new().expect("Failed to create EA key");
-    let ea_public_key = ea_key.public_key().as_bytes().to_vec();
-    let ea_public_keys = vec![ea_public_key];
-    let ea_public_keys_cbor =
-        serde_cbor::to_vec(&ea_public_keys).expect("Failed to serialize EA keys");
-    println!("   ✅ EA key pair created (will be used for both server config and token signing)");
-
-    // Install issuing CA in CA Node
-    let network_id_cstr = create_cstring("test_network");
+    // Get EA public key (only public key exposed)
+    let mut ea_public_key_ptr: *mut u8 = ptr::null_mut();
+    let mut ea_public_key_len: usize = 0;
     let result = unsafe {
-        rn_keys_ca_node_install_issuing_ca(
+        rn_keys_ca_get_ea_public_key(
+            ea_key_handle,
+            &mut ea_public_key_ptr,
+            &mut ea_public_key_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to get EA public key");
+    assert!(
+        !ea_public_key_ptr.is_null(),
+        "EA public key should not be null"
+    );
+    assert!(
+        ea_public_key_len > 0,
+        "EA public key length should be positive"
+    );
+
+    let ea_public_keys_cbor =
+        unsafe { std::slice::from_raw_parts(ea_public_key_ptr, ea_public_key_len) }.to_vec();
+    println!(
+        "   ✅ EA public key retrieved ({} bytes)",
+        ea_public_key_len
+    );
+
+    // Complete CA setup using new secure FFI (no private keys exposed)
+    let network_id_cstr = create_cstring("test_network");
+    let root_ca_subject_cstr = create_cstring("CN=Test Root CA,O=Test,C=US");
+    let issuing_ca_subject_cstr = create_cstring("CN=Test Issuing CA,O=Test,C=US");
+    let result = unsafe {
+        rn_keys_ca_node_setup_complete(
             ca_node,
-            issuing_key_cbor.as_ptr(),
-            issuing_key_cbor.len(),
-            issuing_cert_der.as_ptr(),
-            issuing_cert_der.len(),
-            root_ca_cert.as_ptr(),
-            root_ca_cert.len(),
+            root_ca_subject_cstr.as_ptr(),
+            issuing_ca_subject_cstr.as_ptr(),
+            365, // validity_days
+            1,   // issuing_ca_serial
             ea_public_keys_cbor.as_ptr(),
             ea_public_keys_cbor.len(),
             network_id_cstr.as_ptr(),
             &mut error,
         )
     };
-    assert_eq!(result, 0, "Failed to install issuing CA");
-
-    // Configure enrollment authority
-    let result = unsafe {
-        rn_keys_ca_node_configure_enrollment_authority(
-            ca_node,
-            ea_public_keys_cbor.as_ptr(),
-            ea_public_keys_cbor.len(),
-            &mut error,
-        )
-    };
-    assert_eq!(result, 0, "Failed to configure enrollment authority");
+    assert_eq!(result, 0, "Failed to setup CA node");
+    println!("   ✅ CA Node setup complete (no private keys exposed)");
 
     println!("   ✅ CA Node configured with issuing CA and enrollment authority");
 
@@ -331,28 +323,48 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let csr_der = setup_token.csr_der.clone();
     println!("   ✅ CSR generated ({} bytes)", csr_der.len());
 
-    // Create enrollment token using the SAME EA key (following design section 6.6)
-    // Step 3: Create tokens with the SAME EA private key
+    // Create enrollment token using new secure FFI (private key stays internal)
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
-    let token_body = runar_keys::EnrollmentTokenBody::new(
-        "test_token_001".to_string(),
-        "test_network".to_string(),
-        Some("test_subject".to_string()),
-        now - 60,   // 1 minute ago to account for clock differences
-        now + 3600, // 1 hour
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], // nonce
-        vec!["enroll".to_string()],
-    );
+    let token_id_cstr = create_cstring("test_token_001");
+    let network_id_cstr = create_cstring("test_network");
+    let subject_cstr = create_cstring("test_subject");
+    let nonce = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    let capabilities = vec![create_cstring("enroll")];
+    let capabilities_ptrs: Vec<*const c_char> = capabilities.iter().map(|s| s.as_ptr()).collect();
 
-    let enrollment_token_struct = runar_keys::EnrollmentToken::generate(&ea_key, token_body)
-        .expect("Failed to generate enrollment token");
-    let _enrollment_token =
-        serde_cbor::to_vec(&enrollment_token_struct).expect("Failed to serialize enrollment token");
-    println!("   ✅ Enrollment token created with SAME EA key used for server config");
+    let mut token_cbor_ptr: *mut u8 = ptr::null_mut();
+    let mut token_cbor_len: usize = 0;
+    let result = unsafe {
+        rn_keys_ca_generate_enrollment_token(
+            ea_key_handle,
+            token_id_cstr.as_ptr(),
+            network_id_cstr.as_ptr(),
+            subject_cstr.as_ptr(),
+            now - 60,   // 1 minute ago to account for clock differences
+            now + 3600, // 1 hour
+            nonce.as_ptr(),
+            nonce.len(),
+            capabilities_ptrs.as_ptr(),
+            capabilities_ptrs.len(),
+            &mut token_cbor_ptr,
+            &mut token_cbor_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to generate enrollment token");
+    assert!(!token_cbor_ptr.is_null(), "Token CBOR should not be null");
+    assert!(token_cbor_len > 0, "Token CBOR length should be positive");
+
+    let enrollment_token_cbor =
+        unsafe { std::slice::from_raw_parts(token_cbor_ptr, token_cbor_len) }.to_vec();
+    let enrollment_token_struct: runar_keys::EnrollmentToken =
+        serde_cbor::from_slice(&enrollment_token_cbor)
+            .expect("Failed to deserialize enrollment token");
+    println!("   ✅ Enrollment token created using secure FFI (private key stays internal)");
 
     // Build CsrEnrollRequest CBOR (following working test pattern)
     let enroll_request_struct = runar_keys::ca_node_types::CsrEnrollRequest {
@@ -364,14 +376,45 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let enroll_request =
         serde_cbor::to_vec(&enroll_request_struct).expect("Failed to serialize enroll request");
 
+    // Get certificates from CA Node using new secure FFI (public certificates only)
+    let mut root_ca_cert_ptr: *mut u8 = ptr::null_mut();
+    let mut root_ca_cert_len: usize = 0;
+    let result = unsafe {
+        rn_keys_ca_node_get_root_ca_certificate(
+            ca_node,
+            &mut root_ca_cert_ptr,
+            &mut root_ca_cert_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to get Root CA certificate");
+    let root_ca_cert =
+        unsafe { std::slice::from_raw_parts(root_ca_cert_ptr, root_ca_cert_len) }.to_vec();
+
+    let mut issuing_ca_cert_ptr: *mut u8 = ptr::null_mut();
+    let mut issuing_ca_cert_len: usize = 0;
+    let result = unsafe {
+        rn_keys_ca_node_get_issuing_ca_certificate(
+            ca_node,
+            &mut issuing_ca_cert_ptr,
+            &mut issuing_ca_cert_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to get Issuing CA certificate");
+    let issuing_cert_der =
+        unsafe { std::slice::from_raw_parts(issuing_ca_cert_ptr, issuing_ca_cert_len) }.to_vec();
+
+    println!("   ✅ Certificates retrieved from CA Node (public certificates only)");
+    println!("      Root CA cert: {} bytes", root_ca_cert.len());
+    println!("      Issuing CA cert: {} bytes", issuing_cert_der.len());
+
     // Create CA Client with all configuration at once (following design section 6.6)
     println!("   🔧 Creating CA Client with all configuration (following design section 6.6):");
     println!("      Bootstrap: {}", bootstrap_addr_str);
     println!("      Authenticated: {}", authenticated_addr_str);
     println!("      Network ID: test_network");
     println!("      Timeout: 30s, Max retries: 3");
-    println!("      Root CA cert: {} bytes", root_ca_cert.len());
-    println!("      Issuing CA cert: {} bytes", issuing_cert_der.len());
 
     // Create configuration CBOR
     let config = CaClientConfigAll {
@@ -1147,19 +1190,41 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // ==========================================
     println!("\n❌ PHASE 10: Negative Cases via REAL QUIC mTLS");
 
-    // Test invalid enrollment token (wrong network_id)
-    let invalid_token_body = runar_keys::EnrollmentTokenBody::new(
-        "invalid_token".to_string(),
-        "wrong_network".to_string(), // Wrong network ID
-        Some("invalid".to_string()),
-        now - 60,
-        now + 3600,
-        [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
-        vec!["enroll".to_string()],
-    );
+    // Test invalid enrollment token (wrong network_id) using new secure FFI
+    let invalid_token_id_cstr = create_cstring("invalid_token");
+    let invalid_network_id_cstr = create_cstring("wrong_network"); // Wrong network ID
+    let invalid_subject_cstr = create_cstring("invalid");
+    let invalid_nonce = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+    let invalid_capabilities = vec![create_cstring("enroll")];
+    let invalid_capabilities_ptrs: Vec<*const c_char> =
+        invalid_capabilities.iter().map(|s| s.as_ptr()).collect();
 
-    let invalid_token_struct = runar_keys::EnrollmentToken::generate(&ea_key, invalid_token_body)
-        .expect("Failed to generate invalid enrollment token");
+    let mut invalid_token_cbor_ptr: *mut u8 = ptr::null_mut();
+    let mut invalid_token_cbor_len: usize = 0;
+    let result = unsafe {
+        rn_keys_ca_generate_enrollment_token(
+            ea_key_handle,
+            invalid_token_id_cstr.as_ptr(),
+            invalid_network_id_cstr.as_ptr(),
+            invalid_subject_cstr.as_ptr(),
+            now - 60,
+            now + 3600,
+            invalid_nonce.as_ptr(),
+            invalid_nonce.len(),
+            invalid_capabilities_ptrs.as_ptr(),
+            invalid_capabilities_ptrs.len(),
+            &mut invalid_token_cbor_ptr,
+            &mut invalid_token_cbor_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Failed to generate invalid enrollment token");
+    let invalid_token_cbor =
+        unsafe { std::slice::from_raw_parts(invalid_token_cbor_ptr, invalid_token_cbor_len) }
+            .to_vec();
+    let invalid_token_struct: runar_keys::EnrollmentToken =
+        serde_cbor::from_slice(&invalid_token_cbor)
+            .expect("Failed to deserialize invalid enrollment token");
 
     let mut invalid_setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut invalid_setup_token_len: usize = 0;
@@ -1279,6 +1344,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     // Free all resources
     unsafe {
+        rn_keys_ca_free_ea_key_pair(ea_key_handle);
         rn_transport_ca_server_free(ca_server);
         rn_transport_ca_client_free(ca_client);
         rn_keys_free(node_keys);

@@ -5,7 +5,7 @@
 
 use runar_ffi::*;
 
-use std::ffi::c_void;
+use std::ffi::{c_void, CStr};
 use std::ptr;
 
 // Import common utilities
@@ -499,7 +499,7 @@ fn test_mobile_get_keystore_state_happy_path() {
         message: ptr::null(),
     };
 
-    let mut state = 0i32;
+    let _state = 0i32;
 
     // Note: rn_keys_mobile_get_keystore_state has been removed - state management is now internal
     // State management is handled internally by the MobileKeyManager
@@ -2775,54 +2775,103 @@ fn test_ca_node_install_issuing_ca_happy_path() {
     assert_eq!(result, 0, "Should successfully create CA node");
     assert!(!ca_node.is_null(), "CA node should not be null");
 
-    // Create test certificates and keys
-    let test_key = create_test_ecdsa_key_pair();
-    let test_cert = create_test_certificate();
-    let test_root_cert = create_test_certificate();
-    let test_ea_keys = create_test_ea_public_keys();
+    // Create EA key pair for testing
+    let mut ea_key_handle: *mut c_void = ptr::null_mut();
+    let result = unsafe { rn_keys_ca_create_ea_key_pair(&mut ea_key_handle, &mut error) };
+    assert_eq!(result, 0, "Should successfully create EA key pair");
+    assert!(!ea_key_handle.is_null(), "EA key handle should not be null");
 
-    // Install issuing CA
+    // Get EA public key
+    let mut ea_public_key_ptr: *mut u8 = ptr::null_mut();
+    let mut ea_public_key_len = 0usize;
     let result = unsafe {
-        rn_keys_ca_node_install_issuing_ca(
+        rn_keys_ca_get_ea_public_key(
+            ea_key_handle,
+            &mut ea_public_key_ptr,
+            &mut ea_public_key_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Should successfully get EA public key");
+    assert!(
+        !ea_public_key_ptr.is_null(),
+        "EA public key should not be null"
+    );
+
+    // Convert to Vec for easier handling
+    let ea_public_key =
+        unsafe { Vec::from_raw_parts(ea_public_key_ptr, ea_public_key_len, ea_public_key_len) };
+
+    // Complete CA setup using new secure function
+    let result = unsafe {
+        rn_keys_ca_node_setup_complete(
             ca_node,
-            test_key.as_ptr(),
-            test_key.len(),
-            test_cert.as_ptr(),
-            test_cert.len(),
-            test_root_cert.as_ptr(),
-            test_root_cert.len(),
-            test_ea_keys.as_ptr(),
-            test_ea_keys.len(),
+            create_cstring("CN=Test Root CA,O=Test,C=US").as_ptr(),
+            create_cstring("CN=Test Issuing CA,O=Test,C=US").as_ptr(),
+            365,
+            1,
+            ea_public_key.as_ptr(),
+            ea_public_key.len(),
             create_cstring("test_network").as_ptr(),
             &mut error,
         )
     };
 
-    assert_eq!(result, 0, "Should successfully install issuing CA");
+    if result != 0 {
+        println!("Error code: {}, Error message: {}", error.code, unsafe {
+            CStr::from_ptr(error.message).to_string_lossy()
+        });
+    }
+    assert_eq!(result, 0, "Should successfully complete CA setup");
+
+    // Clean up EA key pair
+    unsafe { rn_keys_ca_free_ea_key_pair(ea_key_handle) };
 
     // Clean up
     unsafe { rn_keys_ca_node_free(ca_node) };
 }
 
 #[test]
-fn test_ca_node_install_issuing_ca_null_ca_node() {
+fn test_ca_node_setup_complete_null_ca_node() {
     let mut error = create_test_error();
-    let test_key = create_test_ecdsa_key_pair();
-    let test_cert = create_test_certificate();
-    let test_root_cert = create_test_certificate();
-    let test_ea_keys = create_test_ea_public_keys();
 
+    // Create EA key pair for testing
+    let mut ea_key_handle: *mut c_void = ptr::null_mut();
+    let result = unsafe { rn_keys_ca_create_ea_key_pair(&mut ea_key_handle, &mut error) };
+    assert_eq!(result, 0, "Should successfully create EA key pair");
+    assert!(!ea_key_handle.is_null(), "EA key handle should not be null");
+
+    // Get EA public key
+    let mut ea_public_key_ptr: *mut u8 = ptr::null_mut();
+    let mut ea_public_key_len = 0usize;
     let result = unsafe {
-        rn_keys_ca_node_install_issuing_ca(
+        rn_keys_ca_get_ea_public_key(
+            ea_key_handle,
+            &mut ea_public_key_ptr,
+            &mut ea_public_key_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Should successfully get EA public key");
+    assert!(
+        !ea_public_key_ptr.is_null(),
+        "EA public key should not be null"
+    );
+
+    // Convert to Vec for easier handling
+    let ea_public_key =
+        unsafe { Vec::from_raw_parts(ea_public_key_ptr, ea_public_key_len, ea_public_key_len) };
+
+    // Test with null CA node
+    let result = unsafe {
+        rn_keys_ca_node_setup_complete(
             ptr::null_mut(),
-            test_key.as_ptr(),
-            test_key.len(),
-            test_cert.as_ptr(),
-            test_cert.len(),
-            test_root_cert.as_ptr(),
-            test_root_cert.len(),
-            test_ea_keys.as_ptr(),
-            test_ea_keys.len(),
+            create_cstring("CN=Test Root CA,O=Test,C=US").as_ptr(),
+            create_cstring("CN=Test Issuing CA,O=Test,C=US").as_ptr(),
+            365,
+            1,
+            ea_public_key.as_ptr(),
+            ea_public_key.len(),
             create_cstring("test_network").as_ptr(),
             &mut error,
         )
@@ -2832,6 +2881,9 @@ fn test_ca_node_install_issuing_ca_null_ca_node() {
         result, RN_ERROR_NULL_ARGUMENT,
         "Should fail with null CA node"
     );
+
+    // Clean up EA key pair
+    unsafe { rn_keys_ca_free_ea_key_pair(ea_key_handle) };
 }
 
 // ============================================================================
