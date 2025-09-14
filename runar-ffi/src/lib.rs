@@ -46,8 +46,9 @@ pub struct CaServerWrapper {
     pub bootstrap_addr: Option<String>,
     pub authenticated_addr: Option<String>,
 }
+use rustls::crypto::aws_lc_rs;
 use serde_cbor as _; // keep dependency linked for now
-                     // panic handling imports removed - no longer needed without ffi_guard
+// panic handling imports removed - no longer needed without ffi_guard
 use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -6636,6 +6637,9 @@ pub unsafe extern "C" fn rn_transport_ca_server_start(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
+    // Initialize RustLS crypto provider before starting CA server
+    let _ = aws_lc_rs::default_provider().install_default();
+
     let wrapper = &mut *(server as *mut CaServerWrapper);
 
     // Start the server using shared runtime
@@ -7593,6 +7597,9 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
+    // Initialize RustLS crypto provider before CA client operations
+    let _ = aws_lc_rs::default_provider().install_default();
+
     let wrapper = &*(client as *const CaClientWrapper);
     let client = &wrapper.client;
 
@@ -7732,6 +7739,9 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
+
+    // Initialize RustLS crypto provider before CA client operations
+    let _ = aws_lc_rs::default_provider().install_default();
 
     let wrapper = &*(client as *const CaClientWrapper);
     let client = &wrapper.client;

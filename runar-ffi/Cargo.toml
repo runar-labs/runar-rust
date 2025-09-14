@@ -25,6 +25,7 @@ log = "0.4"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 rustls-pki-types = "1"
+rustls = "0.23"
 libc = "0.2"
 
 [build-dependencies]
