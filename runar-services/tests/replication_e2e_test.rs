@@ -191,7 +191,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
-            )))
+            )), None)
             .await?;
 
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -212,7 +212,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
-            )))
+            )), None)
             .await?;
 
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -227,6 +227,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let user_count: i64 = *users_result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -244,6 +245,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM posts",
             ))),
+            None,
         )
         .await?;
     let post_count: i64 = *posts_result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -291,6 +293,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let user_count2: i64 = *users_result2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -311,6 +314,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM posts",
             ))),
+            None,
         )
         .await?;
     let post_count2: i64 = *posts_result2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -339,7 +343,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(timestamp))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -355,6 +359,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'node2_user'",
             ))),
+            None,
         )
         .await?;
     let new_users: Vec<ArcValue> =
@@ -376,7 +381,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(timestamp))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -392,6 +397,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'node1_user'",
             ))),
+            None,
         )
         .await?;
     let new_users2: Vec<ArcValue> =
@@ -410,6 +416,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let final_count1: i64 = *final_users1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -426,6 +433,7 @@ async fn test_basic_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let final_count2: i64 = *final_users2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -499,7 +507,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
-            )))
+            )), None)
             .await?;
 
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -518,7 +526,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
-            )))
+            )), None)
             .await?;
 
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -534,6 +542,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let user_count: i64 = *users_result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -596,6 +605,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let user_count2: i64 = *users_result2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -616,6 +626,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM posts",
             ))),
+            None,
         )
         .await?;
     let post_count2: i64 = *posts_result2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -641,6 +652,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'sync_user1'",
             ))),
+            None,
         )
         .await?;
     let test_users: Vec<ArcValue> = (*test_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -658,6 +670,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM users_Events ORDER BY timestamp",
             ))),
+            None,
         )
         .await?;
     let events1: Vec<ArcValue> = (*events_result1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -675,6 +688,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT * FROM users_Events ORDER BY timestamp",
             ))),
+            None,
         )
         .await?;
     let events2: Vec<ArcValue> = (*events_result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -697,7 +711,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(timestamp))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -713,6 +727,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username, email FROM users WHERE username = 'post_sync_user'",
             ))),
+            None,
         )
         .await?;
     let new_users: Vec<ArcValue> =
@@ -753,7 +768,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(timestamp))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -769,6 +784,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'post_sync_user2'",
             ))),
+            None,
         )
         .await?;
     let new_users2: Vec<ArcValue> =
@@ -787,6 +803,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let final_count1: i64 = *final_users1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -803,6 +820,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let final_count2: i64 = *final_users2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -879,6 +897,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let user_count3: i64 = *users_result3.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -900,7 +919,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let result = node3
         .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("UPDATE users SET email = 'updated_by_node3@example.com' WHERE username = 'sync_user2'")
-        )))
+        )), None)
         .await?;
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
     assert_eq!(affected_rows, 1, "Should update 1 user on Node 3");
@@ -915,6 +934,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT email FROM users WHERE username = 'sync_user2'",
             ))),
+            None,
         )
         .await?;
     let update_users2: Vec<ArcValue> =
@@ -947,6 +967,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "DELETE FROM users WHERE username = 'sync_user5'",
             ))),
+            None,
         )
         .await?;
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -962,6 +983,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'sync_user5'",
             ))),
+            None,
         )
         .await?;
     let delete_users3: Vec<ArcValue> =
@@ -1024,6 +1046,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let restart_user_count1: i64 = *restart_count1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1048,6 +1071,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT email FROM users WHERE username = 'sync_user2'",
             ))),
+            None,
         )
         .await?;
     let update_users1: Vec<ArcValue> =
@@ -1077,6 +1101,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'sync_user5'",
             ))),
+            None,
         )
         .await?;
     let delete_users1: Vec<ArcValue> =
@@ -1095,6 +1120,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'post_sync_user'",
             ))),
+            None,
         )
         .await?;
     let post_sync_users1: Vec<ArcValue> =
@@ -1117,7 +1143,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(timestamp))
             )
-        )))
+        )), None)
         .await?;
     let affected_rows1: i64 = *result1.as_type_ref::<i64>().unwrap();
     assert_eq!(affected_rows1, 1, "Should insert 1 user on Node 1");
@@ -1126,7 +1152,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
     let result2 = node2
         .local_request("users_db_test_2/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("UPDATE users SET email = 'complex_updated@example.com' WHERE username = 'sync_user3'")
-        )))
+        )), None)
         .await?;
     let affected_rows2: i64 = *result2.as_type_ref::<i64>().unwrap();
     assert_eq!(affected_rows2, 1, "Should update 1 user on Node 2");
@@ -1138,6 +1164,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "DELETE FROM users WHERE username = 'sync_user7'",
             ))),
+            None,
         )
         .await?;
     let affected_rows3: i64 = *result3.as_type_ref::<i64>().unwrap();
@@ -1156,6 +1183,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let count1: i64 = *final_count1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1172,6 +1200,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let count2: i64 = *final_count2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1188,6 +1217,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let count3: i64 = *final_count3.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1222,6 +1252,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'complex_user1'",
             ))),
+            None,
         )
         .await?;
     let complex_users1: Vec<ArcValue> =
@@ -1234,6 +1265,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'complex_user1'",
             ))),
+            None,
         )
         .await?;
     let complex_users2: Vec<ArcValue> =
@@ -1246,6 +1278,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'complex_user1'",
             ))),
+            None,
         )
         .await?;
     let complex_users3: Vec<ArcValue> =
@@ -1259,6 +1292,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT email FROM users WHERE username = 'sync_user3'",
             ))),
+            None,
         )
         .await?;
     let update_email1 = update_check1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1279,6 +1313,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT email FROM users WHERE username = 'sync_user3'",
             ))),
+            None,
         )
         .await?;
     let update_email2 = update_check2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1299,6 +1334,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT email FROM users WHERE username = 'sync_user3'",
             ))),
+            None,
         )
         .await?;
     let update_email3 = update_check3.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1320,6 +1356,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'sync_user7'",
             ))),
+            None,
         )
         .await?;
     let delete_users1: Vec<ArcValue> =
@@ -1332,6 +1369,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'sync_user7'",
             ))),
+            None,
         )
         .await?;
     let delete_users2: Vec<ArcValue> =
@@ -1344,6 +1382,7 @@ async fn test_full_replication_between_nodes() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'sync_user7'",
             ))),
+            None,
         )
         .await?;
     let delete_users3: Vec<ArcValue> =
@@ -1397,7 +1436,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     let event_tables_result = node1
         .local_request("users_db_test_3/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_Events' ORDER BY name")
-        )))
+        )), None)
         .await?;
     let event_tables: Vec<ArcValue> =
         (*event_tables_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -1444,7 +1483,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
-            )))
+            )), None)
             .await?;
 
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -1459,6 +1498,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT operation_type, timestamp FROM users_Events ORDER BY timestamp",
             ))),
+            None,
         )
         .await?;
     let events: Vec<ArcValue> = (*events_result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -1524,7 +1564,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
     let event_tables_result2 = node2
         .local_request("users_db_test_3/execute_query", Some(ArcValue::new_struct(
             runar_services::sqlite::SqlQuery::new("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_Events' ORDER BY name")
-        )))
+        )), None)
         .await?;
     let event_tables2: Vec<ArcValue> =
         (*event_tables_result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -1539,6 +1579,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT operation_type, timestamp FROM users_Events ORDER BY timestamp",
             ))),
+            None,
         )
         .await?;
     let events2: Vec<ArcValue> = (*events_result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -1555,6 +1596,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "UPDATE users SET email = 'updated@example.com' WHERE username = 'event_user1'",
             ))),
+            None,
         )
         .await?;
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -1567,6 +1609,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "DELETE FROM users WHERE username = 'event_user3'",
             ))),
+            None,
         )
         .await?;
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -1583,6 +1626,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT operation_type, timestamp FROM users_Events ORDER BY timestamp",
             ))),
+            None,
         )
         .await?;
     let all_events: Vec<ArcValue> =
@@ -1624,6 +1668,7 @@ async fn test_event_tables_and_ordering() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT operation_type, timestamp FROM users_Events ORDER BY timestamp",
             ))),
+            None,
         )
         .await?;
     let all_events2: Vec<ArcValue> =
@@ -1703,7 +1748,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp))
                 )
-            )))
+            )), None)
             .await?;
 
         let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -1718,6 +1763,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let user_count: i64 = *users_result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1777,6 +1823,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let user_count2: i64 = *users_result2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1804,7 +1851,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(timestamp))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -1820,6 +1867,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'mobile_node2_user'",
             ))),
+            None,
         )
         .await?;
     let new_users: Vec<ArcValue> =
@@ -1841,7 +1889,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             ).with_params(runar_services::sqlite::Params::new()
                 .with_value(runar_services::sqlite::Value::Integer(timestamp))
             )
-        )))
+        )), None)
         .await?;
 
     let affected_rows: i64 = *result.as_type_ref::<i64>().unwrap();
@@ -1857,6 +1905,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'mobile_node1_user'",
             ))),
+            None,
         )
         .await?;
     let new_users2: Vec<ArcValue> =
@@ -1883,6 +1932,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let final_count1: i64 = *final_users1.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1899,6 +1949,7 @@ async fn test_mobile_simulator_replication() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let final_count2: i64 = *final_users2.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -1976,7 +2027,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
                 ).with_params(runar_services::sqlite::Params::new()
                     .with_value(runar_services::sqlite::Value::Integer(timestamp + i))
                 )
-            )))
+            )), None)
             .await?;
 
         if i % 50 == 0 {
@@ -1991,6 +2042,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let count1: i64 = *result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -2047,6 +2099,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT COUNT(*) as count FROM users",
             ))),
+            None,
         )
         .await?;
     let count2: i64 = *result.as_type_ref::<Vec<ArcValue>>().unwrap()[0]
@@ -2066,6 +2119,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'user001'",
             ))),
+            None,
         )
         .await?;
     let rows: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -2077,6 +2131,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'user200'",
             ))),
+            None,
         )
         .await?;
     let rows: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -2088,6 +2143,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username FROM users WHERE username = 'user400'",
             ))),
+            None,
         )
         .await?;
     let rows: Vec<ArcValue> = (*result.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -2102,6 +2158,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username, email, created_at FROM users ORDER BY username",
             ))),
+            None,
         )
         .await?;
     let rows1: Vec<ArcValue> = (*result1.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();
@@ -2112,6 +2169,7 @@ async fn test_high_volume_replication_with_pagination() -> Result<()> {
             Some(ArcValue::new_struct(runar_services::sqlite::SqlQuery::new(
                 "SELECT username, email, created_at FROM users ORDER BY username",
             ))),
+            None,
         )
         .await?;
     let rows2: Vec<ArcValue> = (*result2.as_type_ref::<Vec<ArcValue>>().unwrap()).clone();

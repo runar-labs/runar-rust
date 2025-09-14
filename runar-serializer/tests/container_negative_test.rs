@@ -43,6 +43,7 @@ fn build_test_context() -> Result<TestContext> {
     user_mobile.install_network_public_key(&network_pub)?;
 
     let mut node_keys = NodeKeyManager::new(logger.clone())?;
+    node_keys.generate_keys()?;
     let token = node_keys.generate_csr()?;
     let nk_msg = mobile_network_master
         .create_network_key_message(&network_public_key, &token.node_agreement_public_key)?;

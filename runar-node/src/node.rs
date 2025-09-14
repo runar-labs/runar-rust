@@ -1866,7 +1866,10 @@ impl Node {
             .unwrap()
             .get_network_public_key_by_id(&network_id)?;
 
-        match self.local_request(topic_path.as_str(), params_option).await {
+        match self
+            .local_request(topic_path.as_str(), params_option, None)
+            .await
+        {
             Ok(response) => {
                 log_debug!(self.logger, "[handle_network_request] local request completed successfully correlation_id: {correlation_id}", correlation_id=msg.payload.correlation_id);
 
@@ -2085,6 +2088,7 @@ impl Node {
         &self,
         path: impl Into<String>,
         payload: Option<ArcValue>,
+        options: Option<RequestOptions>,
     ) -> Result<ArcValue> {
         let path_string = path.into();
         let topic_path = match TopicPath::new(&path_string, &self.network_id) {
@@ -2102,9 +2106,28 @@ impl Node {
         {
             log_debug!(self.logger, "Executing local handler for: {topic_path}");
 
+            let profile_public_keys = options
+                .map(|o| o.profile_public_keys)
+                .unwrap_or_default()
+                .unwrap_or_default();
+
+            let mut metadata: HashMap<String, ArcValue> = HashMap::new();
+            metadata.insert(
+                "node_id".to_string(),
+                ArcValue::new_primitive(self.node_id.clone()),
+            );
+            metadata.insert(
+                "profile_public_keys".to_string(),
+                ArcValue::new_list(profile_public_keys),
+            );
+
             // Create request context
-            let mut context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone());
+            let mut context = RequestContext::new(
+                &topic_path,
+                Arc::new(self.clone()),
+                metadata,
+                self.logger.clone(),
+            );
 
             // Extract parameters using the original registration path
             if let Ok(params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -2191,10 +2214,23 @@ impl Node {
                 .unwrap_or_default()
                 .unwrap_or_default();
 
+            let mut metadata: HashMap<String, ArcValue> = HashMap::new();
+            metadata.insert(
+                "node_id".to_string(),
+                ArcValue::new_primitive(self.node_id.clone()),
+            );
+            metadata.insert(
+                "profile_public_keys".to_string(),
+                ArcValue::new_list(profile_public_keys),
+            );
+
             // Create request context
-            let mut context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
-                    .with_user_profile_public_keys(profile_public_keys);
+            let mut context = RequestContext::new(
+                &topic_path,
+                Arc::new(self.clone()),
+                metadata,
+                self.logger.clone(),
+            );
 
             // Extract parameters using the original registration path
             if let Ok(path_params) = topic_path.extract_params(&registration_path.action_path()) {
@@ -2252,10 +2288,23 @@ impl Node {
                 .unwrap_or_default()
                 .unwrap_or_default();
 
+            let mut metadata: HashMap<String, ArcValue> = HashMap::new();
+            metadata.insert(
+                "node_id".to_string(),
+                ArcValue::new_primitive(self.node_id.clone()),
+            );
+            metadata.insert(
+                "profile_public_keys".to_string(),
+                ArcValue::new_list(profile_public_keys),
+            );
+
             // Create request context with profile public keys
-            let context =
-                RequestContext::new(&topic_path, Arc::new(self.clone()), self.logger.clone())
-                    .with_user_profile_public_keys(profile_public_keys);
+            let context = RequestContext::new(
+                &topic_path,
+                Arc::new(self.clone()),
+                metadata,
+                self.logger.clone(),
+            );
 
             // Apply load balancing strategy to select a handler
             let load_balancer = self.load_balancer.read().await;

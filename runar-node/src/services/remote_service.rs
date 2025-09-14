@@ -248,7 +248,15 @@ impl RemoteService {
                     "🚀 [RemoteService] Starting remote request - Action: {action} Target: {peer_node_id}"
                 );
 
-                let profile_public_keys = request_context.user_profile_public_keys.clone();
+                // let profile_public_keys = request_context.user_profile_public_keys.clone();
+
+                let metadata = request_context.metadata.clone();
+                let profile_public_keys: Vec<Vec<u8>>;
+                if let Some(profile_public_keys_arc) = metadata.get("profile_public_keys") {
+                    profile_public_keys = profile_public_keys_arc.as_type::<Vec<Vec<u8>>>()?;
+                } else {
+                    return Err(anyhow::anyhow!("Profile public keys not found in metadata"));
+                }
 
                 // Send the request
                 let topic_path_str = action_topic_path.as_str();

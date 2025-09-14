@@ -11,6 +11,7 @@ use runar_node::{LifecycleContext, NodeDelegate, RequestContext, TopicPath};
 
 use runar_serializer::ArcValue;
 use runar_test_utils::create_node_test_config;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -413,9 +414,11 @@ async fn test_on_method() {
         // Test 3: Test from RequestContext
         let test_logger = Logger::new_root(Component::Custom("Test"));
         let topic_path = TopicPath::new("math/add", "test_network").unwrap();
+        let metadata: HashMap<String, ArcValue> = HashMap::new();
         let context = RequestContext::new(
             &topic_path,
             Arc::new(node.clone()),
+            metadata,
             Arc::new(test_logger.clone()),
         );
 

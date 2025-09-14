@@ -48,13 +48,11 @@ pub struct RequestContext {
     /// Complete topic path for this request (optional) - includes service path and action
     pub topic_path: TopicPath,
     /// Metadata for this request - additional contextual information
-    pub metadata: Option<ArcValue>,
+    pub metadata: HashMap<String, ArcValue>,
     /// Logger for this context - pre-configured with the appropriate component and path
     pub logger: Arc<Logger>,
     /// Path parameters extracted from template matching
     pub path_params: HashMap<String, String>,
-
-    pub user_profile_public_keys: Vec<Vec<u8>>,
 
     /// Node delegate for making requests or publishing events
     pub(crate) node_delegate: Arc<Node>,
@@ -83,7 +81,6 @@ impl Clone for RequestContext {
             logger: self.logger.clone(),
             path_params: self.path_params.clone(),
             node_delegate: self.node_delegate.clone(),
-            user_profile_public_keys: self.user_profile_public_keys.clone(),
         }
     }
 }
@@ -103,7 +100,12 @@ impl RequestContext {
     /// Create a new RequestContext with a TopicPath and logger
     ///
     /// This is the primary constructor that takes the minimum required parameters.
-    pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, logger: Arc<Logger>) -> Self {
+    pub fn new(
+        topic_path: &TopicPath,
+        node_delegate: Arc<Node>,
+        metadata: HashMap<String, ArcValue>,
+        logger: Arc<Logger>,
+    ) -> Self {
         // Add action path to logger if available from topic_path
         let action_path = topic_path.action_path();
         let action_logger = logger.with_component(Component::Action);
@@ -111,26 +113,17 @@ impl RequestContext {
 
         Self {
             topic_path: topic_path.clone(),
-            metadata: None,
+            metadata: metadata,
             logger: Arc::new(action_logger),
             node_delegate,
             path_params: HashMap::new(),
-            user_profile_public_keys: vec![],
         }
     }
 
-    /// Add metadata to a RequestContext
-    ///
-    /// Use builder-style methods instead of specialized constructors.
-    pub fn with_metadata(mut self, metadata: ArcValue) -> Self {
-        self.metadata = Some(metadata);
-        self
-    }
-
-    pub fn with_user_profile_public_keys(mut self, user_profile_public_keys: Vec<Vec<u8>>) -> Self {
-        self.user_profile_public_keys = user_profile_public_keys;
-        self
-    }
+    // pub fn with_user_profile_public_keys(mut self, user_profile_public_keys: Vec<Vec<u8>>) -> Self {
+    //     self.user_profile_public_keys = user_profile_public_keys;
+    //     self
+    // }
 
     /// Get the network ID from the topic path
     pub fn network_id(&self) -> String {
