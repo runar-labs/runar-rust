@@ -56,6 +56,15 @@ fn two_transports_request_response() {
             version: 0,
         };
         let info_buf = serde_cbor::to_vec(&info).unwrap();
+        println!("Rust CBOR data length: {}", info_buf.len());
+        println!(
+            "Rust CBOR data: {}",
+            info_buf
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
         assert_eq!(
             rn_keys_set_local_node_info(keys_b, info_buf.as_ptr(), info_buf.len()),
             0

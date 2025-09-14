@@ -1,7 +1,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::{
-    ffi::{c_void, CString},
+    ffi::{c_void, CStr, CString},
     os::raw::c_char,
     ptr,
     sync::{Arc, RwLock},
@@ -98,6 +98,13 @@ pub const RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED: i32 = 1014;
 pub const RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED: i32 = 1015;
 pub const RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED: i32 = 1016;
 pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
+
+// Logger error codes
+pub const RN_ERROR_LOGGER_ALREADY_INITIALIZED: i32 = 1020;
+pub const RN_ERROR_LOGGER_NODE_ID_ALREADY_SET: i32 = 1021;
+pub const RN_ERROR_LOGGER_INVALID_NODE_ID: i32 = 1022;
+pub const RN_ERROR_LOGGER_INVALID_LEVEL: i32 = 1023;
+pub const RN_ERROR_BUFFER_TOO_SMALL: i32 = 1024;
 
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
@@ -446,6 +453,97 @@ pub extern "C" fn rn_set_log_level(level: i32) {
         _ => log::LevelFilter::Info,
     };
     log::set_max_level(filter);
+}
+
+// Global logger management
+static GLOBAL_LOGGER: OnceCell<Arc<Logger>> = OnceCell::new();
+
+// Get or create global root logger
+fn get_global_logger() -> Arc<Logger> {
+    GLOBAL_LOGGER
+        .get_or_init(|| Arc::new(Logger::new_root(Component::Custom("ffi"))))
+        .clone()
+}
+
+// Set node ID on root logger (subsequent calls have no effect)
+fn set_global_logger_node_id(node_id: String) -> Result<(), String> {
+    let logger = get_global_logger();
+    logger.set_node_id(node_id);
+    Ok(())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_set_logger_node_id(node_id: *const c_char, err: *mut RnError) -> i32 {
+    if node_id.is_null() {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "Node ID cannot be null");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let node_id_str = unsafe { CStr::from_ptr(node_id) };
+    let node_id_string = match node_id_str.to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid UTF-8 in node ID");
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    let _ = set_global_logger_node_id(node_id_string);
+    0 // Always succeeds (subsequent calls have no effect)
+}
+
+#[no_mangle]
+pub extern "C" fn rn_set_logger_level(level: i32, err: *mut RnError) -> i32 {
+    let filter = match level {
+        0 => log::LevelFilter::Off,
+        1 => log::LevelFilter::Error,
+        2 => log::LevelFilter::Warn,
+        3 => log::LevelFilter::Info,
+        4 => log::LevelFilter::Debug,
+        5 => log::LevelFilter::Trace,
+        _ => {
+            set_error(err, RN_ERROR_LOGGER_INVALID_LEVEL, "Invalid log level");
+            return RN_ERROR_LOGGER_INVALID_LEVEL;
+        }
+    };
+
+    log::set_max_level(filter);
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_get_logger_node_id(
+    out_node_id: *mut c_char,
+    out_len: usize,
+    err: *mut RnError,
+) -> i32 {
+    if out_node_id.is_null() || out_len == 0 {
+        set_error(
+            err,
+            RN_ERROR_INVALID_ARGUMENT,
+            "Output buffer cannot be null or empty",
+        );
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    let root_logger = get_global_logger();
+    let node_id = root_logger.node_id();
+    if node_id != "unknown" {
+        let bytes = node_id.as_bytes();
+        if bytes.len() >= out_len {
+            set_error(err, RN_ERROR_BUFFER_TOO_SMALL, "Output buffer too small");
+            return RN_ERROR_BUFFER_TOO_SMALL;
+        }
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_node_id as *mut u8, bytes.len());
+            *out_node_id.add(bytes.len()) = 0; // Null terminate
+        }
+        0
+    } else {
+        set_error(err, RN_ERROR_NOT_INITIALIZED, "Node ID not set");
+        RN_ERROR_NOT_INITIALIZED
+    }
 }
 
 fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool {
@@ -2895,7 +2993,8 @@ pub extern "C" fn rn_keys_free(keys: *mut c_void) {
 
 /// Internal helper that constructs a new keys handle and sets error on failure.
 fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
-    let logger = Arc::new(Logger::new_root(Component::Keys));
+    let root_logger = get_global_logger();
+    let logger = Arc::new(root_logger.with_component(Component::Keys));
 
     let inner = KeysInner {
         logger,
@@ -4128,9 +4227,8 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             })
         });
 
-    let logger = Arc::new(runar_common::logging::Logger::new_root(
-        runar_common::logging::Component::Custom("ffi_transport"),
-    ));
+    let root_logger = get_global_logger();
+    let logger = Arc::new(root_logger.with_component(Component::Transporter));
 
     options = options
         .with_request_callback(request_callback)
@@ -4783,15 +4881,15 @@ pub unsafe extern "C" fn rn_keys_node_generate_keys(keys: *mut c_void, err: *mut
 /// Create new CA Node (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_new(
-    logger: *mut c_void,
     out_ca_node: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    if logger.is_null() || out_ca_node.is_null() || err.is_null() {
+    if out_ca_node.is_null() || err.is_null() {
         return -1;
     }
 
-    let _logger = unsafe { &*(logger as *const Arc<Logger>) };
+    let root_logger = get_global_logger();
+    let _logger = root_logger.with_component(Component::Keys);
 
     // Create a proper CA Node with valid certificates
     // This follows the design pattern from the tests
@@ -6438,21 +6536,16 @@ pub unsafe extern "C" fn rn_transport_ca_server_new(
     config: *const u8,
     _config_len: usize,
     shared_ca_node: *mut c_void,
-    logger: *mut c_void,
     out_server: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    if config.is_null()
-        || shared_ca_node.is_null()
-        || logger.is_null()
-        || out_server.is_null()
-        || err.is_null()
-    {
+    if config.is_null() || shared_ca_node.is_null() || out_server.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let logger = unsafe { &*(logger as *const Arc<Logger>) };
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Transporter);
     let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
 
     // Parse the server configuration from the provided config data
@@ -6509,11 +6602,11 @@ pub unsafe extern "C" fn rn_transport_ca_server_new(
     };
 
     // Create the CA server using the shared CA Node reference
-    let server = CaServer::new(server_config, ca_node_arc.clone(), logger.clone());
+    let server = CaServer::new(server_config, ca_node_arc.clone(), Arc::new(logger.clone()));
 
     let wrapper = CaServerWrapper {
         server,
-        logger: logger.clone(),
+        logger: Arc::new(logger),
         bootstrap_addr: None,
         authenticated_addr: None,
     };
@@ -7386,21 +7479,16 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
     config_cbor: *const u8,
     config_len: usize,
     node_keys: *mut c_void,
-    logger: *mut c_void,
     out_client: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    if config_cbor.is_null()
-        || node_keys.is_null()
-        || logger.is_null()
-        || out_client.is_null()
-        || err.is_null()
-    {
+    if config_cbor.is_null() || node_keys.is_null() || out_client.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let logger = unsafe { &*(logger as *const Arc<Logger>) };
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Transporter);
 
     // Parse configuration CBOR
     let config_data = std::slice::from_raw_parts(config_cbor, config_len);
@@ -7473,7 +7561,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
     let client = match CaClientBuilder::new()
         .with_config(client_config.clone())
         .with_node_key_manager(Arc::clone(node_key_manager_arc))
-        .with_logger(logger.clone())
+        .with_logger(Arc::new(logger.clone()))
         .build()
     {
         Ok(client) => client,
@@ -7497,7 +7585,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
     let wrapper = CaClientWrapper {
         client,
         config: client_config,
-        logger: logger.clone(),
+        logger: Arc::new(logger),
         root_ca_cert: config.root_ca_der,
         issuing_ca_cert: config.issuing_ca_der,
         node_key_manager: Some(node_key_manager_arc.clone()),

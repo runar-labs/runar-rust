@@ -267,7 +267,7 @@ impl CaServer {
         // Create QUIC endpoint
         let endpoint = Endpoint::server(server_config, self.config.bootstrap_bind)?;
         let bound_addr = endpoint.local_addr()?;
-        println!("DEBUG: Bootstrap server actually bound to: {}", bound_addr);
+        println!("DEBUG: Bootstrap server actually bound to: {bound_addr}");
 
         // Store endpoint and start accepting connections
         let endpoint_arc = Arc::new(endpoint);

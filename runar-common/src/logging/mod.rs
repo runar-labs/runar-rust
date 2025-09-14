@@ -153,12 +153,6 @@ impl Logger {
         }
     }
 
-    /// Clone this logger with the same settings
-    /// This is useful when you need to pass a logger to a component that might modify it
-    pub fn clone_logger(&self) -> Self {
-        self.clone()
-    }
-
     /// Get a reference to the node ID (truncated to first 8 characters for readability)
     pub fn node_id(&self) -> &str {
         self.node_id

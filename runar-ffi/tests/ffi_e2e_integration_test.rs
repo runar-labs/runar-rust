@@ -89,7 +89,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Create test logger with proper component (like working test)
     // The working test uses Component::Transporter for network operations
     let logger = Arc::new(Logger::new_root(Component::Transporter));
-    let logger_ptr = Box::into_raw(Box::new(logger)) as *mut c_void;
+    let _logger_ptr = Box::into_raw(Box::new(logger)) as *mut c_void;
 
     // Create keys handles
     let mut node_keys: *mut c_void = ptr::null_mut();
@@ -126,8 +126,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     // Create CA Node
     let mut ca_node: *mut c_void = ptr::null_mut();
-    let result =
-        unsafe { rn_keys_ca_node_new(logger_ptr, &mut ca_node as *mut *mut c_void, &mut error) };
+    let result = unsafe { rn_keys_ca_node_new(&mut ca_node as *mut *mut c_void, &mut error) };
     assert_eq!(result, 0, "Failed to create CA node");
     assert!(!ca_node.is_null(), "CA node should not be null");
 
@@ -227,7 +226,6 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             server_config.as_ptr(),
             server_config.len(),
             shared_ca_node,
-            logger_ptr,
             &mut ca_server as *mut *mut c_void,
             &mut error,
         )
@@ -435,7 +433,6 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             config_cbor.as_ptr(),
             config_cbor.len(),
             node_keys,
-            logger_ptr,
             &mut ca_client,
             &mut error,
         )

@@ -75,11 +75,100 @@ if (state_loaded) {
 - Consistent error handling across all functions
 - Clear, maintainable API without confusion
 
+## Logger Management (REFACTORED - NO LOGGER PARAMETERS)
+
+**CRITICAL CHANGE**: As part of the logger refactor, all FFI functions that previously accepted `logger: *mut c_void` parameters have been updated to use a global hierarchical logger system. This simplifies the API and ensures consistent logging across all components.
+
+### Global Logger System
+- **Root Logger**: Single global logger instance with component `Custom("ffi")`
+- **Child Loggers**: All components create child loggers using `get_global_logger().with_component(Component::X)`
+- **Node ID**: Set once on root logger, inherited by all child loggers
+- **Log Level**: Can be changed at any time using `rn_set_logger_level()`
+
+### Logger Management Functions
+- `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger (can be called before/after logger creation)
+- `rn_set_logger_level(level_i32, err) -> i32` - Set global log level (can be called at any time)
+- `rn_get_logger_node_id(out_node_id, out_len, err) -> i32` - Get current node ID from root logger
+
+### Functions Updated (Logger Parameters Removed)
+**The following functions previously had `logger: *mut c_void` parameters that have been removed:**
+- `rn_keys_ca_node_new` - Now uses `get_global_logger().with_component(Component::Keys)`
+- `rn_transport_ca_server_new` - Now uses `get_global_logger().with_component(Component::Transporter)`
+- `rn_transport_ca_client_new_with_config` - Now uses `get_global_logger().with_component(Component::Transporter)`
+
+### Usage Pattern
+```c
+// 1. Set logger level (optional, can be called at any time)
+rn_set_logger_level(4, &err); // Debug level
+
+// 2. Set node ID (optional, initializes logger if needed)
+rn_set_logger_node_id("node-123", &err);
+
+// 3. Use FFI functions (no logger parameters needed)
+rn_keys_ca_node_new(&ca_node, &err);
+rn_transport_ca_server_new(config, len, ca_node, &server, &err);
+rn_transport_ca_client_new_with_config(config, len, node_keys, &client, &err);
+```
+
+### Logger Refactor Implementation Details
+
+#### Global Logger Architecture
+```rust
+// Global root logger (lazy initialized)
+static GLOBAL_LOGGER: OnceCell<Arc<Logger>> = OnceCell::new();
+
+// Get or create global root logger
+fn get_global_logger() -> Arc<Logger> {
+    GLOBAL_LOGGER.get_or_init(|| {
+        Arc::new(Logger::new_root(Component::Custom("ffi")))
+    }).clone()
+}
+
+// Set node ID on root logger (subsequent calls have no effect)
+fn set_global_logger_node_id(node_id: String) -> Result<(), String> {
+    let logger = get_global_logger();
+    logger.set_node_id(node_id);
+    Ok(())
+}
+```
+
+#### Hierarchical Logger Pattern
+All components now create child loggers from the global root logger:
+
+| Component | Logger Creation Pattern |
+|-----------|------------------------|
+| **KeysInner** | `get_global_logger().with_component(Component::Keys)` |
+| **QuicTransport** | `get_global_logger().with_component(Component::Transporter)` |
+| **CA Node** | `get_global_logger().with_component(Component::Keys)` |
+| **CA Server** | `get_global_logger().with_component(Component::Transporter)` |
+| **CA Client** | `get_global_logger().with_component(Component::Transporter)` |
+
+#### Logger Hierarchy
+```
+Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
+├── Keys Child Logger (Component::Keys) [inherits node_id]
+├── Transporter Child Logger (Component::Transporter) [inherits node_id]
+└── Any other child loggers created by components
+```
+
+#### Benefits
+- ✅ **Consistent node ID** across all components
+- ✅ **Proper hierarchical logging** with component context
+- ✅ **Parent-child relationship** maintained
+- ✅ **Single source of truth** for logger configuration
+- ✅ **Simplified FFI API** without logger parameters
+- ✅ **Thread-safe** global logger management
+
 ## Common Utilities
 - `rn_free(ptr, len)`
 - `rn_string_free(cstr)`
 - `rn_last_error(out_buf, out_len) -> i32`
-- `rn_set_log_level(level_i32)`
+- `rn_set_log_level(level_i32)` (DEPRECATED - use `rn_set_logger_level` instead)
+
+### Logger Management Functions (NEW)
+- `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger
+- `rn_set_logger_level(level_i32, err) -> i32` - Set global log level
+- `rn_get_logger_node_id(out_node_id, out_len, err) -> i32` - Get current node ID
 
 ---
 
@@ -111,7 +200,7 @@ if (state_loaded) {
 - `rn_keys_node_decrypt_with_profile(keys, envelope_cbor, len, profile_id_cstr, out_data_ptr, out_len, err) -> i32`
 
 ### CA Node – In-Process Authority
-- `rn_keys_ca_node_new(logger, out_ca_node, err) -> i32`
+- `rn_keys_ca_node_new(out_ca_node, err) -> i32` (LOGGER PARAMETER REMOVED - uses global logger)
 - `rn_keys_ca_node_free(ca_node)`
 - `rn_keys_ca_node_install_issuing_ca(ca_node, issuing_key_der, key_len, issuing_cert_der, cert_len, root_ca_der, root_len, ea_public_keys_cbor, ea_len, err) -> i32`
 - `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_public_keys_cbor, len, err) -> i32`
@@ -123,7 +212,7 @@ if (state_loaded) {
 - `rn_keys_ca_node_handle_crl(ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
 
 ### CA Server – QUIC Servers (Bootstrap + Authenticated)
-- `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, logger, out_server, err) -> i32`
+- `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, out_server, err) -> i32` (LOGGER PARAMETER REMOVED - uses global logger)
 - `rn_transport_ca_server_free(server)`
 - `rn_transport_ca_server_configure_admin_skis(server, admin_skis_cbor, len, err) -> i32`
 - `rn_transport_ca_server_start(server, err) -> i32`
@@ -132,7 +221,7 @@ if (state_loaded) {
 - `rn_transport_ca_server_get_authenticated_addr(server, out_cstr, err) -> i32`
 
 ### CA Client – QUIC Client
-- `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, logger, out_client, err) -> i32`
+- `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, out_client, err) -> i32` (LOGGER PARAMETER REMOVED - uses global logger)
   - config_cbor = CaClientConfigAll (CBOR):
     - bootstrap_server: String
     - authenticated_server: String
@@ -159,6 +248,13 @@ if (state_loaded) {
 - `RN_ERROR_CA_CLIENT_CONNECTION_FAILED`
 - `RN_ERROR_CERTIFICATE_VALIDATION_FAILED`
 - `RN_ERROR_PROFILE_KEY_NOT_FOUND`
+
+### Logger Error Codes (NEW)
+- `RN_ERROR_LOGGER_ALREADY_INITIALIZED` (1020)
+- `RN_ERROR_LOGGER_NODE_ID_ALREADY_SET` (1021)
+- `RN_ERROR_LOGGER_INVALID_NODE_ID` (1022)
+- `RN_ERROR_LOGGER_INVALID_LEVEL` (1023)
+- `RN_ERROR_BUFFER_TOO_SMALL` (1024)
 
 ---
 
@@ -188,14 +284,14 @@ All payloads denoted as CBOR must follow the same Rust-side structs used by tran
 
 ### Phase 2: CA Node and Server
 1) CA Node
-   - `rn_keys_ca_node_new(logger, &mut ca_node, &mut err)`
+   - `rn_keys_ca_node_new(&mut ca_node, &mut err)` (LOGGER PARAMETER REMOVED)
    - Prepare DER bytes for Issuing CA key/cert and Root CA cert (via Rust-side builder in test harness)
    - `rn_keys_ca_node_install_issuing_ca(ca_node, issuing_key_der, ..., issuing_cert_der, ..., root_ca_der, ..., ea_pubkeys_cbor, ..., &mut err)`
 2) Enrollment Authority
    - `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_pubkeys_cbor, len, &mut err)`
 3) QUIC Servers (bootstrap + authenticated)
    - Build CA server config CBOR: `{ bootstrap_bind: "127.0.0.1:0", authenticated_bind: "127.0.0.1:0", network_id: "test_network", rate_limit_per_minute: 5, rate_limit_per_hour: 30 }`
-   - `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, logger, &mut server, &mut err)`
+   - `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, &mut server, &mut err)` (LOGGER PARAMETER REMOVED)
    - `rn_transport_ca_server_start(server, &mut err)`
    - `rn_transport_ca_server_get_bootstrap_addr(server, &mut bootstrap_cstr, &mut err)`
    - `rn_transport_ca_server_get_authenticated_addr(server, &mut authenticated_cstr, &mut err)`
@@ -211,7 +307,7 @@ All payloads denoted as CBOR must follow the same Rust-side structs used by tran
      - bootstrap_server, authenticated_server, network_id, request_timeout_seconds, max_retries
      - root_ca_der (from Root CA)
      - issuing_ca_der (from Issuing CA)
-   - `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, logger, &mut client, &mut err)`
+   - `rn_transport_ca_client_new_with_config(config_cbor, len, node_keys, &mut client, &mut err)` (LOGGER PARAMETER REMOVED)
 5) Enroll
    - `rn_transport_ca_client_enroll(client, bootstrap_addr_cstr, enroll_req_cbor, len, &mut resp_ptr, &mut resp_len, &mut err)` -> CBOR `CsrEnrollResponse`
 6) Convert and Install Certificate
@@ -857,6 +953,13 @@ pub const RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED: i32 = 1014;
 pub const RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED: i32 = 1015;
 pub const RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED: i32 = 1016;
 pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
+
+// Logger error codes
+pub const RN_ERROR_LOGGER_ALREADY_INITIALIZED: i32 = 1020;
+pub const RN_ERROR_LOGGER_NODE_ID_ALREADY_SET: i32 = 1021;
+pub const RN_ERROR_LOGGER_INVALID_NODE_ID: i32 = 1022;
+pub const RN_ERROR_LOGGER_INVALID_LEVEL: i32 = 1023;
+pub const RN_ERROR_BUFFER_TOO_SMALL: i32 = 1024;
 ```
 
 ### 7. Data Structures for FFI
@@ -1108,8 +1211,44 @@ This design provides a comprehensive update to the FFI API that:
 5. Provides clear migration path for breaking changes
 6. Ensures security and proper error handling
 7. **Supports 100% of full_transport_e2e_test.rs functionality via FFI**
+8. **Implements global hierarchical logger system** (LOGGER REFACTOR)
 
 The implementation should follow the phased approach to minimize risk and ensure each component is properly tested before moving to the next phase.
+
+## Logger Refactor Summary
+
+### Changes Made
+1. **Removed logger parameters** from 3 FFI functions:
+   - `rn_keys_ca_node_new` - removed `logger: *mut c_void` parameter
+   - `rn_transport_ca_server_new` - removed `logger: *mut c_void` parameter  
+   - `rn_transport_ca_client_new_with_config` - removed `logger: *mut c_void` parameter
+
+2. **Added 3 new logger management functions**:
+   - `rn_set_logger_node_id(node_id_cstr, err) -> i32`
+   - `rn_set_logger_level(level_i32, err) -> i32`
+   - `rn_get_logger_node_id(out_node_id, out_len, err) -> i32`
+
+3. **Added 5 new error codes**:
+   - `RN_ERROR_LOGGER_ALREADY_INITIALIZED` (1020)
+   - `RN_ERROR_LOGGER_NODE_ID_ALREADY_SET` (1021)
+   - `RN_ERROR_LOGGER_INVALID_NODE_ID` (1022)
+   - `RN_ERROR_LOGGER_INVALID_LEVEL` (1023)
+   - `RN_ERROR_BUFFER_TOO_SMALL` (1024)
+
+4. **Updated internal logger usage** in 5 places:
+   - KeysInner: `get_global_logger().with_component(Component::Keys)`
+   - QuicTransport: `get_global_logger().with_component(Component::Transporter)`
+   - CA Node: `get_global_logger().with_component(Component::Keys)`
+   - CA Server: `get_global_logger().with_component(Component::Transporter)`
+   - CA Client: `get_global_logger().with_component(Component::Transporter)`
+
+### Implementation Benefits
+- ✅ **Simplified FFI API** - No logger parameters needed
+- ✅ **Consistent logging** - All components use same root logger
+- ✅ **Hierarchical structure** - Proper parent-child logger relationships
+- ✅ **Thread-safe** - Global logger management with OnceCell
+- ✅ **Easy configuration** - Set node ID and log level once
+- ✅ **Backward compatible** - Old `rn_set_log_level` still works (deprecated)
 
 ## Helper Functions, Test Data Creation, Async Handling, Negative and Performance Tests
 

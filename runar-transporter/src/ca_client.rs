@@ -286,7 +286,7 @@ impl CaClient {
                 println!("DEBUG: Root CA cert subject: {}", parsed_cert.1.subject());
             }
             if let Err(e) = root_store.add(CertificateDer::from(root_ca_cert.clone())) {
-                println!("DEBUG: Failed to add root CA cert to trust store: {:?}", e);
+                println!("DEBUG: Failed to add root CA cert to trust store: {e:?}");
                 log_warn!(
                     self.logger,
                     "Failed to add root CA certificate to root store: {e}"
@@ -306,10 +306,7 @@ impl CaClient {
                 issuing_ca_cert.len()
             );
             if let Err(e) = root_store.add(CertificateDer::from(issuing_ca_cert.clone())) {
-                println!(
-                    "DEBUG: Failed to add issuing CA cert to trust store: {:?}",
-                    e
-                );
+                println!("DEBUG: Failed to add issuing CA cert to trust store: {e:?}");
                 log_warn!(
                     self.logger,
                     "Failed to add issuing CA certificate to root store: {e}"
@@ -356,13 +353,13 @@ impl CaClient {
                         conn
                     }
                     Err(e) => {
-                        println!("DEBUG: Connection failed: {:?}", e);
+                        println!("DEBUG: Connection failed: {e:?}");
                         return Err(e.into());
                     }
                 }
             }
             Err(e) => {
-                println!("DEBUG: Failed to create connection future: {:?}", e);
+                println!("DEBUG: Failed to create connection future: {e:?}");
                 return Err(e.into());
             }
         };

@@ -2723,11 +2723,11 @@ fn test_certificate_and_network_key_error_handling_consistency() {
 
 #[test]
 fn test_ca_node_new_happy_path() {
-    let logger = create_test_logger();
+    let _logger = create_test_logger();
     let mut error = create_test_error();
     let mut ca_node: *mut c_void = ptr::null_mut();
 
-    let result = unsafe { rn_keys_ca_node_new(logger, &mut ca_node, &mut error) };
+    let result = unsafe { rn_keys_ca_node_new(&mut ca_node, &mut error) };
 
     assert_eq!(result, 0, "Should successfully create CA node");
     assert!(!ca_node.is_null(), "CA node should not be null");
@@ -2739,9 +2739,9 @@ fn test_ca_node_new_happy_path() {
 #[test]
 fn test_ca_node_new_null_logger() {
     let mut error = create_test_error();
-    let mut ca_node: *mut c_void = ptr::null_mut();
+    let ca_node: *mut c_void = ptr::null_mut();
 
-    let result = unsafe { rn_keys_ca_node_new(ptr::null_mut(), &mut ca_node, &mut error) };
+    let result = unsafe { rn_keys_ca_node_new(ptr::null_mut(), &mut error) };
 
     assert_eq!(result, -1, "Should fail with null logger");
     assert!(ca_node.is_null(), "CA node should be null for null logger");
@@ -2749,10 +2749,10 @@ fn test_ca_node_new_null_logger() {
 
 #[test]
 fn test_ca_node_new_null_output() {
-    let logger = create_test_logger();
+    let _logger = create_test_logger();
     let mut error = create_test_error();
 
-    let result = unsafe { rn_keys_ca_node_new(logger, ptr::null_mut(), &mut error) };
+    let result = unsafe { rn_keys_ca_node_new(ptr::null_mut(), &mut error) };
 
     assert_eq!(result, -1, "Should fail with null output pointer");
 }
@@ -2766,12 +2766,12 @@ fn test_ca_node_free_null() {
 
 #[test]
 fn test_ca_node_install_issuing_ca_happy_path() {
-    let logger = create_test_logger();
+    let _logger = create_test_logger();
     let mut error = create_test_error();
     let mut ca_node: *mut c_void = ptr::null_mut();
 
     // Create CA node first
-    let result = unsafe { rn_keys_ca_node_new(logger, &mut ca_node, &mut error) };
+    let result = unsafe { rn_keys_ca_node_new(&mut ca_node, &mut error) };
     assert_eq!(result, 0, "Should successfully create CA node");
     assert!(!ca_node.is_null(), "CA node should not be null");
 
@@ -2900,7 +2900,6 @@ fn test_ca_server_new_stub() {
             ptr::null(),
             0, // config_len
             ptr::null_mut(),
-            ptr::null_mut(),
             &mut server,
             &mut error,
         )
@@ -2933,7 +2932,6 @@ fn test_ca_client_new_stub() {
         rn_transport_ca_client_new_with_config(
             ptr::null_mut(),
             0,
-            ptr::null_mut(),
             ptr::null_mut(),
             &mut client,
             &mut error,

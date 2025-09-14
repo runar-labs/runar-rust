@@ -70,6 +70,16 @@
 
 #define RNAPIRN_ERROR_CRL_GENERATION_FAILED 1017
 
+#define RNAPIRN_ERROR_LOGGER_ALREADY_INITIALIZED 1020
+
+#define RNAPIRN_ERROR_LOGGER_NODE_ID_ALREADY_SET 1021
+
+#define RNAPIRN_ERROR_LOGGER_INVALID_NODE_ID 1022
+
+#define RNAPIRN_ERROR_LOGGER_INVALID_LEVEL 1023
+
+#define RNAPIRN_ERROR_BUFFER_TOO_SMALL 1024
+
 typedef struct RNAPIKeysInner RNAPIKeysInner;
 
 typedef struct RNAPITransportInner RNAPITransportInner;
@@ -149,6 +159,12 @@ int32_t rn_keys_set_local_node_info(void *keys, const uint8_t *node_info_cbor, s
 int32_t rn_last_error(char *out, size_t out_len);
 
 void rn_set_log_level(int32_t level);
+
+int32_t rn_set_logger_node_id(const char *node_id, struct RNAPIRnError *err);
+
+int32_t rn_set_logger_level(int32_t level, struct RNAPIRnError *err);
+
+int32_t rn_get_logger_node_id(char *out_node_id, size_t out_len, struct RNAPIRnError *err);
 
 int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RNAPIRnError *err);
 
@@ -498,7 +514,7 @@ int32_t rn_keys_node_generate_keys(void *keys, struct RNAPIRnError *err);
 /**
  * Create new CA Node (new API)
  */
-int32_t rn_keys_ca_node_new(void *logger, void **out_ca_node, struct RNAPIRnError *err);
+int32_t rn_keys_ca_node_new(void **out_ca_node, struct RNAPIRnError *err);
 
 /**
  * Free CA Node (new API)
@@ -739,7 +755,6 @@ int32_t rn_keys_certificate_get_serial(const uint8_t *cert,
 int32_t rn_transport_ca_server_new(const uint8_t *config,
                                    size_t _config_len,
                                    void *shared_ca_node,
-                                   void *logger,
                                    void **out_server,
                                    struct RNAPIRnError *err);
 
@@ -873,7 +888,6 @@ int32_t rn_keys_node_has_network_private_key(void *keys,
 int32_t rn_transport_ca_client_new_with_config(const uint8_t *config_cbor,
                                                size_t config_len,
                                                void *node_keys,
-                                               void *logger,
                                                void **out_client,
                                                struct RNAPIRnError *err);
 
