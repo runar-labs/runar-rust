@@ -17,7 +17,6 @@ use quinn::{
 use rand::{rngs::ThreadRng, Rng};
 use runar_common::{compact_ids::compact_id, logging::Logger, Component};
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
-use rustls::crypto::ring;
 use rustls::{crypto::CryptoProvider, ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
@@ -669,7 +668,7 @@ impl QuicTransport {
         .with_component(Component::Transporter);
 
         if CryptoProvider::get_default().is_none() {
-            ring::default_provider()
+            rustls::crypto::aws_lc_rs::default_provider()
                 .install_default()
                 .expect("Failed to install default crypto provider");
         }

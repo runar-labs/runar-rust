@@ -9,7 +9,7 @@
 
 use log::{debug, error, info, warn, Level};
 use once_cell::sync::OnceCell;
-use std::fmt::{self, Arguments, Display, Formatter};
+use std::fmt::Arguments;
 
 /// Predefined components for logging categorization
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -55,11 +55,8 @@ pub struct Logger {
     component: Component,
     /// context for the logger
     context: OnceCell<String>,
-    /// Parent component for hierarchical logging (if any)
-    parent_component: Option<Component>,
     /// Parent context for hierarchical logging (if any)
     parent_context: Option<String>,
-
     //pre computed prefixes for performance
     full_component_prefix: String,
 }
@@ -71,7 +68,6 @@ impl Logger {
         Self {
             component,
             context: OnceCell::new(),
-            parent_component: None,
             parent_context: None,
             full_component_prefix: component.as_str().to_string(),
         }
@@ -99,7 +95,6 @@ impl Logger {
         Self {
             component,
             context: OnceCell::new(),
-            parent_component: Some(self.component),
             parent_context: self.context.get().cloned(),
             full_component_prefix: format!("{} {}", self.component.as_str(), component.as_str()),
         }
