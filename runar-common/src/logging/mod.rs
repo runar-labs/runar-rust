@@ -76,7 +76,7 @@ impl Logger {
     pub fn set_context(&self, context: String) {
         let full_context_prefix: String;
         if let Some(parent_context) = self.parent_context.clone() {
-            full_context_prefix = format!("{} {}", parent_context, context)
+            full_context_prefix = format!("{parent_context} {context}")
         } else {
             full_context_prefix = context
         }
@@ -103,10 +103,8 @@ impl Logger {
     fn full_context_prefix(&self) -> Option<String> {
         if let Some(context) = self.context.get() {
             Some(context.clone())
-        } else if let Some(parent_context) = self.parent_context.clone() {
-            Some(parent_context)
         } else {
-            None
+            self.parent_context.clone()
         }
     }
 
@@ -134,9 +132,9 @@ impl Logger {
             let component_prefix = &self.full_component_prefix;
             let context_prefix = self.full_context_prefix();
             if let Some(context_prefix) = context_prefix {
-                debug!("[{} {}] {}", component_prefix, context_prefix, args);
+                debug!("[{component_prefix} {context_prefix}] {args}");
             } else {
-                debug!("[{}] {}", component_prefix, args);
+                debug!("[{component_prefix}] {args}");
             }
         }
     }
@@ -165,9 +163,9 @@ impl Logger {
             let component_prefix = &self.full_component_prefix;
             let context_prefix = self.full_context_prefix();
             if let Some(context_prefix) = context_prefix {
-                info!("[{} {}] {}", component_prefix, context_prefix, args);
+                info!("[{component_prefix} {context_prefix}] {args}");
             } else {
-                info!("[{}] {}", component_prefix, args);
+                info!("[{component_prefix}] {args}");
             }
         }
     }
@@ -178,9 +176,9 @@ impl Logger {
             let component_prefix = &self.full_component_prefix;
             let context_prefix = self.full_context_prefix();
             if let Some(context_prefix) = context_prefix {
-                info!("[{} {}] {}", component_prefix, context_prefix, msg);
+                info!("[{component_prefix} {context_prefix}] {msg}");
             } else {
-                info!("[{}] {}", component_prefix, msg);
+                info!("[{component_prefix}] {msg}");
             }
         }
     }
@@ -209,9 +207,9 @@ impl Logger {
             let component_prefix = &self.full_component_prefix;
             let context_prefix = self.full_context_prefix();
             if let Some(context_prefix) = context_prefix {
-                warn!("[{} {}] {}", component_prefix, context_prefix, args);
+                warn!("[{component_prefix} {context_prefix}] {args}");
             } else {
-                warn!("[{}] {}", component_prefix, args);
+                warn!("[{component_prefix}] {args}");
             }
         }
     }
@@ -240,9 +238,9 @@ impl Logger {
             let component_prefix = &self.full_component_prefix;
             let context_prefix = self.full_context_prefix();
             if let Some(context_prefix) = context_prefix {
-                error!("[{} {}] {}", component_prefix, context_prefix, args);
+                error!("[{component_prefix} {context_prefix}] {args}");
             } else {
-                error!("[{}] {}", component_prefix, args);
+                error!("[{component_prefix}] {args}");
             }
         }
     }
