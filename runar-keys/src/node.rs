@@ -151,7 +151,7 @@ impl NodeKeyManager {
         // Only set node_id if it's not already set (OnceCell will panic if already set)
         // We use std::panic::catch_unwind to safely check if node_id is already set
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.logger.set_node_id(node_public_key_str.clone());
+            self.logger.set_context(node_public_key_str.clone());
         }));
         if result.is_err() {
             // Node ID was already set, which is fine - we're idempotent

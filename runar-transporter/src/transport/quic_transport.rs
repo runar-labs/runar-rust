@@ -242,7 +242,7 @@ impl QuicTransportOptions {
 
     pub fn with_logger_from_node_id(mut self, node_id: String) -> Self {
         let logger = Arc::new(Logger::new_root(Component::Transporter));
-        logger.set_node_id(node_id);
+        logger.set_context(node_id);
         self.logger = Some(logger);
         self
     }

@@ -104,7 +104,6 @@ pub const RN_ERROR_LOGGER_ALREADY_INITIALIZED: i32 = 1020;
 pub const RN_ERROR_LOGGER_NODE_ID_ALREADY_SET: i32 = 1021;
 pub const RN_ERROR_LOGGER_INVALID_NODE_ID: i32 = 1022;
 pub const RN_ERROR_LOGGER_INVALID_LEVEL: i32 = 1023;
-pub const RN_ERROR_BUFFER_TOO_SMALL: i32 = 1024;
 
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
@@ -468,7 +467,7 @@ fn get_global_logger() -> Arc<Logger> {
 // Set node ID on root logger (subsequent calls have no effect)
 fn set_global_logger_node_id(node_id: String) -> Result<(), String> {
     let logger = get_global_logger();
-    logger.set_node_id(node_id);
+    logger.set_context(node_id);
     Ok(())
 }
 
@@ -509,41 +508,6 @@ pub extern "C" fn rn_set_logger_level(level: i32, err: *mut RnError) -> i32 {
 
     log::set_max_level(filter);
     0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_get_logger_node_id(
-    out_node_id: *mut c_char,
-    out_len: usize,
-    err: *mut RnError,
-) -> i32 {
-    if out_node_id.is_null() || out_len == 0 {
-        set_error(
-            err,
-            RN_ERROR_INVALID_ARGUMENT,
-            "Output buffer cannot be null or empty",
-        );
-        return RN_ERROR_INVALID_ARGUMENT;
-    }
-
-    let root_logger = get_global_logger();
-    let node_id = root_logger.node_id();
-    if node_id != "unknown" {
-        let bytes = node_id.as_bytes();
-        if bytes.len() >= out_len {
-            set_error(err, RN_ERROR_BUFFER_TOO_SMALL, "Output buffer too small");
-            return RN_ERROR_BUFFER_TOO_SMALL;
-        }
-
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_node_id as *mut u8, bytes.len());
-            *out_node_id.add(bytes.len()) = 0; // Null terminate
-        }
-        0
-    } else {
-        set_error(err, RN_ERROR_NOT_INITIALIZED, "Node ID not set");
-        RN_ERROR_NOT_INITIALIZED
-    }
 }
 
 fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool {

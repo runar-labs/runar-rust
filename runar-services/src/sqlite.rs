@@ -865,7 +865,7 @@ impl AbstractService for SqliteService {
                                             table: table_name.clone(),
                                             data: query_arc_value.clone(),
                                             timestamp: SystemTime::now(),
-                                            origin_node_id: req_ctx.logger.node_id().to_string(),
+                                            origin_node_id: "TODO".to_string(), //TODO add metadata which contain the remote node id to the context
                                             origin_seq: service_clone
                                                 .next_origin_seq(&table_name)
                                                 .await

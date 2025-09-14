@@ -234,7 +234,7 @@ async fn test_certificate_validation_edge_cases() -> Result<()> {
     println!("🧪 Testing certificate validation edge cases");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let node_logger = create_test_logger();
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let mut node_keys = NodeKeyManager::new(node_logger)?;
@@ -292,7 +292,7 @@ async fn test_multiple_network_scenario() -> Result<()> {
     println!("🌐 Testing multiple network scenario");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
 
     // Create multiple nodes
@@ -367,7 +367,7 @@ async fn test_certificate_performance() -> Result<()> {
     // Measure mobile CA creation
     let ca_start = std::time::Instant::now();
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let ca_duration = ca_start.elapsed();
 
@@ -422,7 +422,7 @@ async fn test_enhanced_key_management() -> Result<()> {
     println!("🔐 Testing enhanced key management features");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let node_logger = create_test_logger();
 
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
@@ -655,7 +655,7 @@ async fn test_encryption_network_keys_empty_profile_keys() -> Result<()> {
     println!("🔒 Testing encryption with network keys + empty profile keys array");
 
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let node_logger = create_test_logger();
 
     let mut mobile = MobileKeyManager::new(mobile_logger)?;

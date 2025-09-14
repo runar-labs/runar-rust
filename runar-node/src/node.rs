@@ -649,7 +649,7 @@ impl Node {
             return Err(anyhow::anyhow!("Node public key not available"));
         };
         let node_id = compact_id(&node_public_key);
-        logger.set_node_id(node_id.clone());
+        logger.set_context(node_id.clone());
 
         log_info!(logger, "Successfully loaded existing node credentials.");
 

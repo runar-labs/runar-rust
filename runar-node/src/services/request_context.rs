@@ -16,7 +16,7 @@ use crate::services::service_registry::EventHandler;
 use crate::services::{EventRegistrationOptions, OnOptions, PublishOptions};
 use crate::services::{NodeDelegate, RequestOptions};
 use anyhow::Result;
-use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_serializer::arc_value::AsArcValue;
@@ -106,17 +106,13 @@ impl RequestContext {
     pub fn new(topic_path: &TopicPath, node_delegate: Arc<Node>, logger: Arc<Logger>) -> Self {
         // Add action path to logger if available from topic_path
         let action_path = topic_path.action_path();
-        let action_logger = if !action_path.is_empty() {
-            // If there's an action path, add it to the logger
-            Arc::new(logger.with_action_path(action_path))
-        } else {
-            logger
-        };
+        let action_logger = logger.with_component(Component::Action);
+        action_logger.set_context(action_path);
 
         Self {
             topic_path: topic_path.clone(),
             metadata: None,
-            logger: action_logger,
+            logger: Arc::new(action_logger),
             node_delegate,
             path_params: HashMap::new(),
             user_profile_public_keys: vec![],
@@ -369,24 +365,4 @@ impl RequestContext {
 
     // Convenience subscribe without options removed to unify API
     // subscribe without options removed to unify API
-}
-
-impl LoggingContext for RequestContext {
-    fn component(&self) -> Component {
-        Component::Service
-    }
-
-    fn service_path(&self) -> Option<&str> {
-        let path = self.topic_path.service_path();
-        Some(Box::leak(path.into_boxed_str()))
-    }
-
-    fn action_path(&self) -> Option<&str> {
-        let path = self.topic_path.action_path();
-        Some(Box::leak(path.into_boxed_str()))
-    }
-
-    fn logger(&self) -> &Logger {
-        &self.logger
-    }
 }

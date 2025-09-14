@@ -34,7 +34,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 
     // 1 - (mobile side) - generate user master key
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let mut mobile_keys_manager = MobileKeyManager::new(mobile_logger)?;
 
     // Generate user root agreement public key for ECIES
@@ -505,7 +505,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
         bincode::deserialize(&serialized_mobile_state).expect("Failed to deserialize mobile state");
 
     let mobile_logger_hydrated = create_test_logger();
-    mobile_logger_hydrated.set_node_id("mobile".to_string());
+    mobile_logger_hydrated.set_context("mobile".to_string());
     let mut mobile_hydrated = runar_keys::mobile::MobileKeyManager::from_state(
         deserialized_mobile_state,
         mobile_logger_hydrated,
@@ -815,7 +815,7 @@ async fn test_e2e_keys_generation_and_exchange() -> Result<()> {
 #[tokio::test]
 async fn test_negative_csr_cn_mismatch_rejected() -> Result<()> {
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let node_logger = create_test_logger();
     let mut node_keys = NodeKeyManager::new(node_logger)?;
@@ -836,7 +836,7 @@ async fn test_negative_csr_cn_mismatch_rejected() -> Result<()> {
 #[tokio::test]
 async fn test_negative_tampered_csr_signature_rejected() -> Result<()> {
     let mobile_logger = create_test_logger();
-    mobile_logger.set_node_id("mobile".to_string());
+    mobile_logger.set_context("mobile".to_string());
     let mut mobile = MobileKeyManager::new(mobile_logger)?;
     let node_logger = create_test_logger();
     let mut node_keys = NodeKeyManager::new(node_logger)?;

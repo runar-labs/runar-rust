@@ -30,7 +30,7 @@ pub mod service_registry;
 use crate::node::Node; // Added for concrete type Node
 use crate::services::service_registry::{EventHandler, RemoteEventHandler};
 use anyhow::{anyhow, Result};
-use runar_common::logging::{Component, Logger, LoggingContext};
+use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
 use runar_macros_common::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, FieldSchema};
@@ -378,20 +378,6 @@ impl LifecycleContext {
     /// Unsubscribe from a subscription by ID
     pub async fn unsubscribe(&self, subscription_id: &str) -> Result<()> {
         self.node_delegate.unsubscribe(subscription_id).await
-    }
-}
-
-impl LoggingContext for LifecycleContext {
-    fn component(&self) -> Component {
-        Component::Service
-    }
-
-    fn service_path(&self) -> Option<&str> {
-        Some(&self.service_path)
-    }
-
-    fn logger(&self) -> &Logger {
-        &self.logger
     }
 }
 

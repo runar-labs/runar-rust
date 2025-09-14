@@ -88,7 +88,6 @@ if (state_loaded) {
 ### Logger Management Functions
 - `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger (can be called before/after logger creation)
 - `rn_set_logger_level(level_i32, err) -> i32` - Set global log level (can be called at any time)
-- `rn_get_logger_node_id(out_node_id, out_len, err) -> i32` - Get current node ID from root logger
 
 ### Functions Updated (Logger Parameters Removed)
 **The following functions previously had `logger: *mut c_void` parameters that have been removed:**
@@ -168,7 +167,6 @@ Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
 ### Logger Management Functions (NEW)
 - `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger
 - `rn_set_logger_level(level_i32, err) -> i32` - Set global log level
-- `rn_get_logger_node_id(out_node_id, out_len, err) -> i32` - Get current node ID
 
 ---
 
@@ -254,7 +252,6 @@ Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
 - `RN_ERROR_LOGGER_NODE_ID_ALREADY_SET` (1021)
 - `RN_ERROR_LOGGER_INVALID_NODE_ID` (1022)
 - `RN_ERROR_LOGGER_INVALID_LEVEL` (1023)
-- `RN_ERROR_BUFFER_TOO_SMALL` (1024)
 
 ---
 
@@ -959,7 +956,6 @@ pub const RN_ERROR_LOGGER_ALREADY_INITIALIZED: i32 = 1020;
 pub const RN_ERROR_LOGGER_NODE_ID_ALREADY_SET: i32 = 1021;
 pub const RN_ERROR_LOGGER_INVALID_NODE_ID: i32 = 1022;
 pub const RN_ERROR_LOGGER_INVALID_LEVEL: i32 = 1023;
-pub const RN_ERROR_BUFFER_TOO_SMALL: i32 = 1024;
 ```
 
 ### 7. Data Structures for FFI
@@ -1223,17 +1219,15 @@ The implementation should follow the phased approach to minimize risk and ensure
    - `rn_transport_ca_server_new` - removed `logger: *mut c_void` parameter  
    - `rn_transport_ca_client_new_with_config` - removed `logger: *mut c_void` parameter
 
-2. **Added 3 new logger management functions**:
+2. **Added 2 new logger management functions**:
    - `rn_set_logger_node_id(node_id_cstr, err) -> i32`
    - `rn_set_logger_level(level_i32, err) -> i32`
-   - `rn_get_logger_node_id(out_node_id, out_len, err) -> i32`
 
-3. **Added 5 new error codes**:
+3. **Added 4 new error codes**:
    - `RN_ERROR_LOGGER_ALREADY_INITIALIZED` (1020)
    - `RN_ERROR_LOGGER_NODE_ID_ALREADY_SET` (1021)
    - `RN_ERROR_LOGGER_INVALID_NODE_ID` (1022)
    - `RN_ERROR_LOGGER_INVALID_LEVEL` (1023)
-   - `RN_ERROR_BUFFER_TOO_SMALL` (1024)
 
 4. **Updated internal logger usage** in 5 places:
    - KeysInner: `get_global_logger().with_component(Component::Keys)`

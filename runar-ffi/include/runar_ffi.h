@@ -78,8 +78,6 @@
 
 #define RNAPIRN_ERROR_LOGGER_INVALID_LEVEL 1023
 
-#define RNAPIRN_ERROR_BUFFER_TOO_SMALL 1024
-
 typedef struct RNAPIKeysInner RNAPIKeysInner;
 
 typedef struct RNAPITransportInner RNAPITransportInner;
@@ -163,8 +161,6 @@ void rn_set_log_level(int32_t level);
 int32_t rn_set_logger_node_id(const char *node_id, struct RNAPIRnError *err);
 
 int32_t rn_set_logger_level(int32_t level, struct RNAPIRnError *err);
-
-int32_t rn_get_logger_node_id(char *out_node_id, size_t out_len, struct RNAPIRnError *err);
 
 int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RNAPIRnError *err);
 
