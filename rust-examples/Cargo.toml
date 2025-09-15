@@ -20,6 +20,7 @@ runar_services = { path = "../runar-services" }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_cbor = "0.11"
 async-trait = "0.1"
 bincode = "1.3"
 uuid = { version = "1.0", features = ["v4"] }
@@ -48,4 +49,12 @@ path = "validate_typescript_vectors.rs"
 [[example]]
 name = "label_resolver_example"
 path = "label_resolver_example.rs"
+
+[[example]]
+name = "ffi_types_vectors"
+path = "ffi_types_vectors.rs"
+
+[[example]]
+name = "validate_ffi_vectors"
+path = "validate_ffi_vectors.rs"
 

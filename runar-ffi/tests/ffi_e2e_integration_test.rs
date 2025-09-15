@@ -71,7 +71,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     use runar_common::logging::{Component, LogLevel, Logger, LoggingConfig};
     use std::sync::Arc;
 
-    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Debug);
+    let logging_config = LoggingConfig::new().with_default_level(LogLevel::Trace);
     logging_config.apply();
 
     // Initialize rustls crypto provider
