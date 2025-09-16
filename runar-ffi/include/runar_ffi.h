@@ -70,14 +70,6 @@
 
 #define RNAPIRN_ERROR_CRL_GENERATION_FAILED 1017
 
-#define RNAPIRN_ERROR_LOGGER_ALREADY_INITIALIZED 1020
-
-#define RNAPIRN_ERROR_LOGGER_NODE_ID_ALREADY_SET 1021
-
-#define RNAPIRN_ERROR_LOGGER_INVALID_NODE_ID 1022
-
-#define RNAPIRN_ERROR_LOGGER_INVALID_LEVEL 1023
-
 typedef struct RNAPIKeysInner RNAPIKeysInner;
 
 typedef struct RNAPITransportInner RNAPITransportInner;
@@ -159,8 +151,6 @@ int32_t rn_last_error(char *out, size_t out_len);
 void rn_set_log_level(int32_t level);
 
 int32_t rn_set_logger_node_id(const char *node_id, struct RNAPIRnError *err);
-
-int32_t rn_set_logger_level(int32_t level, struct RNAPIRnError *err);
 
 int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RNAPIRnError *err);
 

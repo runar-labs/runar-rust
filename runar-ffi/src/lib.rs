@@ -10,7 +10,7 @@ use std::{
 use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
 use runar_keys::keystore;
-use runar_logging::{Component, Logger};
+use runar_logging::{log_debug, log_error, log_trace, Component, LogLevel, Logger, LoggingConfig};
 
 use runar_keys::{
     ca_node::CANode,
@@ -99,12 +99,6 @@ pub const RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED: i32 = 1014;
 pub const RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED: i32 = 1015;
 pub const RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED: i32 = 1016;
 pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
-
-// Logger error codes
-pub const RN_ERROR_LOGGER_ALREADY_INITIALIZED: i32 = 1020;
-pub const RN_ERROR_LOGGER_NODE_ID_ALREADY_SET: i32 = 1021;
-pub const RN_ERROR_LOGGER_INVALID_NODE_ID: i32 = 1022;
-pub const RN_ERROR_LOGGER_INVALID_LEVEL: i32 = 1023;
 
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
@@ -444,15 +438,18 @@ pub unsafe extern "C" fn rn_last_error(out: *mut c_char, out_len: usize) -> i32 
 
 #[no_mangle]
 pub extern "C" fn rn_set_log_level(level: i32) {
-    let filter = match level {
-        0 => log::LevelFilter::Off,
-        1 => log::LevelFilter::Error,
-        2 => log::LevelFilter::Warn,
-        3 => log::LevelFilter::Info,
-        4 => log::LevelFilter::Debug,
-        _ => log::LevelFilter::Info,
+    let log_level = match level {
+        0 => LogLevel::Off,
+        1 => LogLevel::Error,
+        2 => LogLevel::Warn,
+        3 => LogLevel::Info,
+        4 => LogLevel::Debug,
+        5 => LogLevel::Trace,
+        _ => LogLevel::Info,
     };
-    log::set_max_level(filter);
+
+    let logging_config = LoggingConfig::new().with_default_level(log_level);
+    logging_config.apply();
 }
 
 // Global logger management
@@ -490,25 +487,6 @@ pub unsafe extern "C" fn rn_set_logger_node_id(node_id: *const c_char, err: *mut
 
     let _ = set_global_logger_node_id(node_id_string);
     0 // Always succeeds (subsequent calls have no effect)
-}
-
-#[no_mangle]
-pub extern "C" fn rn_set_logger_level(level: i32, err: *mut RnError) -> i32 {
-    let filter = match level {
-        0 => log::LevelFilter::Off,
-        1 => log::LevelFilter::Error,
-        2 => log::LevelFilter::Warn,
-        3 => log::LevelFilter::Info,
-        4 => log::LevelFilter::Debug,
-        5 => log::LevelFilter::Trace,
-        _ => {
-            set_error(err, RN_ERROR_LOGGER_INVALID_LEVEL, "Invalid log level");
-            return RN_ERROR_LOGGER_INVALID_LEVEL;
-        }
-    };
-
-    log::set_max_level(filter);
-    0
 }
 
 fn alloc_string(out_ptr: *mut *mut c_char, out_len: *mut usize, s: &str) -> bool {
@@ -3691,19 +3669,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
                             if n >= 0 {
                                 options = options.with_max_request_retries(n as u32);
                             }
-                        }
-                    }
-                    "log_level" => {
-                        if let serde_cbor::Value::Integer(lvl) = v {
-                            let lf = match lvl {
-                                0 => log::LevelFilter::Off,
-                                1 => log::LevelFilter::Error,
-                                2 => log::LevelFilter::Warn,
-                                3 => log::LevelFilter::Info,
-                                4 => log::LevelFilter::Debug,
-                                _ => log::LevelFilter::Info,
-                            };
-                            log::set_max_level(lf);
                         }
                     }
                     // Inline certs (discouraged in production; for testing)
@@ -7608,6 +7573,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
 
     let wrapper = &*(client as *const CaClientWrapper);
     let client = &wrapper.client;
+    let logger = &wrapper.logger;
 
     // Parse bootstrap address
     let _bootstrap_addr_str = match std::ffi::CStr::from_ptr(bootstrap_addr).to_str() {
@@ -7623,16 +7589,22 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
     };
 
     // Parse the enrollment request
-    log::trace!("FFI enroll - parsing enrollment request ({request_len} bytes)");
+    log_trace!(
+        logger,
+        "FFI enroll - parsing enrollment request ({request_len} bytes)"
+    );
     let request_data = std::slice::from_raw_parts(request, request_len);
     let enroll_request = match serde_cbor::from_slice::<CsrEnrollRequest>(request_data) {
         Ok(req) => {
-            log::trace!("FFI enroll - request parsed successfully: network_id={}, csr_size={} bytes, token_id={}", 
+            log_trace!(logger, "FFI enroll - request parsed successfully: network_id={}, csr_size={} bytes, token_id={}", 
                 req.network_id, req.csr_der.len(), req.enrollment_token.body.token_id);
             req
         }
         Err(e) => {
-            log::error!("FFI enroll - failed to parse enrollment request: {e}");
+            log_error!(
+                logger,
+                "FFI enroll - failed to parse enrollment request: {e}"
+            );
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -7644,39 +7616,52 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
 
     // Perform enrollment (using configured bootstrap address from client config)
     let bootstrap_addr_from_config = wrapper.config.bootstrap_server;
-    log::debug!("FFI enroll - using bootstrap address from config: {bootstrap_addr_from_config}");
-    log::trace!("FFI enroll - bootstrap_addr parameter (ignored): {_bootstrap_addr_str}");
+    log_debug!(
+        logger,
+        "FFI enroll - using bootstrap address from config: {bootstrap_addr_from_config}"
+    );
+    log_trace!(
+        logger,
+        "FFI enroll - bootstrap_addr parameter (ignored): {_bootstrap_addr_str}"
+    );
 
-    log::trace!("FFI enroll - client configuration: root_ca_cert={} bytes, issuing_ca_cert={} bytes, node_key_manager={}, network_id={}, request_timeout={:?}, max_retries={}",
+    log_trace!(logger, "FFI enroll - client configuration: root_ca_cert={} bytes, issuing_ca_cert={} bytes, node_key_manager={}, network_id={}, request_timeout={:?}, max_retries={}",
         wrapper.root_ca_cert.len(), wrapper.issuing_ca_cert.len(), wrapper.node_key_manager.is_some(),
         wrapper.config.network_id, wrapper.config.request_timeout, wrapper.config.max_retries);
 
-    log::trace!("FFI enroll - starting enrollment call with config: bootstrap={}, authenticated={}, network_id={}",
+    log_trace!(logger, "FFI enroll - starting enrollment call with config: bootstrap={}, authenticated={}, network_id={}",
         wrapper.config.bootstrap_server, wrapper.config.authenticated_server, wrapper.config.network_id);
 
     // Add a small delay to ensure server is ready
-    log::trace!("FFI enroll - adding small delay to ensure server readiness");
+    log_trace!(
+        logger,
+        "FFI enroll - adding small delay to ensure server readiness"
+    );
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    log::trace!("FFI enroll - calling client.enroll()...");
+    log_trace!(logger, "FFI enroll - calling client.enroll()...");
     match runtime().block_on(client.enroll(enroll_request)) {
         Ok(response) => {
-            log::debug!("FFI enroll - enrollment successful, serializing response");
+            log_debug!(
+                logger,
+                "FFI enroll - enrollment successful, serializing response"
+            );
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
                     let response_len = response_data.len();
-                    log::debug!(
+                    log_debug!(
+                        logger,
                         "FFI enroll - response serialized successfully ({response_len} bytes)"
                     );
                     let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
                     *out_len = response_len;
-                    log::trace!("FFI enroll - enrollment completed successfully");
+                    log_trace!(logger, "FFI enroll - enrollment completed successfully");
                     0
                 }
                 Err(e) => {
-                    log::error!("FFI enroll - failed to serialize response: {e}");
+                    log_error!(logger, "FFI enroll - failed to serialize response: {e}");
                     set_error(
                         err,
                         RN_ERROR_OPERATION_FAILED,
@@ -7687,7 +7672,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
             }
         }
         Err(e) => {
-            log::error!("FFI enroll - enrollment failed: {e:?}");
+            log_error!(logger, "FFI enroll - enrollment failed: {e:?}");
             let mut error_chain = String::new();
             let mut source = e.source();
             let mut level = 0;
@@ -7697,7 +7682,8 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
                 level += 1;
             }
             if !error_chain.is_empty() {
-                log::debug!(
+                log_debug!(
+                    logger,
                     "FFI enroll - error chain: {}",
                     error_chain.trim_end_matches("; ")
                 );
