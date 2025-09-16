@@ -2,8 +2,8 @@ use crate::replication::{ReplicationConfig, ReplicationManager};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use hex::encode;
-use runar_common::logging::Logger;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use runar_node::services::{EventContext, LifecycleContext, RequestContext, ServiceFuture};
 use runar_node::AbstractService;
 use runar_serializer::{ArcValue, Plain};
@@ -872,7 +872,7 @@ impl AbstractService for SqliteService {
                                             table: table_name.clone(),
                                             data: query_arc_value.clone(),
                                             timestamp: SystemTime::now(),
-                                            origin_node_id: origin_node_id,
+                                            origin_node_id,
                                             origin_seq: service_clone
                                                 .next_origin_seq(&table_name)
                                                 .await

@@ -68,7 +68,7 @@ fn validate_certificate_chain(root_ca_der: &[u8], issuing_ca_der: &[u8]) {
 #[test]
 fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Error>> {
     // Set up logging exactly like the working test
-    use runar_common::logging::{Component, LogLevel, Logger, LoggingConfig};
+    use runar_logging::{Component, LogLevel, Logger, LoggingConfig};
     use std::sync::Arc;
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Trace);

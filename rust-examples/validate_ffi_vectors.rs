@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use runar_keys::ca_node_types::{CaErrorResponse, CsrEnrollRequest, CsrEnrollResponse};
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 

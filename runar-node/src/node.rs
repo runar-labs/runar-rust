@@ -7,11 +7,11 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
 use runar_common::routing::{PathTrie, TopicPath};
 use runar_keys::{
     mobile::EnvelopeEncryptedData, EnvelopeCrypto, NodeKeyManager, Result as KeyResult,
 };
+use runar_logging::{Component, Logger};
 
 use runar_schemas::{ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata};
 use runar_serializer::arc_value::AsArcValue;
@@ -40,7 +40,7 @@ use tokio::{
 use uuid::Uuid;
 
 use dashmap::DashMap;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock as StdRwLock;
@@ -80,7 +80,7 @@ pub(crate) type NodeDiscoveryList = Vec<Arc<dyn NodeDiscovery>>;
 // Type alias for service tasks to reduce complexity
 type ServiceTask = (TopicPath, JoinHandle<()>);
 // Certificate and PrivateKey types are now imported via the cert_utils module
-use runar_common::logging::LoggingConfig;
+use runar_logging::LoggingConfig;
 
 use crate::services::keys_service::KeysService;
 use crate::services::load_balancing::{LoadBalancingStrategy, RoundRobinLoadBalancer};
@@ -203,8 +203,7 @@ impl NodeConfig {
     /// use runar_node::NodeConfig;
     /// use std::sync::{Arc, RwLock};
     /// use runar_keys::NodeKeyManager;
-    /// use runar_common::logging::Logger;
-    /// use runar_common::logging::Component;
+    /// use runar_logging::{Logger, Component};
     ///
     /// // Basic configuration
     /// let config = NodeConfig::new("my-node");
@@ -300,7 +299,7 @@ impl NodeConfig {
     ///
     /// ```rust
     /// use runar_node::NodeConfig;
-    /// use runar_common::logging::LoggingConfig;
+    /// use runar_logging::LoggingConfig;
     ///
     /// let config = NodeConfig::new("my-node")
     ///     .with_logging_config(LoggingConfig::default_info());
@@ -374,8 +373,7 @@ impl NodeConfig {
     /// use runar_node::NodeConfig;
     /// use std::sync::{Arc, RwLock};
     /// use runar_keys::NodeKeyManager;
-    /// use runar_common::logging::Logger;
-    /// use runar_common::logging::Component;
+    /// use runar_logging::{Logger, Component};
     ///
     /// let logger = Arc::new(Logger::new_root(Component::Keys));
     /// let node_keys_manager = NodeKeyManager::new(logger).expect("Failed to create key manager");

@@ -211,7 +211,7 @@ fn generate_csr_enroll_request_vectors(out: &Path) -> Result<()> {
     let different_csr_request = CsrEnrollRequest {
         network_id: "test_network".to_string(),
         csr_der: vec![8; 256], // 256-byte CSR
-        enrollment_token: enrollment_token,
+        enrollment_token,
     };
 
     write_cbor_vector(
@@ -317,7 +317,7 @@ fn generate_ca_client_config_all_vectors(out: &Path) -> Result<()> {
 
 fn write_cbor_vector<T: Serialize>(out: &Path, filename: &str, data: &T) -> Result<()> {
     let cbor_data =
-        serde_cbor::to_vec(data).context(format!("Failed to serialize {} to CBOR", filename))?;
+        serde_cbor::to_vec(data).context(format!("Failed to serialize {filename} to CBOR"))?;
 
     let mut path = out.to_path_buf();
     path.push(filename);

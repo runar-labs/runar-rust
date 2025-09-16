@@ -9,8 +9,8 @@ use std::{
 
 use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
-use runar_common::logging::{Component, Logger};
 use runar_keys::keystore;
+use runar_logging::{Component, Logger};
 
 use runar_keys::{
     ca_node::CANode,
@@ -7623,10 +7623,16 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
     };
 
     // Parse the enrollment request
+    log::trace!("FFI enroll - parsing enrollment request ({request_len} bytes)");
     let request_data = std::slice::from_raw_parts(request, request_len);
     let enroll_request = match serde_cbor::from_slice::<CsrEnrollRequest>(request_data) {
-        Ok(req) => req,
+        Ok(req) => {
+            log::trace!("FFI enroll - request parsed successfully: network_id={}, csr_size={} bytes, token_id={}", 
+                req.network_id, req.csr_der.len(), req.enrollment_token.body.token_id);
+            req
+        }
         Err(e) => {
+            log::error!("FFI enroll - failed to parse enrollment request: {e}");
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -7638,63 +7644,39 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
 
     // Perform enrollment (using configured bootstrap address from client config)
     let bootstrap_addr_from_config = wrapper.config.bootstrap_server;
-    println!(
-        "DEBUG: FFI enroll - using bootstrap address from config: {bootstrap_addr_from_config}",
-    );
-    println!("DEBUG: FFI enroll - bootstrap_addr parameter (ignored): {_bootstrap_addr_str}",);
-    println!(
-        "DEBUG: FFI enroll - client has root CA cert: {} bytes",
-        wrapper.root_ca_cert.len()
-    );
-    println!(
-        "DEBUG: FFI enroll - client has issuing CA cert: {} bytes",
-        wrapper.issuing_ca_cert.len()
-    );
-    println!(
-        "DEBUG: FFI enroll - client has node key manager: {}",
-        wrapper.node_key_manager.is_some()
-    );
-    println!(
-        "DEBUG: FFI enroll - network_id: {}",
-        wrapper.config.network_id
-    );
-    println!(
-        "DEBUG: FFI enroll - request_timeout: {:?}",
-        wrapper.config.request_timeout
-    );
-    println!(
-        "DEBUG: FFI enroll - max_retries: {}",
-        wrapper.config.max_retries
-    );
+    log::debug!("FFI enroll - using bootstrap address from config: {bootstrap_addr_from_config}");
+    log::trace!("FFI enroll - bootstrap_addr parameter (ignored): {_bootstrap_addr_str}");
 
-    println!("DEBUG: Starting enrollment call...");
-    println!(
-        "DEBUG: FFI enroll - client config: bootstrap={}, authenticated={}, network_id={}",
-        wrapper.config.bootstrap_server,
-        wrapper.config.authenticated_server,
-        wrapper.config.network_id
-    );
-    println!(
-        "DEBUG: FFI enroll - request timeout: {:?}, max_retries: {}",
-        wrapper.config.request_timeout, wrapper.config.max_retries
-    );
+    log::trace!("FFI enroll - client configuration: root_ca_cert={} bytes, issuing_ca_cert={} bytes, node_key_manager={}, network_id={}, request_timeout={:?}, max_retries={}",
+        wrapper.root_ca_cert.len(), wrapper.issuing_ca_cert.len(), wrapper.node_key_manager.is_some(),
+        wrapper.config.network_id, wrapper.config.request_timeout, wrapper.config.max_retries);
+
+    log::trace!("FFI enroll - starting enrollment call with config: bootstrap={}, authenticated={}, network_id={}",
+        wrapper.config.bootstrap_server, wrapper.config.authenticated_server, wrapper.config.network_id);
 
     // Add a small delay to ensure server is ready
+    log::trace!("FFI enroll - adding small delay to ensure server readiness");
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    println!("DEBUG: FFI enroll - calling client.enroll()...");
+    log::trace!("FFI enroll - calling client.enroll()...");
     match runtime().block_on(client.enroll(enroll_request)) {
         Ok(response) => {
+            log::debug!("FFI enroll - enrollment successful, serializing response");
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
                     let response_len = response_data.len();
+                    log::debug!(
+                        "FFI enroll - response serialized successfully ({response_len} bytes)"
+                    );
                     let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
                     *out_len = response_len;
+                    log::trace!("FFI enroll - enrollment completed successfully");
                     0
                 }
                 Err(e) => {
+                    log::error!("FFI enroll - failed to serialize response: {e}");
                     set_error(
                         err,
                         RN_ERROR_OPERATION_FAILED,
@@ -7705,14 +7687,20 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
             }
         }
         Err(e) => {
-            println!("DEBUG: Enrollment error details: {e:?}");
-            println!("DEBUG: Enrollment error chain:");
+            log::error!("FFI enroll - enrollment failed: {e:?}");
+            let mut error_chain = String::new();
             let mut source = e.source();
             let mut level = 0;
             while let Some(err) = source {
-                println!("DEBUG: Level {level}: {err}");
+                error_chain.push_str(&format!("level {level}: {err}; "));
                 source = err.source();
                 level += 1;
+            }
+            if !error_chain.is_empty() {
+                log::debug!(
+                    "FFI enroll - error chain: {}",
+                    error_chain.trim_end_matches("; ")
+                );
             }
             set_error(
                 err,

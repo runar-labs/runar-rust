@@ -13,14 +13,12 @@
 use anyhow::{Context, Result};
 
 use runar_cli::{InitCommand, NodeConfig};
-use runar_common::{
-    compact_ids::compact_id,
-    logging::{Component, Logger},
-};
+use runar_common::compact_ids::compact_id;
 use runar_keys::{
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     NodeKeyManager,
 };
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;

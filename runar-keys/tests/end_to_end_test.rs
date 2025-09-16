@@ -6,15 +6,13 @@
 //! end-to-end flow and test the whole system by bypassing the network part
 //! and dealing with the internal components directly.
 
-use runar_common::{
-    compact_ids::compact_id,
-    logging::{Component, Logger},
-};
+use runar_common::compact_ids::compact_id;
 use runar_keys::{
     error::Result,
     mobile::{MobileKeyManager, NodeCertificateMessage, SetupToken},
     node::{CertificateStatus, NodeKeyManager},
 };
+use runar_logging::{Component, Logger};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::sync::Arc;
 use x509_parser::prelude::FromDer;

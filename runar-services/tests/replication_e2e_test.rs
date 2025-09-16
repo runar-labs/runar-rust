@@ -1,6 +1,6 @@
 use anyhow::Result;
-use runar_common::logging::{Component, Logger};
-use runar_common::logging::{LogLevel, LoggingConfig};
+use runar_logging::{Component, Logger};
+use runar_logging::{LogLevel, LoggingConfig};
 use runar_node::Node;
 use runar_serializer::ArcValue;
 use runar_services::{

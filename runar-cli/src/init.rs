@@ -10,10 +10,10 @@ use anyhow::{Context, Result};
 use hex::encode;
 use qrcode::{render::unicode::Dense1x2, QrCode};
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
 use runar_keys::mobile::{NetworkKeyMessage, NodeCertificateMessage, SetupToken};
 use runar_keys::node::{CertificateStatus, NodeKeyManager};
-use runar_macros_common::{log_debug, log_info};
+use runar_logging::{log_debug, log_info};
+use runar_logging::{Component, Logger};
 
 use serde_cbor::to_vec;
 use std::path::PathBuf;

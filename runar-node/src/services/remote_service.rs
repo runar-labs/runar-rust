@@ -13,9 +13,9 @@ use uuid::Uuid;
 use crate::services::abstract_service::AbstractService;
 
 use crate::services::{ActionHandler, LifecycleContext, RemoteLifecycleContext};
-use runar_common::logging::Logger;
 use runar_common::routing::TopicPath;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use runar_schemas::{ActionMetadata, ServiceMetadata};
 use runar_serializer::{
     traits::{LabelResolverConfig, ResolverCache},

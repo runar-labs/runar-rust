@@ -15,8 +15,9 @@ use quinn::{
     SendStream, ServerConfig, TransportConfig, VarInt,
 };
 use rand::{rngs::ThreadRng, Rng};
-use runar_common::{compact_ids::compact_id, logging::Logger, Component};
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_common::compact_ids::compact_id;
+use runar_logging::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{Component, Logger};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};

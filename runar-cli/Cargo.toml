@@ -41,6 +41,7 @@ runar_common = { path = "../runar-common" }
 runar-keys = { path = "../runar-keys", features = ["apple-keystore", "linux-keystore"] }
 runar_node = { path = "../runar-node" }
 runar_macros_common = { path = "../runar-macros-common" }
+runar_logging = { path = "../runar-logging" }
 
 # Logging
 log = "0.4"

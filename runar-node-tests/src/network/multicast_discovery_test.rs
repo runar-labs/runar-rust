@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_transporter::discovery::{DiscoveryEvent, DEFAULT_MULTICAST_ADDR};
 use runar_transporter::discovery::{DiscoveryOptions, MulticastDiscovery, NodeDiscovery};
 use std::sync::Arc;

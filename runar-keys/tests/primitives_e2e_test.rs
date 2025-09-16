@@ -11,10 +11,7 @@
 //! 5. Certificate revocation and CRL-lite
 //! 6. Profile key interop
 
-use runar_common::{
-    compact_ids::compact_id,
-    logging::{Component, Logger},
-};
+use runar_common::compact_ids::compact_id;
 use runar_keys::{
     ca_node::CANode,
     ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest},
@@ -24,6 +21,7 @@ use runar_keys::{
     mobile::MobileKeyManager,
     node::{CertificateStatus, NodeKeyManager},
 };
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 use std::time::SystemTime;
 

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
+use runar_logging::{Component, Logger};
 use runar_schemas::NodeInfo;
 use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 // Intentionally not importing QuicTransportOptions here

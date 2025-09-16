@@ -10,6 +10,7 @@ runar_node = { path = "../../runar-node" }
 runar_macros = { path = "../../runar-macros" }
 runar_common = { path = "../../runar-common" }
 runar_test_utils = { path = "../../runar-test-utils" }
+runar_logging = { path = "../../runar-logging" }
 async-trait = "0.1"
 runar-serializer = { path = "../../runar-serializer" }
 runar_macros_common = { path = "../../runar-macros-common" }

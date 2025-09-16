@@ -108,16 +108,16 @@ pub fn create_napi_error_with_code(_code: i32, message: &str) -> napi::Error {
 // Helper function to convert any error to NAPI error with appropriate code
 pub fn to_napi_error_with_code<E: ErrorCodeMapping + std::fmt::Display>(error: E) -> napi::Error {
     let code = error.to_error_code();
-    let message = format!("Error {}: {}", code, error);
+    let message = format!("Error {code}: {error}");
     create_napi_error_with_code(code, &message)
 }
 
-use runar_common::logging::{Component, Logger};
 use runar_keys::{
     CANode, CertificateValidator, CsrEnrollRequest, EnrollmentToken as KeysEnrollmentToken,
     EnrollmentTokenBody, EnvelopeCrypto, MobileKeyManager, NodeKeyManager, RenewRequest,
     RevokeRequest,
 };
+use runar_logging::{Component, Logger};
 use runar_schemas::NodeInfo;
 
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
@@ -1602,9 +1602,7 @@ impl CaServer {
         };
 
         // Create logger
-        let logger = Arc::new(runar_common::logging::Logger::new_root(
-            runar_common::logging::Component::Custom("NodejsApi"),
-        ));
+        let logger = Arc::new(Logger::new_root(Component::Custom("NodejsApi")));
 
         // Create CA Server - we need to create a new CANode since we can't easily convert AsyncMutex to RwLock
         // For now, create a placeholder CANode - this will be properly implemented when the full CA infrastructure is ready
@@ -1739,9 +1737,7 @@ impl CaClient {
         };
 
         // Create logger
-        let logger = runar_common::logging::Logger::new_root(
-            runar_common::logging::Component::Custom("NodejsApi"),
-        );
+        let logger = Logger::new_root(Component::Custom("NodejsApi"));
 
         // Get node key manager from Keys
         let node_key_manager = {
@@ -1930,8 +1926,8 @@ impl CaClient {
 impl CaCreator {
     #[napi]
     pub fn create_root_ca(subject: String) -> Result<Ca> {
-        let ca = runar_keys::CertificateAuthority::new(&subject)
-            .map_err(|e| to_napi_error_with_code(e))?;
+        let ca =
+            runar_keys::CertificateAuthority::new(&subject).map_err(to_napi_error_with_code)?;
 
         Ok(Ca {
             inner: Arc::new(Mutex::new(ca)),
@@ -1973,8 +1969,7 @@ impl Ca {
     pub fn get_ski(&self) -> Result<String> {
         let ca = self.inner.lock().unwrap();
         let cert = ca.ca_certificate();
-        let ski =
-            CertificateValidator::extract_ski(cert).map_err(|e| to_napi_error_with_code(e))?;
+        let ski = CertificateValidator::extract_ski(cert).map_err(to_napi_error_with_code)?;
         Ok(hex::encode(ski))
     }
 
@@ -2027,7 +2022,7 @@ impl Ca {
         let is_ca = parsed
             .tbs_certificate
             .basic_constraints()
-            .map_or(false, |bc| bc.unwrap().value.ca);
+            .is_ok_and(|bc| bc.unwrap().value.ca);
         Ok(is_ca)
     }
 
@@ -2120,8 +2115,8 @@ impl EnrollmentToken {
         permissions: Vec<String>,
     ) -> Result<Uint8Array> {
         // Parse the enrollment authority key
-        let ea_key = runar_keys::certificate::EcdsaKeyPair::from_pkcs8_der(&ea_key_der.to_vec())
-            .map_err(|e| to_napi_error_with_code(e))?;
+        let ea_key = runar_keys::certificate::EcdsaKeyPair::from_pkcs8_der(&ea_key_der)
+            .map_err(to_napi_error_with_code)?;
 
         // Calculate token validity times
         let now = std::time::SystemTime::now()
@@ -2154,8 +2149,8 @@ impl EnrollmentToken {
         );
 
         // Generate the signed token
-        let token = KeysEnrollmentToken::generate(&ea_key, token_body)
-            .map_err(|e| to_napi_error_with_code(e))?;
+        let token =
+            KeysEnrollmentToken::generate(&ea_key, token_body).map_err(to_napi_error_with_code)?;
 
         // Serialize to CBOR
         let token_cbor = serde_cbor::to_vec(&token).map_err(|e| {
@@ -2175,11 +2170,11 @@ impl EnrollmentToken {
         ea_public_key: Uint8Array,
     ) -> Result<bool> {
         // Deserialize token
-        let token: KeysEnrollmentToken = serde_cbor::from_slice(&token_cbor.to_vec())
+        let token: KeysEnrollmentToken = serde_cbor::from_slice(&token_cbor)
             .map_err(|e| Error::from_reason(format!("Failed to deserialize token: {e}")))?;
 
         // Verify signature
-        match token.verify(&ea_public_key.to_vec()) {
+        match token.verify(&ea_public_key) {
             Ok(()) => {
                 // Validate for enrollment
                 match token.validate_for_enrollment(&network_id) {
@@ -2194,7 +2189,7 @@ impl EnrollmentToken {
     #[napi]
     pub fn get_token_info(token_cbor: Uint8Array) -> Result<Uint8Array> {
         // Deserialize token
-        let token: KeysEnrollmentToken = serde_cbor::from_slice(&token_cbor.to_vec())
+        let token: KeysEnrollmentToken = serde_cbor::from_slice(&token_cbor)
             .map_err(|e| Error::from_reason(format!("Failed to deserialize token: {e}")))?;
 
         // Create token info struct

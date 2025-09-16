@@ -11,7 +11,7 @@
 
 use anyhow::Result;
 use quinn::{Endpoint, ServerConfig};
-use runar_common::logging::Logger;
+use runar_logging::Logger;
 use std::net::SocketAddr;
 
 use runar_keys::ca_node_types::{
@@ -19,7 +19,7 @@ use runar_keys::ca_node_types::{
     CsrEnrollRequest, CsrEnrollResponse, RenewRequest, RevokeRequest, StatusRequest,
 };
 use runar_keys::{ca_node::CANode, certificate::EcdsaKeyPair};
-use runar_macros_common::{log_debug, log_info};
+use runar_logging::{log_debug, log_info};
 use rustls::{server::WebPkiClientVerifier, RootCertStore, ServerConfig as RustlsServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde_cbor;
@@ -1319,11 +1319,11 @@ impl Default for CaServerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runar_common::logging::Component;
     use runar_keys::{
         ca_node::CANode,
         certificate::{CertificateAuthority, EcdsaKeyPair},
     };
+    use runar_logging::Component;
 
     #[tokio::test]
     async fn test_ca_server_builder() -> Result<()> {

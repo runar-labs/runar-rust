@@ -135,9 +135,5 @@ macro_rules! params {
     };
 }
 
-// ============================
-// Re-export logging macros from runar-logging crate
-// ============================
-
-// Re-export all logging macros from the dedicated logging crate
-pub use runar_logging::{log_debug, log_error, log_info, log_trace, log_warn, runar_log};
+// Note: Logging macros have been moved to the dedicated runar-logging crate.
+// Import logging macros directly from runar_logging.

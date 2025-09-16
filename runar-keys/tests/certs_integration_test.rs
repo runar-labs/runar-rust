@@ -8,13 +8,13 @@
 //! 5. Cross-node validation
 
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
 use runar_keys::{
     certificate::X509Certificate,
     error::Result,
     mobile::MobileKeyManager,
     node::{CertificateStatus, NodeKeyManager},
 };
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 
 fn create_test_logger() -> Arc<Logger> {
@@ -606,9 +606,7 @@ async fn test_enhanced_key_management() -> Result<()> {
 
 #[test]
 fn test_symmetric_key_management() {
-    let logger = Arc::new(Logger::new_root(runar_common::logging::Component::Custom(
-        "test",
-    )));
+    let logger = Arc::new(Logger::new_root(Component::Custom("test")));
     let mut node_manager = NodeKeyManager::new(logger).expect("Failed to create NodeKeyManager");
     node_manager
         .generate_keys()

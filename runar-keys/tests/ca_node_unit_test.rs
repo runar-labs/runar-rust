@@ -3,12 +3,12 @@
 //! This module tests individual CANode methods and functionality
 //! without the full E2E integration tests.
 
-use runar_common::logging::{Component, Logger};
 use runar_keys::{
     ca_node::CANode,
     certificate::{CertificateAuthority, EcdsaKeyPair},
     error::Result,
 };
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 
 #[test]

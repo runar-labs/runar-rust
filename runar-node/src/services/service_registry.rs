@@ -21,7 +21,7 @@
 
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{log_debug, log_error, log_info, log_warn};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -32,8 +32,8 @@ use crate::services::abstract_service::{AbstractService, ServiceState};
 use crate::services::{
     ActionHandler, EventContext, EventRegistrationOptions, RegistryDelegate, RemoteService,
 };
-use runar_common::logging::Logger;
 use runar_common::routing::{PathTrie, TopicPath};
+use runar_logging::Logger;
 use runar_schemas::{ActionMetadata, ServiceMetadata, SubscriptionMetadata};
 use runar_serializer::ArcValue;
 

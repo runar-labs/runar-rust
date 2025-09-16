@@ -5,11 +5,9 @@
 //! existing comprehensive tests.
 
 use anyhow::Result;
-use runar_common::{
-    compact_ids::compact_id,
-    logging::{Component, Logger},
-};
+use runar_common::compact_ids::compact_id;
 use runar_keys::{keystore::DeviceKeystore, NodeKeyManager};
+use runar_logging::{Component, Logger};
 use std::sync::Arc;
 use tempfile::TempDir;
 

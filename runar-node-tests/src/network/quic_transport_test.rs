@@ -2,8 +2,8 @@
 async fn test_dial_cancel_on_inbound_connect(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use runar_common::compact_ids::compact_id;
-    use runar_common::logging::{Component, Logger};
-    use runar_common::logging::{LogLevel, LoggingConfig};
+    use runar_logging::{Component, Logger};
+    use runar_logging::{LogLevel, LoggingConfig};
     // PeerInfo not used in this test
     use runar_transporter::transport::NetworkTransport;
     use runar_transporter::transport::{QuicTransport, QuicTransportOptions};
@@ -181,8 +181,8 @@ async fn test_dial_cancel_on_inbound_connect(
     Ok(())
 }
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::{Component, Logger};
-use runar_common::logging::{LogLevel, LoggingConfig};
+use runar_logging::{Component, Logger};
+use runar_logging::{LogLevel, LoggingConfig};
 use runar_schemas::{NodeInfo, NodeMetadata, SubscriptionMetadata};
 use runar_transporter::transport::{
     GetLocalNodeInfoCallback, MESSAGE_TYPE_EVENT, MESSAGE_TYPE_HANDSHAKE, MESSAGE_TYPE_REQUEST,
@@ -1071,12 +1071,10 @@ async fn test_capability_version_bump_across_reconnect(
         panic!("test_capability_version_bump_across_reconnect timed out");
     });
 
-    let logging_config = runar_common::logging::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Debug);
+    let logging_config =
+        LoggingConfig::new().with_default_level(runar_node::config::LogLevel::Debug);
     logging_config.apply();
-    let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
-        runar_common::logging::Component::Custom("cap_version_test"),
-    ));
+    let logger = std::sync::Arc::new(Logger::new_root(Component::Custom("cap_version_test")));
 
     // Keys/certs
     let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
@@ -1246,12 +1244,10 @@ async fn test_quic_anti_flap_under_race() -> Result<(), Box<dyn std::error::Erro
         panic!("test_quic_anti_flap_under_race timed out");
     });
 
-    let logging_config = runar_common::logging::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Debug);
+    let logging_config =
+        LoggingConfig::new().with_default_level(runar_node::config::LogLevel::Debug);
     logging_config.apply();
-    let logger = std::sync::Arc::new(runar_common::logging::Logger::new_root(
-        runar_common::logging::Component::Custom("anti_flap_test"),
-    ));
+    let logger = std::sync::Arc::new(Logger::new_root(Component::Custom("anti_flap_test")));
 
     // Keys/certs
     let mut ca = runar_keys::MobileKeyManager::new(logger.clone())?;
@@ -1571,8 +1567,8 @@ async fn test_transport_message_header_bounds_checking(
 #[tokio::test]
 async fn test_transport_start_stop_idempotence(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use runar_common::logging::{Component, Logger};
-    use runar_common::logging::{LogLevel, LoggingConfig};
+    use runar_logging::{Component, Logger};
+    use runar_logging::{LogLevel, LoggingConfig};
 
     let logging_config = LoggingConfig::new().with_default_level(LogLevel::Warn);
     logging_config.apply();

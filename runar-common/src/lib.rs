@@ -13,16 +13,8 @@
 pub mod errors;
 pub mod routing;
 
-// Re-export logging types and macros from the dedicated logging crate
-pub use runar_logging::{
-    log_debug, log_error, log_info, log_trace, log_warn, runar_log, Component, ComponentKey,
-    LogLevel, Logger, LoggingConfig,
-};
-
-// Re-export the logging module for backward compatibility
-pub mod logging {
-    pub use runar_logging::*;
-}
+// Note: Logging functionality has been moved to the dedicated runar-logging crate.
+// Import logging types and macros directly from runar_logging.
 
 /// Utility module for compact ID encoding
 pub mod compact_ids {

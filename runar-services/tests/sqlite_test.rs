@@ -58,7 +58,7 @@ impl Drop for TestDbGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runar_common::logging::LoggingConfig;
+    use runar_logging::LoggingConfig;
     use runar_node::config::LogLevel;
     use runar_node::Node;
     use runar_serializer::ArcValue;

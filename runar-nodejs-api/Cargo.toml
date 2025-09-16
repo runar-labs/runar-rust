@@ -23,6 +23,7 @@ runar_common = { path = "../runar-common" }
 runar-schemas = { path = "../runar-schemas" }
 arc-swap = { package = "arc-swap", version = "1" }
 runar-serializer = { path = "../runar-serializer" }
+runar_logging = { path = "../runar-logging" }
 uuid = { version = "1", features = ["v4"] }
 
 [features]

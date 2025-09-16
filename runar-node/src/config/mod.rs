@@ -25,4 +25,4 @@
 // ```
 
 // Re-export configuration types from runar_common::logging
-pub use runar_common::logging::{ComponentKey, LogLevel, LoggingConfig};
+pub use runar_logging::{ComponentKey, LogLevel, LoggingConfig};

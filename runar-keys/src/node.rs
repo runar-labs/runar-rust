@@ -21,7 +21,7 @@ use p256::SecretKey as P256SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
 use rand::{thread_rng, RngCore};
 use runar_common::compact_ids::compact_id;
-use runar_common::logging::Logger;
+use runar_logging::Logger;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};

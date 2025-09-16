@@ -11,13 +11,13 @@
 
 use anyhow::Result;
 use quinn::{ClientConfig, Endpoint};
-use runar_common::logging::Logger;
 use runar_keys::ca_node_types::{
     CaStatus, ChainRequest, ChainResponse, CrlRequest, CsrEnrollRequest, CsrEnrollResponse,
     RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, StatusRequest,
 };
 use runar_keys::node::NodeKeyManager;
-use runar_macros_common::{log_debug, log_info, log_warn};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_info, log_warn};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use rustls_pki_types::CertificateDer;
 use serde_cbor;
@@ -739,11 +739,11 @@ impl CaClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runar_common::logging::Component;
     use runar_keys::{
         enrollment_token::{EnrollmentToken, EnrollmentTokenBody},
         node::NodeKeyManager,
     };
+    use runar_logging::Component;
     use std::time::SystemTime;
 
     #[tokio::test]

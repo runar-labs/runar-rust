@@ -4,8 +4,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
+use runar_logging::{Component, Logger};
 use runar_node::services::{EventContext, EventRegistrationOptions};
 use runar_node::{Node, ServiceRegistry};
 use runar_serializer::ArcValue;

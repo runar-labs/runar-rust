@@ -83,7 +83,7 @@ pub fn create_cstring(s: &str) -> std::ffi::CString {
 /// Create a test logger for CA operations
 #[allow(dead_code)]
 pub fn create_test_logger() -> *mut c_void {
-    use runar_common::logging::{Component, Logger};
+    use runar_logging::{Component, Logger};
     use std::sync::Arc;
 
     let logger = Arc::new(Logger::new_root(Component::Custom("test")));

@@ -13,10 +13,7 @@
 //! 7. Token revocation over REAL QUIC mTLS
 
 use anyhow::Result;
-use runar_common::{
-    compact_ids::compact_id,
-    logging::{Component, LogLevel, Logger, LoggingConfig},
-};
+use runar_common::compact_ids::compact_id;
 use runar_keys::ca_node_types::{CsrEnrollRequest, RenewRequest, RevokeRequest};
 use runar_keys::{
     ca_node::CANode,
@@ -25,6 +22,7 @@ use runar_keys::{
     mobile::MobileKeyManager,
     node::NodeKeyManager,
 };
+use runar_logging::{Component, LogLevel, Logger, LoggingConfig};
 use runar_transporter::{
     ca_client::{CaClientBuilder, CaClientConfig},
     ca_server::{CaServerBuilder, CaServerConfig, RateLimitConfig},

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use axum::http::StatusCode as HttpStatus;
-use runar_common::{Component, Logger};
 use runar_gateway::GatwayService;
+use runar_logging::{Component, Logger, LoggingConfig};
 use runar_macros::{action, service};
 use runar_node::Node;
 use runar_serializer::{ArcValue, Plain};
@@ -63,8 +63,8 @@ impl EchoService {
 #[tokio::test]
 async fn test_gateway_routes() -> Result<()> {
     // 1. Setup Node
-    let logging_config = runar_common::logging::LoggingConfig::new()
-        .with_default_level(runar_node::config::LogLevel::Warn);
+    let logging_config =
+        LoggingConfig::new().with_default_level(runar_node::config::LogLevel::Warn);
     logging_config.apply();
 
     let node_config = create_node_test_config()

@@ -16,9 +16,9 @@ use std::sync::Arc;
 
 use crate::services::{LifecycleContext, RegistryDelegate, RequestContext};
 use crate::{AbstractService, ServiceState};
-use runar_common::logging::Logger;
 use runar_common::routing::TopicPath;
-use runar_macros_common::{log_debug, log_error, log_info};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_error, log_info};
 use runar_serializer::ArcValue;
 
 /// Registry Info Service - provides information about registered services without holding state

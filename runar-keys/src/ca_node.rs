@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 use p256::ecdsa::signature::Verifier;
-use runar_common::Logger;
+use runar_logging::Logger;
 use runar_logging::{log_debug, log_error, log_trace};
 use std::sync::Arc;
 use x509_parser::prelude::*;

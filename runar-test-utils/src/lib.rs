@@ -6,8 +6,8 @@
 use anyhow::Result;
 use rand::{thread_rng, Rng};
 use runar_common::compact_ids;
-use runar_common::logging::{Component, Logger};
 use runar_keys::{mobile::MobileKeyManager, node::NodeKeyManager};
+use runar_logging::{Component, Logger};
 use runar_node::NodeConfig;
 use runar_serializer::traits::{
     create_context_label_resolver, EnvelopeCrypto, LabelKeyword, LabelResolver,
@@ -509,11 +509,12 @@ pub fn create_test_environment() -> Result<(MobileSimulator, NodeConfig)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use runar_logging::LoggingConfig;
 
     // Set up logging once for all tests in this module
     fn setup_logging() {
-        let logging_config = runar_common::logging::LoggingConfig::new()
-            .with_default_level(runar_node::config::LogLevel::Warn);
+        let logging_config =
+            LoggingConfig::new().with_default_level(runar_node::config::LogLevel::Warn);
         logging_config.apply();
     }
 
@@ -668,8 +669,8 @@ mod tests {
         init();
 
         // Configure logging
-        let logging_config = runar_common::logging::LoggingConfig::new()
-            .with_default_level(runar_node::config::LogLevel::Warn);
+        let logging_config =
+            LoggingConfig::new().with_default_level(runar_node::config::LogLevel::Warn);
         logging_config.apply();
 
         let logger = Arc::new(Logger::new_root(Component::Custom(

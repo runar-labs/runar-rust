@@ -38,6 +38,7 @@ runar-serializer-macros = { path = "../runar-serializer-macros" }
 runar-schemas = { path = "../runar-schemas" }
 runar_macros_common = { path = "../runar-macros-common" }
 runar_transporter = { path = "../runar-transporter" }
+runar_logging = { path = "../runar-logging" }
 
 # Network dependencies
 quinn = "0.11"
@@ -85,6 +86,7 @@ targets = [
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["async_tokio"] }
 runar_test_utils = { path = "../runar-test-utils" }
+runar_logging = { path = "../runar-logging" }
 
 
 

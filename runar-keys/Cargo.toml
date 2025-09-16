@@ -71,6 +71,7 @@ tokio = { version = "1.0", features = ["full"] }
 tempfile = "3.0"
 rustls = "0.23"
 rustls-pemfile = "2"
+runar_logging = { path = "../runar-logging" }
 
 [features]
 default = []

@@ -1,7 +1,7 @@
 //! Basic tests for the Runar CLI
 
 use runar_cli::{InitCommand, NodeConfig, StartCommand};
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 
 use std::sync::Arc;
 use tempfile::TempDir;

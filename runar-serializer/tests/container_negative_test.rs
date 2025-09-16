@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use runar_common::logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
+use runar_logging::{Component, Logger};
 use runar_serializer::traits::{
     EnvelopeCrypto, KeyMappingConfig, LabelKeyInfo, LabelResolver, SerializationContext,
 };

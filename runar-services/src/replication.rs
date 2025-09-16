@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
-use runar_common::logging::Logger;
-use runar_macros_common::{log_debug, log_info};
+use runar_logging::Logger;
+use runar_logging::{log_debug, log_info};
 use runar_node::services::{LifecycleContext, OnOptions};
 use runar_node::{AbstractService, ServiceState};
 use runar_serializer::{ArcValue, Plain};

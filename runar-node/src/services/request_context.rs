@@ -16,9 +16,9 @@ use crate::services::service_registry::EventHandler;
 use crate::services::{EventRegistrationOptions, OnOptions, PublishOptions};
 use crate::services::{NodeDelegate, RequestOptions};
 use anyhow::Result;
-use runar_common::logging::{Component, Logger};
 use runar_common::routing::TopicPath;
-use runar_macros_common::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{Component, Logger};
 use runar_serializer::arc_value::AsArcValue;
 use runar_serializer::ArcValue;
 
@@ -113,7 +113,7 @@ impl RequestContext {
 
         Self {
             topic_path: topic_path.clone(),
-            metadata: metadata,
+            metadata,
             logger: Arc::new(action_logger),
             node_delegate,
             path_params: HashMap::new(),
