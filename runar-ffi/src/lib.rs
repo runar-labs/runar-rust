@@ -6366,36 +6366,93 @@ pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_node_get_node_certificate"));
+
+    log_trace!(logger, "rn_keys_node_get_node_certificate: function entry");
+
     if keys.is_null() || out_cert.is_null() || out_len.is_null() || err.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_node_certificate: null argument detected"
+        );
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
     let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_node_get_node_certificate: keys handle is null"
+        );
         set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     };
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: keys handle validated, inner: {:p}",
+        inner
+    );
 
     let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_get_node_certificate: node manager validated successfully"
+            );
+            mgr
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_node_certificate: failed to validate node manager: {}",
+                e.message()
+            );
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: acquiring read lock on node manager"
+    );
     let node_manager = match manager.read() {
-        Ok(mgr) => mgr,
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_get_node_certificate: read lock acquired successfully"
+            );
+            mgr
+        }
         Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_node_certificate: failed to acquire read lock"
+            );
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
             return RN_ERROR_LOCK_ERROR;
         }
     };
 
     // Get node certificate
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: calling node_manager.get_node_certificate()"
+    );
     let cert_der = match node_manager.get_node_certificate() {
-        Some(cert) => cert.der_bytes(),
+        Some(cert) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_get_node_certificate: certificate found, getting DER bytes"
+            );
+            cert.der_bytes()
+        }
         None => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_node_certificate: no node certificate installed"
+            );
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -6407,9 +6464,19 @@ pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
 
     // Allocate memory for certificate using Box::into_raw
     let cert_len = cert_der.len();
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: certificate DER length: {} bytes",
+        cert_len
+    );
     let cert_ptr = Box::into_raw(cert_der.to_vec().into_boxed_slice()) as *mut u8;
     *out_cert = cert_ptr;
     *out_len = cert_len;
+    log_trace!(
+        logger,
+        "rn_keys_node_get_node_certificate: returning success with {} bytes",
+        cert_len
+    );
 
     0
 }
@@ -6422,16 +6489,44 @@ pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
     out_ski: *mut *mut c_char,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_certificate_extract_ski"));
+
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: function entry, cert_len: {}",
+        cert_len
+    );
+
     if cert.is_null() || out_ski.is_null() || err.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_certificate_extract_ski: null argument detected"
+        );
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
     // Parse certificate
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: parsing certificate DER data"
+    );
     let cert_data = std::slice::from_raw_parts(cert, cert_len);
     let certificate = match runar_keys::certificate::X509Certificate::from_der(cert_data.to_vec()) {
-        Ok(cert) => cert,
+        Ok(cert) => {
+            log_trace!(
+                logger,
+                "rn_keys_certificate_extract_ski: certificate parsed successfully"
+            );
+            cert
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_certificate_extract_ski: failed to parse certificate: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED,
@@ -6442,9 +6537,25 @@ pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
     };
 
     // Extract SKI using runar-keys function
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: extracting SKI from certificate"
+    );
     let ski_bytes = match runar_keys::certificate::CertificateValidator::extract_ski(&certificate) {
-        Ok(ski) => ski,
+        Ok(ski) => {
+            log_trace!(
+                logger,
+                "rn_keys_certificate_extract_ski: SKI extracted successfully, length: {}",
+                ski.len()
+            );
+            ski
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_certificate_extract_ski: failed to extract SKI: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED,
@@ -6455,14 +6566,35 @@ pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
     };
 
     // Convert to hex string
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: converting SKI bytes to hex string"
+    );
     let ski_hex = ski_bytes
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<Vec<_>>()
         .join("");
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: SKI hex string: {}",
+        ski_hex
+    );
+
     let ski_cstr = match std::ffi::CString::new(ski_hex) {
-        Ok(s) => s,
+        Ok(s) => {
+            log_trace!(
+                logger,
+                "rn_keys_certificate_extract_ski: CString created successfully"
+            );
+            s
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_certificate_extract_ski: failed to create CString: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_INVALID_UTF8,
@@ -6473,7 +6605,12 @@ pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
     };
 
     // Allocate memory for SKI string using CString::into_raw
+    log_trace!(
+        logger,
+        "rn_keys_certificate_extract_ski: allocating memory for SKI string"
+    );
     *out_ski = ski_cstr.into_raw();
+    log_trace!(logger, "rn_keys_certificate_extract_ski: returning success");
 
     0
 }
