@@ -9,7 +9,7 @@ use crate::error::{KeyError, Result};
 use crate::keystore::persistence;
 use crate::mobile::{EnvelopeEncryptedData, NetworkKeyMessage, NodeCertificateMessage, SetupToken};
 use crate::EnvelopeCrypto;
-use crate::{log_debug, log_info, log_warn};
+use runar_logging::{log_debug, log_info, log_warn};
 
 // use p256::ecdsa::SigningKey; // no longer needed here
 use crate::keystore::{

@@ -12,10 +12,10 @@ fn read_bytes(path: &Path) -> Result<Vec<u8>> {
 
 fn validate_enrollment_token_body() -> Result<()> {
     println!("🔍 Validating EnrollmentTokenBody...");
-    
+
     // Test basic enrollment token body
     let swift_data = read_bytes(Path::new(
-        "../runar-swift/target/ffi-types-vectors-swift/enrollment_token_body_basic.bin",
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/enrollment_token_body_basic.bin",
     ))?;
     let rust_data = read_bytes(Path::new(
         "target/ffi-types-vectors/enrollment_token_body_basic.bin",
@@ -41,9 +41,9 @@ fn validate_enrollment_token_body() -> Result<()> {
 
 fn validate_enrollment_token() -> Result<()> {
     println!("🔍 Validating EnrollmentToken...");
-    
+
     let swift_data = read_bytes(Path::new(
-        "../runar-swift/target/ffi-types-vectors-swift/enrollment_token_basic.bin",
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/enrollment_token_basic.bin",
     ))?;
     let rust_data = read_bytes(Path::new(
         "target/ffi-types-vectors/enrollment_token_basic.bin",
@@ -51,8 +51,8 @@ fn validate_enrollment_token() -> Result<()> {
 
     let swift_token: EnrollmentToken = serde_cbor::from_slice(&swift_data)
         .context("Failed to deserialize Swift EnrollmentToken")?;
-    let rust_token: EnrollmentToken = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust EnrollmentToken")?;
+    let rust_token: EnrollmentToken =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust EnrollmentToken")?;
 
     if swift_token == rust_token {
         println!("✅ EnrollmentToken validation passed");
@@ -69,18 +69,16 @@ fn validate_enrollment_token() -> Result<()> {
 
 fn validate_setup_token() -> Result<()> {
     println!("🔍 Validating SetupToken...");
-    
-    let swift_data = read_bytes(Path::new(
-        "../runar-swift/target/ffi-types-vectors-swift/setup_token_basic.bin",
-    ))?;
-    let rust_data = read_bytes(Path::new(
-        "target/ffi-types-vectors/setup_token_basic.bin",
-    ))?;
 
-    let swift_setup: SetupToken = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift SetupToken")?;
-    let rust_setup: SetupToken = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust SetupToken")?;
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/setup_token_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new("target/ffi-types-vectors/setup_token_basic.bin"))?;
+
+    let swift_setup: SetupToken =
+        serde_cbor::from_slice(&swift_data).context("Failed to deserialize Swift SetupToken")?;
+    let rust_setup: SetupToken =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust SetupToken")?;
 
     if swift_setup == rust_setup {
         println!("✅ SetupToken validation passed");
@@ -97,9 +95,9 @@ fn validate_setup_token() -> Result<()> {
 
 fn validate_csr_enroll_request() -> Result<()> {
     println!("🔍 Validating CsrEnrollRequest...");
-    
+
     let swift_data = read_bytes(Path::new(
-        "../runar-swift/target/ffi-types-vectors-swift/csr_enroll_request_basic.bin",
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/csr_enroll_request_basic.bin",
     ))?;
     let rust_data = read_bytes(Path::new(
         "target/ffi-types-vectors/csr_enroll_request_basic.bin",
@@ -125,16 +123,22 @@ fn validate_csr_enroll_request() -> Result<()> {
 
 fn validate_csr_enroll_response() -> Result<()> {
     println!("🔍 Validating CsrEnrollResponse...");
-    
+
     let swift_data = read_bytes(Path::new(
-        "../runar-swift/target/ffi-types-vectors-swift/csr_enroll_response_basic.bin",
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/csr_enroll_response_basic.bin",
     ))?;
     let rust_data = read_bytes(Path::new(
         "target/ffi-types-vectors/csr_enroll_response_basic.bin",
     ))?;
 
-    let swift_response: CsrEnrollResponse = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift CsrEnrollResponse")?;
+    let swift_response: CsrEnrollResponse =
+        serde_cbor::from_slice(&swift_data).with_context(|| {
+            format!(
+                "Failed to deserialize Swift CsrEnrollResponse. Data length: {}, hex: {}",
+                swift_data.len(),
+                hex::encode(&swift_data[..std::cmp::min(swift_data.len(), 100)])
+            )
+        })?;
     let rust_response: CsrEnrollResponse = serde_cbor::from_slice(&rust_data)
         .context("Failed to deserialize Rust CsrEnrollResponse")?;
 
@@ -153,18 +157,23 @@ fn validate_csr_enroll_response() -> Result<()> {
 
 fn validate_ca_error_response() -> Result<()> {
     println!("🔍 Validating CaErrorResponse...");
-    
+
     let swift_data = read_bytes(Path::new(
-        "../runar-swift/target/ffi-types-vectors-swift/ca_error_response_basic.bin",
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/ca_error_response_basic.bin",
     ))?;
     let rust_data = read_bytes(Path::new(
         "target/ffi-types-vectors/ca_error_response_basic.bin",
     ))?;
 
-    let swift_error: CaErrorResponse = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift CaErrorResponse")?;
-    let rust_error: CaErrorResponse = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust CaErrorResponse")?;
+    let swift_error: CaErrorResponse = serde_cbor::from_slice(&swift_data).with_context(|| {
+        format!(
+            "Failed to deserialize Swift CaErrorResponse. Data length: {}, hex: {}",
+            swift_data.len(),
+            hex::encode(&swift_data[..std::cmp::min(swift_data.len(), 100)])
+        )
+    })?;
+    let rust_error: CaErrorResponse =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust CaErrorResponse")?;
 
     if swift_error == rust_error {
         println!("✅ CaErrorResponse validation passed");
@@ -180,7 +189,7 @@ fn validate_ca_error_response() -> Result<()> {
 }
 
 fn check_directories_exist() -> Result<()> {
-    let swift_dir = Path::new("../runar-swift/target/ffi-types-vectors-swift");
+    let swift_dir = Path::new("../../runar-swift/swift-ffi/target/ffi-types-vectors-swift");
     let rust_dir = Path::new("target/ffi-types-vectors");
 
     if !swift_dir.exists() {

@@ -46,6 +46,7 @@ base64 = "0.21"  # For compact Base64 URL-safe encoding of public keys
 
 # Logging framework
 runar_common = { path = "../runar-common" }
+runar_logging = { path = "../runar-logging" }
 log = "0.4"
 
 # Error handling

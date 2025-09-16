@@ -50,7 +50,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    let _logger = Arc::new(Logger::new_root(Component::Keys));
+    let logger = Arc::new(Logger::new_root(Component::Keys));
 
     println!("\n🚀 Starting Full-transport E2E QUIC mTLS test");
 
@@ -76,6 +76,7 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
         issuing_ca_cert.clone(),
         root_ca_cert.clone(),
         "test_network".to_string(),
+        logger,
     );
 
     // Configure enrollment authority

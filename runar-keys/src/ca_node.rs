@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 use p256::ecdsa::signature::Verifier;
+use runar_common::Logger;
+use runar_logging::{log_debug, log_error, log_trace};
+use std::sync::Arc;
 use x509_parser::prelude::*;
 
 use crate::{
@@ -36,6 +39,8 @@ pub struct CANode {
     pub admin_ski_allowlist: Vec<String>,
     /// Token anti-replay ledger: (token_id, nonce) -> expiry_time
     pub token_replay_ledger: HashMap<(String, [u8; 16]), SystemTime>,
+    /// Logger
+    logger: Arc<Logger>,
 }
 
 impl CANode {
@@ -45,6 +50,7 @@ impl CANode {
         issuing_ca_cert: X509Certificate,
         root_ca_cert: X509Certificate,
         network_id: String,
+        logger: Arc<Logger>,
     ) -> Self {
         Self {
             issuing_ca_key,
@@ -57,6 +63,7 @@ impl CANode {
             revoked_certificates: HashMap::new(),
             admin_ski_allowlist: Vec::new(),
             token_replay_ledger: HashMap::new(),
+            logger,
         }
     }
 
@@ -92,59 +99,66 @@ impl CANode {
 
     /// Validate an enrollment token
     pub fn validate_enrollment_token(&mut self, token: &EnrollmentToken) -> Result<()> {
-        println!("DEBUG: validate_enrollment_token called");
+        log_trace!(self.logger, "validate_enrollment_token called");
         // Check if token is revoked
         if self.revoked_tokens.contains_key(&token.body.token_id) {
-            println!("DEBUG: Token has been revoked");
+            log_error!(self.logger, "Token has been revoked");
             return Err(KeyError::ValidationError(
                 "Token has been revoked".to_string(),
             ));
         }
-        println!("DEBUG: Token not revoked");
+        log_trace!(self.logger, "Token not revoked");
 
         // Check anti-replay ledger
-        println!("DEBUG: Checking anti-replay ledger...");
+        log_trace!(self.logger, "Checking anti-replay ledger...");
         let replay_key = (token.body.token_id.clone(), token.body.nonce);
         if let Some(expiry_time) = self.token_replay_ledger.get(&replay_key) {
             if SystemTime::now() < *expiry_time {
-                println!("DEBUG: Token nonce already used (replay attack)");
+                log_error!(self.logger, "Token nonce already used (replay attack)");
                 return Err(KeyError::ValidationError(
                     "Token nonce already used (replay attack)".to_string(),
                 ));
             }
         }
-        println!("DEBUG: No replay attack detected");
+        log_trace!(self.logger, "No replay attack detected");
 
         // Get the enrollment authority public key
-        println!(
-            "DEBUG: Looking up enrollment authority for signer_id: {}",
+        log_trace!(
+            self.logger,
+            "Looking up enrollment authority for signer_id: {}",
             token.signer_id
         );
-        println!(
-            "DEBUG: Available enrollment authorities: {:?}",
+        log_trace!(
+            self.logger,
+            "Available enrollment authorities: {:?}",
             self.enrollment_authorities.keys().collect::<Vec<_>>()
         );
         let ea_public_key = self
             .enrollment_authorities
             .get(&token.signer_id)
             .ok_or_else(|| {
-                println!("DEBUG: Unknown enrollment authority: {}", token.signer_id);
+                log_error!(
+                    self.logger,
+                    "Unknown enrollment authority: {}",
+                    token.signer_id
+                );
                 KeyError::ValidationError("Unknown enrollment authority".to_string())
             })?;
-        println!("DEBUG: Found enrollment authority public key");
+        log_trace!(self.logger, "Found enrollment authority public key");
 
         // Verify token signature
-        println!("DEBUG: Verifying token signature...");
+        log_trace!(self.logger, "Verifying token signature...");
         token.verify(ea_public_key)?;
-        println!("DEBUG: Token signature verification passed");
+        log_trace!(self.logger, "Token signature verification passed");
 
         // Validate token for enrollment
-        println!(
-            "DEBUG: Validating token for enrollment with network_id: {}",
+        log_trace!(
+            self.logger,
+            "Validating token for enrollment with network_id: {}",
             self.network_id
         );
         token.validate_for_enrollment(&self.network_id)?;
-        println!("DEBUG: Token validation for enrollment passed");
+        log_debug!(self.logger, "Token validation for enrollment passed");
 
         // Add to anti-replay ledger with token expiry time
         self.token_replay_ledger.insert(
@@ -179,30 +193,30 @@ impl CANode {
         request: CsrEnrollRequest,
         remote_addr: &str,
     ) -> Result<CsrEnrollResponse> {
-        println!("DEBUG: CA Node handle_enroll called");
+        log_trace!(self.logger, "CA Node handle_enroll called");
         // Validate enrollment token
-        println!("DEBUG: Validating enrollment token...");
+        log_trace!(self.logger, "Validating enrollment token...");
         self.validate_enrollment_token(&request.enrollment_token)?;
-        println!("DEBUG: Enrollment token validation passed");
+        log_trace!(self.logger, "Enrollment token validation passed");
 
         // Check rate limiting
-        println!("DEBUG: Checking rate limiting...");
+        log_trace!(self.logger, "Checking rate limiting...");
         self.check_rate_limit(remote_addr, &request.enrollment_token.body.token_id)?;
-        println!("DEBUG: Rate limiting check passed");
+        log_trace!(self.logger, "Rate limiting check passed");
 
         // Parse and validate CSR
-        println!("DEBUG: Parsing CSR...");
+        log_trace!(self.logger, "Parsing CSR...");
         let (_, csr) = x509_parser::certification_request::X509CertificationRequest::from_der(
             &request.csr_der,
         )
         .map_err(|e| {
-            println!("DEBUG: CSR parsing failed: {e}");
+            log_error!(self.logger, "CSR parsing failed: {e}");
             KeyError::ValidationError(format!("Invalid CSR: {e}"))
         })?;
-        println!("DEBUG: CSR parsed successfully");
+        log_trace!(self.logger, "CSR parsed successfully");
 
         // Extract CN from CSR subject
-        println!("DEBUG: Extracting CN from CSR subject...");
+        log_trace!(self.logger, "Extracting CN from CSR subject...");
         let subject = &csr.certification_request_info.subject;
         let mut cn = None;
         for rdn in subject.iter_common_name() {
@@ -212,28 +226,31 @@ impl CANode {
             }
         }
         let cn = cn.ok_or_else(|| {
-            println!("DEBUG: CSR missing CN");
+            log_error!(self.logger, "CSR missing CN");
             KeyError::ValidationError("CSR missing CN".to_string())
         })?;
-        println!("DEBUG: CSR CN extracted: {cn}");
+        log_trace!(self.logger, "CSR CN extracted: {cn}");
 
         // Validate CN matches compact_id of public key in CSR
-        println!("DEBUG: Validating CN matches compact_id...");
+        log_trace!(self.logger, "Validating CN matches compact_id...");
         let public_key = &csr
             .certification_request_info
             .subject_pki
             .subject_public_key;
         let public_key_bytes = public_key.data.to_vec();
         let expected_cn = runar_common::compact_ids::compact_id(&public_key_bytes);
-        println!("DEBUG: Expected CN: {expected_cn}");
+        log_trace!(self.logger, "Expected CN: {expected_cn}");
 
         if cn != expected_cn {
-            println!("DEBUG: CN mismatch: got {cn}, expected {expected_cn}");
+            log_error!(self.logger, "CN mismatch: got {cn}, expected {expected_cn}");
             return Err(KeyError::ValidationError(format!(
                 "CSR CN {cn} does not match public key compact_id {expected_cn}"
             )));
         }
-        println!("DEBUG: CN validation passed");
+        log_debug!(
+            self.logger,
+            "CSR validation and certificate issuance completed"
+        );
 
         // Create certificate authority for signing
         let ca = CertificateAuthority::from_existing(

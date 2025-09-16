@@ -28,8 +28,6 @@ pub mod enrollment_token;
 pub mod error;
 pub mod mobile;
 pub mod node;
-#[macro_use]
-mod macros;
 pub mod pure_x509;
 
 // Re-export key types for convenience

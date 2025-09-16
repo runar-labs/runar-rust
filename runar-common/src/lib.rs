@@ -11,10 +11,18 @@
 
 // Export modules
 pub mod errors;
-pub mod logging;
 pub mod routing;
-// Re-export traits and types at the root level
-pub use logging::{Component, ComponentKey, LogLevel, Logger, LoggingConfig};
+
+// Re-export logging types and macros from the dedicated logging crate
+pub use runar_logging::{
+    log_debug, log_error, log_info, log_trace, log_warn, runar_log, Component, ComponentKey,
+    LogLevel, Logger, LoggingConfig,
+};
+
+// Re-export the logging module for backward compatibility
+pub mod logging {
+    pub use runar_logging::*;
+}
 
 /// Utility module for compact ID encoding
 pub mod compact_ids {

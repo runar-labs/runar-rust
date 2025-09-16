@@ -14,20 +14,20 @@ use crate::keystore::{
     DeviceKeystore, DeviceKeystoreCaps,
 };
 use crate::EnvelopeCrypto;
-use crate::{log_debug, log_error, log_info};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
 use pkcs8::{DecodePrivateKey, EncodePrivateKey};
 use rand::thread_rng;
 use runar_common::compact_ids::compact_id;
 use runar_common::logging::Logger;
+use runar_logging::{log_debug, log_error, log_info};
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Setup token from a node requesting a certificate
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetupToken {
     /// Node's public key for identity
     pub node_public_key: Vec<u8>,

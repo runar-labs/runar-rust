@@ -1602,12 +1602,13 @@ impl CaServer {
         };
 
         // Create logger
-        let logger = runar_common::logging::Logger::new_root(
+        let logger = Arc::new(runar_common::logging::Logger::new_root(
             runar_common::logging::Component::Custom("NodejsApi"),
-        );
+        ));
 
         // Create CA Server - we need to create a new CANode since we can't easily convert AsyncMutex to RwLock
         // For now, create a placeholder CANode - this will be properly implemented when the full CA infrastructure is ready
+        let ca_logger = Arc::new(Logger::new_root(Component::Keys));
         let ca_node = CANode::new(
             runar_keys::certificate::EcdsaKeyPair::new()
                 .map_err(|e| Error::from_reason(format!("Failed to create CA key: {e}")))?,
@@ -1616,9 +1617,10 @@ impl CaServer {
             runar_keys::certificate::X509Certificate::from_der(vec![])
                 .map_err(|e| Error::from_reason(format!("Failed to create root cert: {e}")))?,
             "default_network".to_string(),
+            ca_logger,
         );
         let ca_node_rwlock = Arc::new(StdRwLock::new(ca_node));
-        let ca_server = TransporterCaServer::new(config, ca_node_rwlock, Arc::new(logger));
+        let ca_server = TransporterCaServer::new(config, ca_node_rwlock, logger);
 
         Ok(Self {
             inner: Arc::new(AsyncMutex::new(ca_server)),
@@ -2225,6 +2227,7 @@ pub struct CaNode {
 impl CaNode {
     #[napi(constructor)]
     pub fn new() -> Result<Self> {
+        let logger = Arc::new(Logger::new_root(Component::Keys));
         let ca_node = CANode::new(
             runar_keys::certificate::EcdsaKeyPair::new()
                 .map_err(|e| Error::from_reason(format!("Failed to create CA key: {e}")))?,
@@ -2233,6 +2236,7 @@ impl CaNode {
             runar_keys::certificate::X509Certificate::from_der(vec![])
                 .map_err(|e| Error::from_reason(format!("Failed to create root cert: {e}")))?,
             "default_network".to_string(),
+            logger,
         );
         Ok(Self {
             inner: Arc::new(AsyncMutex::new(ca_node)),

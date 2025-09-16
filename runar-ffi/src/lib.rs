@@ -48,7 +48,7 @@ pub struct CaServerWrapper {
 }
 use rustls::crypto::aws_lc_rs;
 use serde_cbor as _; // keep dependency linked for now
-// panic handling imports removed - no longer needed without ffi_guard
+                     // panic handling imports removed - no longer needed without ffi_guard
 use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -4854,7 +4854,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_new(
     }
 
     let root_logger = get_global_logger();
-    let _logger = root_logger.with_component(Component::Keys);
+    let logger = root_logger.with_component(Component::Custom("CA Node"));
 
     // Create a proper CA Node with valid certificates
     // This follows the design pattern from the tests
@@ -4893,6 +4893,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_new(
         temp_cert,
         temp_root_cert,
         "uninitialized".to_string(), // Will be updated by install_issuing_ca
+        Arc::new(logger),
     );
 
     let boxed_ca_node = Box::new(ca_node);
@@ -4938,18 +4939,23 @@ pub unsafe extern "C" fn rn_keys_ca_node_create_shared(
     );
 
     // Create a new CANode with the same data
-    let new_ca_node = CANode {
-        issuing_ca_key: ca_node_ref.issuing_ca_key.clone(),
-        issuing_ca_cert: ca_node_ref.issuing_ca_cert.clone(),
-        root_ca_cert: ca_node_ref.root_ca_cert.clone(),
-        network_id: ca_node_ref.network_id.clone(),
-        enrollment_authorities: ca_node_ref.enrollment_authorities.clone(),
-        revoked_tokens: ca_node_ref.revoked_tokens.clone(),
-        rate_limits: ca_node_ref.rate_limits.clone(),
-        revoked_certificates: ca_node_ref.revoked_certificates.clone(),
-        admin_ski_allowlist: ca_node_ref.admin_ski_allowlist.clone(),
-        token_replay_ledger: ca_node_ref.token_replay_ledger.clone(),
-    };
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("CA Node"));
+    let mut new_ca_node = CANode::new(
+        ca_node_ref.issuing_ca_key.clone(),
+        ca_node_ref.issuing_ca_cert.clone(),
+        ca_node_ref.root_ca_cert.clone(),
+        ca_node_ref.network_id.clone(),
+        Arc::new(logger),
+    );
+
+    // Copy the additional state
+    new_ca_node.enrollment_authorities = ca_node_ref.enrollment_authorities.clone();
+    new_ca_node.revoked_tokens = ca_node_ref.revoked_tokens.clone();
+    new_ca_node.rate_limits = ca_node_ref.rate_limits.clone();
+    new_ca_node.revoked_certificates = ca_node_ref.revoked_certificates.clone();
+    new_ca_node.admin_ski_allowlist = ca_node_ref.admin_ski_allowlist.clone();
+    new_ca_node.token_replay_ledger = ca_node_ref.token_replay_ledger.clone();
 
     let ca_node_arc = Arc::new(RwLock::new(new_ca_node));
 

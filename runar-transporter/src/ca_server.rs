@@ -1344,6 +1344,7 @@ mod tests {
             issuing_ca_cert,
             root_ca.ca_certificate().clone(),
             "test_network".to_string(),
+            logger.clone(),
         )));
 
         let config = CaServerConfig {
@@ -1385,6 +1386,7 @@ mod tests {
             issuing_ca_cert,
             root_ca.ca_certificate().clone(),
             "test_network".to_string(),
+            logger.clone(),
         )));
 
         let config = CaServerConfig {

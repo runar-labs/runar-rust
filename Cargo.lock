@@ -3261,10 +3261,12 @@ dependencies = [
  "async-trait",
  "bincode",
  "ctor 0.2.9",
+ "hex",
  "runar-keys",
  "runar-schemas",
  "runar-serializer",
  "runar_common 0.1.0",
+ "runar_ffi",
  "runar_macros",
  "runar_macros_common",
  "runar_node",
@@ -3301,6 +3303,7 @@ dependencies = [
  "rand 0.8.5",
  "rcgen 0.12.1",
  "runar_common 0.1.0",
+ "runar_logging",
  "rustls 0.23.28",
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
@@ -3485,6 +3488,7 @@ dependencies = [
  "once_cell",
  "prost",
  "prost-derive",
+ "runar_logging",
  "rustc-hash 1.1.0",
  "serde",
  "serde_bytes",
@@ -3580,6 +3584,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "runar_logging"
+version = "0.1.0"
+dependencies = [
+ "env_logger 0.10.2",
+ "log",
+ "once_cell",
+]
+
+[[package]]
 name = "runar_macros"
 version = "0.1.0"
 dependencies = [
@@ -3616,6 +3629,7 @@ name = "runar_macros_common"
 version = "0.1.0"
 dependencies = [
  "runar-serializer",
+ "runar_logging",
  "serde",
  "serde_json",
 ]

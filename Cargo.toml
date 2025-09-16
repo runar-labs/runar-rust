@@ -4,6 +4,7 @@ members = [
     "runar-macros",
     "runar-macros-common",
     "runar-common",
+    "runar-logging",
     "runar-services",
     "rust-examples/micro_services_demo",
     "rust-examples",

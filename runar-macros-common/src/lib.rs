@@ -136,64 +136,8 @@ macro_rules! params {
 }
 
 // ============================
-// Logger Macros (zero-overhead when disabled)
+// Re-export logging macros from runar-logging crate
 // ============================
 
-/// Core logging macro that checks the log level before formatting.
-///
-/// Usage:
-/// - Positional/explicit args: `runar_log!(logger, Info, "message {}", arg)`
-/// - Implicit capture: `runar_log!(logger, Info, "topic={topic} id={id}")`
-///
-/// When the level is disabled, neither the formatting nor the argument evaluation occurs.
-#[macro_export]
-macro_rules! runar_log {
-    ($logger:expr, Debug, $($arg:tt)*) => {{
-        if ::log::log_enabled!(::log::Level::Debug) {
-            ($logger).debug_args(format_args!($($arg)*));
-        }
-    }};
-    ($logger:expr, Info, $($arg:tt)*) => {{
-        if ::log::log_enabled!(::log::Level::Info) {
-            ($logger).info_args(format_args!($($arg)*));
-        }
-    }};
-    ($logger:expr, Warn, $($arg:tt)*) => {{
-        if ::log::log_enabled!(::log::Level::Warn) {
-            ($logger).warn_args(format_args!($($arg)*));
-        }
-    }};
-    ($logger:expr, Error, $($arg:tt)*) => {{
-        if ::log::log_enabled!(::log::Level::Error) {
-            ($logger).error_args(format_args!($($arg)*));
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! log_debug {
-    ($logger:expr, $($arg:tt)*) => {
-        $crate::runar_log!($logger, Debug, $($arg)*);
-    }
-}
-
-#[macro_export]
-macro_rules! log_info {
-    ($logger:expr, $($arg:tt)*) => {
-        $crate::runar_log!($logger, Info, $($arg)*);
-    }
-}
-
-#[macro_export]
-macro_rules! log_warn {
-    ($logger:expr, $($arg:tt)*) => {
-        $crate::runar_log!($logger, Warn, $($arg)*);
-    }
-}
-
-#[macro_export]
-macro_rules! log_error {
-    ($logger:expr, $($arg:tt)*) => {
-        $crate::runar_log!($logger, Error, $($arg)*);
-    }
-}
+// Re-export all logging macros from the dedicated logging crate
+pub use runar_logging::{log_debug, log_error, log_info, log_trace, log_warn, runar_log};

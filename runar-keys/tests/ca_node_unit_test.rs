@@ -3,11 +3,13 @@
 //! This module tests individual CANode methods and functionality
 //! without the full E2E integration tests.
 
+use runar_common::logging::{Component, Logger};
 use runar_keys::{
     ca_node::CANode,
     certificate::{CertificateAuthority, EcdsaKeyPair},
     error::Result,
 };
+use std::sync::Arc;
 
 #[test]
 fn test_ca_node_creation() -> Result<()> {
@@ -20,7 +22,16 @@ fn test_ca_node_creation() -> Result<()> {
     let root_authority = CertificateAuthority::new("CN=Test Root CA,O=Test,C=US")?;
     let root_cert = root_authority.ca_certificate().clone();
 
-    let ca_node = CANode::new(ca_key, ca_cert, root_cert, "test_network".to_string());
+    // Create logger
+    let logger = Arc::new(Logger::new_root(Component::Keys));
+
+    let ca_node = CANode::new(
+        ca_key,
+        ca_cert,
+        root_cert,
+        "test_network".to_string(),
+        logger,
+    );
 
     assert_eq!(ca_node.network_id, "test_network");
     assert!(ca_node.enrollment_authorities.is_empty());
@@ -38,7 +49,16 @@ fn test_enrollment_authority_configuration() -> Result<()> {
     let root_authority = CertificateAuthority::new("CN=Test Root CA,O=Test,C=US")?;
     let root_cert = root_authority.ca_certificate().clone();
 
-    let mut ca_node = CANode::new(ca_key, ca_cert, root_cert, "test_network".to_string());
+    // Create logger
+    let logger = Arc::new(Logger::new_root(Component::Keys));
+
+    let mut ca_node = CANode::new(
+        ca_key,
+        ca_cert,
+        root_cert,
+        "test_network".to_string(),
+        logger,
+    );
 
     // Configure enrollment authority
     let ea_key = EcdsaKeyPair::new()?;
@@ -66,7 +86,16 @@ fn test_rate_limiting() -> Result<()> {
     let root_authority = CertificateAuthority::new("CN=Test Root CA,O=Test,C=US")?;
     let root_cert = root_authority.ca_certificate().clone();
 
-    let mut ca_node = CANode::new(ca_key, ca_cert, root_cert, "test_network".to_string());
+    // Create logger
+    let logger = Arc::new(Logger::new_root(Component::Keys));
+
+    let mut ca_node = CANode::new(
+        ca_key,
+        ca_cert,
+        root_cert,
+        "test_network".to_string(),
+        logger,
+    );
 
     // Should allow initial requests (same token_id to share rate limit)
     for _ in 0..5 {

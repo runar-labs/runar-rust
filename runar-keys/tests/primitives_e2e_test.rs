@@ -55,11 +55,13 @@ async fn test_primitives_e2e_ca_node_flow() -> Result<()> {
     println!("   ✅ Issuing CA created: {}", issuing_ca_cert.subject());
 
     // Create CA Node
+    let ca_logger = create_test_logger();
     let mut ca_node = CANode::new(
         issuing_ca_key.clone(),
         issuing_ca_cert.clone(),
         root_ca_cert.clone(),
         "test_network".to_string(),
+        ca_logger,
     );
 
     // Configure enrollment authority (mobile user)
@@ -508,11 +510,13 @@ async fn test_primitives_e2e_enrollment_token_validation() -> Result<()> {
     let issuing_ca_cert =
         root_ca.sign_ca_certificate_request_with_serial(&issuing_ca_csr, 365, Some(1))?;
 
+    let ca_logger = create_test_logger();
     let mut ca_node = CANode::new(
         issuing_ca_key,
         issuing_ca_cert,
         root_ca.ca_certificate().clone(),
         "test_network".to_string(),
+        ca_logger,
     );
     let ea_public_key = ea_key.public_key_bytes();
     ca_node.configure_enrollment_authority(vec![ea_public_key.clone()])?;

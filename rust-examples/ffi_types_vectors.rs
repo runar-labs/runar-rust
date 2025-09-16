@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use runar_ffi::CaClientConfigAll;
 use runar_keys::ca_node_types::{CaErrorResponse, CsrEnrollRequest, CsrEnrollResponse};
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
@@ -32,6 +33,7 @@ fn main() -> Result<()> {
 
     // 6. CaErrorResponse
     generate_ca_error_response_vectors(&out)?;
+    generate_ca_client_config_all_vectors(&out)?;
 
     println!("✅ Generated FFI types vectors to {}", out.display());
     Ok(())
@@ -64,7 +66,11 @@ fn generate_enrollment_token_body_vectors(out: &Path) -> Result<()> {
         permissions: vec!["enroll".to_string(), "renew".to_string()],
     };
 
-    write_cbor_vector(out, "enrollment_token_body_multi_permissions.bin", &multi_permissions_body)?;
+    write_cbor_vector(
+        out,
+        "enrollment_token_body_multi_permissions.bin",
+        &multi_permissions_body,
+    )?;
 
     // Enrollment token body without subject hint
     let no_subject_body = EnrollmentTokenBody {
@@ -77,7 +83,11 @@ fn generate_enrollment_token_body_vectors(out: &Path) -> Result<()> {
         permissions: vec!["enroll".to_string()],
     };
 
-    write_cbor_vector(out, "enrollment_token_body_no_subject.bin", &no_subject_body)?;
+    write_cbor_vector(
+        out,
+        "enrollment_token_body_no_subject.bin",
+        &no_subject_body,
+    )?;
 
     println!("✅ EnrollmentTokenBody vectors generated");
     Ok(())
@@ -99,7 +109,12 @@ fn generate_enrollment_token_vectors(out: &Path) -> Result<()> {
 
     let basic_token = EnrollmentToken {
         body: basic_body,
-        signature: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70],
+        signature: vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+            47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
+            69, 70,
+        ],
         signer_id: "test_signer_001".to_string(),
     };
 
@@ -122,7 +137,11 @@ fn generate_enrollment_token_vectors(out: &Path) -> Result<()> {
         signer_id: "test_signer_002".to_string(),
     };
 
-    write_cbor_vector(out, "enrollment_token_long_signature.bin", &long_signature_token)?;
+    write_cbor_vector(
+        out,
+        "enrollment_token_long_signature.bin",
+        &long_signature_token,
+    )?;
 
     println!("✅ EnrollmentToken vectors generated");
     Ok(())
@@ -133,9 +152,9 @@ fn generate_setup_token_vectors(out: &Path) -> Result<()> {
 
     // Basic setup token
     let basic_setup = SetupToken {
-        node_public_key: vec![1; 65], // 65-byte public key
+        node_public_key: vec![1; 65],           // 65-byte public key
         node_agreement_public_key: vec![2; 65], // 65-byte agreement key
-        csr_der: vec![3; 318], // 318-byte CSR (typical size)
+        csr_der: vec![3; 318],                  // 318-byte CSR (typical size)
         node_id: "test_node_001".to_string(),
     };
 
@@ -143,13 +162,17 @@ fn generate_setup_token_vectors(out: &Path) -> Result<()> {
 
     // Setup token with different key sizes
     let different_sizes_setup = SetupToken {
-        node_public_key: vec![4; 33], // 33-byte compressed key
+        node_public_key: vec![4; 33],           // 33-byte compressed key
         node_agreement_public_key: vec![5; 32], // 32-byte key
-        csr_der: vec![6; 256], // 256-byte CSR
+        csr_der: vec![6; 256],                  // 256-byte CSR
         node_id: "test_node_002".to_string(),
     };
 
-    write_cbor_vector(out, "setup_token_different_sizes.bin", &different_sizes_setup)?;
+    write_cbor_vector(
+        out,
+        "setup_token_different_sizes.bin",
+        &different_sizes_setup,
+    )?;
 
     println!("✅ SetupToken vectors generated");
     Ok(())
@@ -191,7 +214,11 @@ fn generate_csr_enroll_request_vectors(out: &Path) -> Result<()> {
         enrollment_token: enrollment_token,
     };
 
-    write_cbor_vector(out, "csr_enroll_request_different_csr.bin", &different_csr_request)?;
+    write_cbor_vector(
+        out,
+        "csr_enroll_request_different_csr.bin",
+        &different_csr_request,
+    )?;
 
     println!("✅ CsrEnrollRequest vectors generated");
     Ok(())
@@ -203,8 +230,8 @@ fn generate_csr_enroll_response_vectors(out: &Path) -> Result<()> {
     // Basic CSR enroll response
     let basic_response = CsrEnrollResponse {
         network_id: "test_network".to_string(),
-        certificate_der: vec![9; 1024], // 1KB certificate
-        issuing_ca_der: vec![10; 512], // Intermediate cert
+        certificate_der: vec![9; 1024],   // 1KB certificate
+        issuing_ca_der: vec![10; 512],    // Intermediate cert
         root_ca_der: Some(vec![11; 256]), // Root cert
         expires_at: 1757894422,
     };
@@ -215,8 +242,8 @@ fn generate_csr_enroll_response_vectors(out: &Path) -> Result<()> {
     let no_root_response = CsrEnrollResponse {
         network_id: "test_network".to_string(),
         certificate_der: vec![12; 2048], // 2KB certificate
-        issuing_ca_der: vec![13; 1024], // Intermediate cert
-        root_ca_der: None, // No root cert
+        issuing_ca_der: vec![13; 1024],  // Intermediate cert
+        root_ca_der: None,               // No root cert
         expires_at: 1757894422,
     };
 
@@ -234,35 +261,69 @@ fn generate_ca_error_response_vectors(out: &Path) -> Result<()> {
     write_cbor_vector(out, "ca_error_response_basic.bin", &basic_error)?;
 
     // Error response with reason
-    let error_with_reason = CaErrorResponse::with_reason(
-        "forbidden",
-        "CSR CN mismatch",
-        "csr_cn_mismatch",
-    );
+    let error_with_reason =
+        CaErrorResponse::with_reason("forbidden", "CSR CN mismatch", "csr_cn_mismatch");
     write_cbor_vector(out, "ca_error_response_with_reason.bin", &error_with_reason)?;
 
     // Rate limited error
-    let rate_limited_error = CaErrorResponse::with_reason(
-        "rate_limited",
-        "Too many requests",
-        "rate_limit_exceeded",
-    );
-    write_cbor_vector(out, "ca_error_response_rate_limited.bin", &rate_limited_error)?;
+    let rate_limited_error =
+        CaErrorResponse::with_reason("rate_limited", "Too many requests", "rate_limit_exceeded");
+    write_cbor_vector(
+        out,
+        "ca_error_response_rate_limited.bin",
+        &rate_limited_error,
+    )?;
 
     println!("✅ CaErrorResponse vectors generated");
     Ok(())
 }
 
+fn generate_ca_client_config_all_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating CaClientConfigAll vectors...");
+
+    // Basic CA client config
+    let basic_config = CaClientConfigAll {
+        bootstrap_server: "127.0.0.1:8443".to_string(),
+        authenticated_server: "127.0.0.1:8444".to_string(),
+        network_id: "test_network".to_string(),
+        request_timeout_seconds: 30,
+        max_retries: 3,
+        root_ca_der: vec![1; 256],    // Root CA cert
+        issuing_ca_der: vec![2; 512], // Issuing CA cert
+    };
+
+    write_cbor_vector(out, "ca_client_config_all_basic.bin", &basic_config)?;
+
+    // CA client config with different sizes
+    let different_sizes_config = CaClientConfigAll {
+        bootstrap_server: "192.168.1.100:8443".to_string(),
+        authenticated_server: "192.168.1.100:8444".to_string(),
+        network_id: "production_network".to_string(),
+        request_timeout_seconds: 60,
+        max_retries: 5,
+        root_ca_der: vec![3; 1024],    // Larger root CA cert
+        issuing_ca_der: vec![4; 2048], // Larger issuing CA cert
+    };
+
+    write_cbor_vector(
+        out,
+        "ca_client_config_all_different_sizes.bin",
+        &different_sizes_config,
+    )?;
+
+    println!("✅ CaClientConfigAll vectors generated");
+    Ok(())
+}
+
 fn write_cbor_vector<T: Serialize>(out: &Path, filename: &str, data: &T) -> Result<()> {
-    let cbor_data = serde_cbor::to_vec(data)
-        .context(format!("Failed to serialize {} to CBOR", filename))?;
-    
+    let cbor_data =
+        serde_cbor::to_vec(data).context(format!("Failed to serialize {} to CBOR", filename))?;
+
     let mut path = out.to_path_buf();
     path.push(filename);
-    
-    fs::write(&path, &cbor_data)
-        .context(format!("Failed to write {}", path.display()))?;
-    
+
+    fs::write(&path, &cbor_data).context(format!("Failed to write {}", path.display()))?;
+
     println!("   📝 {}: {} bytes", filename, cbor_data.len());
     Ok(())
 }

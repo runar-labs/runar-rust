@@ -7,7 +7,7 @@
 // - Node ID tracking through logger inheritance
 // - Support for action and event path tracing
 
-use log::{debug, error, info, warn, Level};
+use log::{debug, error, info, trace, warn, Level};
 use once_cell::sync::OnceCell;
 use std::fmt::Arguments;
 
@@ -105,6 +105,37 @@ impl Logger {
             Some(context.clone())
         } else {
             self.parent_context.clone()
+        }
+    }
+
+    /// Log a trace message
+    pub fn trace(&self, message: impl Into<String>) {
+        if log::log_enabled!(Level::Trace) {
+            let component_prefix = &self.full_component_prefix;
+            let context_prefix = self.full_context_prefix();
+            if let Some(context_prefix) = context_prefix {
+                trace!(
+                    "[{} {}] {}",
+                    component_prefix,
+                    context_prefix,
+                    message.into()
+                );
+            } else {
+                trace!("[{}] {}", component_prefix, message.into());
+            }
+        }
+    }
+
+    /// Log a trace message using fmt::Arguments (avoids allocating message String)
+    pub fn trace_args(&self, args: Arguments) {
+        if log::log_enabled!(Level::Trace) {
+            let component_prefix = &self.full_component_prefix;
+            let context_prefix = self.full_context_prefix();
+            if let Some(context_prefix) = context_prefix {
+                trace!("[{component_prefix} {context_prefix}] {args}");
+            } else {
+                trace!("[{component_prefix}] {args}");
+            }
         }
     }
 
@@ -249,3 +280,78 @@ impl Logger {
 // Re-export logging configuration
 pub mod config;
 pub use config::{ComponentKey, LogLevel, LoggingConfig};
+
+// ============================
+// Logger Macros (zero-overhead when disabled)
+// ============================
+
+/// Core logging macro that checks the log level before formatting.
+///
+/// Usage:
+/// - Positional/explicit args: `runar_log!(logger, Info, "message {}", arg)`
+/// - Implicit capture: `runar_log!(logger, Info, "topic={topic} id={id}")`
+///
+/// When the level is disabled, neither the formatting nor the argument evaluation occurs.
+#[macro_export]
+macro_rules! runar_log {
+    ($logger:expr, Debug, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Debug) {
+            ($logger).debug_args(format_args!($($arg)*));
+        }
+    }};
+    ($logger:expr, Trace, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Trace) {
+            ($logger).trace_args(format_args!($($arg)*));
+        }
+    }};
+    ($logger:expr, Info, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Info) {
+            ($logger).info_args(format_args!($($arg)*));
+        }
+    }};
+    ($logger:expr, Warn, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Warn) {
+            ($logger).warn_args(format_args!($($arg)*));
+        }
+    }};
+    ($logger:expr, Error, $($arg:tt)*) => {{
+        if ::log::log_enabled!(::log::Level::Error) {
+            ($logger).error_args(format_args!($($arg)*));
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! log_trace {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Trace, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! log_debug {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Debug, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! log_info {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Info, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! log_warn {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Warn, $($arg)*);
+    }
+}
+
+#[macro_export]
+macro_rules! log_error {
+    ($logger:expr, $($arg:tt)*) => {
+        $crate::runar_log!($logger, Error, $($arg)*);
+    }
+}
