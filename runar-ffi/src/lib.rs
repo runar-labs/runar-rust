@@ -3274,29 +3274,76 @@ pub extern "C" fn rn_keys_node_generate_csr(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_node_generate_csr"));
+
     let Some(inner) = with_keys_inner(keys) else {
+        log_error!(logger, "rn_keys_node_generate_csr: keys handle is null");
         set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return RN_ERROR_INVALID_HANDLE;
     };
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: keys handle validated, inner: {:p}",
+        inner
+    );
+
     let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_generate_csr: node manager validated successfully"
+            );
+            mgr
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: failed to validate node manager: {}",
+                e.message()
+            );
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: acquiring write lock on node manager"
+    );
     let mut node_manager = match manager.write() {
-        Ok(mgr) => mgr,
+        Ok(mgr) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_generate_csr: write lock acquired successfully"
+            );
+            mgr
+        }
         Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: failed to acquire write lock"
+            );
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
             return RN_ERROR_LOCK_ERROR;
         }
     };
 
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: calling node_manager.generate_csr()"
+    );
     let token = match node_manager.generate_csr() {
-        Ok(t) => t,
+        Ok(t) => {
+            log_trace!(logger, "rn_keys_node_generate_csr: generate_csr succeeded");
+            t
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: generate_csr failed: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -3305,9 +3352,25 @@ pub extern "C" fn rn_keys_node_generate_csr(
             return RN_ERROR_OPERATION_FAILED;
         }
     };
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: serializing token to CBOR"
+    );
     let cbor = match serde_cbor::to_vec(&token) {
-        Ok(v) => v,
+        Ok(v) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_generate_csr: token serialized to {} bytes",
+                v.len()
+            );
+            v
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_generate_csr: failed to serialize token: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_SERIALIZATION_FAILED,
@@ -3316,10 +3379,26 @@ pub extern "C" fn rn_keys_node_generate_csr(
             return 2;
         }
     };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: allocating {} bytes for output",
+        cbor.len()
+    );
     if !alloc_bytes(out_st_cbor, out_len, &cbor) {
+        log_error!(
+            logger,
+            "rn_keys_node_generate_csr: failed to allocate output bytes"
+        );
         set_error(err, RN_ERROR_MEMORY_ALLOCATION, "invalid out pointers");
         return RN_ERROR_MEMORY_ALLOCATION;
     }
+
+    log_trace!(
+        logger,
+        "rn_keys_node_generate_csr: returning success with {} bytes",
+        cbor.len()
+    );
     0
 }
 
@@ -7709,6 +7788,9 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_transport_ca_client_renew"));
+
     if client.is_null()
         || authenticated_addr.is_null()
         || request.is_null()
@@ -7716,21 +7798,44 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
         || out_len.is_null()
         || err.is_null()
     {
+        log_error!(
+            logger,
+            "rn_transport_ca_client_renew: null argument detected"
+        );
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
+    let wrapper = &*(client as *const CaClientWrapper);
+    log_trace!(
+        logger,
+        "rn_transport_ca_client_renew: arguments validated, initializing crypto provider"
+    );
     // Initialize RustLS crypto provider before CA client operations
     let _ = aws_lc_rs::default_provider().install_default();
-
-    let wrapper = &*(client as *const CaClientWrapper);
     let client = &wrapper.client;
 
+    log_trace!(
+        logger,
+        "rn_transport_ca_client_renew: parsing renewal request from {} bytes",
+        request_len
+    );
     // Parse the renewal request
     let request_data = std::slice::from_raw_parts(request, request_len);
     let renew_request = match serde_cbor::from_slice::<RenewRequest>(request_data) {
-        Ok(req) => req,
+        Ok(req) => {
+            log_trace!(
+                logger,
+                "rn_transport_ca_client_renew: successfully parsed renewal request"
+            );
+            req
+        }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_transport_ca_client_renew: failed to parse renewal request: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -7740,19 +7845,42 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
         }
     };
 
+    log_trace!(
+        logger,
+        "rn_transport_ca_client_renew: calling client.renew with parsed request"
+    );
     // Perform renewal using shared runtime
     match runtime().block_on(client.renew(renew_request)) {
         Ok(response) => {
+            log_trace!(
+                logger,
+                "rn_transport_ca_client_renew: client.renew succeeded, serializing response"
+            );
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
                     let response_len = response_data.len();
+                    log_trace!(
+                        logger,
+                        "rn_transport_ca_client_renew: response serialized to {} bytes",
+                        response_len
+                    );
                     let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
                     *out_response = response_ptr;
                     *out_len = response_len;
+                    log_trace!(
+                        logger,
+                        "rn_transport_ca_client_renew: returning success with {} bytes",
+                        response_len
+                    );
                     0
                 }
                 Err(e) => {
+                    log_error!(
+                        logger,
+                        "rn_transport_ca_client_renew: failed to serialize response: {}",
+                        e
+                    );
                     set_error(
                         err,
                         RN_ERROR_OPERATION_FAILED,
@@ -7763,6 +7891,11 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
             }
         }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_transport_ca_client_renew: client.renew failed: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -8024,12 +8157,20 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
     cert_len: usize,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_node_install_certificate"));
+
     if keys.is_null() || certificate_data.is_null() || err.is_null() {
+        log_error!(logger, "rn_keys_node_install_certificate: null argument");
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
     let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_node_install_certificate: invalid keys handle"
+        );
         set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
         return RN_ERROR_INVALID_HANDLE;
     };
@@ -8037,26 +8178,64 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
     let manager = match validate_node_manager(inner) {
         Ok(mgr) => mgr,
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_install_certificate: failed to validate node manager: {:?}",
+                e
+            );
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
     let cert_data = std::slice::from_raw_parts(certificate_data, cert_len);
+    log_trace!(
+        logger,
+        "rn_keys_node_install_certificate: certificate data length: {}, first 20 bytes: {:?}",
+        cert_len,
+        &cert_data[..cert_len.min(20)]
+    );
 
     // Parse the certificate message
+    log_trace!(
+        logger,
+        "rn_keys_node_install_certificate: attempting to parse certificate as CBOR"
+    );
     match serde_cbor::from_slice::<NodeCertificateMessage>(cert_data) {
         Ok(cert_message) => {
+            log_trace!(
+                logger,
+                "rn_keys_node_install_certificate: successfully parsed certificate message"
+            );
             let mut mgr = match manager.write() {
                 Ok(mgr) => mgr,
                 Err(_) => {
+                    log_error!(
+                        logger,
+                        "rn_keys_node_install_certificate: failed to acquire write lock"
+                    );
                     set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire write lock");
                     return RN_ERROR_LOCK_ERROR;
                 }
             };
+            log_trace!(
+                logger,
+                "rn_keys_node_install_certificate: calling mgr.install_certificate"
+            );
             match mgr.install_certificate(cert_message) {
-                Ok(_) => 0,
+                Ok(_) => {
+                    log_trace!(
+                        logger,
+                        "rn_keys_node_install_certificate: certificate installed successfully"
+                    );
+                    0
+                }
                 Err(e) => {
+                    log_error!(
+                        logger,
+                        "rn_keys_node_install_certificate: failed to install certificate: {}",
+                        e
+                    );
                     set_error(
                         err,
                         RN_ERROR_OPERATION_FAILED,
@@ -8067,6 +8246,11 @@ pub unsafe extern "C" fn rn_keys_node_install_certificate(
             }
         }
         Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_install_certificate: failed to parse certificate as CBOR: {}",
+                e
+            );
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
