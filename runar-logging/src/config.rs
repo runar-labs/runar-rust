@@ -2,53 +2,17 @@
 //
 // This module provides configuration options for logging in the Runar system.
 
-use super::Component;
 use env_logger::{Builder, TimestampPrecision};
 use log::LevelFilter;
-use std::collections::HashMap;
 
 /// Logging configuration options
 #[derive(Clone, Debug)]
 pub struct LoggingConfig {
-    /// Default log level for all components
+    /// Default log level for all runar modules
     pub default_level: LogLevel,
-    /// Component-specific log levels
-    pub component_levels: HashMap<ComponentKey, LogLevel>,
 }
 
-/// Component key for logging configuration
-/// This provides Hash and Eq implementations for identifying components
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ComponentKey {
-    Node,
-    Registry,
-    Service,
-    Event,
-    Action,
-    Database,
-    Network,
-    System,
-    Custom(String),
-}
-
-impl From<Component> for ComponentKey {
-    fn from(component: Component) -> Self {
-        match component {
-            Component::Node => ComponentKey::Node,
-            Component::Registry => ComponentKey::Registry,
-            Component::Service => ComponentKey::Service,
-            Component::Event => ComponentKey::Event,
-            Component::Action => ComponentKey::Action,
-            Component::Database => ComponentKey::Database,
-            Component::Transporter => ComponentKey::Network,
-            Component::System => ComponentKey::System,
-            Component::NetworkDiscovery => ComponentKey::Network,
-            Component::Custom(name) => ComponentKey::Custom(name.to_string()),
-            Component::CLI => ComponentKey::Custom("CLI".to_string()),
-            Component::Keys => ComponentKey::Custom("Keys".to_string()),
-        }
-    }
-}
+// Components are only used for adding context to log messages, not for filtering
 
 /// Log levels matching standard Rust log crate levels
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,24 +50,19 @@ impl LoggingConfig {
     pub fn new() -> Self {
         Self {
             default_level: LogLevel::Error,
-            component_levels: HashMap::new(),
         }
     }
 
-    /// Create a default logging configuration with Info level for all components
+    /// Create a default logging configuration with Info level for all runar modules
     pub fn default_info() -> Self {
-        Self::new()
+        Self {
+            default_level: LogLevel::Info,
+        }
     }
 
-    /// Set the default log level
+    /// Set the default log level for all runar modules
     pub fn with_default_level(mut self, level: LogLevel) -> Self {
         self.default_level = level;
-        self
-    }
-
-    /// Set a log level for a specific component
-    pub fn with_component_level(mut self, component: Component, level: LogLevel) -> Self {
-        self.component_levels.insert(component.into(), level);
         self
     }
 
@@ -127,27 +86,46 @@ impl LoggingConfig {
         builder.format_target(false);
         builder.format_timestamp(Some(TimestampPrecision::Millis));
 
-        // Set the default level
-        builder.filter_level(self.default_level.to_level_filter());
+        // Set the default level to Error to suppress external libraries
+        builder.filter_level(LogLevel::Error.to_level_filter());
 
-        // Apply component-specific levels
-        for (component, level) in &self.component_levels {
-            let target = match component {
-                ComponentKey::Node => "runar_node",
-                ComponentKey::Registry => "runar_node::services::registry",
-                ComponentKey::Service => "runar_node::services",
-                ComponentKey::Event => "runar_node::services::event",
-                ComponentKey::Action => "runar_node::services::action",
-                ComponentKey::Database => "runar_node::database",
-                ComponentKey::Network => "runar_node::network",
-                ComponentKey::System => "runar_node::system",
-                ComponentKey::Custom(name) => name,
-            };
+        // Component-specific levels are not used for filtering
+        // Components are only for adding context to log messages
 
-            builder.filter(Some(target), level.to_level_filter());
+        // Always allow our runar modules to use the specified default level
+        // This ensures that when default_level is set, it applies to all runar_* modules
+        if self.default_level != LogLevel::Error {
+            builder.filter(Some("runar_"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_node"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_keys"), self.default_level.to_level_filter());
+            builder.filter(
+                Some("runar_transporter"),
+                self.default_level.to_level_filter(),
+            );
+            builder.filter(
+                Some("runar_serializer"),
+                self.default_level.to_level_filter(),
+            );
+            builder.filter(Some("runar_common"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_ffi"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_logging"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_macros"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_schemas"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_services"), self.default_level.to_level_filter());
+            builder.filter(Some("runar_gateway"), self.default_level.to_level_filter());
         }
 
+        // Keep external libraries at Info level to avoid verbose logs
         builder.filter(Some("quinn"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("quinn::"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("quinn_proto"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("quinn_udp"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("rustls"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("rustls::"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("tokio"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("tokio::"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("hyper"), LogLevel::Info.to_level_filter());
+        builder.filter(Some("hyper::"), LogLevel::Info.to_level_filter());
 
         // Try to initialize the global logger, but don't panic if it's already initialized
         // This is especially important for tests where multiple tests might try to initialize the logger

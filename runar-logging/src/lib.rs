@@ -279,7 +279,7 @@ impl Logger {
 
 // Re-export logging configuration
 pub mod config;
-pub use config::{ComponentKey, LogLevel, LoggingConfig};
+pub use config::{LogLevel, LoggingConfig};
 
 // ============================
 // Logger Macros (zero-overhead when disabled)
