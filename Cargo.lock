@@ -3622,6 +3622,7 @@ dependencies = [
  "runar-schemas",
  "runar-serializer",
  "runar_common 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "runar_logging",
  "runar_macros_common",
  "runar_node",
  "runar_test_utils",

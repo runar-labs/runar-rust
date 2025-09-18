@@ -57,6 +57,7 @@ prost = "0.12"
 prost-derive = "0.12"
 runar-serializer = { path = "../runar-serializer" }
 runar_node = { path = "../runar-node" }
+runar_logging = { path = "../runar-logging" }
 
 # Binary for macro expansion debugging
 [[bin]]

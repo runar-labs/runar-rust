@@ -38,7 +38,7 @@ Logging macros
 They evaluate formatting only when the level is enabled.
 
 ```rust
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_macros_common::{log_debug, log_info, log_warn, log_error};
 
 let logger = Logger::new_root(Component::System, "readme");

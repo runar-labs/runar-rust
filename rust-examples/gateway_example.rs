@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_node::services::RequestContext;
 
 // Define a simple user service

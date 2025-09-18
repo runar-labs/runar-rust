@@ -58,7 +58,7 @@ End-to-end usage (abridged)
 
 ```rust
 use std::sync::Arc;
-use runar_common::logging::{Component, Logger};
+use runar_logging::{Component, Logger};
 use runar_keys::{MobileKeyManager, NodeKeyManager};
 use runar_serializer::{
     traits::{

@@ -85,7 +85,7 @@ Security
 Logging
 -------
 
-Structured logging via `runar_common::logging` with component prefixes and
+Structured logging via `runar_logging` with component prefixes and
 context (action/event paths). Use the provided macros in `runar_macros_common`.
 
 MSRV
