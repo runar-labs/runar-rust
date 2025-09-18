@@ -411,14 +411,17 @@ pub unsafe extern "C" fn rn_keys_set_local_node_info(
     let info: NodeInfo = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
         Err(e) => {
-            set_error(err, RN_ERROR_SERIALIZATION_FAILED, &format!("Failed to decode NodeInfo: {e}"));
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to decode NodeInfo: {e}"),
+            );
             return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
     inner.local_node_info.store(Arc::new(Some(info)));
     0
 }
-
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_set_log_level(level: i32, err: *mut RnError) -> i32 {
@@ -430,7 +433,11 @@ pub unsafe extern "C" fn rn_set_log_level(level: i32, err: *mut RnError) -> i32 
         4 => LogLevel::Debug,
         5 => LogLevel::Trace,
         _ => {
-            set_error(err, RN_ERROR_INVALID_ARGUMENT, &format!("Invalid log level: {level}. Must be 0-5"));
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid log level: {level}. Must be 0-5"),
+            );
             return RN_ERROR_INVALID_ARGUMENT;
         }
     };

@@ -479,10 +479,6 @@ fn test_node_encrypt_local_data_wrong_manager_type() {
 fn test_node_get_keystore_state_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
 
     // Note: rn_keys_node_get_keystore_state has been removed - state management is now internal
     // Keys are automatically generated when needed
@@ -494,10 +490,6 @@ fn test_node_get_keystore_state_happy_path() {
 fn test_mobile_get_keystore_state_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_mobile(keys) };
-    let mut error = RnError {
-        code: 0,
-        message: ptr::null(),
-    };
 
     let _state = 0i32;
 

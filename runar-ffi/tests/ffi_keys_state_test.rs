@@ -495,4 +495,3 @@ fn test_ensure_symmetric_key() {
         rn_keys_free(keys);
     }
 }
-

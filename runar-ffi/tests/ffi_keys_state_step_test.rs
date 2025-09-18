@@ -72,4 +72,3 @@ fn linux_keystore_minimal_network_key_crash_repro() {
         rn_keys_free(keys);
     }
 }
-

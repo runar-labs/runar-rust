@@ -32,38 +32,6 @@ struct CaClientConfigAll {
     pub issuing_ca_der: Vec<u8>, // Required, not optional
 }
 
-/// Validate certificate chain to ensure proper signing relationships
-fn validate_certificate_chain(root_ca_der: &[u8], issuing_ca_der: &[u8]) {
-    // Basic validation: ensure certificates are not empty and have reasonable sizes
-    assert!(
-        !root_ca_der.is_empty(),
-        "Root CA certificate should not be empty"
-    );
-    assert!(
-        !issuing_ca_der.is_empty(),
-        "Issuing CA certificate should not be empty"
-    );
-
-    // Basic size checks (certificates should be at least a few hundred bytes)
-    assert!(
-        root_ca_der.len() > 100,
-        "Root CA certificate seems too small: {} bytes",
-        root_ca_der.len()
-    );
-    assert!(
-        issuing_ca_der.len() > 100,
-        "Issuing CA certificate seems too small: {} bytes",
-        issuing_ca_der.len()
-    );
-
-    println!("   ✅ Root CA certificate: {} bytes", root_ca_der.len());
-    println!(
-        "   ✅ Issuing CA certificate: {} bytes",
-        issuing_ca_der.len()
-    );
-    println!("   ✅ Certificate chain validation passed (basic checks)");
-}
-
 /// Test the full CA Node infrastructure using FFI API with REAL QUIC mTLS connections
 #[test]
 fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Error>> {
@@ -160,10 +128,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     let ea_public_keys_cbor =
         unsafe { std::slice::from_raw_parts(ea_public_key_ptr, ea_public_key_len) }.to_vec();
-    println!(
-        "   ✅ EA public key retrieved ({} bytes)",
-        ea_public_key_len
-    );
+    println!("   ✅ EA public key retrieved ({ea_public_key_len} bytes)");
 
     // Complete CA setup using new secure FFI (no private keys exposed)
     let network_id_cstr = create_cstring("test_network");
@@ -275,19 +240,19 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         .to_string();
 
     println!("   ✅ CA Server started with addresses");
-    println!("      Bootstrap: {}", bootstrap_addr_str);
-    println!("      Authenticated: {}", authenticated_addr_str);
+    println!("      Bootstrap: {bootstrap_addr_str}");
+    println!("      Authenticated: {authenticated_addr_str}");
 
     // Test basic network connectivity
     println!("   🔍 Testing basic network connectivity...");
     match bootstrap_addr_str.parse::<std::net::SocketAddr>() {
-        Ok(addr) => println!("   ✅ Bootstrap address resolved: {}", addr),
-        Err(e) => println!("   ❌ Bootstrap address resolution failed: {}", e),
+        Ok(addr) => println!("   ✅ Bootstrap address resolved: {addr}"),
+        Err(e) => println!("   ❌ Bootstrap address resolution failed: {e}"),
     }
 
     match authenticated_addr_str.parse::<std::net::SocketAddr>() {
-        Ok(addr) => println!("   ✅ Authenticated address resolved: {}", addr),
-        Err(e) => println!("   ❌ Authenticated address resolution failed: {}", e),
+        Ok(addr) => println!("   ✅ Authenticated address resolved: {addr}"),
+        Err(e) => println!("   ❌ Authenticated address resolution failed: {e}"),
     }
 
     // Recreate CStrings for the client configuration
@@ -302,14 +267,12 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Generate CSR on node (returns SetupToken CBOR)
     let mut setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut setup_token_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr(
-            node_keys,
-            &mut setup_token_ptr,
-            &mut setup_token_len,
-            &mut error,
-        )
-    };
+    let result = rn_keys_node_generate_csr(
+        node_keys,
+        &mut setup_token_ptr,
+        &mut setup_token_len,
+        &mut error,
+    );
     assert_eq!(result, 0, "Failed to generate CSR");
     assert!(!setup_token_ptr.is_null(), "SetupToken should not be null");
     assert!(setup_token_len > 0, "SetupToken length should be positive");
@@ -331,7 +294,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let network_id_cstr = create_cstring("test_network");
     let subject_cstr = create_cstring("test_subject");
     let nonce = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-    let capabilities = vec![create_cstring("enroll")];
+    let capabilities = [create_cstring("enroll")];
     let capabilities_ptrs: Vec<*const c_char> = capabilities.iter().map(|s| s.as_ptr()).collect();
 
     let mut token_cbor_ptr: *mut u8 = ptr::null_mut();
@@ -409,8 +372,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     // Create CA Client with all configuration at once (following design section 6.6)
     println!("   🔧 Creating CA Client with all configuration (following design section 6.6):");
-    println!("      Bootstrap: {}", bootstrap_addr_str);
-    println!("      Authenticated: {}", authenticated_addr_str);
+    println!("      Bootstrap: {bootstrap_addr_str}");
+    println!("      Authenticated: {authenticated_addr_str}");
     println!("      Network ID: test_network");
     println!("      Timeout: 30s, Max retries: 3");
 
@@ -438,10 +401,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     if result != 0 {
-        println!(
-            "   ❌ Failed to create CA client with error code: {}",
-            result
-        );
+        println!("   ❌ Failed to create CA client with error code: {result}");
         println!("   ❌ Error message: {}", unsafe {
             std::ffi::CStr::from_ptr(error.message).to_string_lossy()
         });
@@ -452,7 +412,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     // Enroll via CA Client
     println!("   🔧 Attempting enrollment with:");
-    println!("      Bootstrap address: {}", bootstrap_addr_str);
+    println!("      Bootstrap address: {bootstrap_addr_str}");
     println!("      Request size: {} bytes", enroll_request.len());
     println!("      CSR size: {} bytes", csr_der.len());
 
@@ -471,7 +431,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     };
 
     if result != 0 {
-        println!("   ❌ Enrollment failed with error code: {}", result);
+        println!("   ❌ Enrollment failed with error code: {result}");
         println!("   ❌ Error message: {}", unsafe {
             std::ffi::CStr::from_ptr(error.message).to_string_lossy()
         });
@@ -486,10 +446,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         enroll_response_len > 0,
         "Enroll response length should be positive"
     );
-    println!(
-        "   ✅ Enrollment successful, response size: {} bytes",
-        enroll_response_len
-    );
+    println!("   ✅ Enrollment successful, response size: {enroll_response_len} bytes");
 
     let enroll_response =
         unsafe { std::slice::from_raw_parts(enroll_response_ptr, enroll_response_len) }.to_vec();
@@ -559,14 +516,12 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Generate renewal CSR (returns SetupToken CBOR)
     let mut renewal_setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut renewal_setup_token_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr(
-            node_keys,
-            &mut renewal_setup_token_ptr,
-            &mut renewal_setup_token_len,
-            &mut error,
-        )
-    };
+    let result = rn_keys_node_generate_csr(
+        node_keys,
+        &mut renewal_setup_token_ptr,
+        &mut renewal_setup_token_len,
+        &mut error,
+    );
     assert_eq!(result, 0, "Failed to generate renewal CSR");
     assert!(
         !renewal_setup_token_ptr.is_null(),
@@ -614,7 +569,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     };
 
     if result != 0 {
-        println!("   ❌ Renewal failed with error code: {}", result);
+        println!("   ❌ Renewal failed with error code: {result}");
         println!("   ❌ Error message: {}", unsafe {
             std::ffi::CStr::from_ptr(error.message).to_string_lossy()
         });
@@ -710,7 +665,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(!client_ski_cstr.is_null(), "Client SKI should not be null");
 
     let client_ski = unsafe { std::ffi::CStr::from_ptr(client_ski_cstr).to_string_lossy() };
-    println!("   📋 Client certificate SKI: {}", client_ski);
+    println!("   📋 Client certificate SKI: {client_ski}");
 
     // Add client SKI to shared CA Node (which is what the server actually uses)
     let client_ski_cstr = create_cstring(&client_ski);
@@ -735,19 +690,17 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     };
     assert_eq!(result, 0, "Failed to configure admin SKIs on server");
 
-    println!("   ✅ Admin SKI configured for revocation: {}", client_ski);
+    println!("   ✅ Admin SKI configured for revocation: {client_ski}");
 
     // Generate renewal CSR for revocation (returns SetupToken CBOR)
     let mut renewal_setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut renewal_setup_token_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr(
-            node_keys,
-            &mut renewal_setup_token_ptr,
-            &mut renewal_setup_token_len,
-            &mut error,
-        )
-    };
+    let result = rn_keys_node_generate_csr(
+        node_keys,
+        &mut renewal_setup_token_ptr,
+        &mut renewal_setup_token_len,
+        &mut error,
+    );
     assert_eq!(result, 0, "Failed to generate renewal CSR");
     assert!(
         !renewal_setup_token_ptr.is_null(),
@@ -778,7 +731,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     );
 
     let cert_serial = unsafe { std::ffi::CStr::from_ptr(cert_serial_cstr).to_string_lossy() };
-    println!("   📋 Certificate serial for revocation: {}", cert_serial);
+    println!("   📋 Certificate serial for revocation: {cert_serial}");
 
     // Create RevokeRequest
     #[derive(serde::Serialize)]
@@ -867,7 +820,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     };
 
     if result != 0 {
-        println!("   ❌ Status request failed with error code: {}", result);
+        println!("   ❌ Status request failed with error code: {result}");
         println!("   ❌ Error message: {}", unsafe {
             std::ffi::CStr::from_ptr(error.message).to_string_lossy()
         });
@@ -899,7 +852,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     };
 
     if result != 0 {
-        println!("   ❌ Chain request failed with error code: {}", result);
+        println!("   ❌ Chain request failed with error code: {result}");
         println!("   ❌ Error message: {}", unsafe {
             std::ffi::CStr::from_ptr(error.message).to_string_lossy()
         });
@@ -974,8 +927,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         unsafe { std::slice::from_raw_parts(work_profile_key_ptr, work_profile_key_len) }.to_vec();
 
     println!(
-        "   ✅ Profile keys derived: personal ({} bytes), work ({} bytes)",
-        personal_profile_key_len, work_profile_key_len
+        "   ✅ Profile keys derived: personal ({personal_profile_key_len} bytes), work ({work_profile_key_len} bytes)"
     );
 
     // Test profile key encryption/decryption
@@ -988,8 +940,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut envelope_len: usize = 0;
 
     // Prepare profile keys array (array of pointers to profile key data)
-    let profile_keys = vec![personal_profile_key.as_ptr()];
-    let profile_lens = vec![personal_profile_key.len()];
+    let profile_keys = [personal_profile_key.as_ptr()];
+    let profile_lens = [personal_profile_key.len()];
 
     let result = unsafe {
         rn_keys_node_encrypt_with_envelope(
@@ -1011,10 +963,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(envelope_len > 0, "Envelope length should be positive");
 
     let envelope_data = unsafe { std::slice::from_raw_parts(envelope_ptr, envelope_len) }.to_vec();
-    println!(
-        "   ✅ Data encrypted with profile key envelope ({} bytes)",
-        envelope_len
-    );
+    println!("   ✅ Data encrypted with profile key envelope ({envelope_len} bytes)");
 
     // Decrypt with profile key
     let mut decrypted_data_ptr: *mut u8 = ptr::null_mut();
@@ -1058,14 +1007,12 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     for i in 1..=3 {
         let mut test_setup_token_ptr: *mut u8 = ptr::null_mut();
         let mut test_setup_token_len: usize = 0;
-        let result = unsafe {
-            rn_keys_node_generate_csr(
-                node_keys,
-                &mut test_setup_token_ptr,
-                &mut test_setup_token_len,
-                &mut error,
-            )
-        };
+        let result = rn_keys_node_generate_csr(
+            node_keys,
+            &mut test_setup_token_ptr,
+            &mut test_setup_token_len,
+            &mut error,
+        );
         assert_eq!(result, 0, "Failed to generate test CSR for rate limiting");
 
         // Extract DER bytes from SetupToken CBOR
@@ -1104,8 +1051,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         // that was already used in Phase 3 (enrollment)
         if result == 0 {
             println!(
-                "   ⚠️  Rate limit check {} unexpectedly passed (rate limiting may not be working)",
-                i
+                "   ⚠️  Rate limit check {i} unexpectedly passed (rate limiting may not be working)"
             );
         } else {
             println!(
@@ -1135,14 +1081,12 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Try to use revoked token (should fail)
     let mut test_setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut test_setup_token_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr(
-            node_keys,
-            &mut test_setup_token_ptr,
-            &mut test_setup_token_len,
-            &mut error,
-        )
-    };
+    let result = rn_keys_node_generate_csr(
+        node_keys,
+        &mut test_setup_token_ptr,
+        &mut test_setup_token_len,
+        &mut error,
+    );
     assert_eq!(
         result, 0,
         "Failed to generate test CSR for revoked token test"
@@ -1192,7 +1136,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let invalid_network_id_cstr = create_cstring("wrong_network"); // Wrong network ID
     let invalid_subject_cstr = create_cstring("invalid");
     let invalid_nonce = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
-    let invalid_capabilities = vec![create_cstring("enroll")];
+    let invalid_capabilities = [create_cstring("enroll")];
     let invalid_capabilities_ptrs: Vec<*const c_char> =
         invalid_capabilities.iter().map(|s| s.as_ptr()).collect();
 
@@ -1225,14 +1169,12 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     let mut invalid_setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut invalid_setup_token_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr(
-            node_keys,
-            &mut invalid_setup_token_ptr,
-            &mut invalid_setup_token_len,
-            &mut error,
-        )
-    };
+    let result = rn_keys_node_generate_csr(
+        node_keys,
+        &mut invalid_setup_token_ptr,
+        &mut invalid_setup_token_len,
+        &mut error,
+    );
     assert_eq!(result, 0, "Failed to generate invalid CSR");
 
     // Extract DER bytes from SetupToken CBOR
@@ -1283,14 +1225,12 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     let mut unauthorized_setup_token_ptr: *mut u8 = ptr::null_mut();
     let mut unauthorized_setup_token_len: usize = 0;
-    let result = unsafe {
-        rn_keys_node_generate_csr(
-            unauthorized_keys,
-            &mut unauthorized_setup_token_ptr,
-            &mut unauthorized_setup_token_len,
-            &mut error,
-        )
-    };
+    let result = rn_keys_node_generate_csr(
+        unauthorized_keys,
+        &mut unauthorized_setup_token_ptr,
+        &mut unauthorized_setup_token_len,
+        &mut error,
+    );
     assert_eq!(result, 0, "Failed to generate unauthorized CSR");
 
     // Extract DER bytes from SetupToken CBOR
