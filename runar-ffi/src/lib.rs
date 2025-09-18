@@ -1706,12 +1706,27 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
     out_has_key: *mut i32,
     err: *mut RnError,
 ) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom("rn_keys_mobile_has_network_private_key"));
+    
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Starting function"
+    );
+    log_trace!(logger, "  keys: {:?}", keys);
+    log_trace!(logger, "  network_public_key: {:?}", network_public_key);
+    log_trace!(logger, "  network_public_key_len: {}", network_public_key_len);
+    log_trace!(logger, "  out_has_key: {:?}", out_has_key);
+    log_trace!(logger, "  err: {:?}", err);
+
     // Validate parameters upfront - specific error messages
     if keys.is_null() {
+        log_error!(logger, "rn_keys_mobile_has_network_private_key: keys handle is null");
         set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
     if network_public_key.is_null() {
+        log_error!(logger, "rn_keys_mobile_has_network_private_key: network_public_key pointer is null");
         set_error(
             err,
             RN_ERROR_NULL_ARGUMENT,
@@ -1720,6 +1735,7 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
         return RN_ERROR_NULL_ARGUMENT;
     }
     if out_has_key.is_null() {
+        log_error!(logger, "rn_keys_mobile_has_network_private_key: output has_key pointer is null");
         set_error(
             err,
             RN_ERROR_NULL_ARGUMENT,
@@ -1728,32 +1744,54 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Parameter validation passed");
+
     let Some(inner) = with_keys_inner(keys) else {
+        log_error!(logger, "rn_keys_mobile_has_network_private_key: keys handle is null in with_keys_inner");
         set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return RN_ERROR_INVALID_HANDLE;
     };
+    
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Got keys inner");
+    
     let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
         Err(e) => {
+            log_error!(logger, "rn_keys_mobile_has_network_private_key: validate_mobile_manager failed: {}", e.message());
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Mobile manager validated");
+
     let mobile_manager = match manager.read() {
         Ok(mgr) => mgr,
         Err(_) => {
+            log_error!(logger, "rn_keys_mobile_has_network_private_key: failed to acquire lock");
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
             return RN_ERROR_LOCK_ERROR;
         }
     };
 
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Got mobile manager lock");
+
     let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: network_pk len: {}", network_pk.len());
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: network_pk first 8 bytes: {:?}", &network_pk[..std::cmp::min(8, network_pk.len())]);
 
     let has_key = mobile_manager.has_network_private_key(network_pk);
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: mobile_manager.has_network_private_key returned: {}", has_key);
+    
+    let result_value = if has_key { 1 } else { 0 };
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: result_value: {}", result_value);
+    
     unsafe {
-        *out_has_key = if has_key { 1 } else { 0 };
+        *out_has_key = result_value;
+        log_trace!(logger, "rn_keys_mobile_has_network_private_key: wrote {} to out_has_key at {:?}", result_value, out_has_key);
     }
+    
+    log_trace!(logger, "rn_keys_mobile_has_network_private_key: returning 0 (success)");
     0
 }
 
