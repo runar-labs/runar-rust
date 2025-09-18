@@ -66,7 +66,7 @@ fn two_transports_request_response() {
                 .join(" ")
         );
         assert_eq!(
-            rn_keys_set_local_node_info(keys_b, info_buf.as_ptr(), info_buf.len()),
+            rn_keys_set_local_node_info(keys_b, info_buf.as_ptr(), info_buf.len(), &mut err as *mut _ as *mut _),
             0
         );
 
@@ -80,7 +80,7 @@ fn two_transports_request_response() {
 
         // Set node info for A
         assert_eq!(
-            rn_keys_set_local_node_info(keys_a, info_buf.as_ptr(), info_buf.len()),
+            rn_keys_set_local_node_info(keys_a, info_buf.as_ptr(), info_buf.len(), &mut err as *mut _ as *mut _),
             0
         );
 

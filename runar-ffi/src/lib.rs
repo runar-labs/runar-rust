@@ -391,53 +391,37 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
 /// Set local NodeInfo from a CBOR buffer.
 ///
 /// Returns 0 on success.
-/// Returns 1 on null/invalid arguments.
-/// Returns 2 on CBOR decode error; call `rn_last_error` to retrieve the error message.
+/// Returns error code on failure; check err for details.
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_set_local_node_info(
     keys: *mut c_void,
     node_info_cbor: *const u8,
     len: usize,
+    err: *mut RnError,
 ) -> i32 {
     let Some(inner) = with_keys_inner(keys) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
         return RN_ERROR_INVALID_HANDLE;
     };
     if node_info_cbor.is_null() || len == 0 {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "null or empty node_info_cbor");
         return RN_ERROR_INVALID_HANDLE;
     }
     let slice = std::slice::from_raw_parts(node_info_cbor, len);
     let info: NodeInfo = match serde_cbor::from_slice(slice) {
         Ok(v) => v,
-        Err(_) => {
-            // Return error code for invalid CBOR data
-            return 2;
+        Err(e) => {
+            set_error(err, RN_ERROR_SERIALIZATION_FAILED, &format!("Failed to decode NodeInfo: {e}"));
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
     inner.local_node_info.store(Arc::new(Some(info)));
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn rn_last_error(out: *mut c_char, out_len: usize) -> i32 {
-    if out.is_null() || out_len == 0 {
-        return RN_ERROR_INVALID_HANDLE;
-    }
-    let cell = LAST_ERROR.get_or_init(|| StdMutex::new(None));
-    let msg = cell
-        .lock()
-        .map(|guard| guard.clone().unwrap_or_default())
-        .unwrap_or_default();
-    let bytes = msg.as_bytes();
-    // ensure space for NUL terminator
-    let copy_len = bytes.len().min(out_len.saturating_sub(1));
-    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy_len);
-    let end = out.add(copy_len);
-    *end = 0;
-    0
-}
 
 #[no_mangle]
-pub extern "C" fn rn_set_log_level(level: i32) {
+pub unsafe extern "C" fn rn_set_log_level(level: i32, err: *mut RnError) -> i32 {
     let log_level = match level {
         0 => LogLevel::Off,
         1 => LogLevel::Error,
@@ -445,11 +429,15 @@ pub extern "C" fn rn_set_log_level(level: i32) {
         3 => LogLevel::Info,
         4 => LogLevel::Debug,
         5 => LogLevel::Trace,
-        _ => LogLevel::Info,
+        _ => {
+            set_error(err, RN_ERROR_INVALID_ARGUMENT, &format!("Invalid log level: {level}. Must be 0-5"));
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
     };
 
     let logging_config = LoggingConfig::new().with_default_level(log_level);
     logging_config.apply();
+    0
 }
 
 // Global logger management
