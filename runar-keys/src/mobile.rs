@@ -385,16 +385,8 @@ impl MobileKeyManager {
         out
     }
 
-    pub fn has_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
-        // Direct access - validate we have the private key for this public key
-        if self.network_data_keys.contains_key(network_public_key) {
-            Ok(network_public_key.to_vec())
-        } else {
-            Err(KeyError::KeyNotFound(format!(
-                "Network private key not found for public key: {} bytes",
-                network_public_key.len()
-            )))
-        }
+    pub fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
+        self.network_data_keys.contains_key(network_public_key)
     }
 
     /// Get network public key by network ID (for backward compatibility)
@@ -1101,7 +1093,7 @@ impl EnvelopeCrypto for MobileKeyManager {
         self.decrypt_with_network(env)
     }
 
-    fn has_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+    fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
         MobileKeyManager::has_network_private_key(self, network_public_key)
     }
 

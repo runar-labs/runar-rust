@@ -49,9 +49,8 @@ fn build_test_context() -> Result<TestContext> {
     // and the user has its own mobile key store with its keys, but does not have access to the network private keys
 
     let mut mobile_network_master = MobileKeyManager::new(logger.clone())?;
-    let network_public_key = mobile_network_master.generate_network_data_key()?;
-    let network_id = runar_common::compact_ids::compact_id(&network_public_key);
-    let network_pub = mobile_network_master.has_network_private_key(&network_public_key)?;
+    let network_pub = mobile_network_master.generate_network_data_key()?;
+    let network_id = runar_common::compact_ids::compact_id(&network_pub);
 
     let mut user_mobile = MobileKeyManager::new(logger.clone())?;
     user_mobile.initialize_user_root_key()?;
@@ -64,7 +63,7 @@ fn build_test_context() -> Result<TestContext> {
     node_keys.generate_keys()?;
     let token = node_keys.generate_csr()?;
     let nk_msg = mobile_network_master
-        .create_network_key_message(&network_public_key, &token.node_agreement_public_key)?;
+        .create_network_key_message(&network_pub, &token.node_agreement_public_key)?;
     node_keys.install_network_key(nk_msg)?;
 
     let user_mobile_ks = Arc::new(user_mobile) as Arc<dyn EnvelopeCrypto>;

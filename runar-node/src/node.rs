@@ -65,7 +65,7 @@ impl EnvelopeCrypto for NodeKeyManagerWrapper {
         keys_manager.decrypt_envelope_data(env)
     }
 
-    fn has_network_private_key(&self, network_public_key: &[u8]) -> KeyResult<Vec<u8>> {
+    fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
         let keys_manager = self.0.read().unwrap();
         keys_manager.has_network_private_key(network_public_key)
     }

@@ -905,16 +905,8 @@ impl NodeKeyManager {
             })
     }
 
-    pub fn has_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
-        // Direct access - validate we have the private key for this public key
-        if self.network_agreements.contains_key(network_public_key) {
-            Ok(network_public_key.to_vec())
-        } else {
-            Err(KeyError::KeyNotFound(format!(
-                "Network private key not found for public key: {} bytes",
-                network_public_key.len()
-            )))
-        }
+    pub fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
+        self.network_agreements.contains_key(network_public_key)
     }
 
     /// Get network public key by network ID (for backward compatibility)
@@ -1223,7 +1215,7 @@ impl EnvelopeCrypto for NodeKeyManager {
         NodeKeyManager::decrypt_envelope_data(self, env)
     }
 
-    fn has_network_private_key(&self, network_public_key: &[u8]) -> Result<Vec<u8>> {
+    fn has_network_private_key(&self, network_public_key: &[u8]) -> bool {
         NodeKeyManager::has_network_private_key(self, network_public_key)
     }
 

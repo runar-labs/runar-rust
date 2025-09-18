@@ -811,26 +811,27 @@ impl Keys {
     }
 
     #[napi]
-    pub fn mobile_has_network_private_key(
-        &self,
-        network_public_key: Uint8Array,
-    ) -> Result<Uint8Array> {
+    pub fn mobile_has_network_private_key(&self, network_public_key: Uint8Array) -> bool {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile_key_manager.is_none() {
-            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(
-                MobileKeyManager::new(inner.logger.clone())
-                    .map_err(|e| Error::from_reason(e.to_string()))?,
-            )));
+            match MobileKeyManager::new(inner.logger.clone()) {
+                Ok(manager) => {
+                    inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(manager)));
+                }
+                Err(_) => {
+                    // Return false if we can't create the manager
+                    return false;
+                }
+            }
         }
-        let pk = inner
+        let has_key = inner
             .mobile_key_manager
             .as_mut()
             .unwrap()
             .write()
             .unwrap()
-            .has_network_private_key(&network_public_key)
-            .map_err(|e| Error::from_reason(e.to_string()))?;
-        Ok(Uint8Array::from(pk))
+            .has_network_private_key(&network_public_key);
+        has_key
     }
 
     #[napi]

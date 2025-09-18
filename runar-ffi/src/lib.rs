@@ -1703,8 +1703,7 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
     keys: *mut c_void,
     network_public_key: *const u8,
     network_public_key_len: usize,
-    out_pk: *mut *mut u8,
-    out_len: *mut usize,
+    out_has_key: *mut i32,
     err: *mut RnError,
 ) -> i32 {
     // Validate parameters upfront - specific error messages
@@ -1720,16 +1719,12 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
         );
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if out_pk.is_null() {
+    if out_has_key.is_null() {
         set_error(
             err,
             RN_ERROR_NULL_ARGUMENT,
-            "output public key pointer is null",
+            "output has_key pointer is null",
         );
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_len.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
@@ -1755,24 +1750,11 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
 
     let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
 
-    match mobile_manager.has_network_private_key(network_pk) {
-        Ok(pk) => {
-            if !alloc_bytes(out_pk, out_len, &pk) {
-                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-                RN_ERROR_MEMORY_ALLOCATION
-            } else {
-                0
-            }
-        }
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("has_network_private_key failed: {e}"),
-            );
-            RN_ERROR_OPERATION_FAILED
-        }
+    let has_key = mobile_manager.has_network_private_key(network_pk);
+    unsafe {
+        *out_has_key = if has_key { 1 } else { 0 };
     }
+    0
 }
 
 #[no_mangle]
@@ -7591,20 +7573,11 @@ pub unsafe extern "C" fn rn_keys_node_has_network_private_key(
             return RN_ERROR_LOCK_ERROR;
         }
     };
-    match mgr.has_network_private_key(network_public_key_bytes) {
-        Ok(_) => {
-            unsafe {
-                *out_has_key = 1;
-            }
-            0
-        }
-        Err(_) => {
-            unsafe {
-                *out_has_key = 0;
-            }
-            0
-        }
+    let has_key = mgr.has_network_private_key(network_public_key_bytes);
+    unsafe {
+        *out_has_key = if has_key { 1 } else { 0 };
     }
+    0
 }
 
 // ============================================================================

@@ -132,8 +132,9 @@ impl EnvelopeCrypto for NoCrypto {
         Ok(env.encrypted_data.clone())
     }
 
-    fn has_network_private_key(&self, _network_public_key: &[u8]) -> KeyResult<Vec<u8>> {
-        Ok(self.network_public_key.clone())
+    fn has_network_private_key(&self, _network_public_key: &[u8]) -> bool {
+        // This is a test implementation - always return true
+        true
     }
 
     fn get_network_public_key_by_id(&self, _network_id: &str) -> KeyResult<Vec<u8>> {
