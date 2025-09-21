@@ -1707,26 +1707,37 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
     err: *mut RnError,
 ) -> i32 {
     let root_logger = get_global_logger();
-    let logger = root_logger.with_component(Component::Custom("rn_keys_mobile_has_network_private_key"));
-    
+    let logger =
+        root_logger.with_component(Component::Custom("rn_keys_mobile_has_network_private_key"));
+
     log_trace!(
         logger,
         "rn_keys_mobile_has_network_private_key: Starting function"
     );
     log_trace!(logger, "  keys: {:?}", keys);
     log_trace!(logger, "  network_public_key: {:?}", network_public_key);
-    log_trace!(logger, "  network_public_key_len: {}", network_public_key_len);
+    log_trace!(
+        logger,
+        "  network_public_key_len: {}",
+        network_public_key_len
+    );
     log_trace!(logger, "  out_has_key: {:?}", out_has_key);
     log_trace!(logger, "  err: {:?}", err);
 
     // Validate parameters upfront - specific error messages
     if keys.is_null() {
-        log_error!(logger, "rn_keys_mobile_has_network_private_key: keys handle is null");
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: keys handle is null"
+        );
         set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
     if network_public_key.is_null() {
-        log_error!(logger, "rn_keys_mobile_has_network_private_key: network_public_key pointer is null");
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: network_public_key pointer is null"
+        );
         set_error(
             err,
             RN_ERROR_NULL_ARGUMENT,
@@ -1735,7 +1746,10 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
         return RN_ERROR_NULL_ARGUMENT;
     }
     if out_has_key.is_null() {
-        log_error!(logger, "rn_keys_mobile_has_network_private_key: output has_key pointer is null");
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: output has_key pointer is null"
+        );
         set_error(
             err,
             RN_ERROR_NULL_ARGUMENT,
@@ -1744,54 +1758,96 @@ pub unsafe extern "C" fn rn_keys_mobile_has_network_private_key(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Parameter validation passed");
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Parameter validation passed"
+    );
 
     let Some(inner) = with_keys_inner(keys) else {
-        log_error!(logger, "rn_keys_mobile_has_network_private_key: keys handle is null in with_keys_inner");
+        log_error!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: keys handle is null in with_keys_inner"
+        );
         set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
         return RN_ERROR_INVALID_HANDLE;
     };
-    
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Got keys inner");
-    
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Got keys inner"
+    );
+
     let manager = match validate_mobile_manager(inner) {
         Ok(mgr) => mgr,
         Err(e) => {
-            log_error!(logger, "rn_keys_mobile_has_network_private_key: validate_mobile_manager failed: {}", e.message());
+            log_error!(
+                logger,
+                "rn_keys_mobile_has_network_private_key: validate_mobile_manager failed: {}",
+                e.message()
+            );
             set_error(err, e.code(), &e.message());
             return e.code();
         }
     };
 
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Mobile manager validated");
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Mobile manager validated"
+    );
 
     let mobile_manager = match manager.read() {
         Ok(mgr) => mgr,
         Err(_) => {
-            log_error!(logger, "rn_keys_mobile_has_network_private_key: failed to acquire lock");
+            log_error!(
+                logger,
+                "rn_keys_mobile_has_network_private_key: failed to acquire lock"
+            );
             set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
             return RN_ERROR_LOCK_ERROR;
         }
     };
 
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: Got mobile manager lock");
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: Got mobile manager lock"
+    );
 
     let network_pk = std::slice::from_raw_parts(network_public_key, network_public_key_len);
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: network_pk len: {}", network_pk.len());
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: network_pk first 8 bytes: {:?}", &network_pk[..std::cmp::min(8, network_pk.len())]);
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: network_pk len: {}",
+        network_pk.len()
+    );
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: network_pk first 8 bytes: {:?}",
+        &network_pk[..std::cmp::min(8, network_pk.len())]
+    );
 
     let has_key = mobile_manager.has_network_private_key(network_pk);
     log_trace!(logger, "rn_keys_mobile_has_network_private_key: mobile_manager.has_network_private_key returned: {}", has_key);
-    
+
     let result_value = if has_key { 1 } else { 0 };
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: result_value: {}", result_value);
-    
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: result_value: {}",
+        result_value
+    );
+
     unsafe {
         *out_has_key = result_value;
-        log_trace!(logger, "rn_keys_mobile_has_network_private_key: wrote {} to out_has_key at {:?}", result_value, out_has_key);
+        log_trace!(
+            logger,
+            "rn_keys_mobile_has_network_private_key: wrote {} to out_has_key at {:?}",
+            result_value,
+            out_has_key
+        );
     }
-    
-    log_trace!(logger, "rn_keys_mobile_has_network_private_key: returning 0 (success)");
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_has_network_private_key: returning 0 (success)"
+    );
     0
 }
 
@@ -2232,99 +2288,6 @@ pub unsafe extern "C" fn rn_keys_mobile_decrypt_message_from_node(
     };
 
     if !alloc_bytes(out_plain, out_len, &plain) {
-        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-        return RN_ERROR_MEMORY_ALLOCATION;
-    }
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_encrypt_for_public_key(
-    keys: *mut c_void,
-    data: *const u8,
-    data_len: usize,
-    recipient_public_key: *const u8,
-    pk_len: usize,
-    out_eed_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if data.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "data pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if recipient_public_key.is_null() {
-        set_error(
-            err,
-            RN_ERROR_NULL_ARGUMENT,
-            "recipient public key pointer is null",
-        );
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_eed_cbor.is_null() {
-        set_error(
-            err,
-            RN_ERROR_NULL_ARGUMENT,
-            "output EED CBOR pointer is null",
-        );
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-    if out_len.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    let data_slice = std::slice::from_raw_parts(data, data_len);
-    let pk = std::slice::from_raw_parts(recipient_public_key, pk_len);
-
-    let manager = match validate_node_manager(inner) {
-        Ok(mgr) => mgr,
-        Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    let node_manager = match manager.read() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    let eed = match node_manager.encrypt_for_public_key(data_slice, pk) {
-        Ok(v) => v,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("encrypt_for_public_key failed: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-    let cbor = match serde_cbor::to_vec(&eed) {
-        Ok(v) => v,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_SERIALIZATION_FAILED,
-                &format!("encode EED failed: {e}"),
-            );
-            return RN_ERROR_SERIALIZATION_FAILED;
-        }
-    };
-    if !alloc_bytes(out_eed_cbor, out_len, &cbor) {
         set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
         return RN_ERROR_MEMORY_ALLOCATION;
     }

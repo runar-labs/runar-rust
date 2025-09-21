@@ -249,7 +249,6 @@ pub trait NetworkTransport: Send + Sync {
 
     /// Update the list of connected peers with the latest node info
     async fn update_peers(&self, node_info: NodeInfo) -> Result<(), NetworkError>;
-
 }
 
 /// Error type for network operations

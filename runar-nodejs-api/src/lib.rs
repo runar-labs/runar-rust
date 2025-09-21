@@ -698,27 +698,6 @@ impl Keys {
     }
 
     #[napi]
-    pub fn encrypt_for_public_key(
-        &self,
-        data: Uint8Array,
-        recipient_pk: Uint8Array,
-    ) -> Result<Uint8Array> {
-        let inner = self.inner.lock().unwrap();
-        let node_ref = inner
-            .node_key_manager
-            .as_ref()
-            .ok_or_else(|| Error::from_reason("Node not init".to_string()))?;
-        let eed = node_ref
-            .read()
-            .unwrap()
-            .encrypt_for_public_key(&data, &recipient_pk)
-            .map_err(|e| Error::from_reason(e.to_string()))?;
-        cbor::to_vec(&eed)
-            .map(Uint8Array::from)
-            .map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    #[napi]
     pub fn encrypt_for_network(
         &self,
         data: Uint8Array,

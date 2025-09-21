@@ -1156,16 +1156,6 @@ impl NodeKeyManager {
         })
     }
 
-    /// Envelope-encrypt for a recipient network public key.
-    pub fn encrypt_for_public_key(
-        &self,
-        data: &[u8],
-        public_key: &[u8],
-    ) -> Result<EnvelopeEncryptedData> {
-        // Call the public method directly, not the trait method
-        NodeKeyManager::encrypt_with_envelope(self, data, Some(public_key), Vec::new())
-    }
-
     /// Check if the manager holds the private key for the given network public key.
     pub fn has_public_key(&self, public_key: &[u8]) -> bool {
         self.network_agreements.contains_key(public_key)

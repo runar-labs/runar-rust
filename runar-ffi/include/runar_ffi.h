@@ -303,15 +303,6 @@ int32_t rn_keys_mobile_decrypt_message_from_node(void *keys,
                                                  size_t *out_len,
                                                  struct RnError *err);
 
-int32_t rn_keys_encrypt_for_public_key(void *keys,
-                                       const uint8_t *data,
-                                       size_t data_len,
-                                       const uint8_t *recipient_public_key,
-                                       size_t pk_len,
-                                       uint8_t **out_eed_cbor,
-                                       size_t *out_len,
-                                       struct RnError *err);
-
 int32_t rn_keys_encrypt_for_network(void *keys,
                                     const uint8_t *data,
                                     size_t data_len,
