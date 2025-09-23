@@ -124,6 +124,32 @@ pub extern "C" fn rn_string_free(s: *const c_char) {
     }
 }
 
+/// Free the error message inside RnError and null the pointer
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[no_mangle]
+pub extern "C" fn rn_error_free(err: *mut RnError) {
+    if err.is_null() {
+        return;
+    }
+    unsafe {
+        let msg_ptr = (*err).message as *mut c_char;
+        if !msg_ptr.is_null() {
+            let _ = CString::from_raw(msg_ptr);
+            (*err).message = ptr::null();
+        }
+    }
+}
+
+/// Clear stored last error message (diagnostics helper)
+#[no_mangle]
+pub extern "C" fn rn_clear_error_history() {
+    if let Some(cell) = LAST_ERROR.get() {
+        if let Ok(mut guard) = cell.lock() {
+            *guard = None;
+        }
+    }
+}
+
 // Placeholders for handles to satisfy linkage while we implement
 #[repr(C)]
 pub struct FfiTransportHandle {
@@ -384,7 +410,10 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
     if out_ptr.is_null() || out_len.is_null() {
         return false;
     }
-    let mut v = Vec::with_capacity(data.len());
+    let mut v: Vec<u8> = Vec::new();
+    if v.try_reserve(data.len()).is_err() {
+        return false;
+    }
     v.extend_from_slice(data);
     let len = v.len();
     let ptr_raw = v.as_mut_ptr();
@@ -4873,14 +4902,15 @@ pub unsafe extern "C" fn rn_keys_node_generate_keys(keys: *mut c_void, err: *mut
 // CA NODE FFI FUNCTIONS (NEW)
 // ============================================================================
 
-/// Create new CA Node (new API)
+/// Create new shared CA Node (consistent API)
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_ca_node_new(
-    out_ca_node: *mut *mut c_void,
+pub unsafe extern "C" fn rn_keys_ca_node_new_shared(
+    out_shared_ca_node: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    if out_ca_node.is_null() || err.is_null() {
-        return -1;
+    if out_shared_ca_node.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
     }
 
     let root_logger = get_global_logger();
@@ -4901,7 +4931,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_new(
     };
 
     // Create temporary certificates using CertificateAuthority
-    // These will be replaced by install_issuing_ca with the real certificates
+    // These will be replaced by setup_complete with the real certificates
     let temp_ca_authority =
         match runar_keys::certificate::CertificateAuthority::new("CN=Temp CA,O=Temp,C=US") {
             Ok(ca) => ca,
@@ -4922,79 +4952,19 @@ pub unsafe extern "C" fn rn_keys_ca_node_new(
         temp_key,
         temp_cert,
         temp_root_cert,
-        "uninitialized".to_string(), // Will be updated by install_issuing_ca
+        "uninitialized".to_string(), // Will be updated by setup_complete
         Arc::new(logger),
     );
 
-    let boxed_ca_node = Box::new(ca_node);
-    unsafe {
-        *out_ca_node = Box::into_raw(boxed_ca_node) as *mut c_void;
-    }
-
-    0
-}
-
-/// Free CA Node (new API)
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_ca_node_free(ca_node: *mut c_void) {
-    if !ca_node.is_null() {
-        let _ = Box::from_raw(ca_node as *mut CANode);
-    }
-}
-
-/// Create shared CA Node reference for server usage
-#[no_mangle]
-pub unsafe extern "C" fn rn_keys_ca_node_create_shared(
-    ca_node: *mut c_void,
-    out_shared_ca_node: *mut *mut c_void,
-    err: *mut RnError,
-) -> i32 {
-    if ca_node.is_null() || out_shared_ca_node.is_null() || err.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
-
-    // Create a clone of the CA Node for the shared reference
-    // This avoids moving the original CA Node
-    let ca_node_ref = unsafe { &*(ca_node as *const CANode) };
-
-    println!("DEBUG: Creating shared CA Node reference");
-    println!(
-        "DEBUG: Original CA Node Issuing CA Subject: {}",
-        ca_node_ref.issuing_ca_cert.subject()
-    );
-    println!(
-        "DEBUG: Original CA Node Root CA Subject: {}",
-        ca_node_ref.root_ca_cert.subject()
-    );
-
-    // Create a new CANode with the same data
-    let root_logger = get_global_logger();
-    let logger = root_logger.with_component(Component::Custom("CA Node"));
-    let mut new_ca_node = CANode::new(
-        ca_node_ref.issuing_ca_key.clone(),
-        ca_node_ref.issuing_ca_cert.clone(),
-        ca_node_ref.root_ca_cert.clone(),
-        ca_node_ref.network_id.clone(),
-        Arc::new(logger),
-    );
-
-    // Copy the additional state
-    new_ca_node.enrollment_authorities = ca_node_ref.enrollment_authorities.clone();
-    new_ca_node.revoked_tokens = ca_node_ref.revoked_tokens.clone();
-    new_ca_node.rate_limits = ca_node_ref.rate_limits.clone();
-    new_ca_node.revoked_certificates = ca_node_ref.revoked_certificates.clone();
-    new_ca_node.admin_ski_allowlist = ca_node_ref.admin_ski_allowlist.clone();
-    new_ca_node.token_replay_ledger = ca_node_ref.token_replay_ledger.clone();
-
-    let ca_node_arc = Arc::new(RwLock::new(new_ca_node));
-
+    // Create shared handle directly
+    let ca_node_arc = Arc::new(RwLock::new(ca_node));
     unsafe {
         *out_shared_ca_node = Box::into_raw(Box::new(ca_node_arc)) as *mut c_void;
     }
 
     0
 }
+
 
 /// Free shared CA Node reference
 #[no_mangle]
@@ -5007,11 +4977,11 @@ pub unsafe extern "C" fn rn_keys_ca_node_free_shared(shared_ca_node: *mut c_void
 /// Add admin SKI to shared CA Node reference
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     ski: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null() || ski.is_null() || err.is_null() {
+    if shared_ca_node.is_null() || ski.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
@@ -5029,8 +4999,8 @@ pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
     };
 
     // This function now expects a shared CA Node (Arc<RwLock<CANode>>)
-    // The caller should pass the shared_ca_node from rn_keys_ca_node_create_shared
-    let ca_node_arc = unsafe { &*(ca_node as *const Arc<RwLock<CANode>>) };
+    // The caller should pass the shared_ca_node from rn_keys_ca_node_new_shared
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
     let mut ca_node_guard = match ca_node_arc.write() {
         Ok(guard) => guard,
         Err(_) => {
@@ -5050,17 +5020,28 @@ pub unsafe extern "C" fn rn_keys_ca_node_add_admin_ski(
 /// Configure enrollment authority (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     ea_public_keys: *const u8,
     keys_len: usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null() || err.is_null() {
+    if shared_ca_node.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &mut *(ca_node as *mut CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Parse enrollment authority public keys
     let ea_keys_data = std::slice::from_raw_parts(ea_public_keys, keys_len);
@@ -5077,7 +5058,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
     };
 
     // Configure enrollment authorities
-    match ca_node.configure_enrollment_authority(ea_public_keys_vec) {
+    match ca_node_guard.configure_enrollment_authority(ea_public_keys_vec) {
         Ok(()) => 0,
         Err(e) => {
             set_error(
@@ -5093,7 +5074,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
 /// Complete CA Node setup with internal private key management (SECURE)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_setup_complete(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     root_ca_subject: *const c_char,
     issuing_ca_subject: *const c_char,
     validity_days: u32,
@@ -5103,7 +5084,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_setup_complete(
     network_id: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null() || err.is_null() {
+    if shared_ca_node.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
@@ -5215,10 +5196,21 @@ pub unsafe extern "C" fn rn_keys_ca_node_setup_complete(
     };
 
     // Install everything in CA Node (no private keys exposed)
-    let ca_node = &mut *(ca_node as *mut CANode);
-    ca_node.network_id = network_id_str.clone();
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+    ca_node_guard.network_id = network_id_str.clone();
 
-    match ca_node.install_issuing_ca(
+    match ca_node_guard.install_issuing_ca(
         issuing_key,
         issuing_cert,
         root_ca.ca_certificate().clone(),
@@ -5463,20 +5455,31 @@ pub unsafe extern "C" fn rn_keys_ca_free_ea_key_pair(ea_key_handle: *mut c_void)
 /// Get Root CA certificate from CA Node (public certificate only)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_get_root_ca_certificate(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     certificate: *mut *mut u8,
     certificate_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
+    if shared_ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &*(ca_node as *const CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Get the root CA certificate (public only)
-    let root_ca_cert = &ca_node.root_ca_cert;
+    let root_ca_cert = &ca_node_guard.root_ca_cert;
 
     let cert_der = root_ca_cert.der_bytes().to_vec();
 
@@ -5495,20 +5498,31 @@ pub unsafe extern "C" fn rn_keys_ca_node_get_root_ca_certificate(
 /// Get Issuing CA certificate from CA Node (public certificate only)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_get_issuing_ca_certificate(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     certificate: *mut *mut u8,
     certificate_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
+    if shared_ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &*(ca_node as *const CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Get the issuing CA certificate (public only)
-    let issuing_ca_cert = &ca_node.issuing_ca_cert;
+    let issuing_ca_cert = &ca_node_guard.issuing_ca_cert;
 
     let cert_der = issuing_ca_cert.der_bytes().to_vec();
 
@@ -5527,7 +5541,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_get_issuing_ca_certificate(
 /// Handle enrollment request (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     request: *const u8,
     request_len: usize,
     remote_addr: *const c_char,
@@ -5535,7 +5549,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null()
+    if shared_ca_node.is_null()
         || request.is_null()
         || remote_addr.is_null()
         || out_response.is_null()
@@ -5546,7 +5560,18 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &mut *(ca_node as *mut CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Parse remote address
     let remote_addr_str = match std::ffi::CStr::from_ptr(remote_addr).to_str() {
@@ -5576,7 +5601,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
     };
 
     // Handle the enrollment request
-    match ca_node.handle_enroll(enroll_request, remote_addr_str) {
+    match ca_node_guard.handle_enroll(enroll_request, remote_addr_str) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -5613,7 +5638,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
 /// Handle renewal request (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     request: *const u8,
     request_len: usize,
     peer_cert: *const u8,
@@ -5622,7 +5647,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null()
+    if shared_ca_node.is_null()
         || request.is_null()
         || peer_cert.is_null()
         || out_response.is_null()
@@ -5633,7 +5658,18 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &mut *(ca_node as *mut CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Parse the renewal request
     let request_data = std::slice::from_raw_parts(request, request_len);
@@ -5653,7 +5689,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
     let peer_cert_data = std::slice::from_raw_parts(peer_cert, cert_len);
 
     // Handle the renewal request
-    match ca_node.handle_renew(renew_request, peer_cert_data) {
+    match ca_node_guard.handle_renew(renew_request, peer_cert_data) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -5688,7 +5724,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
 /// Handle revocation request (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     request: *const u8,
     request_len: usize,
     admin_ski: *const c_char,
@@ -5696,7 +5732,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null()
+    if shared_ca_node.is_null()
         || request.is_null()
         || admin_ski.is_null()
         || out_response.is_null()
@@ -5707,7 +5743,18 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &mut *(ca_node as *mut CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Parse admin SKI
     let admin_ski_str = match std::ffi::CStr::from_ptr(admin_ski).to_str() {
@@ -5737,7 +5784,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
     };
 
     // Handle the revocation request
-    match ca_node.handle_revoke(revoke_request, admin_ski_str) {
+    match ca_node_guard.handle_revoke(revoke_request, admin_ski_str) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -5772,13 +5819,13 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
 /// Handle chain request (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_handle_chain(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     network_id: *const c_char,
     out_response: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null()
+    if shared_ca_node.is_null()
         || network_id.is_null()
         || out_response.is_null()
         || out_len.is_null()
@@ -5788,7 +5835,18 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_chain(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &*(ca_node as *const CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Parse network ID
     let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
@@ -5804,7 +5862,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_chain(
     };
 
     // Handle the chain request
-    match ca_node.handle_chain(network_id_str) {
+    match ca_node_guard.handle_chain(network_id_str) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -5839,13 +5897,13 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_chain(
 /// Handle status request (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     network_id: *const c_char,
     out_response: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null()
+    if shared_ca_node.is_null()
         || network_id.is_null()
         || out_response.is_null()
         || out_len.is_null()
@@ -5855,7 +5913,18 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &*(ca_node as *const CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Parse network ID
     let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
@@ -5871,7 +5940,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
     };
 
     // Handle the status request
-    match ca_node.handle_status(network_id_str) {
+    match ca_node_guard.handle_status(network_id_str) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -5906,13 +5975,13 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
 /// Handle CRL request (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     network_id: *const c_char,
     out_response: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null()
+    if shared_ca_node.is_null()
         || network_id.is_null()
         || out_response.is_null()
         || out_len.is_null()
@@ -5922,7 +5991,18 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let ca_node = &*(ca_node as *const CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Parse network ID
     let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
@@ -5938,7 +6018,7 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
     };
 
     // Handle the CRL request
-    match ca_node.handle_crl(network_id_str) {
+    match ca_node_guard.handle_crl(network_id_str) {
         Ok(response) => {
             // Serialize the response
             match serde_cbor::to_vec(&response) {
@@ -6492,6 +6572,11 @@ pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
         );
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    // Initialize out parameter to null to ensure well-defined state on failure paths
+    unsafe {
+        *out_ski = ptr::null_mut();
     }
 
     // Parse certificate
@@ -8413,11 +8498,11 @@ pub unsafe extern "C" fn rn_keys_get_compact_id(
 /// Revoke enrollment token
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_revoke_token(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     token_id: *const c_char,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null() || token_id.is_null() || err.is_null() {
+    if shared_ca_node.is_null() || token_id.is_null() || err.is_null() {
         set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
         return RN_ERROR_INVALID_ARGUMENT;
     }
@@ -8436,10 +8521,21 @@ pub unsafe extern "C" fn rn_keys_ca_node_revoke_token(
     };
 
     // Get CA Node reference
-    let ca_node = &mut *(ca_node as *mut CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let mut ca_node_guard = match ca_node_arc.write() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire write lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Revoke token using runar-keys function
-    match ca_node.revoke_token(token_id_str.to_string()) {
+    match ca_node_guard.revoke_token(token_id_str.to_string()) {
         Ok(_) => 0,
         Err(e) => {
             set_error(
@@ -8455,21 +8551,32 @@ pub unsafe extern "C" fn rn_keys_ca_node_revoke_token(
 /// Generate CRL-lite
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_generate_crl_lite(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     out_crl: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if ca_node.is_null() || out_crl.is_null() || out_len.is_null() || err.is_null() {
+    if shared_ca_node.is_null() || out_crl.is_null() || out_len.is_null() || err.is_null() {
         set_error(err, RN_ERROR_INVALID_ARGUMENT, "Invalid arguments");
         return RN_ERROR_INVALID_ARGUMENT;
     }
 
     // Get CA Node reference
-    let ca_node = &*(ca_node as *const CANode);
+    let ca_node_arc = unsafe { &*(shared_ca_node as *const Arc<RwLock<CANode>>) };
+    let ca_node_guard = match ca_node_arc.read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            set_error(
+                err,
+                RN_ERROR_LOCK_ERROR,
+                "failed to acquire read lock on CA node",
+            );
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
 
     // Generate CRL-lite using runar-keys function
-    match ca_node.generate_crl_lite() {
+    match ca_node_guard.generate_crl_lite() {
         Ok(crl) => {
             // Serialize CRL to CBOR
             match serde_cbor::to_vec(&crl) {

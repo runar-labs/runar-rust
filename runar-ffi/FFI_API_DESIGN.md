@@ -197,17 +197,20 @@ Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
 - `rn_keys_node_derive_user_profile_key(keys, label_cstr, out_pubkey_ptr, out_len, err) -> i32`
 - `rn_keys_node_decrypt_with_profile(keys, envelope_cbor, len, profile_id_cstr, out_data_ptr, out_len, err) -> i32`
 
-### CA Node – In-Process Authority
-- `rn_keys_ca_node_new(out_ca_node, err) -> i32` (LOGGER PARAMETER REMOVED - uses global logger)
-- `rn_keys_ca_node_free(ca_node)`
-- `rn_keys_ca_node_install_issuing_ca(ca_node, issuing_key_der, key_len, issuing_cert_der, cert_len, root_ca_der, root_len, ea_public_keys_cbor, ea_len, err) -> i32`
-- `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_public_keys_cbor, len, err) -> i32`
-- `rn_keys_ca_node_handle_enroll(ca_node, request_cbor, len, remote_addr_cstr, out_response_cbor, out_len, err) -> i32`
-- `rn_keys_ca_node_handle_renew(ca_node, request_cbor, len, peer_cert_der, peer_len, out_response_cbor, out_len, err) -> i32`
-- `rn_keys_ca_node_handle_revoke(ca_node, request_cbor, len, admin_ski_cstr, out_response_cbor, out_len, err) -> i32`
-- `rn_keys_ca_node_handle_chain(ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
-- `rn_keys_ca_node_handle_status(ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
-- `rn_keys_ca_node_handle_crl(ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+### CA Node – In-Process Authority (CONSISTENT SHARED HANDLE API)
+- `rn_keys_ca_node_new_shared(out_shared_ca_node, err) -> i32` (CREATES SHARED HANDLE - uses global logger)
+- `rn_keys_ca_node_free_shared(shared_ca_node)` (FREES SHARED HANDLE)
+- `rn_keys_ca_node_setup_complete(shared_ca_node, root_ca_subject, issuing_ca_subject, validity_days, issuing_ca_serial, ea_public_keys, ea_keys_len, network_id, err) -> i32`
+- `rn_keys_ca_node_configure_enrollment_authority(shared_ca_node, ea_public_keys_cbor, len, err) -> i32`
+- `rn_keys_ca_node_handle_enroll(shared_ca_node, request_cbor, len, remote_addr_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_renew(shared_ca_node, request_cbor, len, peer_cert_der, peer_len, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_revoke(shared_ca_node, request_cbor, len, admin_ski_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_chain(shared_ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_status(shared_ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_handle_crl(shared_ca_node, network_id_cstr, out_response_cbor, out_len, err) -> i32`
+- `rn_keys_ca_node_add_admin_ski(shared_ca_node, ski, err) -> i32` (ADMIN OPERATIONS)
+- `rn_keys_ca_node_revoke_token(shared_ca_node, token_id, err) -> i32` (ADMIN OPERATIONS)
+- `rn_keys_ca_node_generate_crl_lite(shared_ca_node, out_crl, out_len, err) -> i32` (ADMIN OPERATIONS)
 
 ### CA Server – QUIC Servers (Bootstrap + Authenticated)
 - `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, out_server, err) -> i32` (LOGGER PARAMETER REMOVED - uses global logger)
@@ -281,11 +284,10 @@ All payloads denoted as CBOR must follow the same Rust-side structs used by tran
 
 ### Phase 2: CA Node and Server
 1) CA Node
-   - `rn_keys_ca_node_new(&mut ca_node, &mut err)` (LOGGER PARAMETER REMOVED)
-   - Prepare DER bytes for Issuing CA key/cert and Root CA cert (via Rust-side builder in test harness)
-   - `rn_keys_ca_node_install_issuing_ca(ca_node, issuing_key_der, ..., issuing_cert_der, ..., root_ca_der, ..., ea_pubkeys_cbor, ..., &mut err)`
+   - `rn_keys_ca_node_new_shared(&mut shared_ca_node, &mut err)` (CREATES SHARED HANDLE)
+   - `rn_keys_ca_node_setup_complete(shared_ca_node, root_ca_subject, issuing_ca_subject, validity_days, issuing_ca_serial, ea_public_keys, ea_keys_len, network_id, &mut err)`
 2) Enrollment Authority
-   - `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_pubkeys_cbor, len, &mut err)`
+   - `rn_keys_ca_node_configure_enrollment_authority(shared_ca_node, ea_pubkeys_cbor, len, &mut err)`
 3) QUIC Servers (bootstrap + authenticated)
    - Build CA server config CBOR: `{ bootstrap_bind: "127.0.0.1:0", authenticated_bind: "127.0.0.1:0", network_id: "test_network", rate_limit_per_minute: 5, rate_limit_per_hour: 30 }`
    - `rn_transport_ca_server_new(config_cbor, len, shared_ca_node, &mut server, &mut err)` (LOGGER PARAMETER REMOVED)
@@ -362,7 +364,7 @@ All payloads denoted as CBOR must follow the same Rust-side structs used by tran
 - `rn_transport_ca_client_free(client)`
 - `rn_keys_free(node_keys)`
 - `rn_keys_free(mobile_keys)`
-- `rn_keys_ca_node_free(ca_node)`
+- `rn_keys_ca_node_free_shared(shared_ca_node)`
 
 This FFI E2E validates that all CA server and client operations, certificate lifecycle, profile keys, and rate-limiting behaviors are fully achievable through the FFI layer.
 
@@ -492,41 +494,43 @@ pub extern "C" fn rn_keys_node_has_network_private_key(
 
 ### 3. CA Node APIs (NEW)
 
-#### CA Node Management
+#### CA Node Management (CONSISTENT SHARED HANDLE API)
 ```rust
-// New FFI functions for CA Node operations
-pub extern "C" fn rn_keys_ca_node_new(
-    logger: *mut c_void,
-    out_ca_node: *mut *mut c_void,
+// New FFI functions for CA Node operations - ALL USE SHARED HANDLES
+pub extern "C" fn rn_keys_ca_node_new_shared(
+    out_shared_ca_node: *mut *mut c_void,
     err: *mut RnError
 ) -> i32;
 
-pub extern "C" fn rn_keys_ca_node_install_issuing_ca(
-    ca_node: *mut c_void,
-    issuing_ca_key: *const u8,
-    key_len: usize,
-    issuing_ca_cert: *const u8,
-    cert_len: usize,
-    root_ca_cert: *const u8,
-    root_cert_len: usize,
+pub extern "C" fn rn_keys_ca_node_free_shared(
+    shared_ca_node: *mut c_void
+);
+
+pub extern "C" fn rn_keys_ca_node_setup_complete(
+    shared_ca_node: *mut c_void,
+    root_ca_subject: *const c_char,
+    issuing_ca_subject: *const c_char,
+    validity_days: u32,
+    issuing_ca_serial: u64,
     ea_public_keys: *const u8,
     ea_keys_len: usize,
+    network_id: *const c_char,
     err: *mut RnError
 ) -> i32;
 
 pub extern "C" fn rn_keys_ca_node_configure_enrollment_authority(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     ea_public_keys: *const u8,
     keys_len: usize,
     err: *mut RnError
 ) -> i32;
 ```
 
-#### CA Node Operations
+#### CA Node Operations (ALL USE SHARED HANDLES)
 ```rust
 // Enrollment operations
 pub extern "C" fn rn_keys_ca_node_handle_enroll(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     request: *const u8,
     request_len: usize,
     remote_addr: *const c_char,
@@ -537,7 +541,7 @@ pub extern "C" fn rn_keys_ca_node_handle_enroll(
 
 // Renewal operations
 pub extern "C" fn rn_keys_ca_node_handle_renew(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     request: *const u8,
     request_len: usize,
     peer_cert: *const u8,
@@ -549,7 +553,7 @@ pub extern "C" fn rn_keys_ca_node_handle_renew(
 
 // Revocation operations
 pub extern "C" fn rn_keys_ca_node_handle_revoke(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     request: *const u8,
     request_len: usize,
     admin_ski: *const c_char,
@@ -560,7 +564,7 @@ pub extern "C" fn rn_keys_ca_node_handle_revoke(
 
 // Chain and status operations
 pub extern "C" fn rn_keys_ca_node_handle_chain(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     network_id: *const c_char,
     out_response: *mut *mut u8,
     out_len: *mut usize,
@@ -568,7 +572,7 @@ pub extern "C" fn rn_keys_ca_node_handle_chain(
 ) -> i32;
 
 pub extern "C" fn rn_keys_ca_node_handle_status(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     network_id: *const c_char,
     out_response: *mut *mut u8,
     out_len: *mut usize,
@@ -577,7 +581,7 @@ pub extern "C" fn rn_keys_ca_node_handle_status(
 
 // CRL operations
 pub extern "C" fn rn_keys_ca_node_handle_crl(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     network_id: *const c_char,
     out_response: *mut *mut u8,
     out_len: *mut usize,
@@ -813,25 +817,25 @@ pub extern "C" fn rn_keys_get_compact_id(
 
 ### 4.6. CA Node Admin Management APIs (NEW)
 
-#### CA Node Admin Operations
+#### CA Node Admin Operations (ALL USE SHARED HANDLES)
 ```rust
 // Add admin SKI to CA Node
 pub extern "C" fn rn_keys_ca_node_add_admin_ski(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     ski: *const c_char,
     err: *mut RnError
 ) -> i32;
 
 // Revoke enrollment token
 pub extern "C" fn rn_keys_ca_node_revoke_token(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     token_id: *const c_char,
     err: *mut RnError
 ) -> i32;
 
 // Generate CRL-lite
 pub extern "C" fn rn_keys_ca_node_generate_crl_lite(
-    ca_node: *mut c_void,
+    shared_ca_node: *mut c_void,
     out_crl: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError
@@ -1308,6 +1312,68 @@ The implementation should follow the phased approach to minimize risk and ensure
 - Resilience: loop start/stop server while making client calls; enforce 45s test timeouts to catch deadlocks.
 
 All above use only the FFI APIs listed in the Authoritative Surface.
+
+---
+
+## Lessons Learned: FFI API Design Consistency
+
+### Critical Issue: Handle Type Inconsistency
+
+**Problem**: The original FFI API had a fundamental design flaw where different functions expected different handle types for the same object:
+
+- `rn_keys_ca_node_new` returned raw `CANode*` (Box<CANode>)
+- Most functions expected raw `CANode*` 
+- But `rn_keys_ca_node_add_admin_ski` expected shared `Arc<RwLock<CANode>>*`
+- This caused memory layout corruption and crashes when raw handles were passed to functions expecting shared handles
+
+**Root Cause**: Mixed handle types for the same object created an inconsistent API where the same handle couldn't be used for all operations.
+
+**Solution**: **Consistent Shared Handle API**
+- Remove `rn_keys_ca_node_new` (raw handle creation)
+- Rename `rn_keys_ca_node_create_shared` to `rn_keys_ca_node_new_shared` (primary creation function)
+- Update ALL CA Node functions to expect shared `Arc<RwLock<CANode>>*` handles
+- No backward compatibility - full refactor for consistency
+
+### Key Design Principles
+
+1. **Single Handle Type Per Object**: Each FFI object should have exactly one handle type used consistently across all functions
+2. **Thread Safety by Default**: Use shared handles (`Arc<RwLock<T>>`) for objects that may be accessed from multiple contexts
+3. **No Mixed APIs**: Never mix raw and shared handles for the same object type
+4. **Consistent Naming**: Use clear naming that indicates handle type (e.g., `_shared` suffix)
+5. **No Backward Compatibility for Broken APIs**: If the API is fundamentally flawed, fix it completely rather than maintaining compatibility
+
+### Implementation Guidelines
+
+1. **Handle Type Decision Matrix**:
+   - **Raw handles** (`Box<T>`) - For simple, single-threaded objects with no shared access
+   - **Shared handles** (`Arc<RwLock<T>>`) - For objects that may be accessed from multiple contexts or need thread safety
+
+2. **API Consistency Checklist**:
+   - [ ] All functions for an object type use the same handle type
+   - [ ] Creation function returns the same handle type expected by all other functions
+   - [ ] Naming clearly indicates handle type
+   - [ ] Documentation specifies handle type requirements
+   - [ ] Tests use consistent handle types throughout
+
+3. **Memory Management**:
+   - Each handle type has exactly one corresponding free function
+   - Free functions match the handle type (e.g., `free_shared` for shared handles)
+   - No mixing of allocation/deallocation strategies
+
+### Prevention Strategies
+
+1. **Design Review**: Always review handle type consistency when adding new FFI functions
+2. **Type Safety**: Use Rust's type system to prevent handle type mismatches
+3. **Documentation**: Clearly document handle type requirements for each function
+4. **Testing**: Test handle type consistency across all function combinations
+5. **Code Review**: Check for handle type consistency in all FFI code reviews
+
+### Future Considerations
+
+- Consider using Rust's type system to create distinct handle types (e.g., `RawCANodeHandle` vs `SharedCANodeHandle`)
+- Use compile-time checks to prevent handle type mismatches
+- Consider using macros or code generation to ensure handle type consistency
+- Document handle type decisions and rationale for future reference
 
 ### 6.6 CA Client Configuration and EA Key Consistency (Critical)
 

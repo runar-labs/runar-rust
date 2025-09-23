@@ -138,6 +138,16 @@ void rn_free(uint8_t *ptr, size_t len);
 void rn_string_free(const char *s);
 
 /**
+ * Free the error message inside RnError and null the pointer
+ */
+void rn_error_free(struct RnError *err);
+
+/**
+ * Clear stored last error message (diagnostics helper)
+ */
+void rn_clear_error_history(void);
+
+/**
  * Set local NodeInfo from a CBOR buffer.
  *
  * Returns 0 on success.
@@ -486,21 +496,9 @@ int32_t rn_keys_node_has_keys(void *keys, int32_t *out_has_keys, struct RnError 
 int32_t rn_keys_node_generate_keys(void *keys, struct RnError *err);
 
 /**
- * Create new CA Node (new API)
+ * Create new shared CA Node (consistent API)
  */
-int32_t rn_keys_ca_node_new(void **out_ca_node, struct RnError *err);
-
-/**
- * Free CA Node (new API)
- */
-void rn_keys_ca_node_free(void *ca_node);
-
-/**
- * Create shared CA Node reference for server usage
- */
-int32_t rn_keys_ca_node_create_shared(void *ca_node,
-                                      void **out_shared_ca_node,
-                                      struct RnError *err);
+int32_t rn_keys_ca_node_new_shared(void **out_shared_ca_node, struct RnError *err);
 
 /**
  * Free shared CA Node reference
@@ -510,12 +508,12 @@ void rn_keys_ca_node_free_shared(void *shared_ca_node);
 /**
  * Add admin SKI to shared CA Node reference
  */
-int32_t rn_keys_ca_node_add_admin_ski(void *ca_node, const char *ski, struct RnError *err);
+int32_t rn_keys_ca_node_add_admin_ski(void *shared_ca_node, const char *ski, struct RnError *err);
 
 /**
  * Configure enrollment authority (new API)
  */
-int32_t rn_keys_ca_node_configure_enrollment_authority(void *ca_node,
+int32_t rn_keys_ca_node_configure_enrollment_authority(void *shared_ca_node,
                                                        const uint8_t *ea_public_keys,
                                                        size_t keys_len,
                                                        struct RnError *err);
@@ -523,7 +521,7 @@ int32_t rn_keys_ca_node_configure_enrollment_authority(void *ca_node,
 /**
  * Complete CA Node setup with internal private key management (SECURE)
  */
-int32_t rn_keys_ca_node_setup_complete(void *ca_node,
+int32_t rn_keys_ca_node_setup_complete(void *shared_ca_node,
                                        const char *root_ca_subject,
                                        const char *issuing_ca_subject,
                                        uint32_t validity_days,
@@ -571,7 +569,7 @@ void rn_keys_ca_free_ea_key_pair(void *ea_key_handle);
 /**
  * Get Root CA certificate from CA Node (public certificate only)
  */
-int32_t rn_keys_ca_node_get_root_ca_certificate(void *ca_node,
+int32_t rn_keys_ca_node_get_root_ca_certificate(void *shared_ca_node,
                                                 uint8_t **certificate,
                                                 size_t *certificate_len,
                                                 struct RnError *err);
@@ -579,7 +577,7 @@ int32_t rn_keys_ca_node_get_root_ca_certificate(void *ca_node,
 /**
  * Get Issuing CA certificate from CA Node (public certificate only)
  */
-int32_t rn_keys_ca_node_get_issuing_ca_certificate(void *ca_node,
+int32_t rn_keys_ca_node_get_issuing_ca_certificate(void *shared_ca_node,
                                                    uint8_t **certificate,
                                                    size_t *certificate_len,
                                                    struct RnError *err);
@@ -587,7 +585,7 @@ int32_t rn_keys_ca_node_get_issuing_ca_certificate(void *ca_node,
 /**
  * Handle enrollment request (new API)
  */
-int32_t rn_keys_ca_node_handle_enroll(void *ca_node,
+int32_t rn_keys_ca_node_handle_enroll(void *shared_ca_node,
                                       const uint8_t *request,
                                       size_t request_len,
                                       const char *remote_addr,
@@ -598,7 +596,7 @@ int32_t rn_keys_ca_node_handle_enroll(void *ca_node,
 /**
  * Handle renewal request (new API)
  */
-int32_t rn_keys_ca_node_handle_renew(void *ca_node,
+int32_t rn_keys_ca_node_handle_renew(void *shared_ca_node,
                                      const uint8_t *request,
                                      size_t request_len,
                                      const uint8_t *peer_cert,
@@ -610,7 +608,7 @@ int32_t rn_keys_ca_node_handle_renew(void *ca_node,
 /**
  * Handle revocation request (new API)
  */
-int32_t rn_keys_ca_node_handle_revoke(void *ca_node,
+int32_t rn_keys_ca_node_handle_revoke(void *shared_ca_node,
                                       const uint8_t *request,
                                       size_t request_len,
                                       const char *admin_ski,
@@ -621,7 +619,7 @@ int32_t rn_keys_ca_node_handle_revoke(void *ca_node,
 /**
  * Handle chain request (new API)
  */
-int32_t rn_keys_ca_node_handle_chain(void *ca_node,
+int32_t rn_keys_ca_node_handle_chain(void *shared_ca_node,
                                      const char *network_id,
                                      uint8_t **out_response,
                                      size_t *out_len,
@@ -630,7 +628,7 @@ int32_t rn_keys_ca_node_handle_chain(void *ca_node,
 /**
  * Handle status request (new API)
  */
-int32_t rn_keys_ca_node_handle_status(void *ca_node,
+int32_t rn_keys_ca_node_handle_status(void *shared_ca_node,
                                       const char *network_id,
                                       uint8_t **out_response,
                                       size_t *out_len,
@@ -639,7 +637,7 @@ int32_t rn_keys_ca_node_handle_status(void *ca_node,
 /**
  * Handle CRL request (new API)
  */
-int32_t rn_keys_ca_node_handle_crl(void *ca_node,
+int32_t rn_keys_ca_node_handle_crl(void *shared_ca_node,
                                    const char *network_id,
                                    uint8_t **out_response,
                                    size_t *out_len,
@@ -948,12 +946,14 @@ int32_t rn_keys_get_compact_id(const uint8_t *public_key,
 /**
  * Revoke enrollment token
  */
-int32_t rn_keys_ca_node_revoke_token(void *ca_node, const char *token_id, struct RnError *err);
+int32_t rn_keys_ca_node_revoke_token(void *shared_ca_node,
+                                     const char *token_id,
+                                     struct RnError *err);
 
 /**
  * Generate CRL-lite
  */
-int32_t rn_keys_ca_node_generate_crl_lite(void *ca_node,
+int32_t rn_keys_ca_node_generate_crl_lite(void *shared_ca_node,
                                           uint8_t **out_crl,
                                           size_t *out_len,
                                           struct RnError *err);

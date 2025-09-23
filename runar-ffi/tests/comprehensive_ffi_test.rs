@@ -2717,15 +2717,15 @@ fn test_certificate_and_network_key_error_handling_consistency() {
 fn test_ca_node_new_happy_path() {
     let _logger = create_test_logger();
     let mut error = create_test_error();
-    let mut ca_node: *mut c_void = ptr::null_mut();
+    let mut shared_ca_node: *mut c_void = ptr::null_mut();
 
-    let result = unsafe { rn_keys_ca_node_new(&mut ca_node, &mut error) };
+    let result = unsafe { rn_keys_ca_node_new_shared(&mut shared_ca_node, &mut error) };
 
-    assert_eq!(result, 0, "Should successfully create CA node");
-    assert!(!ca_node.is_null(), "CA node should not be null");
+    assert_eq!(result, 0, "Should successfully create shared CA node");
+    assert!(!shared_ca_node.is_null(), "Shared CA node should not be null");
 
     // Clean up
-    unsafe { rn_keys_ca_node_free(ca_node) };
+    unsafe { rn_keys_ca_node_free_shared(shared_ca_node) };
 }
 
 #[test]
@@ -2733,9 +2733,9 @@ fn test_ca_node_new_null_logger() {
     let mut error = create_test_error();
     let ca_node: *mut c_void = ptr::null_mut();
 
-    let result = unsafe { rn_keys_ca_node_new(ptr::null_mut(), &mut error) };
+    let result = unsafe { rn_keys_ca_node_new_shared(ptr::null_mut(), &mut error) };
 
-    assert_eq!(result, -1, "Should fail with null logger");
+    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should fail with null argument");
     assert!(ca_node.is_null(), "CA node should be null for null logger");
 }
 
@@ -2744,15 +2744,15 @@ fn test_ca_node_new_null_output() {
     let _logger = create_test_logger();
     let mut error = create_test_error();
 
-    let result = unsafe { rn_keys_ca_node_new(ptr::null_mut(), &mut error) };
+    let result = unsafe { rn_keys_ca_node_new_shared(ptr::null_mut(), &mut error) };
 
-    assert_eq!(result, -1, "Should fail with null output pointer");
+    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should fail with null output pointer");
 }
 
 #[test]
 fn test_ca_node_free_null() {
     // Should handle null pointer gracefully
-    unsafe { rn_keys_ca_node_free(ptr::null_mut()) };
+    unsafe { rn_keys_ca_node_free_shared(ptr::null_mut()) };
     // No assertion needed - should not crash
 }
 
@@ -2762,10 +2762,10 @@ fn test_ca_node_install_issuing_ca_happy_path() {
     let mut error = create_test_error();
     let mut ca_node: *mut c_void = ptr::null_mut();
 
-    // Create CA node first
-    let result = unsafe { rn_keys_ca_node_new(&mut ca_node, &mut error) };
-    assert_eq!(result, 0, "Should successfully create CA node");
-    assert!(!ca_node.is_null(), "CA node should not be null");
+    // Create shared CA node first
+    let result = unsafe { rn_keys_ca_node_new_shared(&mut ca_node, &mut error) };
+    assert_eq!(result, 0, "Should successfully create shared CA node");
+    assert!(!ca_node.is_null(), "Shared CA node should not be null");
 
     // Create EA key pair for testing
     let mut ea_key_handle: *mut c_void = ptr::null_mut();
@@ -2820,7 +2820,7 @@ fn test_ca_node_install_issuing_ca_happy_path() {
     unsafe { rn_keys_ca_free_ea_key_pair(ea_key_handle) };
 
     // Clean up
-    unsafe { rn_keys_ca_node_free(ca_node) };
+    unsafe { rn_keys_ca_node_free_shared(ca_node) };
 }
 
 #[test]

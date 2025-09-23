@@ -92,11 +92,11 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // ==========================================
     println!("\n🏗️  PHASE 2: CA Node and Server");
 
-    // Create CA Node
-    let mut ca_node: *mut c_void = ptr::null_mut();
-    let result = unsafe { rn_keys_ca_node_new(&mut ca_node as *mut *mut c_void, &mut error) };
-    assert_eq!(result, 0, "Failed to create CA node");
-    assert!(!ca_node.is_null(), "CA node should not be null");
+    // Create shared CA Node
+    let mut shared_ca_node: *mut c_void = ptr::null_mut();
+    let result = unsafe { rn_keys_ca_node_new_shared(&mut shared_ca_node as *mut *mut c_void, &mut error) };
+    assert_eq!(result, 0, "Failed to create shared CA node");
+    assert!(!shared_ca_node.is_null(), "Shared CA node should not be null");
 
     // Create EA key pair using new secure FFI (private key stays internal)
     let mut ea_key_handle: *mut c_void = ptr::null_mut();
@@ -136,7 +136,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let issuing_ca_subject_cstr = create_cstring("CN=Test Issuing CA,O=Test,C=US");
     let result = unsafe {
         rn_keys_ca_node_setup_complete(
-            ca_node,
+            shared_ca_node,
             root_ca_subject_cstr.as_ptr(),
             issuing_ca_subject_cstr.as_ptr(),
             365, // validity_days
@@ -152,16 +152,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     println!("   ✅ CA Node configured with issuing CA and enrollment authority");
 
-    // Create shared CA Node reference for server usage AFTER configuring the CA Node
-    let mut shared_ca_node: *mut c_void = ptr::null_mut();
-    let result = unsafe {
-        rn_keys_ca_node_create_shared(ca_node, &mut shared_ca_node as *mut *mut c_void, &mut error)
-    };
-    assert_eq!(result, 0, "Failed to create shared CA node reference");
-    assert!(
-        !shared_ca_node.is_null(),
-        "Shared CA node should not be null"
-    );
+    // CA Node is already shared, no need to create additional reference
 
     // Create CA Server config CBOR
     #[derive(serde::Serialize)]
@@ -342,7 +333,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut root_ca_cert_len: usize = 0;
     let result = unsafe {
         rn_keys_ca_node_get_root_ca_certificate(
-            ca_node,
+            shared_ca_node,
             &mut root_ca_cert_ptr,
             &mut root_ca_cert_len,
             &mut error,
@@ -356,7 +347,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut issuing_ca_cert_len: usize = 0;
     let result = unsafe {
         rn_keys_ca_node_get_issuing_ca_certificate(
-            ca_node,
+            shared_ca_node,
             &mut issuing_ca_cert_ptr,
             &mut issuing_ca_cert_len,
             &mut error,
@@ -780,7 +771,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut crl_len: usize = 0;
     let result = unsafe {
         rn_keys_ca_node_handle_crl(
-            ca_node,
+            shared_ca_node,
             network_id_cstr.as_ptr(),
             &mut crl_ptr as *mut *mut u8,
             &mut crl_len,
@@ -1074,7 +1065,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     // Revoke the enrollment token
     let token_id_cstr = create_cstring("test_token_001");
     let result =
-        unsafe { rn_keys_ca_node_revoke_token(ca_node, token_id_cstr.as_ptr(), &mut error) };
+        unsafe { rn_keys_ca_node_revoke_token(shared_ca_node, token_id_cstr.as_ptr(), &mut error) };
     assert_eq!(result, 0, "Failed to revoke enrollment token");
     println!("   ✅ Enrollment token revoked via REAL QUIC mTLS");
 
@@ -1287,7 +1278,6 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_keys_free(node_keys);
         rn_keys_free(mobile_keys);
         rn_keys_ca_node_free_shared(shared_ca_node);
-        rn_keys_ca_node_free(ca_node);
     }
 
     println!("   ✅ All resources freed successfully");
