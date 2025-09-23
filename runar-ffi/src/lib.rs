@@ -103,6 +103,7 @@ pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
 // Minimal memory helpers (placeholders; to be filled during implementation)
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[no_mangle]
 pub extern "C" fn rn_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() || len == 0 {
@@ -5580,10 +5581,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -5657,10 +5658,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_renew(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -5741,10 +5742,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_revoke(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -5808,10 +5809,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_chain(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -5875,10 +5876,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -5942,10 +5943,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -5989,11 +5990,11 @@ pub unsafe extern "C" fn rn_keys_ca_get_certificate_der(
     let ca = &*(ca as *const runar_keys::CertificateAuthority);
     let cert_der = ca.ca_certificate().der_bytes();
 
-    // Allocate memory for certificate DER using Box::into_raw
-    let cert_len = cert_der.len();
-    let cert_ptr = Box::into_raw(cert_der.to_vec().into_boxed_slice()) as *mut u8;
-    *out_cert = cert_ptr;
-    *out_len = cert_len;
+    // Allocate memory for certificate DER using alloc_bytes
+    if !alloc_bytes(out_cert, out_len, cert_der) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
 
     0
 }
@@ -6191,11 +6192,11 @@ pub unsafe extern "C" fn rn_keys_enrollment_token_generate(
         }
     };
 
-    // Allocate memory for token using Box::into_raw
-    let token_len = token_cbor.len();
-    let token_ptr = Box::into_raw(token_cbor.into_boxed_slice()) as *mut u8;
-    *out_token = token_ptr;
-    *out_len = token_len;
+    // Allocate memory for token using alloc_bytes
+    if !alloc_bytes(out_token, out_len, &token_cbor) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
 
     0
 }
@@ -6334,11 +6335,11 @@ pub unsafe extern "C" fn rn_keys_node_get_quic_certificate_config(
         }
     };
 
-    // Allocate memory for config using Box::into_raw
-    let config_len = config_cbor.len();
-    let config_ptr = Box::into_raw(config_cbor.into_boxed_slice()) as *mut u8;
-    *out_config = config_ptr;
-    *out_len = config_len;
+    // Allocate memory for config using alloc_bytes
+    if !alloc_bytes(out_config, out_len, &config_cbor) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
 
     0
 }
@@ -6454,9 +6455,10 @@ pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
         "rn_keys_node_get_node_certificate: certificate DER length: {} bytes",
         cert_len
     );
-    let cert_ptr = Box::into_raw(cert_der.to_vec().into_boxed_slice()) as *mut u8;
-    *out_cert = cert_ptr;
-    *out_len = cert_len;
+    if !alloc_bytes(out_cert, out_len, cert_der) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
     log_trace!(
         logger,
         "rn_keys_node_get_node_certificate: returning success with {} bytes",
@@ -6999,11 +7001,9 @@ pub unsafe extern "C" fn rn_keys_node_derive_user_profile_key(
     };
     match mgr.derive_user_profile_key(label_str) {
         Ok(public_key) => {
-            let public_key_len = public_key.len();
-            let public_key_ptr = Box::into_raw(public_key.into_boxed_slice()) as *mut u8;
-            unsafe {
-                *out_public_key = public_key_ptr;
-                *out_len = public_key_len;
+            if !alloc_bytes(out_public_key, out_len, &public_key) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
             }
             0
         }
@@ -7087,11 +7087,9 @@ pub unsafe extern "C" fn rn_keys_node_decrypt_with_profile(
     };
     match mgr.decrypt_with_profile(&envelope_data, profile_id_str) {
         Ok(decrypted) => {
-            let decrypted_len = decrypted.len();
-            let decrypted_ptr = Box::into_raw(decrypted.into_boxed_slice()) as *mut u8;
-            unsafe {
-                *out_data = decrypted_ptr;
-                *out_len = decrypted_len;
+            if !alloc_bytes(out_data, out_len, &decrypted) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
             }
             0
         }
@@ -7190,11 +7188,11 @@ pub unsafe extern "C" fn rn_keys_node_get_profile_public_key_by_label(
     // Get profile public key by label
     if let Ok(mgr) = manager.read() {
         if let Some(public_key) = mgr.get_profile_public_key_by_label(label_str) {
-            let public_key_len = public_key.len();
-            let public_key_ptr = Box::into_raw(public_key.clone().into_boxed_slice()) as *mut u8;
+            if !alloc_bytes(out_public_key, out_public_key_len, public_key.as_slice()) {
+                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                return RN_ERROR_MEMORY_ALLOCATION;
+            }
             unsafe {
-                *out_public_key = public_key_ptr;
-                *out_public_key_len = public_key_len;
                 *out_has_key = 1;
             }
             return 0;
@@ -7524,12 +7522,9 @@ pub unsafe extern "C" fn rn_keys_node_get_network_agreement(
 
     // Convert the secret key to bytes
     let agreement_bytes = agreement.to_bytes().to_vec();
-    let agreement_len = agreement_bytes.len();
-    let agreement_ptr = Box::into_raw(agreement_bytes.into_boxed_slice()) as *mut u8;
-
-    unsafe {
-        *out_agreement = agreement_ptr;
-        *out_len = agreement_len;
+    if !alloc_bytes(out_agreement, out_len, &agreement_bytes) {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
     }
     0
 }
@@ -7846,9 +7841,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
                         logger,
                         "FFI enroll - response serialized successfully ({response_len} bytes)"
                     );
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     log_trace!(logger, "FFI enroll - enrollment completed successfully");
                     0
                 }
@@ -7978,9 +7974,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
                         "rn_transport_ca_client_renew: response serialized to {} bytes",
                         response_len
                     );
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     log_trace!(
                         logger,
                         "rn_transport_ca_client_renew: returning success with {} bytes",
@@ -8064,10 +8061,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_revoke(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -8121,10 +8118,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_chain(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -8178,10 +8175,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_status(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -8235,10 +8232,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_get_crl(
             // Serialize the response
             match serde_cbor::to_vec(&response) {
                 Ok(response_data) => {
-                    let response_len = response_data.len();
-                    let response_ptr = Box::into_raw(response_data.into_boxed_slice()) as *mut u8;
-                    *out_response = response_ptr;
-                    *out_len = response_len;
+                    if !alloc_bytes(out_response, out_len, &response_data) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
@@ -8477,10 +8474,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_generate_crl_lite(
             // Serialize CRL to CBOR
             match serde_cbor::to_vec(&crl) {
                 Ok(crl_cbor) => {
-                    let crl_len = crl_cbor.len();
-                    let crl_ptr = Box::into_raw(crl_cbor.into_boxed_slice()) as *mut u8;
-                    *out_crl = crl_ptr;
-                    *out_len = crl_len;
+                    if !alloc_bytes(out_crl, out_len, &crl_cbor) {
+                        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                        return RN_ERROR_MEMORY_ALLOCATION;
+                    }
                     0
                 }
                 Err(e) => {
