@@ -104,7 +104,14 @@ static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
 // Minimal memory helpers (placeholders; to be filled during implementation)
 #[no_mangle]
-pub extern "C" fn rn_free(_p: *mut u8, _len: usize) {}
+pub extern "C" fn rn_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    unsafe {
+        let _ = Vec::from_raw_parts(ptr, len, len);  // This actually frees the memory
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn rn_string_free(s: *const c_char) {

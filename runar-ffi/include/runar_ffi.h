@@ -133,7 +133,7 @@ typedef struct ProfileKeyInfo {
   size_t public_key_len;
 } ProfileKeyInfo;
 
-void rn_free(uint8_t *_p, size_t _len);
+void rn_free(uint8_t *ptr, size_t len);
 
 void rn_string_free(const char *s);
 
