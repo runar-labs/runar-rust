@@ -1,0 +1,7 @@
+whe have this e2e test /Users/rafael/dev/runar-rust/runar-keys/tests/end_to_end_test.rs focused on encryption.. and node mobile key stores.. and we have /Users/rafael/dev/runar-rust/runar-transporter/tests/full_transport_e2e_test.rs that tests the CA node scenarios .. transport mtls transport for CA.. certs review etc.. .. and we have /Users/rafael/dev/runar-rust/runar-node-tests/src/network/remote_test.rs that tests the TRansporte P2P features and the core node.. and this also uses proper key manager setuip and real certs... but now we need a end to end  test that combines all of this and  test and shows  the whole framework lifecycle end to end..
+
+stqart with a master mobile key store.. generate the CA.. use that to setup 3 nodes.. then.. setup one of these nodes the a CA node.... then crate mobile client simulators mimicing a mobile app and these needx to use the CA node to obtain certs (full_transport_e2e_test.rs scenarios).. so these mobile client simulators can talk over p2p (remote_test.rs  scenarios) .. whill show the whole framerwork working end to end.. is a great way to document all tehse moving parts working together and test them making sure all hands to together properly...
+
+This task goal is to document this in detail to have a proper from first principles understandind of the frameworks capabiliteis.. and evety steps what it means and what needs to be tested on each step.
+
+create runar_e2e_test.md with this test spec.. so I can review and iterate until we have it nail down. before implementation.
