@@ -78,13 +78,14 @@ The NodeJS API is missing **ALL** of the following major API categories:
 #### 1.1 CA Node Class
 ```typescript
 export class CaNode {
-  constructor(logger: Logger)
+  constructor()
   
   // Core CA Node operations
-  installIssuingCa(
-    issuingKeyDer: Uint8Array,
-    issuingCertDer: Uint8Array, 
-    rootCaDer: Uint8Array,
+  setupComplete(
+    rootCaSubject: string,
+    issuingCaSubject: string,
+    validityDays: number,
+    issuingCaSerial: number,
     eaPublicKeysCbor: Uint8Array,
     networkId: string
   ): Promise<void>
@@ -148,8 +149,7 @@ export class CaNodeShared {
 export class CaServer {
   constructor(
     configCbor: Uint8Array,
-    sharedCaNode: CaNodeShared,
-    logger: Logger
+    sharedCaNode: CaNodeShared
   )
   
   // Server control
@@ -175,8 +175,7 @@ export class CaServer {
 export class CaClient {
   constructor(
     configCbor: Uint8Array,
-    nodeKeys: Keys,
-    logger: Logger
+    nodeKeys: Keys
   )
   
   // CA operations
@@ -218,49 +217,7 @@ export class CaClient {
 
 ### 4. Certificate Authority Creation APIs
 
-#### 4.1 CA Creation Class
-```typescript
-export class CaCreator {
-  // Root CA creation
-  static createRootCa(subject: string): Promise<Ca>
-  
-  // Issuing CA creation
-  static createIssuingCa(
-    rootCa: Ca,
-    subject: string,
-    validityDays: number,
-    serial: number
-  ): Promise<Ca>
-}
-```
-
-#### 4.2 CA Class
-```typescript
-export class Ca {
-  constructor(ca: *mut c_void) // Internal constructor
-  
-  // CA operations
-  getCertificateDer(): Uint8Array
-  getCertificateSubject(): string
-  
-  // Resource management
-  free(): void
-}
-```
-
-**Implementation Details:**
-- **Purpose**: Creates and manages Root CA and Issuing CA certificates
-- **Subject Format**: Must follow X.509 DN format (e.g., "CN=Test CA,O=Test,C=US")
-- **Validity Days**: Certificate validity period in days (minimum 1, maximum 3650)
-- **Serial Numbers**: Must be unique within the CA hierarchy
-- **Memory Management**: All CA objects must be freed after use
-- **Error Handling**: Throws specific error codes for validation failures
-
-**Error Codes:**
-- `CERTIFICATE_CREATION_FAILED: 1009` - General certificate creation failure
-- `INVALID_SUBJECT: 1018` - Invalid subject DN format
-- `INVALID_VALIDITY_PERIOD: 1019` - Invalid validity days
-- `DUPLICATE_SERIAL: 1020` - Duplicate serial number
+Note: Standalone Root/Issuing CA creation is not exposed in the current FFI. NodeJS should configure the CA via `CaNode.setupComplete(...)`, which creates and installs Root/Issuing CA internally using subjects, validity, serial, EA public keys, and network id.
 
 ### 5. Enrollment Token Management APIs
 
@@ -316,14 +273,14 @@ export class Keys {
   initAsNode(): void
   
   // NEW: Unified state management (replaces separate node/mobile methods)
-  probeAndLoadState(): Promise<boolean>
+  hasKeys(): Promise<boolean>
   
   // NEW: Explicit key generation (replaces automatic generation)
   generateKeys(): Promise<void>
   
   // REMOVED: Redundant state checking methods
-  // ❌ nodeGetKeystoreState() - REMOVED (redundant with probeAndLoadState)
-  // ❌ mobileGetKeystoreState() - REMOVED (redundant with probeAndLoadState)
+  // ❌ nodeGetKeystoreState() - REMOVED (redundant with hasKeys)
+  // ❌ mobileGetKeystoreState() - REMOVED (redundant with hasKeys)
   
   // Existing methods (✅ Keep as-is with minimal changes)
   setPersistenceDir(dir: string): void
@@ -348,7 +305,7 @@ export class Keys {
   // NEW: Certificate management
   nodeGetQuicCertificateConfig(): Promise<Uint8Array>
   nodeGetNodeCertificate(): Promise<Uint8Array>
-  nodeInstallCertificateFromMessage(certMessage: Uint8Array): Promise<void>
+  nodeInstallCertificate(certMessage: Uint8Array): Promise<void>
   
   // NEW: Profile key operations
   nodeDecryptWithProfile(
@@ -373,20 +330,20 @@ export class Keys {
 
 **Corrected Initialization Behavior:**
 - **Purpose**: Both `initAsMobile()` and `initAsNode()` now ONLY create the key manager
-- **No State Loading**: Neither method calls `probeAndLoadState()` automatically
+- **No State Loading**: Neither method calls `hasKeys()` automatically
 - **No Key Generation**: Neither method calls `generateKeys()` automatically
-- **Explicit Control**: Calling code must explicitly call `probeAndLoadState()` and `generateKeys()` as needed
+- **Explicit Control**: Calling code must explicitly call `hasKeys()` and `generateKeys()` as needed
 - **Consistency**: Both methods behave identically - only create the manager instance
 
 **Unified State Management:**
-- **Purpose**: Single `probeAndLoadState()` method works for both mobile and node managers
+- **Purpose**: Single `hasKeys()` method works for both mobile and node managers
 - **Return Value**: `Promise<boolean>` - true if state was loaded, false if no state found
 - **Error Handling**: Throws specific error codes for state loading failures
 - **Thread Safety**: Safe to call concurrently from multiple async operations
 
 **Explicit Key Generation:**
 - **Purpose**: Single `generateKeys()` method works for both mobile and node managers
-- **When to Call**: After `probeAndLoadState()` returns false (no existing state)
+- **When to Call**: After `hasKeys()` returns false (no existing state)
 - **Error Handling**: Throws specific error codes for key generation failures
 - **Idempotent**: Safe to call multiple times, only generates keys if not already present
 
@@ -609,7 +566,7 @@ const response = cbor.decode<CsrEnrollResponse>(responseCbor)
 ### Test Structure
 ```typescript
 // tests/ca_e2e_integration_test.ts
-import { Keys, CaNode, CaServer, CaClient, CaCreator, EnrollmentToken } from '../index'
+import { Keys, CaNode, CaServer, CaClient, EnrollmentToken } from '../index'
 import * as cbor from 'cbor'
 
 describe('CA E2E Integration Test', () => {
@@ -629,12 +586,12 @@ describe('CA E2E Integration Test', () => {
     mobileKeys.initAsMobile()
     
     // Load existing state or generate keys as needed
-    const nodeStateLoaded = await nodeKeys.probeAndLoadState()
+    const nodeStateLoaded = await nodeKeys.hasKeys()
     if (!nodeStateLoaded) {
       await nodeKeys.generateKeys()
     }
     
-    const mobileStateLoaded = await mobileKeys.probeAndLoadState()
+    const mobileStateLoaded = await mobileKeys.hasKeys()
     if (!mobileStateLoaded) {
       // Mobile keys will be generated when needed
     }
@@ -645,33 +602,20 @@ describe('CA E2E Integration Test', () => {
     console.log('🏗️  PHASE 2: CA Node and Server')
     
     // Create CA Node
-    const caNode = new CaNode(logger)
+    const caNode = new CaNode()
     
-    // Create Root CA and Issuing CA certificates
-    const rootCa = await CaCreator.createRootCa("CN=Test Root CA,O=Test,C=US")
-    const issuingCa = await CaCreator.createIssuingCa(
-      rootCa, 
-      "CN=Test Issuing CA,O=Test,C=US", 
-      365, 
-      1
-    )
-    
-    // Get certificate DER bytes
-    const rootCaDer = rootCa.getCertificateDer()
-    const issuingCaDer = issuingCa.getCertificateDer()
-    const issuingCaKeyDer = issuingCa.getPrivateKeyDer() // Assuming this method exists
-    
-    // Create EA key pair
+    // Create EA public keys array (from external provision or helper)
     const eaKey = new Uint8Array(32) // ECDSA P-256 private key
     const eaPublicKey = new Uint8Array(65) // ECDSA P-256 public key
     const eaPublicKeys = [eaPublicKey]
     const eaPublicKeysCbor = cbor.encode(eaPublicKeys)
     
-    // Install issuing CA in CA Node
-    await caNode.installIssuingCa(
-      issuingCaKeyDer,
-      issuingCaDer,
-      rootCaDer,
+    // Complete CA setup (creates and installs Root and Issuing CA internally)
+    await caNode.setupComplete(
+      "CN=Test Root CA,O=Test,C=US",
+      "CN=Test Issuing CA,O=Test,C=US",
+      365,
+      1,
       eaPublicKeysCbor,
       "test_network"
     )
@@ -692,7 +636,7 @@ describe('CA E2E Integration Test', () => {
     }
     
     const serverConfigCbor = cbor.encode(serverConfig)
-    const caServer = new CaServer(serverConfigCbor, sharedCaNode, logger)
+    const caServer = new CaServer(serverConfigCbor, sharedCaNode)
     
     // Start CA Server
     await caServer.start()
@@ -745,7 +689,7 @@ describe('CA E2E Integration Test', () => {
     }
     
     const clientConfigCbor = cbor.encode(clientConfig)
-    const caClient = new CaClient(clientConfigCbor, nodeKeys, logger)
+    const caClient = new CaClient(clientConfigCbor, nodeKeys)
     
     // Enroll via CA Client
     const enrollResponseCbor = await caClient.enroll(bootstrapAddr, enrollRequestCbor)
@@ -791,7 +735,7 @@ describe('CA E2E Integration Test', () => {
     console.log('🚫 PHASE 5: Certificate Revocation + CRL-lite via REAL QUIC mTLS')
     
     // Get client certificate for SKI extraction
-    const clientCertDer = nodeKeys.nodeGetNodeCertificate()
+    const clientCertDer = await nodeKeys.nodeGetNodeCertificate()
     const clientSki = Keys.certificateExtractSki(clientCertDer)
     
     // Add client SKI to shared CA Node
@@ -803,7 +747,7 @@ describe('CA E2E Integration Test', () => {
     await caServer.configureAdminSkis(adminSkisCbor)
     
     // Get certificate serial for revocation
-    const certSerial = Keys.certificateGetSerial(clientCertDer)
+    const certSerial = await Keys.certificateGetSerial(clientCertDer)
     
     // Create revocation request
     const revokeRequest: RevokeRequest = {
@@ -981,8 +925,7 @@ describe('CA E2E Integration Test', () => {
     caServer.free()
     caNode.free()
     sharedCaNode.free()
-    rootCa.free()
-    issuingCa.free()
+    // No standalone CA objects to free
     nodeKeys.free()
     mobileKeys.free()
     unauthorizedKeys.free()
@@ -1196,10 +1139,10 @@ export class CaNode {
 ```rust
 // CA Node constructor
 #[napi(constructor)]
-pub fn new(logger: &Logger) -> Result<Self> {
-    let ca_node = CANode::new(/* parameters */)?;
+pub fn new() -> Result<Self> {
+    // CA Node is created empty; certificates installed via setup_complete
     Ok(Self {
-        inner: Arc::new(Mutex::new(ca_node))
+        inner: Arc::new(Mutex::new(CANode::new()?))
     })
 }
 
@@ -1207,8 +1150,7 @@ pub fn new(logger: &Logger) -> Result<Self> {
 #[napi(constructor)]
 pub fn new(
     config_cbor: Uint8Array,
-    shared_ca_node: &CaNodeShared,
-    logger: &Logger
+    shared_ca_node: &CaNodeShared
 ) -> Result<Self> {
     let config: CaServerConfig = cbor::from_slice(&config_cbor)?;
     let server = CaServer::new(config, shared_ca_node.inner.clone())?;
@@ -1222,21 +1164,23 @@ pub fn new(
 ```rust
 // Async method pattern
 #[napi]
-pub async fn install_issuing_ca(
+pub async fn setup_complete(
     &self,
-    issuing_key_der: Uint8Array,
-    issuing_cert_der: Uint8Array,
-    root_ca_der: Uint8Array,
+    root_ca_subject: String,
+    issuing_ca_subject: String,
+    validity_days: u32,
+    issuing_ca_serial: u64,
     ea_public_keys_cbor: Uint8Array,
     network_id: String
 ) -> Result<()> {
     let inner = self.inner.clone();
     RT.spawn(async move {
         let mut ca_node = inner.lock().unwrap();
-        ca_node.install_issuing_ca(
-            issuing_key_der.to_vec(),
-            issuing_cert_der.to_vec(),
-            root_ca_der.to_vec(),
+        ca_node.setup_complete(
+            root_ca_subject,
+            issuing_ca_subject,
+            validity_days,
+            issuing_ca_serial,
             cbor::from_slice(&ea_public_keys_cbor)?,
             network_id
         )
@@ -1404,14 +1348,14 @@ export class Keys {
   initAsNode(): void
   
   // NEW: Unified state management (replaces separate node/mobile methods)
-  probeAndLoadState(): Promise<boolean>
+  hasKeys(): Promise<boolean>
   
   // NEW: Explicit key generation (replaces automatic generation)
   generateKeys(): Promise<void>
   
   // REMOVED: Redundant state checking methods
-  // ❌ nodeGetKeystoreState() - REMOVED (redundant with probeAndLoadState)
-  // ❌ mobileGetKeystoreState() - REMOVED (redundant with probeAndLoadState)
+  // ❌ nodeGetKeystoreState() - REMOVED (redundant with hasKeys)
+  // ❌ mobileGetKeystoreState() - REMOVED (redundant with hasKeys)
 }
 ```
 
@@ -1419,7 +1363,7 @@ export class Keys {
 - **Consistency**: Both init methods should behave identically
 - **Separation of Concerns**: Initialization vs. state management vs. key generation are separate responsibilities
 - **Explicit Control**: The calling code knows the context and should decide what to do next
-- **API Clarity**: Single `probeAndLoadState()` method instead of confusing separate methods
+- **API Clarity**: Single `hasKeys()` method instead of confusing separate methods
 
 #### 2. **MISSING CA NODE SHARED REFERENCE API** ❌ **ADDED**
 **CRITICAL**: The design was missing the `CaNodeShared` creation and management API that is essential for CA Server operations.
@@ -1734,7 +1678,7 @@ export interface NodeCertificateMessage {
 - **Separation of concerns: initialization vs. state management vs. key generation**
 
 #### 2. **Unified State Management** ✅
-- **Single `probeAndLoadState()` method for both mobile and node managers**
+- **Single `hasKeys()` method for both mobile and node managers**
 - **Removed redundant `nodeGetKeystoreState()` and `mobileGetKeystoreState()` methods**
 - **Consistent return type: `Promise<boolean>`**
 - **Clear API: one method, one purpose**
@@ -1791,7 +1735,7 @@ This design document has been **completely updated** to address all critical iss
 ### ✅ **KEY CORRECTIONS APPLIED**
 
 1. **Fixed Initialization Inconsistency** - Both `initAsMobile()` and `initAsNode()` now ONLY create managers
-2. **Unified State Management** - Single `probeAndLoadState()` method replaces separate node/mobile methods
+2. **Unified State Management** - Single `hasKeys()` method replaces separate node/mobile methods
 3. **Removed Redundant Methods** - Eliminated `nodeGetKeystoreState()` and `mobileGetKeystoreState()`
 4. **Added Missing APIs** - Complete CA Node, CA Server, CA Client, Certificate Authority, and Enrollment Token APIs
 5. **Enhanced Error Handling** - Complete error codes and proper error handling patterns

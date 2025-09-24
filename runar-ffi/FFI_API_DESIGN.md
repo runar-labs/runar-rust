@@ -22,7 +22,7 @@ This section enumerates the complete, production-ready FFI API required for exte
 **REASON**: State retrieval/restoration is now handled entirely in the Rust layer using device keystore integration. Only state flushing is exposed to the FFI layer.
 
 **NEW APPROACH**: State management is now handled entirely in the Rust layer using device keystore integration:
-1. **`rn_keys_node_probe_and_load_state(keys, out_loaded, err)`** - Returns boolean indicating if state was loaded
+1. **`rn_keys_node_has_keys(keys, out_loaded, err)`** - Returns boolean indicating if state was loaded
 2. **`rn_keys_node_generate_keys(keys, err)`** - Explicit key generation when no state exists
 3. **Device keystore integration** - State is automatically persisted using OS key store (Keychain/Keyring)
 4. **No manual state export/import** - The FFI layer only provides core crypto operations
@@ -36,7 +36,7 @@ rn_keys_register_device_keystore(keys, device_keystore, &err);
 
 // 2. Try to load existing state
 int32_t state_loaded = 0;
-rn_keys_node_probe_and_load_state(keys, &state_loaded, &err);
+rn_keys_node_has_keys(keys, &state_loaded, &err);
 
 if (state_loaded) {
     // State loaded successfully - keys are ready
@@ -83,11 +83,11 @@ if (state_loaded) {
 - **Root Logger**: Single global logger instance with component `Custom("ffi")`
 - **Child Loggers**: All components create child loggers using `get_global_logger().with_component(Component::X)`
 - **Node ID**: Set once on root logger, inherited by all child loggers
-- **Log Level**: Can be changed at any time using `rn_set_logger_level()`
+- **Log Level**: Can be changed at any time using `rn_set_log_level()`
 
 ### Logger Management Functions
 - `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger (can be called before/after logger creation)
-- `rn_set_logger_level(level_i32, err) -> i32` - Set global log level (can be called at any time)
+- `rn_set_log_level(level_i32, err) -> i32` - Set global log level (can be called at any time)
 
 ### Functions Updated (Logger Parameters Removed)
 **The following functions previously had `logger: *mut c_void` parameters that have been removed:**
@@ -98,13 +98,13 @@ if (state_loaded) {
 ### Usage Pattern
 ```c
 // 1. Set logger level (optional, can be called at any time)
-rn_set_logger_level(4, &err); // Debug level
+rn_set_log_level(4, &err); // Debug level
 
 // 2. Set node ID (optional, initializes logger if needed)
 rn_set_logger_node_id("node-123", &err);
 
 // 3. Use FFI functions (no logger parameters needed)
-rn_keys_ca_node_new(&ca_node, &err);
+rn_keys_ca_node_new_shared(&ca_node, &err);
 rn_transport_ca_server_new(config, len, ca_node, &server, &err);
 rn_transport_ca_client_new_with_config(config, len, node_keys, &client, &err);
 ```
@@ -161,12 +161,12 @@ Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
 ## Common Utilities
 - `rn_free(ptr, len)`
 - `rn_string_free(cstr)`
-- `rn_last_error(out_buf, out_len) -> i32`
-- `rn_set_log_level(level_i32)` (DEPRECATED - use `rn_set_logger_level` instead)
+- `rn_clear_error_history()`
+- `rn_set_log_level(level_i32)`
 
 ### Logger Management Functions (NEW)
 - `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger
-- `rn_set_logger_level(level_i32, err) -> i32` - Set global log level
+- `rn_set_log_level(level_i32, err) -> i32` - Set global log level
 
 ---
 
@@ -178,11 +178,11 @@ Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
 - `rn_keys_enable_auto_persist(keys, enable_i32, err) -> i32`
 - `rn_keys_wipe_persistence(keys, err) -> i32`
 - `rn_keys_init_as_node(keys, err) -> i32`
-- `rn_keys_node_probe_and_load_state(keys, out_loaded, err) -> i32` (NEW - replaces get_keystore_state)
+- `rn_keys_node_has_keys(keys, out_loaded, err) -> i32` (NEW - replaces get_keystore_state)
 - `rn_keys_node_generate_keys(keys, err) -> i32` (NEW - explicit key generation)
 - `rn_keys_node_get_public_key(keys, out_ptr, out_len, err) -> i32`
 - `rn_keys_node_get_agreement_public_key(keys, out_ptr, out_len, err) -> i32`
-- `rn_keys_node_get_node_id(keys, out_cstr, err) -> i32`
+- `rn_keys_node_get_node_id(keys, out_cstr, out_has_id, err) -> i32`
 - `rn_keys_node_generate_csr(keys, out_csr_der_ptr, out_len, err) -> i32`
 - `rn_keys_node_install_certificate(keys, cert_message_cbor_ptr, len, err) -> i32`
 - `rn_keys_node_get_quic_certificate_config(keys, out_config_cbor_ptr, out_len, err) -> i32`
@@ -250,11 +250,8 @@ Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
 - `RN_ERROR_CERTIFICATE_VALIDATION_FAILED`
 - `RN_ERROR_PROFILE_KEY_NOT_FOUND`
 
-### Logger Error Codes (NEW)
-- `RN_ERROR_LOGGER_ALREADY_INITIALIZED` (1020)
-- `RN_ERROR_LOGGER_NODE_ID_ALREADY_SET` (1021)
-- `RN_ERROR_LOGGER_INVALID_NODE_ID` (1022)
-- `RN_ERROR_LOGGER_INVALID_LEVEL` (1023)
+### Logger Error Codes
+(Not used in current implementation)
 
 ---
 
@@ -634,45 +631,9 @@ pub extern "C" fn rn_transport_ca_server_get_authenticated_addr(
 ) -> i32;
 ```
 
-### 4.1. Certificate Authority Creation APIs (NEW)
+### 4.1. Certificate Authority Creation APIs (REMOVED)
 
-#### Root CA and Issuing CA Creation
-```rust
-// Create Root CA certificate
-pub extern "C" fn rn_keys_ca_create_root_ca(
-    subject: *const c_char,
-    out_ca: *mut *mut c_void,
-    err: *mut RnError
-) -> i32;
-
-// Create Issuing CA certificate (signed by Root CA)
-pub extern "C" fn rn_keys_ca_create_issuing_ca(
-    root_ca: *mut c_void,
-    subject: *const c_char,
-    validity_days: u32,
-    serial: u64,
-    out_ca: *mut *mut c_void,
-    err: *mut RnError
-) -> i32;
-
-// Get CA certificate DER bytes
-pub extern "C" fn rn_keys_ca_get_certificate_der(
-    ca: *mut c_void,
-    out_cert: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError
-) -> i32;
-
-// Get CA certificate subject
-pub extern "C" fn rn_keys_ca_get_certificate_subject(
-    ca: *mut c_void,
-    out_subject: *mut *mut c_char,
-    err: *mut RnError
-) -> i32;
-
-// Free CA resources
-pub extern "C" fn rn_keys_ca_free(ca: *mut c_void);
-```
+Root/Issuing CA are created and installed internally via `rn_keys_ca_node_setup_complete(...)`. No standalone CA creation/getter/free functions are exported in the current implementation.
 
 ### 4.2. Enrollment Token Management APIs (NEW)
 
@@ -753,7 +714,7 @@ pub extern "C" fn rn_keys_node_get_node_certificate(
 ) -> i32;
 
 // Install certificate from certificate message
-pub extern "C" fn rn_keys_node_install_certificate_from_message(
+pub extern "C" fn rn_keys_node_install_certificate(
     keys: *mut c_void,
     cert_message: *const u8,
     cert_message_len: usize,
@@ -1048,8 +1009,8 @@ pub struct ProfileKeyEncryptionParams {
 4. **Memory management** - Proper C-compatible memory management
 
 ### Phase 2: Certificate Authority Creation APIs
-1. **Root CA creation** - rn_keys_ca_create_root_ca
-2. **Issuing CA creation** - rn_keys_ca_create_issuing_ca
+1. **CA Node Shared Handle** - `rn_keys_ca_node_new_shared`
+2. **CA Setup** - `rn_keys_ca_node_setup_complete`
 3. **CA certificate access** - get_certificate_der, get_certificate_subject
 4. **CA resource management** - proper cleanup and memory management
 
@@ -1164,7 +1125,7 @@ The updated FFI API design now supports **100% of the functionality** required t
 1. **Mobile Key Manager** - `rn_keys_init_as_mobile`, `rn_keys_mobile_initialize_user_root_key`
 2. **Node Key Manager** - `rn_keys_init_as_node`, `rn_keys_node_generate_keys`
 3. **CA Client Configuration** - `rn_transport_ca_client_new_with_config`
-4. **Certificate Operations** - `rn_keys_node_generate_csr`, `rn_keys_node_install_certificate_from_message`
+4. **Certificate Operations** - `rn_keys_node_generate_csr`, `rn_keys_node_install_certificate`
 5. **Profile Key Operations** - `rn_keys_node_derive_user_profile_key`, `rn_keys_node_encrypt_with_envelope`
 6. **Certificate Analysis** - `rn_keys_certificate_extract_ski`, `rn_keys_certificate_get_serial`
 
@@ -1225,7 +1186,7 @@ The implementation should follow the phased approach to minimize risk and ensure
 
 2. **Added 2 new logger management functions**:
    - `rn_set_logger_node_id(node_id_cstr, err) -> i32`
-   - `rn_set_logger_level(level_i32, err) -> i32`
+   - `rn_set_log_level(level_i32, err) -> i32`
 
 3. **Added 4 new error codes**:
    - `RN_ERROR_LOGGER_ALREADY_INITIALIZED` (1020)
@@ -1253,7 +1214,7 @@ The implementation should follow the phased approach to minimize risk and ensure
 ### 6.1 Test Helper Functions (Rust test harness utilities)
 - `fn create_test_logger() -> *mut c_void`
   - Construct `Arc<Logger>` and return opaque pointer.
-  - Used by: `rn_keys_ca_node_new`, `rn_transport_ca_server_new`, `rn_transport_ca_client_new`.
+  - Used by: (not needed; logger is global)
 - `fn create_test_error() -> RnError`
   - Return zeroed `RnError` struct for FFI calls; pass `&mut err` everywhere.
 - `fn create_test_ecdsa_key_pair() -> Vec<u8>`
@@ -1261,13 +1222,13 @@ The implementation should follow the phased approach to minimize risk and ensure
 - `fn create_test_certificate() -> Vec<u8>`
   - Return DER certificate bytes (for invalid-cert negative tests).
 - `fn create_test_ea_public_keys() -> Vec<u8>`
-  - CBOR `Vec<Vec<u8>>` of EA public keys. Input for `rn_keys_ca_node_configure_enrollment_authority` and `rn_keys_ca_node_install_issuing_ca`.
+  - CBOR `Vec<Vec<u8>>` of EA public keys. Input for `rn_keys_ca_node_configure_enrollment_authority` or `rn_keys_ca_node_setup_complete`.
 - `fn create_cstring(s: &str) -> CString`
   - Build CStr for addresses, network_id, admin_ski, etc.
 
 ### 6.2 Test Data Creation (precise usage)
 - `fn create_root_ca_certificate() -> Vec<u8>`
-  - DER root CA; pass as `root_ca_der` to `rn_keys_ca_node_install_issuing_ca`.
+  - (not needed) Issuer and root are created internally via `rn_keys_ca_node_setup_complete`.
 - `fn create_issuing_ca_certificate() -> (Vec<u8>, Vec<u8>)`
   - `(issuing_key_der, issuing_cert_der)`; pass to `rn_keys_ca_node_install_issuing_ca`.
 - `fn create_enrollment_token(network_id: &str, token_id: &str) -> Vec<u8>`
@@ -1390,7 +1351,7 @@ Exact FFI sequence and checklist:
 2) Configure CA Node with EA public keys:
    - `ea_pubkeys_cbor = cbor::to_vec(vec![ea_pk])`
    - `rn_keys_ca_node_configure_enrollment_authority(ca_node, ea_pubkeys_cbor.as_ptr(), ea_pubkeys_cbor.len(), &mut err)`
-   - Alternatively, pass the same `ea_pubkeys_cbor` to `rn_keys_ca_node_install_issuing_ca` when installing the issuer.
+   - Alternatively, pass the same `ea_pubkeys_cbor` to `rn_keys_ca_node_setup_complete`.
 3) Create tokens with the SAME EA private key:
    - `token_cbor = create_enrollment_token_with_sk(ea_sk_der, body)`
    - Embed `token_cbor` in `CsrEnrollRequest` CBOR for `rn_transport_ca_client_enroll`.
