@@ -6054,6 +6054,148 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
 // CA CREATION FFI FUNCTIONS (NEW)
 // ============================================================================
 
+/// Create Root CA certificate
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_create_root_ca(
+    subject: *const c_char,
+    out_ca: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if subject.is_null() || out_ca.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let subject_str = match CStr::from_ptr(subject).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid UTF-8 in subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    let ca = match runar_keys::certificate::CertificateAuthority::new(subject_str) {
+        Ok(ca) => ca,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create root CA: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    unsafe {
+        *out_ca = Box::into_raw(Box::new(ca)) as *mut c_void;
+    }
+
+    0
+}
+
+/// Create Issuing CA certificate (signed by Root CA)
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_ca_create_issuing_ca(
+    root_ca: *mut c_void,
+    subject: *const c_char,
+    validity_days: u32,
+    serial: u64,
+    out_ca: *mut *mut c_void,
+    err: *mut RnError,
+) -> i32 {
+    if root_ca.is_null() || subject.is_null() || out_ca.is_null() || err.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    let root_ca = &*(root_ca as *const runar_keys::certificate::CertificateAuthority);
+    let subject_str = match CStr::from_ptr(subject).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_UTF8,
+                &format!("Invalid UTF-8 in subject: {e}"),
+            );
+            return RN_ERROR_INVALID_UTF8;
+        }
+    };
+
+    // Validate validity_days
+    if validity_days == 0 {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "validity_days cannot be zero");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Validate serial
+    if serial == 0 {
+        set_error(err, RN_ERROR_INVALID_ARGUMENT, "serial cannot be zero");
+        return RN_ERROR_INVALID_ARGUMENT;
+    }
+
+    // Create issuing CA key pair
+    let issuing_ca_key = match runar_keys::certificate::EcdsaKeyPair::new() {
+        Ok(key) => key,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create issuing CA key: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create CSR for issuing CA
+    let issuing_ca_csr_der = match runar_keys::certificate::CertificateRequest::create(
+        &issuing_ca_key,
+        subject_str,
+    ) {
+        Ok(csr_der) => csr_der,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to create issuing CA CSR: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Sign the issuing CA certificate
+    let issuing_ca_cert = match root_ca.sign_ca_certificate_request_with_serial(
+        &issuing_ca_csr_der,
+        validity_days,
+        Some(serial),
+    ) {
+        Ok(cert) => cert,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to sign issuing CA certificate: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    // Create issuing CA from existing key pair and certificate
+    let issuing_ca = runar_keys::certificate::CertificateAuthority::from_existing(
+        issuing_ca_key,
+        issuing_ca_cert,
+    );
+
+    unsafe {
+        *out_ca = Box::into_raw(Box::new(issuing_ca)) as *mut c_void;
+    }
+
+    0
+}
+
 /// Get CA certificate DER bytes
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_get_certificate_der(
@@ -6094,25 +6236,26 @@ pub unsafe extern "C" fn rn_keys_ca_get_certificate_subject(
     let ca = &*(ca as *const runar_keys::CertificateAuthority);
     let subject = ca.ca_certificate().subject();
 
-    // Convert to C string
-    let subject_cstr = match std::ffi::CString::new(subject) {
+    let c_subject = match CString::new(subject) {
         Ok(s) => s,
         Err(e) => {
             set_error(
                 err,
                 RN_ERROR_INVALID_UTF8,
-                &format!("Invalid subject string: {e}"),
+                &format!("Invalid UTF-8 in subject: {e}"),
             );
             return RN_ERROR_INVALID_UTF8;
         }
     };
 
-    // Allocate memory for C string using CString::into_raw
-    *out_subject = subject_cstr.into_raw();
+    unsafe {
+        *out_subject = c_subject.into_raw();
+    }
 
     0
 }
 
+/// Free CA resources
 /// Free CA resources
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_free(ca: *mut c_void) {

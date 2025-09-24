@@ -621,5 +621,190 @@ async fn test_full_transport_e2e_quic_mtls() -> Result<()> {
     println!("   • CRL-lite: ✅");
     println!("   • REAL QUIC mTLS: ✅");
 
+    // ==========================================
+    // Phase 13: CA Reconstruction Validation
+    // ==========================================
+    println!("\n🔧 PHASE 13: CA Reconstruction Validation");
+
+    // Test reconstruction of the issuing CA using from_existing()
+    println!("   🔍 Validating Issuing CA reconstruction using from_existing()...");
+
+    // Reconstruct the issuing CA using from_existing() to validate the workflow
+    let reconstructed_issuing_ca =
+        CertificateAuthority::from_existing(issuing_ca_key.clone(), issuing_ca_cert.clone());
+
+    // Verify the reconstructed CA is identical
+    assert_eq!(
+        reconstructed_issuing_ca.ca_certificate().subject(),
+        issuing_ca_cert.subject()
+    );
+    assert_eq!(
+        reconstructed_issuing_ca.ca_certificate().issuer(),
+        issuing_ca_cert.issuer()
+    );
+    assert_eq!(
+        reconstructed_issuing_ca.ca_certificate().der_bytes(),
+        issuing_ca_cert.der_bytes()
+    );
+
+    // Test that the reconstructed CA can sign certificates
+    let test_node_key = EcdsaKeyPair::new()?;
+    let test_csr = CertificateRequest::create(&test_node_key, "CN=Test Node,O=Test,C=US")?;
+    let test_signed_cert = reconstructed_issuing_ca.sign_certificate_request_with_serial(
+        &test_csr,
+        30,
+        Some(88888),
+    )?;
+
+    assert!(test_signed_cert.subject().contains("CN=Test Node"));
+    assert!(test_signed_cert.issuer().contains("CN=Test Issuing CA"));
+
+    println!("   ✅ Issuing CA reconstruction via from_existing() validated successfully");
+
+    // ==========================================
+    // Phase 14: Reconstruction with QUIC Server
+    // ==========================================
+    println!("\n🌐 PHASE 14: Reconstruction with QUIC Server");
+
+    // Create a new CA Node with the reconstructed CA
+    let reconstructed_logger = Arc::new(Logger::new_root(Component::Keys));
+    let mut reconstructed_ca_node = CANode::new(
+        issuing_ca_key.clone(),
+        issuing_ca_cert.clone(),
+        root_ca_cert.clone(),
+        "test_network".to_string(),
+        reconstructed_logger,
+    );
+
+    // Configure enrollment authority
+    reconstructed_ca_node.configure_enrollment_authority(vec![ea_public_key.clone()])?;
+
+    // Create new QUIC server with reconstructed CA Node
+    let reconstructed_ca_node_arc = Arc::new(std::sync::RwLock::new(reconstructed_ca_node));
+    let reconstructed_server_logger = Arc::new(Logger::new_root(Component::Transporter));
+
+    let reconstructed_server_config = CaServerConfig {
+        bootstrap_bind: "127.0.0.1:0".parse()?,
+        authenticated_bind: "127.0.0.1:0".parse()?,
+        network_id: "test_network".to_string(),
+        rate_limit_config: RateLimitConfig::default(),
+        admin_skis: vec![],
+        additional_ca_certs: vec![],
+    };
+
+    let mut reconstructed_ca_server = CaServerBuilder::new()
+        .with_config(reconstructed_server_config)
+        .with_ca_node(reconstructed_ca_node_arc.clone())
+        .with_logger(reconstructed_server_logger)
+        .build()?;
+
+    // Start reconstructed CA Node server
+    let (reconstructed_bootstrap_addr, reconstructed_authenticated_addr) =
+        reconstructed_ca_server.start().await?;
+    sleep(Duration::from_millis(100)).await;
+
+    println!("   ✅ Reconstructed CA Node QUIC server started");
+
+    // ==========================================
+    // Phase 15: Basic Operations with Reconstructed CA
+    // ==========================================
+    println!("\n🔍 PHASE 15: Basic Operations with Reconstructed CA");
+
+    // Create a new mobile node for testing
+    let test_mobile_logger = Arc::new(Logger::new_root(Component::Keys));
+    let mut test_mobile = MobileKeyManager::new(test_mobile_logger)?;
+    test_mobile.initialize_user_root_key()?;
+
+    let test_node_logger = Arc::new(Logger::new_root(Component::Keys));
+    let mut test_mobile_node = NodeKeyManager::new(test_node_logger)?;
+    test_mobile_node.generate_keys()?;
+
+    // Create CA Client for the reconstructed server
+    let test_client_logger = Arc::new(Logger::new_root(Component::Transporter));
+    let test_client_config = CaClientConfig {
+        bootstrap_server: reconstructed_bootstrap_addr,
+        authenticated_server: reconstructed_authenticated_addr,
+        network_id: "test_network".to_string(),
+        request_timeout: Duration::from_secs(30),
+        max_retries: 3,
+    };
+
+    let test_mobile_node_arc = Arc::new(std::sync::RwLock::new(test_mobile_node));
+    let test_ca_client = CaClientBuilder::new()
+        .with_config(test_client_config)
+        .with_node_key_manager(test_mobile_node_arc.clone())
+        .with_logger(test_client_logger)
+        .build()?
+        .with_root_ca_cert(root_ca_cert.der_bytes().to_vec())
+        .with_issuing_ca_cert(issuing_ca_cert.der_bytes().to_vec());
+
+    // Test basic enrollment with reconstructed CA
+    let test_csr = test_mobile_node_arc.write().unwrap().generate_csr()?;
+    let test_token_body = EnrollmentTokenBody::new(
+        "reconstruction_test_token".to_string(),
+        "test_network".to_string(),
+        Some("test_subject".to_string()),
+        now - 60,
+        now + 3600,
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        vec!["enroll".to_string()],
+    );
+    let test_enrollment_token = EnrollmentToken::generate(&ea_key, test_token_body)?;
+
+    let test_csr_enroll_request = CsrEnrollRequest {
+        network_id: "test_network".to_string(),
+        csr_der: test_csr.csr_der,
+        enrollment_token: test_enrollment_token,
+    };
+
+    let test_enroll_response = test_ca_client.enroll(test_csr_enroll_request).await?;
+    let test_cert_message = test_mobile.from_enroll_response(&test_enroll_response)?;
+    test_mobile_node_arc
+        .write()
+        .unwrap()
+        .install_certificate(test_cert_message)?;
+
+    println!("   ✅ Basic enrollment with reconstructed CA successful");
+
+    // Test basic status request
+    let test_status = test_ca_client.get_status().await?;
+    assert_eq!(
+        test_status.issuing_subject,
+        "CN=Test Issuing CA, O=Test, C=US"
+    );
+    println!("   ✅ Basic status request with reconstructed CA successful");
+
+    println!("   🎉 CA reconstruction validation completed successfully!");
+
+    // ==========================================
+    // FINAL VALIDATION SUMMARY
+    // ==========================================
+    println!("\n🎉 FULL-TRANSPORT E2E TEST WITH RECONSTRUCTION COMPLETED SUCCESSFULLY!");
+    println!("📋 All validations passed:");
+    println!("   ✅ CA Node infrastructure setup");
+    println!("   ✅ REAL QUIC mTLS transport configuration");
+    println!("   ✅ Mobile node enrollment via REAL QUIC mTLS");
+    println!("   ✅ Certificate renewal via REAL QUIC mTLS");
+    println!("   ✅ Certificate revocation and CRL-lite via REAL QUIC mTLS");
+    println!("   ✅ CA Node API status and chain via REAL QUIC mTLS");
+    println!("   ✅ Profile key interop via REAL QUIC mTLS");
+    println!("   ✅ Rate limiting via REAL QUIC mTLS");
+    println!("   ✅ Token revocation via REAL QUIC mTLS");
+    println!("   ✅ Error handling via REAL QUIC mTLS");
+    println!("   ✅ CA reconstruction via from_existing()");
+    println!("   ✅ Reconstructed CA operations via REAL QUIC mTLS");
+
+    println!("\n🌐 CA NODE INFRASTRUCTURE READY FOR PRODUCTION WITH REAL QUIC mTLS!");
+    println!("📊 Test Statistics:");
+    println!("   • Root CA: {}", root_ca_cert.subject());
+    println!("   • Issuing CA: {}", issuing_ca_cert.subject());
+    println!("   • Network ID: test_network");
+    println!("   • Profile keys: 2 (personal, work)");
+    println!("   • Revoked certificates: 1");
+    println!("   • Rate limiting: ✅");
+    println!("   • CRL-lite: ✅");
+    println!("   • REAL QUIC mTLS: ✅");
+    println!("   • CA reconstruction: ✅");
+
     Ok(())
 }
