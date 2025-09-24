@@ -443,18 +443,33 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     );
     println!("   ✅ Enrollment successful, response size: {enroll_response_len} bytes");
 
-    let enroll_response =
-        unsafe { std::slice::from_raw_parts(enroll_response_ptr, enroll_response_len) }.to_vec();
-    println!("   ✅ Enrollment successful ({enroll_response_len} bytes response)");
+    // Deserialize and validate the enrollment response
+    let enroll_response_cbor = unsafe { std::slice::from_raw_parts(enroll_response_ptr, enroll_response_len) };
+    let enroll_response: runar_keys::ca_node_types::CsrEnrollResponse = 
+        serde_cbor::from_slice(enroll_response_cbor)
+            .expect("Failed to deserialize enroll response");
+
+    // Validate the response
+    assert_eq!(enroll_response.network_id, "test_network");
+    assert!(!enroll_response.certificate_der.is_empty());
+    assert!(!enroll_response.issuing_ca_der.is_empty());
+    assert!(enroll_response.expires_at > 0);
+
+    println!("   ✅ Enrollment successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}", 
+        enroll_response.network_id, 
+        enroll_response.certificate_der.len(),
+        enroll_response.issuing_ca_der.len(),
+        enroll_response.expires_at);
 
     // Convert response to NodeCertificateMessage
+    let enroll_response_cbor = serde_cbor::to_vec(&enroll_response).expect("Failed to serialize enroll response");
     let mut cert_msg_ptr: *mut u8 = ptr::null_mut();
     let mut cert_msg_len: usize = 0;
     let result = unsafe {
         rn_keys_mobile_from_enroll_response(
             mobile_keys,
-            enroll_response.as_ptr(),
-            enroll_response.len(),
+            enroll_response_cbor.as_ptr(),
+            enroll_response_cbor.len(),
             &mut cert_msg_ptr,
             &mut cert_msg_len,
             &mut error,
@@ -581,17 +596,33 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     );
     println!("   ✅ Certificate renewal successful ({renew_response_len} bytes response)");
 
-    let renew_response =
-        unsafe { std::slice::from_raw_parts(renew_response_ptr, renew_response_len) }.to_vec();
+    // Deserialize and validate the renewal response
+    let renew_response_cbor = unsafe { std::slice::from_raw_parts(renew_response_ptr, renew_response_len) };
+    let renew_response: runar_keys::ca_node_types::RenewResponse = 
+        serde_cbor::from_slice(renew_response_cbor)
+            .expect("Failed to deserialize renew response");
+
+    // Validate the response
+    assert_eq!(renew_response.network_id, "test_network");
+    assert!(!renew_response.certificate_der.is_empty());
+    assert!(!renew_response.issuing_ca_der.is_empty());
+    assert!(renew_response.expires_at > 0);
+
+    println!("   ✅ Certificate renewal successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}", 
+        renew_response.network_id, 
+        renew_response.certificate_der.len(),
+        renew_response.issuing_ca_der.len(),
+        renew_response.expires_at);
 
     // Convert response to NodeCertificateMessage
+    let renew_response_cbor = serde_cbor::to_vec(&renew_response).expect("Failed to serialize renew response");
     let mut renewal_cert_msg_ptr: *mut u8 = ptr::null_mut();
     let mut renewal_cert_msg_len: usize = 0;
     let result = unsafe {
         rn_keys_mobile_from_renew_response(
             mobile_keys,
-            renew_response.as_ptr(),
-            renew_response.len(),
+            renew_response_cbor.as_ptr(),
+            renew_response_cbor.len(),
             &mut renewal_cert_msg_ptr,
             &mut renewal_cert_msg_len,
             &mut error,
@@ -766,9 +797,17 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         "Revoke response should not be null"
     );
 
-    let _revoke_response =
-        unsafe { std::slice::from_raw_parts(revoke_response_ptr, revoke_response_len) };
-    println!("   ✅ Certificate revoked successfully");
+    // Deserialize and validate the revocation response
+    let revoke_response_cbor = unsafe { std::slice::from_raw_parts(revoke_response_ptr, revoke_response_len) };
+    let revoke_response: runar_keys::ca_node_types::RevokeResponse = 
+        serde_cbor::from_slice(revoke_response_cbor)
+            .expect("Failed to deserialize revoke response");
+
+    // Validate the response
+    assert_eq!(revoke_response.network_id, "test_network");
+    assert!(revoke_response.ok, "Revocation should be successful");
+
+    println!("   ✅ Certificate revoked successfully: {}", revoke_response.ok);
 
     // Generate CRL-lite
     let mut crl_ptr: *mut u8 = ptr::null_mut();
@@ -830,7 +869,25 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         status_response_len > 0,
         "Status response length should be positive"
     );
-    println!("   ✅ CA Status retrieved via REAL QUIC mTLS ({status_response_len} bytes)");
+    // Deserialize and validate the status response
+    let status_response_cbor = unsafe { std::slice::from_raw_parts(status_response_ptr, status_response_len) };
+    let status_response: runar_keys::ca_node_types::CaStatus = 
+        serde_cbor::from_slice(status_response_cbor)
+            .expect("Failed to deserialize status response");
+
+    // Validate the response
+    assert_eq!(status_response.network_id, "test_network");
+    assert!(!status_response.issuing_subject.is_empty());
+    assert!(!status_response.issuing_serial_hex.is_empty());
+    assert!(status_response.not_before > 0);
+    assert!(status_response.not_after > status_response.not_before);
+
+    println!("   ✅ CA Status retrieved via REAL QUIC mTLS: network_id={}, issuing_subject={}, issuing_serial={}, not_before={}, not_after={}", 
+        status_response.network_id, 
+        status_response.issuing_subject,
+        status_response.issuing_serial_hex,
+        status_response.not_before,
+        status_response.not_after);
 
     // Get Certificate Chain
     let mut chain_response_ptr: *mut u8 = ptr::null_mut();
@@ -862,7 +919,22 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         chain_response_len > 0,
         "Chain response length should be positive"
     );
-    println!("   ✅ Certificate chain retrieved via REAL QUIC mTLS ({chain_response_len} bytes)");
+    // Deserialize and validate the chain response
+    let chain_response_cbor = unsafe { std::slice::from_raw_parts(chain_response_ptr, chain_response_len) };
+    let chain_response: runar_keys::ca_node_types::ChainResponse = 
+        serde_cbor::from_slice(chain_response_cbor)
+            .expect("Failed to deserialize chain response");
+
+    // Validate the response
+    assert_eq!(chain_response.network_id, "test_network");
+    assert!(!chain_response.issuing_ca_der.is_empty());
+    assert!(chain_response.root_ca_der.is_some());
+    assert!(!chain_response.root_ca_der.as_ref().unwrap().is_empty());
+
+    println!("   ✅ Certificate chain retrieved via REAL QUIC mTLS: network_id={}, issuing_ca_size={} bytes, root_ca_size={} bytes", 
+        chain_response.network_id, 
+        chain_response.issuing_ca_der.len(),
+        chain_response.root_ca_der.as_ref().unwrap().len());
 
     // ==========================================
     // Phase 7: Profile Key Functionality via REAL QUIC mTLS
@@ -1746,8 +1818,25 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         "Test enroll response length should be positive"
     );
 
-    let test_enroll_response =
-        unsafe { std::slice::from_raw_parts(test_enroll_response_ptr, test_enroll_response_len) }.to_vec();
+    // Deserialize and validate the test enrollment response
+    let test_enroll_response_cbor = unsafe { std::slice::from_raw_parts(test_enroll_response_ptr, test_enroll_response_len) };
+    let test_enroll_response: runar_keys::ca_node_types::CsrEnrollResponse = 
+        serde_cbor::from_slice(test_enroll_response_cbor)
+            .expect("Failed to deserialize test enroll response");
+
+    // Validate the response
+    assert_eq!(test_enroll_response.network_id, "test_network");
+    assert!(!test_enroll_response.certificate_der.is_empty());
+    assert!(!test_enroll_response.issuing_ca_der.is_empty());
+    assert!(test_enroll_response.expires_at > 0);
+
+    println!("   ✅ Test enrollment successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}", 
+        test_enroll_response.network_id, 
+        test_enroll_response.certificate_der.len(),
+        test_enroll_response.issuing_ca_der.len(),
+        test_enroll_response.expires_at);
+
+    let test_enroll_response = serde_cbor::to_vec(&test_enroll_response).expect("Failed to serialize test enroll response");
     
     // Convert enrollment response to certificate message using mobile function
     let mut test_cert_msg_ptr: *mut u8 = ptr::null_mut();
@@ -1802,9 +1891,25 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         "Test status response should not be null"
     );
 
-    let _test_status_response =
-        unsafe { std::slice::from_raw_parts(test_status_response_ptr, test_status_response_len) }.to_vec();
-    println!("   ✅ Basic status request with reconstructed CA successful");
+    // Deserialize and validate the test status response
+    let test_status_response_cbor = unsafe { std::slice::from_raw_parts(test_status_response_ptr, test_status_response_len) };
+    let test_status_response: runar_keys::ca_node_types::CaStatus = 
+        serde_cbor::from_slice(test_status_response_cbor)
+            .expect("Failed to deserialize test status response");
+
+    // Validate the response
+    assert_eq!(test_status_response.network_id, "test_network");
+    assert!(!test_status_response.issuing_subject.is_empty());
+    assert!(!test_status_response.issuing_serial_hex.is_empty());
+    assert!(test_status_response.not_before > 0);
+    assert!(test_status_response.not_after > test_status_response.not_before);
+
+    println!("   ✅ Basic status request with reconstructed CA successful: network_id={}, issuing_subject={}, issuing_serial={}, not_before={}, not_after={}", 
+        test_status_response.network_id, 
+        test_status_response.issuing_subject,
+        test_status_response.issuing_serial_hex,
+        test_status_response.not_before,
+        test_status_response.not_after);
 
     println!("   🎉 CA reconstruction validation completed successfully!");
 
