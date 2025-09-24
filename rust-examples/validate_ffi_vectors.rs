@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
-use runar_keys::ca_node_types::{CaErrorResponse, CsrEnrollRequest, CsrEnrollResponse};
+use runar_keys::ca_node_types::{
+    CaErrorResponse, ChainResponse, CrlLite, CsrEnrollRequest, CsrEnrollResponse, 
+    RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, CaStatus
+};
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
 // use serde::{Deserialize, Serialize};
@@ -188,6 +191,202 @@ fn validate_ca_error_response() -> Result<()> {
     Ok(())
 }
 
+fn validate_renew_request() -> Result<()> {
+    println!("🔍 Validating RenewRequest...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/renew_request_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/renew_request_basic.bin",
+    ))?;
+
+    let swift_request: RenewRequest = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift RenewRequest")?;
+    let rust_request: RenewRequest = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust RenewRequest")?;
+
+    if swift_request == rust_request {
+        println!("✅ RenewRequest validation passed");
+    } else {
+        anyhow::bail!(
+            "RenewRequest validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_request,
+            rust_request
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_renew_response() -> Result<()> {
+    println!("🔍 Validating RenewResponse...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/renew_response_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/renew_response_basic.bin",
+    ))?;
+
+    let swift_response: RenewResponse = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift RenewResponse")?;
+    let rust_response: RenewResponse = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust RenewResponse")?;
+
+    if swift_response == rust_response {
+        println!("✅ RenewResponse validation passed");
+    } else {
+        anyhow::bail!(
+            "RenewResponse validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_response,
+            rust_response
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_revoke_request() -> Result<()> {
+    println!("🔍 Validating RevokeRequest...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/revoke_request_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/revoke_request_basic.bin",
+    ))?;
+
+    let swift_request: RevokeRequest = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift RevokeRequest")?;
+    let rust_request: RevokeRequest = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust RevokeRequest")?;
+
+    if swift_request == rust_request {
+        println!("✅ RevokeRequest validation passed");
+    } else {
+        anyhow::bail!(
+            "RevokeRequest validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_request,
+            rust_request
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_revoke_response() -> Result<()> {
+    println!("🔍 Validating RevokeResponse...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/revoke_response_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/revoke_response_basic.bin",
+    ))?;
+
+    let swift_response: RevokeResponse = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift RevokeResponse")?;
+    let rust_response: RevokeResponse = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust RevokeResponse")?;
+
+    if swift_response == rust_response {
+        println!("✅ RevokeResponse validation passed");
+    } else {
+        anyhow::bail!(
+            "RevokeResponse validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_response,
+            rust_response
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_ca_status() -> Result<()> {
+    println!("🔍 Validating CaStatus...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/ca_status_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/ca_status_basic.bin",
+    ))?;
+
+    let swift_status: CaStatus = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift CaStatus")?;
+    let rust_status: CaStatus = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust CaStatus")?;
+
+    if swift_status == rust_status {
+        println!("✅ CaStatus validation passed");
+    } else {
+        anyhow::bail!(
+            "CaStatus validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_status,
+            rust_status
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_chain_response() -> Result<()> {
+    println!("🔍 Validating ChainResponse...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/chain_response_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/chain_response_basic.bin",
+    ))?;
+
+    let swift_response: ChainResponse = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift ChainResponse")?;
+    let rust_response: ChainResponse = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust ChainResponse")?;
+
+    if swift_response == rust_response {
+        println!("✅ ChainResponse validation passed");
+    } else {
+        anyhow::bail!(
+            "ChainResponse validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_response,
+            rust_response
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_crl_lite() -> Result<()> {
+    println!("🔍 Validating CrlLite...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/crl_lite_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/crl_lite_basic.bin",
+    ))?;
+
+    let swift_crl: CrlLite = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift CrlLite")?;
+    let rust_crl: CrlLite = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust CrlLite")?;
+
+    if swift_crl == rust_crl {
+        println!("✅ CrlLite validation passed");
+    } else {
+        anyhow::bail!(
+            "CrlLite validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_crl,
+            rust_crl
+        );
+    }
+
+    Ok(())
+}
+
 fn check_directories_exist() -> Result<()> {
     let swift_dir = Path::new("../../runar-swift/swift-ffi/target/ffi-types-vectors-swift");
     let rust_dir = Path::new("target/ffi-types-vectors");
@@ -229,6 +428,13 @@ fn main() -> Result<()> {
         validate_setup_token,
         validate_csr_enroll_request,
         validate_csr_enroll_response,
+        validate_renew_request,
+        validate_renew_response,
+        validate_revoke_request,
+        validate_revoke_response,
+        validate_ca_status,
+        validate_chain_response,
+        validate_crl_lite,
         validate_ca_error_response,
     ];
 

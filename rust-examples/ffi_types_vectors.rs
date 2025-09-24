@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use runar_ffi::CaClientConfigAll;
-use runar_keys::ca_node_types::{CaErrorResponse, CsrEnrollRequest, CsrEnrollResponse};
+use runar_keys::ca_node_types::{
+    CaErrorResponse, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, 
+    RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, CaStatus
+};
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
 use serde::Serialize;
@@ -34,6 +37,25 @@ fn main() -> Result<()> {
     // 6. CaErrorResponse
     generate_ca_error_response_vectors(&out)?;
     generate_ca_client_config_all_vectors(&out)?;
+
+    // 7. RenewRequest
+    generate_renew_request_vectors(&out)?;
+
+    // 8. RenewResponse
+    generate_renew_response_vectors(&out)?;
+
+    // 9. RevokeRequest
+    generate_revoke_request_vectors(&out)?;
+
+    // 10. RevokeResponse
+    generate_revoke_response_vectors(&out)?;
+
+    // 11. CaStatus
+    generate_ca_status_vectors(&out)?;
+
+    // 12. ChainResponse
+    generate_chain_response_vectors(&out)?;
+
 
     println!("✅ Generated FFI types vectors to {}", out.display());
     Ok(())
@@ -314,6 +336,159 @@ fn generate_ca_client_config_all_vectors(out: &Path) -> Result<()> {
     println!("✅ CaClientConfigAll vectors generated");
     Ok(())
 }
+
+fn generate_renew_request_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating RenewRequest vectors...");
+
+    // Basic renew request
+    let basic_renew = RenewRequest {
+        network_id: "test_network".to_string(),
+        csr_der: vec![1; 318], // 318-byte CSR
+    };
+
+    write_cbor_vector(out, "renew_request_basic.bin", &basic_renew)?;
+
+    // Renew request with different CSR size
+    let different_csr_renew = RenewRequest {
+        network_id: "test_network".to_string(),
+        csr_der: vec![2; 256], // 256-byte CSR
+    };
+
+    write_cbor_vector(out, "renew_request_different_csr.bin", &different_csr_renew)?;
+
+    println!("✅ RenewRequest vectors generated");
+    Ok(())
+}
+
+fn generate_renew_response_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating RenewResponse vectors...");
+
+    // Basic renew response
+    let basic_renew_response = RenewResponse {
+        network_id: "test_network".to_string(),
+        certificate_der: vec![3; 1024],   // 1KB certificate
+        issuing_ca_der: vec![4; 512],     // Intermediate cert
+        expires_at: 1757894422,
+    };
+
+    write_cbor_vector(out, "renew_response_basic.bin", &basic_renew_response)?;
+
+    // Renew response with larger certificate
+    let large_cert_renew_response = RenewResponse {
+        network_id: "test_network".to_string(),
+        certificate_der: vec![5; 2048],   // 2KB certificate
+        issuing_ca_der: vec![6; 1024],    // Intermediate cert
+        expires_at: 1757894422,
+    };
+
+    write_cbor_vector(out, "renew_response_large_cert.bin", &large_cert_renew_response)?;
+
+    println!("✅ RenewResponse vectors generated");
+    Ok(())
+}
+
+fn generate_revoke_request_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating RevokeRequest vectors...");
+
+    // Basic revoke request
+    let basic_revoke = RevokeRequest {
+        network_id: "test_network".to_string(),
+        certificate_serial: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+        reason: "testing".to_string(),
+    };
+
+    write_cbor_vector(out, "revoke_request_basic.bin", &basic_revoke)?;
+
+    // Revoke request without reason
+    let no_reason_revoke = RevokeRequest {
+        network_id: "test_network".to_string(),
+        certificate_serial: vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
+        reason: "no_reason".to_string(),
+    };
+
+    write_cbor_vector(out, "revoke_request_no_reason.bin", &no_reason_revoke)?;
+
+    println!("✅ RevokeRequest vectors generated");
+    Ok(())
+}
+
+fn generate_revoke_response_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating RevokeResponse vectors...");
+
+    // Basic revoke response
+    let basic_revoke_response = RevokeResponse {
+        network_id: "test_network".to_string(),
+        ok: true,
+    };
+
+    write_cbor_vector(out, "revoke_response_basic.bin", &basic_revoke_response)?;
+
+    // Failed revoke response
+    let failed_revoke_response = RevokeResponse {
+        network_id: "test_network".to_string(),
+        ok: false,
+    };
+
+    write_cbor_vector(out, "revoke_response_failed.bin", &failed_revoke_response)?;
+
+    println!("✅ RevokeResponse vectors generated");
+    Ok(())
+}
+
+fn generate_ca_status_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating CaStatus vectors...");
+
+    // Basic CA status
+    let basic_status = CaStatus {
+        network_id: "test_network".to_string(),
+        issuing_subject: "CN=Test Issuing CA,O=Test,C=US".to_string(),
+        issuing_serial_hex: "1234567890ABCDEF".to_string(),
+        not_before: 1757890822,
+        not_after: 1757894422,
+    };
+
+    write_cbor_vector(out, "ca_status_basic.bin", &basic_status)?;
+
+    // CA status with different times
+    let different_times_status = CaStatus {
+        network_id: "test_network".to_string(),
+        issuing_subject: "CN=Production Issuing CA,O=Production,C=US".to_string(),
+        issuing_serial_hex: "FEDCBA0987654321".to_string(),
+        not_before: 1757890822,
+        not_after: 1757890822 + 31536000, // 1 year later
+    };
+
+    write_cbor_vector(out, "ca_status_different_times.bin", &different_times_status)?;
+
+    println!("✅ CaStatus vectors generated");
+    Ok(())
+}
+
+fn generate_chain_response_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating ChainResponse vectors...");
+
+    // Basic chain response
+    let basic_chain = ChainResponse {
+        network_id: "test_network".to_string(),
+        issuing_ca_der: vec![1; 512],     // Intermediate cert
+        root_ca_der: Some(vec![2; 256]),  // Root cert
+    };
+
+    write_cbor_vector(out, "chain_response_basic.bin", &basic_chain)?;
+
+    // Chain response without root CA
+    let no_root_chain = ChainResponse {
+        network_id: "test_network".to_string(),
+        issuing_ca_der: vec![3; 1024],    // Intermediate cert
+        root_ca_der: None,                // No root cert
+    };
+
+    write_cbor_vector(out, "chain_response_no_root.bin", &no_root_chain)?;
+
+    println!("✅ ChainResponse vectors generated");
+    Ok(())
+}
+
 
 fn write_cbor_vector<T: Serialize>(out: &Path, filename: &str, data: &T) -> Result<()> {
     let cbor_data =

@@ -1348,12 +1348,30 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     // Free all resources
     unsafe {
+        // Free response data allocated by FFI functions
+        rn_free(enroll_response_ptr, enroll_response_len);
+        rn_free(renew_response_ptr, renew_response_len);
+        rn_free(revoke_response_ptr, revoke_response_len);
+        rn_free(status_response_ptr, status_response_len);
+        rn_free(chain_response_ptr, chain_response_len);
+        rn_free(revoked_response_ptr, revoked_response_len);
+        rn_free(invalid_response_ptr, invalid_response_len);
+        rn_free(unauthorized_response_ptr, unauthorized_response_len);
+        
+        // Free profile key data
+        rn_free(personal_profile_key_ptr, personal_profile_key_len);
+        rn_free(work_profile_key_ptr, work_profile_key_len);
+        
+        // Free handles
         rn_keys_ca_free_ea_key_pair(ea_key_handle);
         rn_transport_ca_server_free(ca_server);
         rn_transport_ca_client_free(ca_client);
         rn_keys_free(node_keys);
         rn_keys_free(mobile_keys);
         rn_keys_ca_node_free_shared(shared_ca_node);
+        
+        // Free logger allocated with Box::into_raw
+        Box::from_raw(_logger_ptr as *mut Arc<Logger>);
     }
 
     println!("   ✅ All resources freed successfully");
@@ -1956,6 +1974,15 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
 
     // Free all resources
     unsafe {
+        // Free certificate DER data allocated by FFI functions
+        rn_free(reconstructed_root_cert_ptr, reconstructed_root_cert_len);
+        rn_free(reconstructed_issuing_cert_ptr, reconstructed_issuing_cert_len);
+        
+        // Free response data from reconstruction phase
+        rn_free(test_enroll_response_ptr, test_enroll_response_len);
+        rn_free(test_status_response_ptr, test_status_response_len);
+        
+        // Free handles
         rn_keys_ca_free(reconstructed_root_ca);
         rn_keys_ca_free(reconstructed_issuing_ca);
         rn_keys_ca_free_ea_key_pair(fresh_ea_key_handle);
@@ -1964,6 +1991,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_keys_free(test_mobile_keys);
         rn_keys_free(test_node_keys);
         rn_keys_ca_node_free_shared(reconstructed_shared_ca_node);
+        
+        // Free string data
         rn_string_free(reconstructed_root_subject_ptr);
         rn_string_free(reconstructed_issuing_subject_ptr);
     }
