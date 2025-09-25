@@ -237,7 +237,7 @@ fn two_transports_request_response() {
             path: "/echo".to_string(),
             correlation_id: "c1".to_string(),
             payload: b"hello".to_vec(),
-            dest_peer_id: peer_id,
+            dest_peer_id: peer_id.clone(),
             network_public_key: None,
             profile_public_keys: vec![],
         })
@@ -328,6 +328,66 @@ fn two_transports_request_response() {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(got_resp, "did not get response event");
+
+        // Test publish/subscribe flow
+        println!("Testing publish/subscribe flow...");
+        
+        // Create CBOR publish parameters
+        let publish_params = serde_cbor::to_vec(&TransportPublishParams {
+            path: "/events/test".to_string(),
+            correlation_id: "pub1".to_string(),
+            payload: b"test event data".to_vec(),
+            dest_peer_id: peer_id.clone(),
+            network_public_key: None,
+        })
+        .unwrap();
+
+        // Publish event from transport B to transport A
+        let publish_result = rn_transport_publish(
+            tb,
+            publish_params.as_ptr(),
+            publish_params.len(),
+            &mut err as *mut _ as *mut _,
+        );
+        if publish_result != 0 {
+            let error_msg = std::ffi::CStr::from_ptr(err.message).to_string_lossy();
+            panic!("Transport publish failed with code {publish_result}: {error_msg}");
+        }
+
+        // Expect event on A
+        let mut got_event = false;
+        for _ in 0..50 {
+            let mut ev_ptr: *mut u8 = std::ptr::null_mut();
+            let mut ev_len: usize = 0;
+            let rc =
+                rn_transport_poll_event(ta, &mut ev_ptr, &mut ev_len, &mut err as *mut _ as *mut _);
+            assert_eq!(rc, 0);
+            if !ev_ptr.is_null() && ev_len > 0 {
+                let v: Value =
+                    serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
+                if let Value::Map(m) = v {
+                    let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
+                        Value::Text(s) => Some(s.as_str()),
+                        _ => None,
+                    });
+                    if typ == Some("EventReceived") {
+                        // Verify the event payload
+                        if let Some(Value::Bytes(payload)) = m.get(&Value::Text("payload".into())) {
+                            assert_eq!(payload, b"test event data", "Event payload mismatch");
+                        }
+                        if let Some(Value::Text(path)) = m.get(&Value::Text("path".into())) {
+                            assert_eq!(path, "/events/test", "Event path mismatch");
+                        }
+                        got_event = true;
+                        rn_free(ev_ptr, ev_len);
+                        break;
+                    }
+                }
+                rn_free(ev_ptr, ev_len);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(got_event, "did not get event on target peer");
 
         // Cleanup
         let _ = rn_transport_stop(tb, &mut err as *mut _ as *mut _);
