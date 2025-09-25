@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -25,6 +25,17 @@ fn cstring_to_ptr(s: &CString) -> *const c_char {
 /// Test successful root CA creation with valid subject
 #[test]
 fn test_ca_create_root_ca_happy_path() {
+    // Set up logging to match Swift test
+    unsafe {
+        let mut err = RnError {
+            code: 0,
+            message: std::ptr::null_mut(),
+        };
+        assert_eq!(rn_set_log_level(5, &mut err as *mut _ as *mut _), 0); // 5 = trace level
+        let node_id = std::ffi::CString::new("ca-tests").unwrap();
+        assert_eq!(rn_set_logger_node_id(node_id.as_ptr(), &mut err as *mut _ as *mut _), 0);
+    }
+    
     let subject = create_cstring("CN=Test Root CA,O=Test,C=US");
     let mut ca_handle: *mut std::os::raw::c_void = ptr::null_mut();
     let mut error = create_test_error();

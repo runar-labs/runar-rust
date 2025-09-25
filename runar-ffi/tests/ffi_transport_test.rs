@@ -21,6 +21,11 @@ fn two_transports_request_response() {
             message: std::ptr::null(),
         };
 
+        // Set up logging to match Swift test
+        assert_eq!(rn_set_log_level(5, &mut err as *mut _ as *mut _), 0); // 5 = trace level
+        let node_id = std::ffi::CString::new("two-transports-test").unwrap();
+        assert_eq!(rn_set_logger_node_id(node_id.as_ptr(), &mut err as *mut _ as *mut _), 0);
+
         let mut keys_a: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(rn_keys_new(&mut keys_a, &mut err as *mut _ as *mut _), 0);
 

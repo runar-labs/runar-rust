@@ -36,23 +36,7 @@
 
 #define RN_ERROR_INVALID_ARGUMENT 11
 
-#define RN_ERROR_CA_NODE_NOT_INITIALIZED 1001
-
-#define RN_ERROR_CA_SERVER_NOT_RUNNING 1002
-
-#define RN_ERROR_CA_CLIENT_CONNECTION_FAILED 1003
-
-#define RN_ERROR_CERTIFICATE_VALIDATION_FAILED 1004
-
-#define RN_ERROR_PROFILE_KEY_NOT_FOUND 1005
-
 #define RN_ERROR_ENROLLMENT_TOKEN_INVALID 1006
-
-#define RN_ERROR_RATE_LIMIT_EXCEEDED 1007
-
-#define RN_ERROR_ADMIN_NOT_AUTHORIZED 1008
-
-#define RN_ERROR_CERTIFICATE_CREATION_FAILED 1009
 
 #define RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED 1010
 
@@ -61,14 +45,6 @@
 #define RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED 1012
 
 #define RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED 1013
-
-#define RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED 1014
-
-#define RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED 1015
-
-#define RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED 1016
-
-#define RN_ERROR_CRL_GENERATION_FAILED 1017
 
 typedef struct KeysInner KeysInner;
 
@@ -91,47 +67,6 @@ typedef struct FfiKeysHandle {
 typedef struct FfiTransportHandle {
   struct TransportInner *inner;
 } FfiTransportHandle;
-
-/**
- * CA Server Configuration (C-compatible)
- */
-typedef struct CaServerConfig {
-  const char *bootstrap_bind;
-  const char *authenticated_bind;
-  const char *network_id;
-  uint32_t rate_limit_per_minute;
-  uint32_t rate_limit_per_hour;
-} CaServerConfig;
-
-/**
- * CA Client Configuration (C-compatible)
- */
-typedef struct CaClientConfig {
-  const char *bootstrap_server;
-  const char *authenticated_server;
-  const char *network_id;
-  uint32_t request_timeout_seconds;
-  uint32_t max_retries;
-} CaClientConfig;
-
-/**
- * Certificate Status (C-compatible)
- */
-typedef struct CertificateStatus {
-  int32_t is_valid;
-  uint64_t not_before;
-  uint64_t not_after;
-  char *serial_hex;
-} CertificateStatus;
-
-/**
- * Profile Key Info (C-compatible)
- */
-typedef struct ProfileKeyInfo {
-  char *profile_id;
-  uint8_t *public_key;
-  size_t public_key_len;
-} ProfileKeyInfo;
 
 void rn_free(uint8_t *ptr, size_t len);
 

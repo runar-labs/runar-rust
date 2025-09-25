@@ -3274,6 +3274,7 @@ dependencies = [
  "runar_node",
  "runar_services",
  "runar_test_utils",
+ "runar_transporter",
  "serde",
  "serde_cbor",
  "serde_json",

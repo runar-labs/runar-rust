@@ -42,7 +42,6 @@ pub struct CaClientWrapper {
 
 pub struct CaServerWrapper {
     pub server: CaServer,
-    pub logger: Arc<Logger>,
     pub bootstrap_addr: Option<String>,
     pub authenticated_addr: Option<String>,
 }
@@ -81,24 +80,12 @@ pub const RN_ERROR_LOCK_ERROR: i32 = 9;
 pub const RN_ERROR_INVALID_UTF8: i32 = 10;
 pub const RN_ERROR_INVALID_ARGUMENT: i32 = 11;
 
-// New error codes for CA operations (Phase 2)
-pub const RN_ERROR_CA_NODE_NOT_INITIALIZED: i32 = 1001;
-pub const RN_ERROR_CA_SERVER_NOT_RUNNING: i32 = 1002;
-pub const RN_ERROR_CA_CLIENT_CONNECTION_FAILED: i32 = 1003;
-pub const RN_ERROR_CERTIFICATE_VALIDATION_FAILED: i32 = 1004;
-pub const RN_ERROR_PROFILE_KEY_NOT_FOUND: i32 = 1005;
+// CA operation error codes (used in FFI)
 pub const RN_ERROR_ENROLLMENT_TOKEN_INVALID: i32 = 1006;
-pub const RN_ERROR_RATE_LIMIT_EXCEEDED: i32 = 1007;
-pub const RN_ERROR_ADMIN_NOT_AUTHORIZED: i32 = 1008;
-pub const RN_ERROR_CERTIFICATE_CREATION_FAILED: i32 = 1009;
 pub const RN_ERROR_CERTIFICATE_SKI_EXTRACTION_FAILED: i32 = 1010;
 pub const RN_ERROR_CERTIFICATE_SERIAL_EXTRACTION_FAILED: i32 = 1011;
 pub const RN_ERROR_ENROLLMENT_TOKEN_GENERATION_FAILED: i32 = 1012;
 pub const RN_ERROR_MOBILE_RESPONSE_CONVERSION_FAILED: i32 = 1013;
-pub const RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED: i32 = 1014;
-pub const RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED: i32 = 1015;
-pub const RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED: i32 = 1016;
-pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
 
 static LAST_ERROR: OnceCell<StdMutex<Option<String>>> = OnceCell::new();
 
@@ -173,7 +160,7 @@ struct KeysInner {
 }
 
 // New transport parameter types for CBOR serialization
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportRequestParams {
     pub path: String,
     pub correlation_id: String,
@@ -183,7 +170,7 @@ pub struct TransportRequestParams {
     pub profile_public_keys: Vec<Vec<u8>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportPublishParams {
     pub path: String,
     pub correlation_id: String,
@@ -192,7 +179,7 @@ pub struct TransportPublishParams {
     pub network_public_key: Option<Vec<u8>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportCompleteRequestParams {
     pub request_id: String,
     pub response_payload: Vec<u8>,
@@ -559,42 +546,6 @@ fn alloc_string_simple(out_ptr: *mut *mut c_char, s: &str) -> bool {
 // C-compatible data structures
 // ------------------------------
 
-/// CA Server Configuration (C-compatible)
-#[repr(C)]
-pub struct CaServerConfig {
-    pub bootstrap_bind: *const c_char,
-    pub authenticated_bind: *const c_char,
-    pub network_id: *const c_char,
-    pub rate_limit_per_minute: u32,
-    pub rate_limit_per_hour: u32,
-}
-
-/// CA Client Configuration (C-compatible)
-#[repr(C)]
-pub struct CaClientConfig {
-    pub bootstrap_server: *const c_char,
-    pub authenticated_server: *const c_char,
-    pub network_id: *const c_char,
-    pub request_timeout_seconds: u32,
-    pub max_retries: u32,
-}
-
-/// Certificate Status (C-compatible)
-#[repr(C)]
-pub struct CertificateStatus {
-    pub is_valid: i32,
-    pub not_before: u64,
-    pub not_after: u64,
-    pub serial_hex: *mut c_char,
-}
-
-/// Profile Key Info (C-compatible)
-#[repr(C)]
-pub struct ProfileKeyInfo {
-    pub profile_id: *mut c_char,
-    pub public_key: *mut u8,
-    pub public_key_len: usize,
-}
 
 /// Custom server config for deserialization
 #[derive(serde::Deserialize)]
@@ -616,40 +567,6 @@ pub struct RnDeviceKeystoreCaps {
     pub flags: u32, // bitfield: 1=hardware_backed, 2=biometric_gate, 4=screenlock_required, 8=strongbox
 }
 
-/// Enrollment Token Parameters (C-compatible)
-#[repr(C)]
-pub struct EnrollmentTokenParams {
-    pub token_id: *const c_char,
-    pub network_id: *const c_char,
-    pub subject: *const c_char,
-    pub not_before: u64,
-    pub expires_at: u64,
-    pub nonce: *const u8,
-    pub nonce_len: usize,
-    pub permissions: *const u8,
-    pub permissions_len: usize,
-}
-
-/// Certificate Information (C-compatible)
-#[repr(C)]
-pub struct CertificateInfo {
-    pub cert_der: *mut u8,
-    pub cert_len: usize,
-    pub subject: *mut c_char,
-    pub serial_hex: *mut c_char,
-    pub ski_hex: *mut c_char,
-}
-
-/// Profile Key Encryption Parameters (C-compatible)
-#[repr(C)]
-pub struct ProfileKeyEncryptionParams {
-    pub data: *const u8,
-    pub data_len: usize,
-    pub network_key: *const u8,
-    pub network_key_len: usize,
-    pub profile_keys: *const u8,
-    pub profile_keys_len: usize,
-}
 
 fn map_caps(caps: keystore::DeviceKeystoreCaps) -> RnDeviceKeystoreCaps {
     let mut flags: u32 = 0;
@@ -6973,7 +6890,6 @@ pub unsafe extern "C" fn rn_transport_ca_server_new(
 
     let wrapper = CaServerWrapper {
         server,
-        logger: Arc::new(logger),
         bootstrap_addr: None,
         authenticated_addr: None,
     };

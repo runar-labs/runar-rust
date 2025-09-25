@@ -35,8 +35,7 @@ fn create_deep_link(token: &EnrollmentToken, ca_addr: SocketAddr, network_id: &s
     let token_bytes = serde_cbor::to_vec(token).expect("Failed to serialize token to CBOR");
     let token_hex = to_hex(&token_bytes);
     format!(
-        "runar://join-network?token={token_hex}&ca={}&network={}",
-        ca_addr, network_id
+        "runar://join-network?token={token_hex}&ca={ca_addr}&network={network_id}"
     )
 }
 

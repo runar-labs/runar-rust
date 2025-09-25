@@ -62,9 +62,7 @@ fn test_ca_free_happy_path() {
     assert!(!cert_ptr.is_null(), "Certificate should be retrievable");
     
     // Free the certificate memory
-    unsafe {
-        rn_free(cert_ptr, cert_len);
-    }
+    rn_free(cert_ptr, cert_len);
     
     // Free the CA handle - should not crash
     unsafe {
@@ -128,9 +126,7 @@ fn test_ca_multiple_creation_and_freeing() {
         assert!(subject_str.contains(&format!("CN=Test CA {i}")), 
                "CA {i} should have correct subject");
         
-        unsafe {
-            rn_string_free(subject_ptr);
-        }
+        rn_string_free(subject_ptr);
     }
     
     // Free all CAs
@@ -179,10 +175,8 @@ fn test_ca_handle_reuse_patterns() {
         assert!(!subject_ptr.is_null(), "Subject {i} should not be null");
         
         // Clean up this iteration's allocations
-        unsafe {
-            rn_free(cert_ptr, cert_len);
-            rn_string_free(subject_ptr);
-        }
+        rn_free(cert_ptr, cert_len);
+        rn_string_free(subject_ptr);
         
         println!("    ✅ Iteration {i}: handle reused successfully");
     }
@@ -253,12 +247,10 @@ fn test_ca_memory_allocation_patterns() {
     
     // Free all allocated resources
     for (i, (ptr, len, is_subject)) in allocated_resources.into_iter().enumerate() {
-        unsafe {
-            if is_subject {
-                rn_string_free(ptr as *mut c_char);
-            } else {
-                rn_free(ptr, len);
-            }
+        if is_subject {
+            rn_string_free(ptr as *mut c_char);
+        } else {
+            rn_free(ptr, len);
         }
         println!("    ✅ Resource {i} freed successfully");
     }
@@ -344,9 +336,7 @@ fn test_ca_hierarchy_memory_management() {
     
     // Free certificates first
     for (i, (cert_ptr, cert_len)) in cert_data.into_iter().enumerate() {
-        unsafe {
-            rn_free(cert_ptr, cert_len);
-        }
+        rn_free(cert_ptr, cert_len);
         println!("    ✅ Certificate {i} memory freed");
     }
     
@@ -374,7 +364,7 @@ fn test_ca_free_different_orders() {
     
     // Test 1: Create and free in same order
     let mut cas_same_order = Vec::new();
-    for i in 0..3 {
+    for _i in 0..3 {
         let ca_handle = create_test_ca();
         cas_same_order.push(ca_handle);
     }
@@ -387,7 +377,7 @@ fn test_ca_free_different_orders() {
     
     // Test 2: Create and free in reverse order
     let mut cas_reverse_order = Vec::new();
-    for i in 0..3 {
+    for _i in 0..3 {
         let ca_handle = create_test_ca();
         cas_reverse_order.push(ca_handle);
     }
@@ -443,8 +433,8 @@ fn test_ca_free_different_orders() {
     };
     assert_eq!(result, 0, "Child CA should still be usable after parent freed");
     
+    rn_free(cert_ptr, cert_len);
     unsafe {
-        rn_free(cert_ptr, cert_len);
         rn_keys_ca_free(issuing_ca_handle);
     }
     println!("    ✅ Child freed after parent");
@@ -472,9 +462,7 @@ fn test_ca_handle_invalidation_after_free() {
     };
     assert_eq!(result, 0, "CA should work before freeing");
     
-    unsafe {
-        rn_free(cert_ptr, cert_len);
-    }
+    rn_free(cert_ptr, cert_len);
     
     // Free the CA
     unsafe {

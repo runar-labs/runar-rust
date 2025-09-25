@@ -1,7 +1,6 @@
 use runar_schemas::NodeInfo;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::{
-    cmp::Ordering,
     error::Error,
     fmt::{Debug, Formatter, Result as FmtResult},
     net::SocketAddr,
@@ -464,32 +463,6 @@ impl QuicTransport {
             .entry(peer_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
-    }
-
-    // Deprecated: nonce-based winner decision. Left for reference.
-    fn _decide_connection_winner_legacy(
-        &self,
-        existing: (&str, u64, &str, u64),
-        candidate: (&str, u64, &str, u64),
-    ) -> bool {
-        fn canonical_key<'a>(
-            a_id: &'a str,
-            a_nonce: u64,
-            b_id: &'a str,
-            b_nonce: u64,
-        ) -> (Ordering, &'a str, u64, &'a str, u64) {
-            if a_id <= b_id {
-                (Ordering::Less, a_id, a_nonce, b_id, b_nonce)
-            } else {
-                (Ordering::Greater, b_id, b_nonce, a_id, a_nonce)
-            }
-        }
-        let (_e_ord, e_low_id, e_low_nonce, e_high_id, e_high_nonce) =
-            canonical_key(existing.0, existing.1, existing.2, existing.3);
-        let (_c_ord, c_low_id, c_low_nonce, c_high_id, c_high_nonce) =
-            canonical_key(candidate.0, candidate.1, candidate.2, candidate.3);
-        (c_low_id, c_low_nonce, c_high_id, c_high_nonce)
-            < (e_low_id, e_low_nonce, e_high_id, e_high_nonce)
     }
 
     async fn replace_or_keep_connection(

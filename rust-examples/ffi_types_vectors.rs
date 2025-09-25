@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
-use runar_ffi::CaClientConfigAll;
+use runar_ffi::{CaClientConfigAll, TransportRequestParams, TransportPublishParams, TransportCompleteRequestParams};
 use runar_keys::ca_node_types::{
     CaErrorResponse, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, 
     RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, CaStatus
 };
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
+use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -56,6 +57,12 @@ fn main() -> Result<()> {
     // 12. ChainResponse
     generate_chain_response_vectors(&out)?;
 
+    // 13. Transport Types (task11.md requirement)
+    // Note: QuicTransportOptions doesn't implement Serialize, so we skip it for now
+    generate_peer_info_vectors(&out)?;
+    generate_transport_request_params_vectors(&out)?;
+    generate_transport_publish_params_vectors(&out)?;
+    generate_transport_complete_request_params_vectors(&out)?;
 
     println!("✅ Generated FFI types vectors to {}", out.display());
     Ok(())
@@ -489,6 +496,108 @@ fn generate_chain_response_vectors(out: &Path) -> Result<()> {
     Ok(())
 }
 
+
+// QuicTransportOptions doesn't implement Serialize, so we skip it for now
+
+fn generate_peer_info_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating PeerInfo vectors...");
+
+    // Basic peer info
+    let basic_peer = PeerInfo {
+        public_key: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+        addresses: vec!["127.0.0.1:8080".to_string(), "192.168.1.100:9090".to_string()],
+    };
+    write_cbor_vector(out, "peer_info_basic.bin", &basic_peer)?;
+
+    // Peer info with single address
+    let single_addr_peer = PeerInfo {
+        public_key: vec![32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        addresses: vec!["10.0.0.1:1234".to_string()],
+    };
+    write_cbor_vector(out, "peer_info_single_addr.bin", &single_addr_peer)?;
+
+    println!("✅ PeerInfo vectors generated");
+    Ok(())
+}
+
+fn generate_transport_request_params_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating TransportRequestParams vectors...");
+
+    // Basic request params
+    let basic_request = TransportRequestParams {
+        path: "/api/test".to_string(),
+        correlation_id: "corr_789".to_string(),
+        payload: b"test payload".to_vec(),
+        dest_peer_id: "peer_123".to_string(),
+        network_public_key: Some(vec![1, 2, 3, 4, 5]),
+        profile_public_keys: vec![vec![6, 7, 8, 9, 10], vec![11, 12, 13, 14, 15]],
+    };
+    write_cbor_vector(out, "transport_request_params_basic.bin", &basic_request)?;
+
+    // Request params without network key
+    let no_network_request = TransportRequestParams {
+        path: "/api/simple".to_string(),
+        correlation_id: "corr_456".to_string(),
+        payload: b"simple payload".to_vec(),
+        dest_peer_id: "peer_456".to_string(),
+        network_public_key: None,
+        profile_public_keys: vec![vec![1, 2, 3]],
+    };
+    write_cbor_vector(out, "transport_request_params_no_network.bin", &no_network_request)?;
+
+    println!("✅ TransportRequestParams vectors generated");
+    Ok(())
+}
+
+fn generate_transport_publish_params_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating TransportPublishParams vectors...");
+
+    // Basic publish params
+    let basic_publish = TransportPublishParams {
+        path: "/publish/test".to_string(),
+        correlation_id: "pub_123".to_string(),
+        payload: b"publish data".to_vec(),
+        dest_peer_id: "peer_789".to_string(),
+        network_public_key: Some(vec![1, 2, 3, 4, 5]),
+    };
+    write_cbor_vector(out, "transport_publish_params_basic.bin", &basic_publish)?;
+
+    // Publish params without network key
+    let no_network_publish = TransportPublishParams {
+        path: "/publish/simple".to_string(),
+        correlation_id: "pub_456".to_string(),
+        payload: b"simple publish".to_vec(),
+        dest_peer_id: "peer_999".to_string(),
+        network_public_key: None,
+    };
+    write_cbor_vector(out, "transport_publish_params_no_network.bin", &no_network_publish)?;
+
+    println!("✅ TransportPublishParams vectors generated");
+    Ok(())
+}
+
+fn generate_transport_complete_request_params_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating TransportCompleteRequestParams vectors...");
+
+    // Basic complete request params
+    let basic_complete = TransportCompleteRequestParams {
+        request_id: "req_456".to_string(),
+        response_payload: b"response data".to_vec(),
+        profile_public_keys: vec![vec![1, 2, 3], vec![4, 5, 6]],
+    };
+    write_cbor_vector(out, "transport_complete_request_params_basic.bin", &basic_complete)?;
+
+    // Complete request params with empty profile keys
+    let empty_profiles_complete = TransportCompleteRequestParams {
+        request_id: "req_789".to_string(),
+        response_payload: b"empty profiles response".to_vec(),
+        profile_public_keys: vec![],
+    };
+    write_cbor_vector(out, "transport_complete_request_params_empty_profiles.bin", &empty_profiles_complete)?;
+
+    println!("✅ TransportCompleteRequestParams vectors generated");
+    Ok(())
+}
 
 fn write_cbor_vector<T: Serialize>(out: &Path, filename: &str, data: &T) -> Result<()> {
     let cbor_data =

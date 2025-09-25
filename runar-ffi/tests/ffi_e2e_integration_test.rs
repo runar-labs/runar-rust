@@ -1371,7 +1371,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_keys_ca_node_free_shared(shared_ca_node);
         
         // Free logger allocated with Box::into_raw
-        Box::from_raw(_logger_ptr as *mut Arc<Logger>);
+        let _ = Box::from_raw(_logger_ptr as *mut Arc<Logger>);
     }
 
     println!("   ✅ All resources freed successfully");
@@ -1610,10 +1610,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let fresh_issuing_cert = unsafe { std::slice::from_raw_parts(fresh_issuing_cert_ptr, fresh_issuing_cert_len) }.to_vec();
 
     // Free the fresh certificate memory
-    unsafe {
-        rn_free(fresh_root_cert_ptr, fresh_root_cert_len);
-        rn_free(fresh_issuing_cert_ptr, fresh_issuing_cert_len);
-    }
+    rn_free(fresh_root_cert_ptr, fresh_root_cert_len);
+    rn_free(fresh_issuing_cert_ptr, fresh_issuing_cert_len);
 
     // Create fresh server config
     let fresh_custom_config = CustomCaServerConfig {
@@ -1883,9 +1881,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert_eq!(result, 0, "Failed to install test certificate");
     
     // Free the certificate message
-    unsafe {
-        rn_free(test_cert_msg_ptr, test_cert_msg_len);
-    }
+    rn_free(test_cert_msg_ptr, test_cert_msg_len);
     
     println!("   ✅ Basic enrollment with reconstructed CA successful");
 

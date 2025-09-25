@@ -2827,7 +2827,7 @@ fn test_ca_node_install_issuing_ca_happy_path() {
     assert_eq!(result, 0, "Should successfully complete CA setup");
 
     // Clean up EA public key data
-    unsafe { rn_free(ea_public_key_ptr, ea_public_key_len) };
+    rn_free(ea_public_key_ptr, ea_public_key_len);
 
     // Clean up EA key pair
     unsafe { rn_keys_ca_free_ea_key_pair(ea_key_handle) };
@@ -2889,7 +2889,7 @@ fn test_ca_node_setup_complete_null_ca_node() {
     );
 
     // Clean up EA public key data
-    unsafe { rn_free(ea_public_key_ptr, ea_public_key_len) };
+    rn_free(ea_public_key_ptr, ea_public_key_len);
 
     // Clean up EA key pair
     unsafe { rn_keys_ca_free_ea_key_pair(ea_key_handle) };
