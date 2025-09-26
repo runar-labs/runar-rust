@@ -1258,15 +1258,12 @@ pub async fn stop(&self) -> Result<()> {
 
 ## Migration Strategy
 
-### Backward Compatibility
-- Keep all existing APIs unchanged
-- Add new APIs as additional classes
-- Maintain existing behavior for current users
+### NO Backward Compatibility
 
 ### Gradual Migration
 - Phase 1: Add new classes alongside existing ones
 - Phase 2: Update existing classes with new methods
-- Phase 3: Deprecate old patterns (if any)
+- Phase 3: REMOVE old patterns (if any) _ DO NOT DEPREATE ANYTHING - DO NOT LEAVE OLD CODE BEHAIND> REMOVE EVERYTHING. NO BACKWARDS COMPATIBIILITY. THIS IS A NEW CODEBASE> KEEP IT CLEAN AND ORGANIZED
 - Phase 4: Full feature parity with FFI API
 
 ## Testing Strategy
