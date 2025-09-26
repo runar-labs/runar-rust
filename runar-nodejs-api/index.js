@@ -508,6 +508,13 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.Ca = nativeBinding.Ca
+module.exports.CaClient = nativeBinding.CaClient
+module.exports.CaCreator = nativeBinding.CaCreator
+module.exports.CaNode = nativeBinding.CaNode
+module.exports.CaNodeShared = nativeBinding.CaNodeShared
+module.exports.CaServer = nativeBinding.CaServer
 module.exports.Discovery = nativeBinding.Discovery
+module.exports.EnrollmentToken = nativeBinding.EnrollmentToken
 module.exports.Keys = nativeBinding.Keys
 module.exports.Transport = nativeBinding.Transport

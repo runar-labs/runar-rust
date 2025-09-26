@@ -27,16 +27,11 @@ fn create_test_ca() -> *mut std::os::raw::c_void {
     let mut ca_handle: *mut std::os::raw::c_void = ptr::null_mut();
     let mut error = create_test_error();
 
-    let result = unsafe {
-        rn_keys_ca_create_root_ca(
-            cstring_to_ptr(&subject),
-            &mut ca_handle,
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_create_root_ca(cstring_to_ptr(&subject), &mut ca_handle, &mut error) };
     assert_eq!(result, 0, "Test CA creation should succeed");
     assert!(!ca_handle.is_null(), "Test CA handle should not be null");
-    
+
     ca_handle
 }
 
@@ -49,31 +44,35 @@ fn test_ca_get_certificate_der_happy_path() {
     let mut error = create_test_error();
 
     let result = unsafe {
-        rn_keys_ca_get_certificate_der(
-            ca_handle,
-            &mut cert_ptr,
-            &mut cert_len,
-            &mut error,
-        )
+        rn_keys_ca_get_certificate_der(ca_handle, &mut cert_ptr, &mut cert_len, &mut error)
     };
 
     // Verify success
     assert_eq!(result, 0, "Certificate DER retrieval should succeed");
-    assert!(!cert_ptr.is_null(), "Certificate DER pointer should not be null");
+    assert!(
+        !cert_ptr.is_null(),
+        "Certificate DER pointer should not be null"
+    );
     assert!(cert_len > 0, "Certificate DER length should be positive");
-    assert!(cert_len < 10000, "Certificate DER length should be reasonable");
+    assert!(
+        cert_len < 10000,
+        "Certificate DER length should be reasonable"
+    );
     assert_eq!(error.code, 0, "Error code should be 0");
 
     // Verify the DER data starts with a sequence tag (0x30)
     let der_data = unsafe { std::slice::from_raw_parts(cert_ptr, cert_len) };
-    assert_eq!(der_data[0], 0x30, "Certificate DER should start with sequence tag");
+    assert_eq!(
+        der_data[0], 0x30,
+        "Certificate DER should start with sequence tag"
+    );
 
     // Clean up
     unsafe {
         rn_free(cert_ptr, cert_len);
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Certificate DER retrieved successfully: {cert_len} bytes");
 }
 
@@ -94,10 +93,13 @@ fn test_ca_get_certificate_der_null_ca() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
     assert!(cert_ptr.is_null(), "Certificate pointer should remain null");
     assert_eq!(cert_len, 0, "Certificate length should remain 0");
-    
+
     println!("✅ Null CA handle properly rejected");
 }
 
@@ -118,13 +120,16 @@ fn test_ca_get_certificate_der_null_output_ptr() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
 
     // Clean up
     unsafe {
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Null output pointer properly rejected");
 }
 
@@ -145,14 +150,17 @@ fn test_ca_get_certificate_der_null_length_ptr() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
     assert!(cert_ptr.is_null(), "Certificate pointer should remain null");
 
     // Clean up
     unsafe {
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Null length pointer properly rejected");
 }
 
@@ -173,7 +181,10 @@ fn test_ca_get_certificate_der_null_error() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
     assert!(cert_ptr.is_null(), "Certificate pointer should remain null");
     assert_eq!(cert_len, 0, "Certificate length should remain 0");
 
@@ -181,7 +192,7 @@ fn test_ca_get_certificate_der_null_error() {
     unsafe {
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Null error pointer properly rejected");
 }
 
@@ -192,13 +203,8 @@ fn test_ca_get_certificate_subject_happy_path() {
     let mut subject_ptr: *mut c_char = ptr::null_mut();
     let mut error = create_test_error();
 
-    let result = unsafe {
-        rn_keys_ca_get_certificate_subject(
-            ca_handle,
-            &mut subject_ptr,
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_get_certificate_subject(ca_handle, &mut subject_ptr, &mut error) };
 
     // Verify success
     assert_eq!(result, 0, "Certificate subject retrieval should succeed");
@@ -206,11 +212,15 @@ fn test_ca_get_certificate_subject_happy_path() {
     assert_eq!(error.code, 0, "Error code should be 0");
 
     // Verify the subject string is valid
-    let subject_str = unsafe {
-        CStr::from_ptr(subject_ptr).to_string_lossy()
-    };
-    assert!(subject_str.contains("CN=Test CA"), "Subject should contain CN=Test CA");
-    assert!(subject_str.contains("O=Test"), "Subject should contain O=Test");
+    let subject_str = unsafe { CStr::from_ptr(subject_ptr).to_string_lossy() };
+    assert!(
+        subject_str.contains("CN=Test CA"),
+        "Subject should contain CN=Test CA"
+    );
+    assert!(
+        subject_str.contains("O=Test"),
+        "Subject should contain O=Test"
+    );
     assert!(subject_str.contains("C=US"), "Subject should contain C=US");
 
     // Clean up
@@ -218,7 +228,7 @@ fn test_ca_get_certificate_subject_happy_path() {
         rn_string_free(subject_ptr);
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Certificate subject retrieved successfully: {subject_str}");
 }
 
@@ -237,9 +247,12 @@ fn test_ca_get_certificate_subject_null_ca() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
     assert!(subject_ptr.is_null(), "Subject pointer should remain null");
-    
+
     println!("✅ Null CA handle properly rejected");
 }
 
@@ -258,13 +271,16 @@ fn test_ca_get_certificate_subject_null_output() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
 
     // Clean up
     unsafe {
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Null output pointer properly rejected");
 }
 
@@ -283,14 +299,17 @@ fn test_ca_get_certificate_subject_null_error() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
     assert!(subject_ptr.is_null(), "Subject pointer should remain null");
 
     // Clean up
     unsafe {
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Null error pointer properly rejected");
 }
 
@@ -304,33 +323,27 @@ fn test_ca_get_certificate_both_der_and_subject() {
     let mut cert_ptr: *mut u8 = ptr::null_mut();
     let mut cert_len: usize = 0;
     let result = unsafe {
-        rn_keys_ca_get_certificate_der(
-            ca_handle,
-            &mut cert_ptr,
-            &mut cert_len,
-            &mut error,
-        )
+        rn_keys_ca_get_certificate_der(ca_handle, &mut cert_ptr, &mut cert_len, &mut error)
     };
     assert_eq!(result, 0, "Certificate DER retrieval should succeed");
-    assert!(!cert_ptr.is_null(), "Certificate DER pointer should not be null");
+    assert!(
+        !cert_ptr.is_null(),
+        "Certificate DER pointer should not be null"
+    );
     assert!(cert_len > 0, "Certificate DER length should be positive");
 
     // Get subject
     let mut subject_ptr: *mut c_char = ptr::null_mut();
-    let result = unsafe {
-        rn_keys_ca_get_certificate_subject(
-            ca_handle,
-            &mut subject_ptr,
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_get_certificate_subject(ca_handle, &mut subject_ptr, &mut error) };
     assert_eq!(result, 0, "Certificate subject retrieval should succeed");
     assert!(!subject_ptr.is_null(), "Subject pointer should not be null");
 
-    let subject_str = unsafe {
-        CStr::from_ptr(subject_ptr).to_string_lossy()
-    };
-    assert!(subject_str.contains("CN=Test CA"), "Subject should contain CN=Test CA");
+    let subject_str = unsafe { CStr::from_ptr(subject_ptr).to_string_lossy() };
+    assert!(
+        subject_str.contains("CN=Test CA"),
+        "Subject should contain CN=Test CA"
+    );
 
     // Clean up
     unsafe {
@@ -338,7 +351,7 @@ fn test_ca_get_certificate_both_der_and_subject() {
         rn_string_free(subject_ptr);
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Both DER ({cert_len} bytes) and subject ({subject_str}) retrieved successfully");
 }
 
@@ -352,12 +365,7 @@ fn test_ca_get_certificate_der_consistency() {
     let mut cert_ptr1: *mut u8 = ptr::null_mut();
     let mut cert_len1: usize = 0;
     let result = unsafe {
-        rn_keys_ca_get_certificate_der(
-            ca_handle,
-            &mut cert_ptr1,
-            &mut cert_len1,
-            &mut error,
-        )
+        rn_keys_ca_get_certificate_der(ca_handle, &mut cert_ptr1, &mut cert_len1, &mut error)
     };
     assert_eq!(result, 0, "First certificate DER retrieval should succeed");
 
@@ -365,21 +373,22 @@ fn test_ca_get_certificate_der_consistency() {
     let mut cert_ptr2: *mut u8 = ptr::null_mut();
     let mut cert_len2: usize = 0;
     let result = unsafe {
-        rn_keys_ca_get_certificate_der(
-            ca_handle,
-            &mut cert_ptr2,
-            &mut cert_len2,
-            &mut error,
-        )
+        rn_keys_ca_get_certificate_der(ca_handle, &mut cert_ptr2, &mut cert_len2, &mut error)
     };
     assert_eq!(result, 0, "Second certificate DER retrieval should succeed");
 
     // Verify consistency
-    assert_eq!(cert_len1, cert_len2, "Certificate lengths should be identical");
+    assert_eq!(
+        cert_len1, cert_len2,
+        "Certificate lengths should be identical"
+    );
 
     let cert_data1 = unsafe { std::slice::from_raw_parts(cert_ptr1, cert_len1) };
     let cert_data2 = unsafe { std::slice::from_raw_parts(cert_ptr2, cert_len2) };
-    assert_eq!(cert_data1, cert_data2, "Certificate DER data should be identical");
+    assert_eq!(
+        cert_data1, cert_data2,
+        "Certificate DER data should be identical"
+    );
 
     // Clean up
     unsafe {
@@ -387,7 +396,7 @@ fn test_ca_get_certificate_der_consistency() {
         rn_free(cert_ptr2, cert_len2);
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Certificate DER consistency verified across multiple retrievals");
 }
 
@@ -399,36 +408,25 @@ fn test_ca_get_certificate_subject_consistency() {
 
     // First retrieval
     let mut subject_ptr1: *mut c_char = ptr::null_mut();
-    let result = unsafe {
-        rn_keys_ca_get_certificate_subject(
-            ca_handle,
-            &mut subject_ptr1,
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_get_certificate_subject(ca_handle, &mut subject_ptr1, &mut error) };
     assert_eq!(result, 0, "First subject retrieval should succeed");
 
-    let subject_str1 = unsafe {
-        CStr::from_ptr(subject_ptr1).to_string_lossy().to_string()
-    };
+    let subject_str1 = unsafe { CStr::from_ptr(subject_ptr1).to_string_lossy().to_string() };
 
     // Second retrieval
     let mut subject_ptr2: *mut c_char = ptr::null_mut();
-    let result = unsafe {
-        rn_keys_ca_get_certificate_subject(
-            ca_handle,
-            &mut subject_ptr2,
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_get_certificate_subject(ca_handle, &mut subject_ptr2, &mut error) };
     assert_eq!(result, 0, "Second subject retrieval should succeed");
 
-    let subject_str2 = unsafe {
-        CStr::from_ptr(subject_ptr2).to_string_lossy().to_string()
-    };
+    let subject_str2 = unsafe { CStr::from_ptr(subject_ptr2).to_string_lossy().to_string() };
 
     // Verify consistency
-    assert_eq!(subject_str1, subject_str2, "Subject strings should be identical");
+    assert_eq!(
+        subject_str1, subject_str2,
+        "Subject strings should be identical"
+    );
 
     // Clean up
     unsafe {
@@ -436,7 +434,7 @@ fn test_ca_get_certificate_subject_consistency() {
         rn_string_free(subject_ptr2);
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Certificate subject consistency verified: {subject_str1}");
 }
 
@@ -484,26 +482,31 @@ fn test_ca_getters_with_issuing_ca() {
         )
     };
     assert_eq!(result, 0, "Issuing CA DER retrieval should succeed");
-    assert!(!issuing_cert_ptr.is_null(), "Issuing CA DER should not be null");
-    assert!(issuing_cert_len > 0, "Issuing CA DER length should be positive");
+    assert!(
+        !issuing_cert_ptr.is_null(),
+        "Issuing CA DER should not be null"
+    );
+    assert!(
+        issuing_cert_len > 0,
+        "Issuing CA DER length should be positive"
+    );
 
     // Test issuing CA subject retrieval
     let mut issuing_subject_ptr: *mut c_char = ptr::null_mut();
     let result = unsafe {
-        rn_keys_ca_get_certificate_subject(
-            issuing_ca_handle,
-            &mut issuing_subject_ptr,
-            &mut error,
-        )
+        rn_keys_ca_get_certificate_subject(issuing_ca_handle, &mut issuing_subject_ptr, &mut error)
     };
     assert_eq!(result, 0, "Issuing CA subject retrieval should succeed");
-    assert!(!issuing_subject_ptr.is_null(), "Issuing CA subject should not be null");
+    assert!(
+        !issuing_subject_ptr.is_null(),
+        "Issuing CA subject should not be null"
+    );
 
-    let issuing_subject_str = unsafe {
-        CStr::from_ptr(issuing_subject_ptr).to_string_lossy()
-    };
-    assert!(issuing_subject_str.contains("CN=Getter Test Issuing CA"), 
-           "Subject should contain issuing CA name");
+    let issuing_subject_str = unsafe { CStr::from_ptr(issuing_subject_ptr).to_string_lossy() };
+    assert!(
+        issuing_subject_str.contains("CN=Getter Test Issuing CA"),
+        "Subject should contain issuing CA name"
+    );
 
     // Clean up
     unsafe {
@@ -512,7 +515,7 @@ fn test_ca_getters_with_issuing_ca() {
         rn_keys_ca_free(issuing_ca_handle);
         rn_keys_ca_free(root_ca_handle);
     }
-    
+
     println!("✅ Issuing CA getters working correctly");
     println!("    DER: {issuing_cert_len} bytes");
     println!("    Subject: {issuing_subject_str}");

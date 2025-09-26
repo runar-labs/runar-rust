@@ -444,8 +444,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ Enrollment successful, response size: {enroll_response_len} bytes");
 
     // Deserialize and validate the enrollment response
-    let enroll_response_cbor = unsafe { std::slice::from_raw_parts(enroll_response_ptr, enroll_response_len) };
-    let enroll_response: runar_keys::ca_node_types::CsrEnrollResponse = 
+    let enroll_response_cbor =
+        unsafe { std::slice::from_raw_parts(enroll_response_ptr, enroll_response_len) };
+    let enroll_response: runar_keys::ca_node_types::CsrEnrollResponse =
         serde_cbor::from_slice(enroll_response_cbor)
             .expect("Failed to deserialize enroll response");
 
@@ -462,7 +463,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         enroll_response.expires_at);
 
     // Convert response to NodeCertificateMessage
-    let enroll_response_cbor = serde_cbor::to_vec(&enroll_response).expect("Failed to serialize enroll response");
+    let enroll_response_cbor =
+        serde_cbor::to_vec(&enroll_response).expect("Failed to serialize enroll response");
     let mut cert_msg_ptr: *mut u8 = ptr::null_mut();
     let mut cert_msg_len: usize = 0;
     let result = unsafe {
@@ -597,10 +599,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ Certificate renewal successful ({renew_response_len} bytes response)");
 
     // Deserialize and validate the renewal response
-    let renew_response_cbor = unsafe { std::slice::from_raw_parts(renew_response_ptr, renew_response_len) };
-    let renew_response: runar_keys::ca_node_types::RenewResponse = 
-        serde_cbor::from_slice(renew_response_cbor)
-            .expect("Failed to deserialize renew response");
+    let renew_response_cbor =
+        unsafe { std::slice::from_raw_parts(renew_response_ptr, renew_response_len) };
+    let renew_response: runar_keys::ca_node_types::RenewResponse =
+        serde_cbor::from_slice(renew_response_cbor).expect("Failed to deserialize renew response");
 
     // Validate the response
     assert_eq!(renew_response.network_id, "test_network");
@@ -615,7 +617,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         renew_response.expires_at);
 
     // Convert response to NodeCertificateMessage
-    let renew_response_cbor = serde_cbor::to_vec(&renew_response).expect("Failed to serialize renew response");
+    let renew_response_cbor =
+        serde_cbor::to_vec(&renew_response).expect("Failed to serialize renew response");
     let mut renewal_cert_msg_ptr: *mut u8 = ptr::null_mut();
     let mut renewal_cert_msg_len: usize = 0;
     let result = unsafe {
@@ -798,8 +801,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     );
 
     // Deserialize and validate the revocation response
-    let revoke_response_cbor = unsafe { std::slice::from_raw_parts(revoke_response_ptr, revoke_response_len) };
-    let revoke_response: runar_keys::ca_node_types::RevokeResponse = 
+    let revoke_response_cbor =
+        unsafe { std::slice::from_raw_parts(revoke_response_ptr, revoke_response_len) };
+    let revoke_response: runar_keys::ca_node_types::RevokeResponse =
         serde_cbor::from_slice(revoke_response_cbor)
             .expect("Failed to deserialize revoke response");
 
@@ -807,7 +811,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert_eq!(revoke_response.network_id, "test_network");
     assert!(revoke_response.ok, "Revocation should be successful");
 
-    println!("   ✅ Certificate revoked successfully: {}", revoke_response.ok);
+    println!(
+        "   ✅ Certificate revoked successfully: {}",
+        revoke_response.ok
+    );
 
     // Generate CRL-lite
     let mut crl_ptr: *mut u8 = ptr::null_mut();
@@ -870,8 +877,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         "Status response length should be positive"
     );
     // Deserialize and validate the status response
-    let status_response_cbor = unsafe { std::slice::from_raw_parts(status_response_ptr, status_response_len) };
-    let status_response: runar_keys::ca_node_types::CaStatus = 
+    let status_response_cbor =
+        unsafe { std::slice::from_raw_parts(status_response_ptr, status_response_len) };
+    let status_response: runar_keys::ca_node_types::CaStatus =
         serde_cbor::from_slice(status_response_cbor)
             .expect("Failed to deserialize status response");
 
@@ -920,10 +928,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         "Chain response length should be positive"
     );
     // Deserialize and validate the chain response
-    let chain_response_cbor = unsafe { std::slice::from_raw_parts(chain_response_ptr, chain_response_len) };
-    let chain_response: runar_keys::ca_node_types::ChainResponse = 
-        serde_cbor::from_slice(chain_response_cbor)
-            .expect("Failed to deserialize chain response");
+    let chain_response_cbor =
+        unsafe { std::slice::from_raw_parts(chain_response_ptr, chain_response_len) };
+    let chain_response: runar_keys::ca_node_types::ChainResponse =
+        serde_cbor::from_slice(chain_response_cbor).expect("Failed to deserialize chain response");
 
     // Validate the response
     assert_eq!(chain_response.network_id, "test_network");
@@ -1357,11 +1365,11 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_free(revoked_response_ptr, revoked_response_len);
         rn_free(invalid_response_ptr, invalid_response_len);
         rn_free(unauthorized_response_ptr, unauthorized_response_len);
-        
+
         // Free profile key data
         rn_free(personal_profile_key_ptr, personal_profile_key_len);
         rn_free(work_profile_key_ptr, work_profile_key_len);
-        
+
         // Free handles
         rn_keys_ca_free_ea_key_pair(ea_key_handle);
         rn_transport_ca_server_free(ca_server);
@@ -1369,7 +1377,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_keys_free(node_keys);
         rn_keys_free(mobile_keys);
         rn_keys_ca_node_free_shared(shared_ca_node);
-        
+
         // Free logger allocated with Box::into_raw
         let _ = Box::from_raw(_logger_ptr as *mut Arc<Logger>);
     }
@@ -1431,13 +1439,16 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_keys_ca_create_issuing_ca(
             reconstructed_root_ca,
             issuing_ca_subject_cstr.as_ptr(),
-            365, // validity_days
+            365,   // validity_days
             12345, // serial
             &mut reconstructed_issuing_ca as *mut *mut c_void,
             &mut error,
         )
     };
-    assert_eq!(result, 0, "Failed to create reconstructed issuing CA via FFI");
+    assert_eq!(
+        result, 0,
+        "Failed to create reconstructed issuing CA via FFI"
+    );
     assert!(
         !reconstructed_issuing_ca.is_null(),
         "Reconstructed issuing CA should not be null"
@@ -1455,9 +1466,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to get reconstructed root CA certificate");
-    let reconstructed_root_cert =
-        unsafe { std::slice::from_raw_parts(reconstructed_root_cert_ptr, reconstructed_root_cert_len) }
-            .to_vec();
+    let reconstructed_root_cert = unsafe {
+        std::slice::from_raw_parts(reconstructed_root_cert_ptr, reconstructed_root_cert_len)
+    }
+    .to_vec();
 
     let mut reconstructed_issuing_cert_ptr: *mut u8 = ptr::null_mut();
     let mut reconstructed_issuing_cert_len: usize = 0;
@@ -1469,10 +1481,17 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             &mut error,
         )
     };
-    assert_eq!(result, 0, "Failed to get reconstructed issuing CA certificate");
-    let reconstructed_issuing_cert =
-        unsafe { std::slice::from_raw_parts(reconstructed_issuing_cert_ptr, reconstructed_issuing_cert_len) }
-            .to_vec();
+    assert_eq!(
+        result, 0,
+        "Failed to get reconstructed issuing CA certificate"
+    );
+    let reconstructed_issuing_cert = unsafe {
+        std::slice::from_raw_parts(
+            reconstructed_issuing_cert_ptr,
+            reconstructed_issuing_cert_len,
+        )
+    }
+    .to_vec();
 
     // Get subjects from reconstructed CAs via FFI
     let mut reconstructed_root_subject_ptr: *mut c_char = ptr::null_mut();
@@ -1484,9 +1503,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to get reconstructed root CA subject");
-    let reconstructed_root_subject = unsafe {
-        std::ffi::CStr::from_ptr(reconstructed_root_subject_ptr).to_string_lossy()
-    };
+    let reconstructed_root_subject =
+        unsafe { std::ffi::CStr::from_ptr(reconstructed_root_subject_ptr).to_string_lossy() };
 
     let mut reconstructed_issuing_subject_ptr: *mut c_char = ptr::null_mut();
     let result = unsafe {
@@ -1497,9 +1515,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to get reconstructed issuing CA subject");
-    let reconstructed_issuing_subject = unsafe {
-        std::ffi::CStr::from_ptr(reconstructed_issuing_subject_ptr).to_string_lossy()
-    };
+    let reconstructed_issuing_subject =
+        unsafe { std::ffi::CStr::from_ptr(reconstructed_issuing_subject_ptr).to_string_lossy() };
 
     println!("   ✅ Reconstructed Root CA: {reconstructed_root_subject}");
     println!("   ✅ Reconstructed Issuing CA: {reconstructed_issuing_subject}");
@@ -1516,7 +1533,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let mut fresh_ea_key_handle: *mut c_void = ptr::null_mut();
     let result = unsafe { rn_keys_ca_create_ea_key_pair(&mut fresh_ea_key_handle, &mut error) };
     assert_eq!(result, 0, "Failed to create fresh EA key pair");
-    assert!(!fresh_ea_key_handle.is_null(), "Fresh EA key handle should not be null");
+    assert!(
+        !fresh_ea_key_handle.is_null(),
+        "Fresh EA key handle should not be null"
+    );
 
     // Get fresh EA public key
     let mut fresh_ea_public_key_ptr: *mut u8 = ptr::null_mut();
@@ -1531,11 +1551,14 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     };
     assert_eq!(result, 0, "Failed to get fresh EA public key");
     let fresh_ea_public_keys_cbor =
-        unsafe { std::slice::from_raw_parts(fresh_ea_public_key_ptr, fresh_ea_public_key_len) }.to_vec();
+        unsafe { std::slice::from_raw_parts(fresh_ea_public_key_ptr, fresh_ea_public_key_len) }
+            .to_vec();
 
     // Create new shared CA Node with reconstructed CA
     // NOTE: The CA server is already stopped at the end of Phase 12, so we don't need to stop it again
-    println!("   ℹ️  CA server already stopped at end of Phase 12, proceeding with reconstruction...");
+    println!(
+        "   ℹ️  CA server already stopped at end of Phase 12, proceeding with reconstruction..."
+    );
 
     // Create a fresh CA Node for reconstruction (to avoid memory issues with the stopped server)
     // We'll create new certificates with the same subjects as the original setup
@@ -1580,7 +1603,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             &mut error,
         )
     };
-    assert_eq!(result, 0, "Failed to configure enrollment authority for reconstructed CA node");
+    assert_eq!(
+        result, 0,
+        "Failed to configure enrollment authority for reconstructed CA node"
+    );
 
     // Get the fresh CA certificates from the reconstructed CA Node
     let mut fresh_root_cert_ptr: *mut u8 = ptr::null_mut();
@@ -1594,7 +1620,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to get fresh root CA certificate");
-    let fresh_root_cert = unsafe { std::slice::from_raw_parts(fresh_root_cert_ptr, fresh_root_cert_len) }.to_vec();
+    let fresh_root_cert =
+        unsafe { std::slice::from_raw_parts(fresh_root_cert_ptr, fresh_root_cert_len) }.to_vec();
 
     let mut fresh_issuing_cert_ptr: *mut u8 = ptr::null_mut();
     let mut fresh_issuing_cert_len: usize = 0;
@@ -1607,7 +1634,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to get fresh issuing CA certificate");
-    let fresh_issuing_cert = unsafe { std::slice::from_raw_parts(fresh_issuing_cert_ptr, fresh_issuing_cert_len) }.to_vec();
+    let fresh_issuing_cert =
+        unsafe { std::slice::from_raw_parts(fresh_issuing_cert_ptr, fresh_issuing_cert_len) }
+            .to_vec();
 
     // Free the fresh certificate memory
     rn_free(fresh_root_cert_ptr, fresh_root_cert_len);
@@ -1667,14 +1696,19 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
             &mut error,
         )
     };
-    assert_eq!(result, 0, "Failed to get reconstructed authenticated address");
+    assert_eq!(
+        result, 0,
+        "Failed to get reconstructed authenticated address"
+    );
 
-    let reconstructed_bootstrap_addr_str = unsafe { CString::from_raw(reconstructed_bootstrap_addr) }
-        .to_string_lossy()
-        .to_string();
-    let reconstructed_authenticated_addr_str = unsafe { CString::from_raw(reconstructed_authenticated_addr) }
-        .to_string_lossy()
-        .to_string();
+    let reconstructed_bootstrap_addr_str =
+        unsafe { CString::from_raw(reconstructed_bootstrap_addr) }
+            .to_string_lossy()
+            .to_string();
+    let reconstructed_authenticated_addr_str =
+        unsafe { CString::from_raw(reconstructed_authenticated_addr) }
+            .to_string_lossy()
+            .to_string();
 
     // Create CStrings for the reconstructed server addresses
     let reconstructed_bootstrap_addr_cstr = create_cstring(&reconstructed_bootstrap_addr_str);
@@ -1730,7 +1764,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     let test_setup_token_cbor =
         unsafe { std::slice::from_raw_parts(test_setup_token_ptr, test_setup_token_len) };
     let test_setup_token: runar_keys::mobile::SetupToken =
-        serde_cbor::from_slice(test_setup_token_cbor).expect("Failed to deserialize test SetupToken");
+        serde_cbor::from_slice(test_setup_token_cbor)
+            .expect("Failed to deserialize test SetupToken");
     let test_csr_der = test_setup_token.csr_der.clone();
 
     // Create enrollment token for test
@@ -1774,8 +1809,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         csr_der: test_csr_der,
         enrollment_token: test_enrollment_token_struct,
     };
-    let test_enroll_request =
-        serde_cbor::to_vec(&test_enroll_request_struct).expect("Failed to serialize test enroll request");
+    let test_enroll_request = serde_cbor::to_vec(&test_enroll_request_struct)
+        .expect("Failed to serialize test enroll request");
 
     // Create CA Client for reconstructed server using FRESH certificates (from the reconstructed CA Node)
     let test_config = CaClientConfigAll {
@@ -1784,10 +1819,11 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         network_id: "test_network".to_string(),
         request_timeout_seconds: 30,
         max_retries: 3,
-        root_ca_der: fresh_root_cert.clone(),      // Use FRESH certificates (from reconstructed CA Node)
+        root_ca_der: fresh_root_cert.clone(), // Use FRESH certificates (from reconstructed CA Node)
         issuing_ca_der: fresh_issuing_cert.clone(), // Use FRESH certificates (from reconstructed CA Node)
     };
-    let test_config_cbor = serde_cbor::to_vec(&test_config).expect("Failed to serialize test config as CBOR");
+    let test_config_cbor =
+        serde_cbor::to_vec(&test_config).expect("Failed to serialize test config as CBOR");
 
     let mut test_ca_client: *mut c_void = ptr::null_mut();
     let result = unsafe {
@@ -1800,7 +1836,10 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to create test CA client");
-    assert!(!test_ca_client.is_null(), "Test CA client should not be null");
+    assert!(
+        !test_ca_client.is_null(),
+        "Test CA client should not be null"
+    );
 
     // Test basic enrollment with reconstructed CA
     let mut test_enroll_response_ptr: *mut u8 = ptr::null_mut();
@@ -1835,8 +1874,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     );
 
     // Deserialize and validate the test enrollment response
-    let test_enroll_response_cbor = unsafe { std::slice::from_raw_parts(test_enroll_response_ptr, test_enroll_response_len) };
-    let test_enroll_response: runar_keys::ca_node_types::CsrEnrollResponse = 
+    let test_enroll_response_cbor =
+        unsafe { std::slice::from_raw_parts(test_enroll_response_ptr, test_enroll_response_len) };
+    let test_enroll_response: runar_keys::ca_node_types::CsrEnrollResponse =
         serde_cbor::from_slice(test_enroll_response_cbor)
             .expect("Failed to deserialize test enroll response");
 
@@ -1852,8 +1892,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         test_enroll_response.issuing_ca_der.len(),
         test_enroll_response.expires_at);
 
-    let test_enroll_response = serde_cbor::to_vec(&test_enroll_response).expect("Failed to serialize test enroll response");
-    
+    let test_enroll_response = serde_cbor::to_vec(&test_enroll_response)
+        .expect("Failed to serialize test enroll response");
+
     // Convert enrollment response to certificate message using mobile function
     let mut test_cert_msg_ptr: *mut u8 = ptr::null_mut();
     let mut test_cert_msg_len: usize = 0;
@@ -1868,7 +1909,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to convert test enroll response");
-    
+
     // Install the certificate
     let result = unsafe {
         rn_keys_node_install_certificate(
@@ -1879,14 +1920,15 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         )
     };
     assert_eq!(result, 0, "Failed to install test certificate");
-    
+
     // Free the certificate message
     rn_free(test_cert_msg_ptr, test_cert_msg_len);
-    
+
     println!("   ✅ Basic enrollment with reconstructed CA successful");
 
     // Test basic status request
-    let reconstructed_authenticated_addr_cstr = create_cstring(&reconstructed_authenticated_addr_str);
+    let reconstructed_authenticated_addr_cstr =
+        create_cstring(&reconstructed_authenticated_addr_str);
     let mut test_status_response_ptr: *mut u8 = ptr::null_mut();
     let mut test_status_response_len: usize = 0;
     let result = unsafe {
@@ -1906,8 +1948,9 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     );
 
     // Deserialize and validate the test status response
-    let test_status_response_cbor = unsafe { std::slice::from_raw_parts(test_status_response_ptr, test_status_response_len) };
-    let test_status_response: runar_keys::ca_node_types::CaStatus = 
+    let test_status_response_cbor =
+        unsafe { std::slice::from_raw_parts(test_status_response_ptr, test_status_response_len) };
+    let test_status_response: runar_keys::ca_node_types::CaStatus =
         serde_cbor::from_slice(test_status_response_cbor)
             .expect("Failed to deserialize test status response");
 
@@ -1949,8 +1992,14 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     println!("📊 Test Statistics:");
     println!("   • Root CA: {} bytes", root_ca_cert.len());
     println!("   • Issuing CA: {} bytes", issuing_cert_der.len());
-    println!("   • Reconstructed Root CA: {} bytes", reconstructed_root_cert.len());
-    println!("   • Reconstructed Issuing CA: {} bytes", reconstructed_issuing_cert.len());
+    println!(
+        "   • Reconstructed Root CA: {} bytes",
+        reconstructed_root_cert.len()
+    );
+    println!(
+        "   • Reconstructed Issuing CA: {} bytes",
+        reconstructed_issuing_cert.len()
+    );
     println!("   • Network ID: test_network");
     println!("   • Profile keys: 2 (personal, work)");
     println!("   • Revoked certificates: 1");
@@ -1972,12 +2021,15 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     unsafe {
         // Free certificate DER data allocated by FFI functions
         rn_free(reconstructed_root_cert_ptr, reconstructed_root_cert_len);
-        rn_free(reconstructed_issuing_cert_ptr, reconstructed_issuing_cert_len);
-        
+        rn_free(
+            reconstructed_issuing_cert_ptr,
+            reconstructed_issuing_cert_len,
+        );
+
         // Free response data from reconstruction phase
         rn_free(test_enroll_response_ptr, test_enroll_response_len);
         rn_free(test_status_response_ptr, test_status_response_len);
-        
+
         // Free handles
         rn_keys_ca_free(reconstructed_root_ca);
         rn_keys_ca_free(reconstructed_issuing_ca);
@@ -1987,7 +2039,7 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
         rn_keys_free(test_mobile_keys);
         rn_keys_free(test_node_keys);
         rn_keys_ca_node_free_shared(reconstructed_shared_ca_node);
-        
+
         // Free string data
         rn_string_free(reconstructed_root_subject_ptr);
         rn_string_free(reconstructed_issuing_subject_ptr);

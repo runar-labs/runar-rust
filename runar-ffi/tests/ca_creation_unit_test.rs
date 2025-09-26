@@ -33,20 +33,18 @@ fn test_ca_create_root_ca_happy_path() {
         };
         assert_eq!(rn_set_log_level(5, &mut err as *mut _ as *mut _), 0); // 5 = trace level
         let node_id = std::ffi::CString::new("ca-tests").unwrap();
-        assert_eq!(rn_set_logger_node_id(node_id.as_ptr(), &mut err as *mut _ as *mut _), 0);
+        assert_eq!(
+            rn_set_logger_node_id(node_id.as_ptr(), &mut err as *mut _ as *mut _),
+            0
+        );
     }
-    
+
     let subject = create_cstring("CN=Test Root CA,O=Test,C=US");
     let mut ca_handle: *mut std::os::raw::c_void = ptr::null_mut();
     let mut error = create_test_error();
 
-    let result = unsafe {
-        rn_keys_ca_create_root_ca(
-            cstring_to_ptr(&subject),
-            &mut ca_handle,
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_create_root_ca(cstring_to_ptr(&subject), &mut ca_handle, &mut error) };
 
     // Verify success
     if result != 0 {
@@ -64,7 +62,7 @@ fn test_ca_create_root_ca_happy_path() {
     unsafe {
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Root CA created successfully");
 }
 
@@ -74,18 +72,15 @@ fn test_ca_create_root_ca_null_subject() {
     let mut ca_handle: *mut std::os::raw::c_void = ptr::null_mut();
     let mut error = create_test_error();
 
-    let result = unsafe {
-        rn_keys_ca_create_root_ca(
-            ptr::null(),
-            &mut ca_handle,
-            &mut error,
-        )
-    };
+    let result = unsafe { rn_keys_ca_create_root_ca(ptr::null(), &mut ca_handle, &mut error) };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
     assert!(ca_handle.is_null(), "CA handle should remain null");
-    
+
     println!("✅ Null subject properly rejected");
 }
 
@@ -95,17 +90,15 @@ fn test_ca_create_root_ca_null_output() {
     let subject = create_cstring("CN=Test Root CA,O=Test,C=US");
     let mut error = create_test_error();
 
-    let result = unsafe {
-        rn_keys_ca_create_root_ca(
-            cstring_to_ptr(&subject),
-            ptr::null_mut(),
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_create_root_ca(cstring_to_ptr(&subject), ptr::null_mut(), &mut error) };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
-    
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
+
     println!("✅ Null output pointer properly rejected");
 }
 
@@ -116,17 +109,16 @@ fn test_ca_create_root_ca_null_error() {
     let mut ca_handle: *mut std::os::raw::c_void = ptr::null_mut();
 
     let result = unsafe {
-        rn_keys_ca_create_root_ca(
-            cstring_to_ptr(&subject),
-            &mut ca_handle,
-            ptr::null_mut(),
-        )
+        rn_keys_ca_create_root_ca(cstring_to_ptr(&subject), &mut ca_handle, ptr::null_mut())
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
     assert!(ca_handle.is_null(), "CA handle should remain null");
-    
+
     println!("✅ Null error pointer properly rejected");
 }
 
@@ -137,24 +129,19 @@ fn test_ca_create_root_ca_zero_validity() {
     let mut ca_handle: *mut std::os::raw::c_void = ptr::null_mut();
     let mut error = create_test_error();
 
-    let result = unsafe {
-        rn_keys_ca_create_root_ca(
-            cstring_to_ptr(&subject),
-            &mut ca_handle,
-            &mut error,
-        )
-    };
+    let result =
+        unsafe { rn_keys_ca_create_root_ca(cstring_to_ptr(&subject), &mut ca_handle, &mut error) };
 
     // Verify success (root CA creation doesn't take validity_days parameter)
     assert_eq!(result, 0, "Root CA creation should succeed");
     assert!(!ca_handle.is_null(), "CA handle should not be null");
     assert_eq!(error.code, 0, "Error code should be 0");
-    
+
     // Clean up
     unsafe {
         rn_keys_ca_free(ca_handle);
     }
-    
+
     println!("✅ Root CA created successfully (no validity_days parameter)");
 }
 
@@ -174,7 +161,10 @@ fn test_ca_create_issuing_ca_happy_path() {
         )
     };
     assert_eq!(result, 0, "Root CA creation should succeed");
-    assert!(!root_ca_handle.is_null(), "Root CA handle should not be null");
+    assert!(
+        !root_ca_handle.is_null(),
+        "Root CA handle should not be null"
+    );
 
     // Now create issuing CA
     let issuing_subject = create_cstring("CN=Test Issuing CA,O=Test,C=US");
@@ -185,7 +175,7 @@ fn test_ca_create_issuing_ca_happy_path() {
             root_ca_handle,
             cstring_to_ptr(&issuing_subject),
             365, // validity_days
-            1, // Serial number
+            1,   // Serial number
             &mut issuing_ca_handle,
             &mut error,
         )
@@ -193,7 +183,10 @@ fn test_ca_create_issuing_ca_happy_path() {
 
     // Verify success
     assert_eq!(result, 0, "Issuing CA creation should succeed");
-    assert!(!issuing_ca_handle.is_null(), "Issuing CA handle should not be null");
+    assert!(
+        !issuing_ca_handle.is_null(),
+        "Issuing CA handle should not be null"
+    );
     assert_eq!(error.code, 0, "Error code should be 0");
 
     // Clean up
@@ -201,7 +194,7 @@ fn test_ca_create_issuing_ca_happy_path() {
         rn_keys_ca_free(issuing_ca_handle);
         rn_keys_ca_free(root_ca_handle);
     }
-    
+
     println!("✅ Issuing CA created successfully");
 }
 
@@ -224,9 +217,15 @@ fn test_ca_create_issuing_ca_null_root_ca() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
-    assert!(issuing_ca_handle.is_null(), "Issuing CA handle should remain null");
-    
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
+    assert!(
+        issuing_ca_handle.is_null(),
+        "Issuing CA handle should remain null"
+    );
+
     println!("✅ Null root CA properly rejected");
 }
 
@@ -254,7 +253,7 @@ fn test_ca_create_issuing_ca_null_subject() {
         rn_keys_ca_create_issuing_ca(
             root_ca_handle,
             ptr::null(), // Null subject
-            365, // validity_days
+            365,         // validity_days
             1,
             &mut issuing_ca_handle,
             &mut error,
@@ -262,14 +261,20 @@ fn test_ca_create_issuing_ca_null_subject() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
-    assert!(issuing_ca_handle.is_null(), "Issuing CA handle should remain null");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
+    assert!(
+        issuing_ca_handle.is_null(),
+        "Issuing CA handle should remain null"
+    );
 
     // Clean up
     unsafe {
         rn_keys_ca_free(root_ca_handle);
     }
-    
+
     println!("✅ Null subject properly rejected");
 }
 
@@ -305,13 +310,16 @@ fn test_ca_create_issuing_ca_null_output() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should return null argument error");
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should return null argument error"
+    );
 
     // Clean up
     unsafe {
         rn_keys_ca_free(root_ca_handle);
     }
-    
+
     println!("✅ Null output pointer properly rejected");
 }
 
@@ -348,14 +356,20 @@ fn test_ca_create_issuing_ca_zero_validity() {
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_INVALID_ARGUMENT, "Should return invalid argument error");
-    assert!(issuing_ca_handle.is_null(), "Issuing CA handle should remain null");
+    assert_eq!(
+        result, RN_ERROR_INVALID_ARGUMENT,
+        "Should return invalid argument error"
+    );
+    assert!(
+        issuing_ca_handle.is_null(),
+        "Issuing CA handle should remain null"
+    );
 
     // Clean up
     unsafe {
         rn_keys_ca_free(root_ca_handle);
     }
-    
+
     println!("✅ Zero validity days properly rejected");
 }
 
@@ -385,21 +399,27 @@ fn test_ca_create_issuing_ca_zero_serial() {
             root_ca_handle,
             cstring_to_ptr(&issuing_subject),
             365, // validity_days
-            0, // Zero serial number
+            0,   // Zero serial number
             &mut issuing_ca_handle,
             &mut error,
         )
     };
 
     // Verify error
-    assert_eq!(result, RN_ERROR_INVALID_ARGUMENT, "Should return invalid argument error");
-    assert!(issuing_ca_handle.is_null(), "Issuing CA handle should remain null");
+    assert_eq!(
+        result, RN_ERROR_INVALID_ARGUMENT,
+        "Should return invalid argument error"
+    );
+    assert!(
+        issuing_ca_handle.is_null(),
+        "Issuing CA handle should remain null"
+    );
 
     // Clean up
     unsafe {
         rn_keys_ca_free(root_ca_handle);
     }
-    
+
     println!("✅ Zero serial number properly rejected");
 }
 
@@ -420,7 +440,10 @@ fn test_ca_hierarchy_creation_workflow() {
         )
     };
     assert_eq!(result, 0, "Root CA creation should succeed");
-    assert!(!root_ca_handle.is_null(), "Root CA handle should not be null");
+    assert!(
+        !root_ca_handle.is_null(),
+        "Root CA handle should not be null"
+    );
 
     // Create issuing CA
     let issuing_subject = create_cstring("CN=Workflow Issuing CA,O=Workflow Test,C=US");
@@ -431,13 +454,16 @@ fn test_ca_hierarchy_creation_workflow() {
             root_ca_handle,
             cstring_to_ptr(&issuing_subject),
             365, // validity_days
-            42, // Custom serial number
+            42,  // Custom serial number
             &mut issuing_ca_handle,
             &mut error,
         )
     };
     assert_eq!(result, 0, "Issuing CA creation should succeed");
-    assert!(!issuing_ca_handle.is_null(), "Issuing CA handle should not be null");
+    assert!(
+        !issuing_ca_handle.is_null(),
+        "Issuing CA handle should not be null"
+    );
 
     // Verify both CAs can be used to get certificates
     let mut root_cert_ptr: *mut u8 = ptr::null_mut();
@@ -465,8 +491,14 @@ fn test_ca_hierarchy_creation_workflow() {
         )
     };
     assert_eq!(result, 0, "Issuing CA certificate retrieval should succeed");
-    assert!(!issuing_cert_ptr.is_null(), "Issuing cert DER should not be null");
-    assert!(issuing_cert_len > 0, "Issuing cert DER length should be positive");
+    assert!(
+        !issuing_cert_ptr.is_null(),
+        "Issuing cert DER should not be null"
+    );
+    assert!(
+        issuing_cert_len > 0,
+        "Issuing cert DER length should be positive"
+    );
 
     // Clean up
     unsafe {
@@ -479,6 +511,6 @@ fn test_ca_hierarchy_creation_workflow() {
         rn_keys_ca_free(issuing_ca_handle);
         rn_keys_ca_free(root_ca_handle);
     }
-    
+
     println!("✅ Complete CA hierarchy workflow completed successfully");
 }

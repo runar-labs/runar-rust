@@ -97,7 +97,7 @@ pub extern "C" fn rn_free(ptr: *mut u8, len: usize) {
         return;
     }
     unsafe {
-        let _ = Vec::from_raw_parts(ptr, len, len);  // This actually frees the memory
+        let _ = Vec::from_raw_parts(ptr, len, len); // This actually frees the memory
     }
 }
 
@@ -546,7 +546,6 @@ fn alloc_string_simple(out_ptr: *mut *mut c_char, s: &str) -> bool {
 // C-compatible data structures
 // ------------------------------
 
-
 /// Custom server config for deserialization
 #[derive(serde::Deserialize)]
 struct CustomCaServerConfig {
@@ -566,7 +565,6 @@ pub struct RnDeviceKeystoreCaps {
     pub version: u32,
     pub flags: u32, // bitfield: 1=hardware_backed, 2=biometric_gate, 4=screenlock_required, 8=strongbox
 }
-
 
 fn map_caps(caps: keystore::DeviceKeystoreCaps) -> RnDeviceKeystoreCaps {
     let mut flags: u32 = 0;
@@ -4882,7 +4880,6 @@ pub unsafe extern "C" fn rn_keys_ca_node_new_shared(
     0
 }
 
-
 /// Free shared CA Node reference
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_free_shared(shared_ca_node: *mut c_void) {
@@ -5377,7 +5374,11 @@ pub unsafe extern "C" fn rn_keys_ca_node_get_root_ca_certificate(
     certificate_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if shared_ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
+    if shared_ca_node.is_null()
+        || certificate.is_null()
+        || certificate_len.is_null()
+        || err.is_null()
+    {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
@@ -5420,7 +5421,11 @@ pub unsafe extern "C" fn rn_keys_ca_node_get_issuing_ca_certificate(
     certificate_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if shared_ca_node.is_null() || certificate.is_null() || certificate_len.is_null() || err.is_null() {
+    if shared_ca_node.is_null()
+        || certificate.is_null()
+        || certificate_len.is_null()
+        || err.is_null()
+    {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_NULL_ARGUMENT;
     }
@@ -6044,7 +6049,11 @@ pub unsafe extern "C" fn rn_keys_ca_create_issuing_ca(
 
     // Validate validity_days
     if validity_days == 0 {
-        set_error(err, RN_ERROR_INVALID_ARGUMENT, "validity_days cannot be zero");
+        set_error(
+            err,
+            RN_ERROR_INVALID_ARGUMENT,
+            "validity_days cannot be zero",
+        );
         return RN_ERROR_INVALID_ARGUMENT;
     }
 
@@ -6068,20 +6077,18 @@ pub unsafe extern "C" fn rn_keys_ca_create_issuing_ca(
     };
 
     // Create CSR for issuing CA
-    let issuing_ca_csr_der = match runar_keys::certificate::CertificateRequest::create(
-        &issuing_ca_key,
-        subject_str,
-    ) {
-        Ok(csr_der) => csr_der,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_OPERATION_FAILED,
-                &format!("Failed to create issuing CA CSR: {e}"),
-            );
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
+    let issuing_ca_csr_der =
+        match runar_keys::certificate::CertificateRequest::create(&issuing_ca_key, subject_str) {
+            Ok(csr_der) => csr_der,
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_OPERATION_FAILED,
+                    &format!("Failed to create issuing CA CSR: {e}"),
+                );
+                return RN_ERROR_OPERATION_FAILED;
+            }
+        };
 
     // Sign the issuing CA certificate
     let issuing_ca_cert = match root_ca.sign_ca_certificate_request_with_serial(

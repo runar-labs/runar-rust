@@ -2800,9 +2800,8 @@ fn test_ca_node_install_issuing_ca_happy_path() {
     );
 
     // Convert to Vec for easier handling
-    let ea_public_key = unsafe { 
-        std::slice::from_raw_parts(ea_public_key_ptr, ea_public_key_len) 
-    }.to_vec();
+    let ea_public_key =
+        unsafe { std::slice::from_raw_parts(ea_public_key_ptr, ea_public_key_len) }.to_vec();
 
     // Complete CA setup using new secure function
     let result = unsafe {
@@ -2864,9 +2863,8 @@ fn test_ca_node_setup_complete_null_ca_node() {
     );
 
     // Convert to Vec for easier handling
-    let ea_public_key = unsafe { 
-        std::slice::from_raw_parts(ea_public_key_ptr, ea_public_key_len) 
-    }.to_vec();
+    let ea_public_key =
+        unsafe { std::slice::from_raw_parts(ea_public_key_ptr, ea_public_key_len) }.to_vec();
 
     // Test with null CA node
     let result = unsafe {

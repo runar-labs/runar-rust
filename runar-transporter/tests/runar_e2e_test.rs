@@ -34,9 +34,7 @@ fn create_deep_link(token: &EnrollmentToken, ca_addr: SocketAddr, network_id: &s
     // Minimal deep link per spec: scheme + token (CBOR hex) + CA bootstrap address + network
     let token_bytes = serde_cbor::to_vec(token).expect("Failed to serialize token to CBOR");
     let token_hex = to_hex(&token_bytes);
-    format!(
-        "runar://join-network?token={token_hex}&ca={ca_addr}&network={network_id}"
-    )
+    format!("runar://join-network?token={token_hex}&ca={ca_addr}&network={network_id}")
 }
 
 fn parse_deep_link(dl: &str) -> Result<HashMap<String, String>> {
@@ -112,8 +110,10 @@ async fn test_runar_e2e() -> Result<()> {
     let root_ca_cert = root_ca.ca_certificate().clone();
 
     let issuing_ca_key = EcdsaKeyPair::new()?;
-    let issuing_ca_csr = CertificateRequest::create(&issuing_ca_key, "CN=E2E Issuing CA,O=Runar,C=US")?;
-    let issuing_ca_cert = root_ca.sign_ca_certificate_request_with_serial(&issuing_ca_csr, 365, Some(42))?;
+    let issuing_ca_csr =
+        CertificateRequest::create(&issuing_ca_key, "CN=E2E Issuing CA,O=Runar,C=US")?;
+    let issuing_ca_cert =
+        root_ca.sign_ca_certificate_request_with_serial(&issuing_ca_csr, 365, Some(42))?;
 
     let mut ca_node = CANode::new(
         issuing_ca_key.clone(),
@@ -220,5 +220,3 @@ async fn test_runar_e2e() -> Result<()> {
 
     Ok(())
 }
-
-

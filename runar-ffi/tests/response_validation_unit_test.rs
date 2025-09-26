@@ -97,7 +97,10 @@ fn test_status_response_deserialization() {
 
     // Validate structure
     assert_eq!(deserialized.network_id, "test_network");
-    assert_eq!(deserialized.issuing_subject, "CN=Test Issuing CA,O=Test,C=US");
+    assert_eq!(
+        deserialized.issuing_subject,
+        "CN=Test Issuing CA,O=Test,C=US"
+    );
     assert_eq!(deserialized.issuing_serial_hex, "1");
     assert_eq!(deserialized.not_before, 1758682867);
     assert_eq!(deserialized.not_after, 1790218867);
@@ -139,7 +142,10 @@ fn test_invalid_cbor_handling() {
 #[test]
 fn test_missing_fields_validation() {
     // Create a minimal CBOR that might be missing required fields
-    let minimal_cbor = vec![0xa1, 0x6a, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x5f, 0x69, 0x64, 0x6b, 0x74, 0x65, 0x73, 0x74]; // {"network_id": "test"}
+    let minimal_cbor = vec![
+        0xa1, 0x6a, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x5f, 0x69, 0x64, 0x6b, 0x74, 0x65,
+        0x73, 0x74,
+    ]; // {"network_id": "test"}
 
     // Should fail to deserialize due to missing required fields
     let result: Result<CsrEnrollResponse, _> = serde_cbor::from_slice(&minimal_cbor);
@@ -175,7 +181,8 @@ fn test_success_failure_response_validation() {
         ok: true,
     };
 
-    let success_cbor = serde_cbor::to_vec(&success_response).expect("Failed to serialize success response");
+    let success_cbor =
+        serde_cbor::to_vec(&success_response).expect("Failed to serialize success response");
     let success_deserialized: RevokeResponse =
         serde_cbor::from_slice(&success_cbor).expect("Failed to deserialize success response");
     assert!(success_deserialized.ok);
@@ -186,7 +193,8 @@ fn test_success_failure_response_validation() {
         ok: false,
     };
 
-    let failure_cbor = serde_cbor::to_vec(&failure_response).expect("Failed to serialize failure response");
+    let failure_cbor =
+        serde_cbor::to_vec(&failure_response).expect("Failed to serialize failure response");
     let failure_deserialized: RevokeResponse =
         serde_cbor::from_slice(&failure_cbor).expect("Failed to deserialize failure response");
     assert!(!failure_deserialized.ok);
@@ -198,8 +206,8 @@ fn test_empty_certificate_data_validation() {
     let response = CsrEnrollResponse {
         network_id: "test_network".to_string(),
         certificate_der: vec![], // Empty certificate
-        issuing_ca_der: vec![],   // Empty issuing CA
-        root_ca_der: None,        // No root CA
+        issuing_ca_der: vec![],  // Empty issuing CA
+        root_ca_der: None,       // No root CA
         expires_at: 1761274868,
     };
 
@@ -301,7 +309,7 @@ fn test_truncated_response_handling() {
 
     // Serialize to CBOR
     let mut cbor_data = serde_cbor::to_vec(&response).expect("Failed to serialize response");
-    
+
     // Truncate the data
     cbor_data.truncate(cbor_data.len() / 2);
 
@@ -317,10 +325,13 @@ fn test_invalid_field_types() {
     let invalid_cbor = vec![
         0xa5, // map(5)
         0x6a, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x5f, 0x69, 0x64, // "network_id"
-        0x6b, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, // "test_network"
-        0x6d, 0x63, 0x65, 0x72, 0x74, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x65, 0x5f, 0x64, 0x65, 0x72, // "certificate_der"
+        0x6b, 0x74, 0x65, 0x73, 0x74, 0x5f, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72,
+        0x6b, // "test_network"
+        0x6d, 0x63, 0x65, 0x72, 0x74, 0x69, 0x66, 0x69, 0x63, 0x61, 0x74, 0x65, 0x5f, 0x64, 0x65,
+        0x72, // "certificate_der"
         0x65, 0x68, 0x65, 0x6c, 0x6c, 0x6f, // "hello" (string instead of bytes)
-        0x6d, 0x69, 0x73, 0x73, 0x69, 0x6e, 0x67, 0x5f, 0x66, 0x69, 0x65, 0x6c, 0x64, // "missing_field"
+        0x6d, 0x69, 0x73, 0x73, 0x69, 0x6e, 0x67, 0x5f, 0x66, 0x69, 0x65, 0x6c,
+        0x64, // "missing_field"
         0x65, 0x77, 0x6f, 0x72, 0x6c, 0x64, // "world"
     ];
 
@@ -340,10 +351,14 @@ fn test_comprehensive_response_validation_workflow() {
         root_ca_der: Some(vec![11, 12, 13, 14, 15]),
         expires_at: 1761274868,
     };
-    let enroll_cbor = serde_cbor::to_vec(&enroll_response).expect("Failed to serialize enroll response");
+    let enroll_cbor =
+        serde_cbor::to_vec(&enroll_response).expect("Failed to serialize enroll response");
     assert!(!enroll_cbor.is_empty());
     assert!(enroll_cbor.len() < 1024 * 1024);
-    println!("✅ enroll response validation passed: {} bytes", enroll_cbor.len());
+    println!(
+        "✅ enroll response validation passed: {} bytes",
+        enroll_cbor.len()
+    );
 
     // Test renewal response
     let renew_response = RenewResponse {
@@ -352,20 +367,28 @@ fn test_comprehensive_response_validation_workflow() {
         issuing_ca_der: vec![6, 7, 8, 9, 10],
         expires_at: 1761274868,
     };
-    let renew_cbor = serde_cbor::to_vec(&renew_response).expect("Failed to serialize renew response");
+    let renew_cbor =
+        serde_cbor::to_vec(&renew_response).expect("Failed to serialize renew response");
     assert!(!renew_cbor.is_empty());
     assert!(renew_cbor.len() < 1024 * 1024);
-    println!("✅ renew response validation passed: {} bytes", renew_cbor.len());
+    println!(
+        "✅ renew response validation passed: {} bytes",
+        renew_cbor.len()
+    );
 
     // Test revocation response
     let revoke_response = RevokeResponse {
         network_id: "test_network".to_string(),
         ok: true,
     };
-    let revoke_cbor = serde_cbor::to_vec(&revoke_response).expect("Failed to serialize revoke response");
+    let revoke_cbor =
+        serde_cbor::to_vec(&revoke_response).expect("Failed to serialize revoke response");
     assert!(!revoke_cbor.is_empty());
     assert!(revoke_cbor.len() < 1024 * 1024);
-    println!("✅ revoke response validation passed: {} bytes", revoke_cbor.len());
+    println!(
+        "✅ revoke response validation passed: {} bytes",
+        revoke_cbor.len()
+    );
 
     // Test status response
     let status_response = CaStatus {
@@ -375,10 +398,14 @@ fn test_comprehensive_response_validation_workflow() {
         not_before: 1758682867,
         not_after: 1790218867,
     };
-    let status_cbor = serde_cbor::to_vec(&status_response).expect("Failed to serialize status response");
+    let status_cbor =
+        serde_cbor::to_vec(&status_response).expect("Failed to serialize status response");
     assert!(!status_cbor.is_empty());
     assert!(status_cbor.len() < 1024 * 1024);
-    println!("✅ status response validation passed: {} bytes", status_cbor.len());
+    println!(
+        "✅ status response validation passed: {} bytes",
+        status_cbor.len()
+    );
 
     // Test chain response
     let chain_response = ChainResponse {
@@ -386,8 +413,12 @@ fn test_comprehensive_response_validation_workflow() {
         issuing_ca_der: vec![1, 2, 3, 4, 5],
         root_ca_der: Some(vec![6, 7, 8, 9, 10]),
     };
-    let chain_cbor = serde_cbor::to_vec(&chain_response).expect("Failed to serialize chain response");
+    let chain_cbor =
+        serde_cbor::to_vec(&chain_response).expect("Failed to serialize chain response");
     assert!(!chain_cbor.is_empty());
     assert!(chain_cbor.len() < 1024 * 1024);
-    println!("✅ chain response validation passed: {} bytes", chain_cbor.len());
+    println!(
+        "✅ chain response validation passed: {} bytes",
+        chain_cbor.len()
+    );
 }

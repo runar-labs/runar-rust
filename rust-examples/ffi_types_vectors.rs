@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
-use runar_ffi::{CaClientConfigAll, TransportRequestParams, TransportPublishParams, TransportCompleteRequestParams};
+use runar_ffi::{
+    CaClientConfigAll, TransportCompleteRequestParams, TransportPublishParams,
+    TransportRequestParams,
+};
 use runar_keys::ca_node_types::{
-    CaErrorResponse, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, 
-    RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, CaStatus
+    CaErrorResponse, CaStatus, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, RenewRequest,
+    RenewResponse, RevokeRequest, RevokeResponse,
 };
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
@@ -373,8 +376,8 @@ fn generate_renew_response_vectors(out: &Path) -> Result<()> {
     // Basic renew response
     let basic_renew_response = RenewResponse {
         network_id: "test_network".to_string(),
-        certificate_der: vec![3; 1024],   // 1KB certificate
-        issuing_ca_der: vec![4; 512],     // Intermediate cert
+        certificate_der: vec![3; 1024], // 1KB certificate
+        issuing_ca_der: vec![4; 512],   // Intermediate cert
         expires_at: 1757894422,
     };
 
@@ -383,12 +386,16 @@ fn generate_renew_response_vectors(out: &Path) -> Result<()> {
     // Renew response with larger certificate
     let large_cert_renew_response = RenewResponse {
         network_id: "test_network".to_string(),
-        certificate_der: vec![5; 2048],   // 2KB certificate
-        issuing_ca_der: vec![6; 1024],    // Intermediate cert
+        certificate_der: vec![5; 2048], // 2KB certificate
+        issuing_ca_der: vec![6; 1024],  // Intermediate cert
         expires_at: 1757894422,
     };
 
-    write_cbor_vector(out, "renew_response_large_cert.bin", &large_cert_renew_response)?;
+    write_cbor_vector(
+        out,
+        "renew_response_large_cert.bin",
+        &large_cert_renew_response,
+    )?;
 
     println!("✅ RenewResponse vectors generated");
     Ok(())
@@ -400,7 +407,9 @@ fn generate_revoke_request_vectors(out: &Path) -> Result<()> {
     // Basic revoke request
     let basic_revoke = RevokeRequest {
         network_id: "test_network".to_string(),
-        certificate_serial: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+        certificate_serial: vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        ],
         reason: "testing".to_string(),
     };
 
@@ -409,7 +418,9 @@ fn generate_revoke_request_vectors(out: &Path) -> Result<()> {
     // Revoke request without reason
     let no_reason_revoke = RevokeRequest {
         network_id: "test_network".to_string(),
-        certificate_serial: vec![21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
+        certificate_serial: vec![
+            21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+        ],
         reason: "no_reason".to_string(),
     };
 
@@ -465,7 +476,11 @@ fn generate_ca_status_vectors(out: &Path) -> Result<()> {
         not_after: 1757890822 + 31536000, // 1 year later
     };
 
-    write_cbor_vector(out, "ca_status_different_times.bin", &different_times_status)?;
+    write_cbor_vector(
+        out,
+        "ca_status_different_times.bin",
+        &different_times_status,
+    )?;
 
     println!("✅ CaStatus vectors generated");
     Ok(())
@@ -477,8 +492,8 @@ fn generate_chain_response_vectors(out: &Path) -> Result<()> {
     // Basic chain response
     let basic_chain = ChainResponse {
         network_id: "test_network".to_string(),
-        issuing_ca_der: vec![1; 512],     // Intermediate cert
-        root_ca_der: Some(vec![2; 256]),  // Root cert
+        issuing_ca_der: vec![1; 512],    // Intermediate cert
+        root_ca_der: Some(vec![2; 256]), // Root cert
     };
 
     write_cbor_vector(out, "chain_response_basic.bin", &basic_chain)?;
@@ -486,8 +501,8 @@ fn generate_chain_response_vectors(out: &Path) -> Result<()> {
     // Chain response without root CA
     let no_root_chain = ChainResponse {
         network_id: "test_network".to_string(),
-        issuing_ca_der: vec![3; 1024],    // Intermediate cert
-        root_ca_der: None,                // No root cert
+        issuing_ca_der: vec![3; 1024], // Intermediate cert
+        root_ca_der: None,             // No root cert
     };
 
     write_cbor_vector(out, "chain_response_no_root.bin", &no_root_chain)?;
@@ -496,7 +511,6 @@ fn generate_chain_response_vectors(out: &Path) -> Result<()> {
     Ok(())
 }
 
-
 // QuicTransportOptions doesn't implement Serialize, so we skip it for now
 
 fn generate_peer_info_vectors(out: &Path) -> Result<()> {
@@ -504,14 +518,23 @@ fn generate_peer_info_vectors(out: &Path) -> Result<()> {
 
     // Basic peer info
     let basic_peer = PeerInfo {
-        public_key: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
-        addresses: vec!["127.0.0.1:8080".to_string(), "192.168.1.100:9090".to_string()],
+        public_key: vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30, 31, 32,
+        ],
+        addresses: vec![
+            "127.0.0.1:8080".to_string(),
+            "192.168.1.100:9090".to_string(),
+        ],
     };
     write_cbor_vector(out, "peer_info_basic.bin", &basic_peer)?;
 
     // Peer info with single address
     let single_addr_peer = PeerInfo {
-        public_key: vec![32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+        public_key: vec![
+            32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
+            10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+        ],
         addresses: vec!["10.0.0.1:1234".to_string()],
     };
     write_cbor_vector(out, "peer_info_single_addr.bin", &single_addr_peer)?;
@@ -543,7 +566,11 @@ fn generate_transport_request_params_vectors(out: &Path) -> Result<()> {
         network_public_key: None,
         profile_public_keys: vec![vec![1, 2, 3]],
     };
-    write_cbor_vector(out, "transport_request_params_no_network.bin", &no_network_request)?;
+    write_cbor_vector(
+        out,
+        "transport_request_params_no_network.bin",
+        &no_network_request,
+    )?;
 
     println!("✅ TransportRequestParams vectors generated");
     Ok(())
@@ -570,7 +597,11 @@ fn generate_transport_publish_params_vectors(out: &Path) -> Result<()> {
         dest_peer_id: "peer_999".to_string(),
         network_public_key: None,
     };
-    write_cbor_vector(out, "transport_publish_params_no_network.bin", &no_network_publish)?;
+    write_cbor_vector(
+        out,
+        "transport_publish_params_no_network.bin",
+        &no_network_publish,
+    )?;
 
     println!("✅ TransportPublishParams vectors generated");
     Ok(())
@@ -585,7 +616,11 @@ fn generate_transport_complete_request_params_vectors(out: &Path) -> Result<()> 
         response_payload: b"response data".to_vec(),
         profile_public_keys: vec![vec![1, 2, 3], vec![4, 5, 6]],
     };
-    write_cbor_vector(out, "transport_complete_request_params_basic.bin", &basic_complete)?;
+    write_cbor_vector(
+        out,
+        "transport_complete_request_params_basic.bin",
+        &basic_complete,
+    )?;
 
     // Complete request params with empty profile keys
     let empty_profiles_complete = TransportCompleteRequestParams {
@@ -593,7 +628,11 @@ fn generate_transport_complete_request_params_vectors(out: &Path) -> Result<()> 
         response_payload: b"empty profiles response".to_vec(),
         profile_public_keys: vec![],
     };
-    write_cbor_vector(out, "transport_complete_request_params_empty_profiles.bin", &empty_profiles_complete)?;
+    write_cbor_vector(
+        out,
+        "transport_complete_request_params_empty_profiles.bin",
+        &empty_profiles_complete,
+    )?;
 
     println!("✅ TransportCompleteRequestParams vectors generated");
     Ok(())

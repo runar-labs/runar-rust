@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use runar_ffi::{TransportRequestParams, TransportPublishParams, TransportCompleteRequestParams};
+use runar_ffi::{TransportCompleteRequestParams, TransportPublishParams, TransportRequestParams};
 use runar_keys::ca_node_types::{
-    CaErrorResponse, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, 
-    RenewRequest, RenewResponse, RevokeRequest, RevokeResponse, CaStatus
+    CaErrorResponse, CaStatus, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, RenewRequest,
+    RenewResponse, RevokeRequest, RevokeResponse,
 };
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
@@ -203,10 +203,10 @@ fn validate_renew_request() -> Result<()> {
         "target/ffi-types-vectors/renew_request_basic.bin",
     ))?;
 
-    let swift_request: RenewRequest = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift RenewRequest")?;
-    let rust_request: RenewRequest = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust RenewRequest")?;
+    let swift_request: RenewRequest =
+        serde_cbor::from_slice(&swift_data).context("Failed to deserialize Swift RenewRequest")?;
+    let rust_request: RenewRequest =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust RenewRequest")?;
 
     if swift_request == rust_request {
         println!("✅ RenewRequest validation passed");
@@ -231,10 +231,10 @@ fn validate_renew_response() -> Result<()> {
         "target/ffi-types-vectors/renew_response_basic.bin",
     ))?;
 
-    let swift_response: RenewResponse = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift RenewResponse")?;
-    let rust_response: RenewResponse = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust RenewResponse")?;
+    let swift_response: RenewResponse =
+        serde_cbor::from_slice(&swift_data).context("Failed to deserialize Swift RenewResponse")?;
+    let rust_response: RenewResponse =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust RenewResponse")?;
 
     if swift_response == rust_response {
         println!("✅ RenewResponse validation passed");
@@ -259,10 +259,10 @@ fn validate_revoke_request() -> Result<()> {
         "target/ffi-types-vectors/revoke_request_basic.bin",
     ))?;
 
-    let swift_request: RevokeRequest = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift RevokeRequest")?;
-    let rust_request: RevokeRequest = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust RevokeRequest")?;
+    let swift_request: RevokeRequest =
+        serde_cbor::from_slice(&swift_data).context("Failed to deserialize Swift RevokeRequest")?;
+    let rust_request: RevokeRequest =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust RevokeRequest")?;
 
     if swift_request == rust_request {
         println!("✅ RevokeRequest validation passed");
@@ -289,8 +289,8 @@ fn validate_revoke_response() -> Result<()> {
 
     let swift_response: RevokeResponse = serde_cbor::from_slice(&swift_data)
         .context("Failed to deserialize Swift RevokeResponse")?;
-    let rust_response: RevokeResponse = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust RevokeResponse")?;
+    let rust_response: RevokeResponse =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust RevokeResponse")?;
 
     if swift_response == rust_response {
         println!("✅ RevokeResponse validation passed");
@@ -311,14 +311,12 @@ fn validate_ca_status() -> Result<()> {
     let swift_data = read_bytes(Path::new(
         "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/ca_status_basic.bin",
     ))?;
-    let rust_data = read_bytes(Path::new(
-        "target/ffi-types-vectors/ca_status_basic.bin",
-    ))?;
+    let rust_data = read_bytes(Path::new("target/ffi-types-vectors/ca_status_basic.bin"))?;
 
-    let swift_status: CaStatus = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift CaStatus")?;
-    let rust_status: CaStatus = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust CaStatus")?;
+    let swift_status: CaStatus =
+        serde_cbor::from_slice(&swift_data).context("Failed to deserialize Swift CaStatus")?;
+    let rust_status: CaStatus =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust CaStatus")?;
 
     if swift_status == rust_status {
         println!("✅ CaStatus validation passed");
@@ -343,10 +341,10 @@ fn validate_chain_response() -> Result<()> {
         "target/ffi-types-vectors/chain_response_basic.bin",
     ))?;
 
-    let swift_response: ChainResponse = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift ChainResponse")?;
-    let rust_response: ChainResponse = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust ChainResponse")?;
+    let swift_response: ChainResponse =
+        serde_cbor::from_slice(&swift_data).context("Failed to deserialize Swift ChainResponse")?;
+    let rust_response: ChainResponse =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust ChainResponse")?;
 
     if swift_response == rust_response {
         println!("✅ ChainResponse validation passed");
@@ -459,14 +457,12 @@ fn validate_peer_info() -> Result<()> {
     let swift_data = read_bytes(Path::new(
         "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/peer_info_basic.bin",
     ))?;
-    let rust_data = read_bytes(Path::new(
-        "target/ffi-types-vectors/peer_info_basic.bin",
-    ))?;
+    let rust_data = read_bytes(Path::new("target/ffi-types-vectors/peer_info_basic.bin"))?;
 
-    let swift_peer: PeerInfo = serde_cbor::from_slice(&swift_data)
-        .context("Failed to deserialize Swift PeerInfo")?;
-    let rust_peer: PeerInfo = serde_cbor::from_slice(&rust_data)
-        .context("Failed to deserialize Rust PeerInfo")?;
+    let swift_peer: PeerInfo =
+        serde_cbor::from_slice(&swift_data).context("Failed to deserialize Swift PeerInfo")?;
+    let rust_peer: PeerInfo =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust PeerInfo")?;
 
     if swift_peer == rust_peer {
         println!("✅ PeerInfo validation passed");
