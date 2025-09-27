@@ -87,6 +87,7 @@ impl EnrollmentToken {
         // Get the signer ID (compact_id of the EA public key)
         let ea_public_key_bytes = ea_key.public_key().as_bytes().to_vec();
         let signer_id = runar_common::compact_ids::compact_id(&ea_public_key_bytes);
+        
 
         Ok(Self {
             body,

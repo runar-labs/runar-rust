@@ -3372,6 +3372,7 @@ dependencies = [
  "runar_common 0.1.0",
  "runar_logging",
  "runar_transporter",
+ "rustls 0.23.28",
  "serde",
  "serde_cbor",
  "serde_json",

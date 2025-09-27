@@ -153,8 +153,8 @@ describe('Comprehensive API Tests', () => {
       keys.mobileInstallNetworkPublicKey(testPk);
       const networkPublicKey = keys.mobileGenerateNetworkDataKey();
       const pk = keys.mobileHasNetworkPrivateKey(networkPublicKey);
-      expect(pk instanceof Uint8Array).toBe(true);
-      expect(pk.length).toBeGreaterThan(0);
+      expect(typeof pk).toBe('boolean');
+      expect(pk).toBe(true);
     }, 10000);
 
     test('should create network key message successfully', async () => {
@@ -172,6 +172,7 @@ describe('Comprehensive API Tests', () => {
     test('should get node ID successfully', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
+      keys.nodeGenerateKeys(); // Generate keys after initialization
       const id = keys.nodeGetNodeId();
       expect(typeof id).toBe('string');
       expect(id.length).toBeGreaterThan(0);
@@ -180,6 +181,7 @@ describe('Comprehensive API Tests', () => {
     test('should get node public key successfully', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
+      keys.nodeGenerateKeys(); // Generate keys after initialization
       const pk = keys.nodeGetPublicKey();
       expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
@@ -188,6 +190,7 @@ describe('Comprehensive API Tests', () => {
     test('should get node agreement public key successfully', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
+      keys.nodeGenerateKeys(); // Generate keys after initialization
       const pk = keys.nodeGetAgreementPublicKey();
       expect(pk instanceof Uint8Array).toBe(true);
       expect(pk.length).toBeGreaterThan(0);
@@ -196,6 +199,7 @@ describe('Comprehensive API Tests', () => {
     test('should generate CSR successfully', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
+      keys.nodeGenerateKeys(); // Generate keys after initialization
       const csr = keys.nodeGenerateCsr();
       expect(csr instanceof Uint8Array).toBe(true);
       expect(csr.length).toBeGreaterThan(0);
@@ -216,6 +220,7 @@ describe('Comprehensive API Tests', () => {
     test('should encrypt local data successfully', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
+      keys.nodeGenerateKeys(); // Generate keys after initialization
       const data = Buffer.from('test data');
       const encrypted = keys.encryptLocalData(data);
       expect(encrypted instanceof Uint8Array).toBe(true);
@@ -225,6 +230,7 @@ describe('Comprehensive API Tests', () => {
     test('should decrypt local data successfully', () => {
       const keys = createFreshKeys(tmpDir);
       keys.initAsNode();
+      keys.nodeGenerateKeys(); // Generate keys after initialization
       const data = Buffer.from('test data');
       const encrypted = keys.encryptLocalData(data);
       const decrypted = keys.decryptLocalData(encrypted);

@@ -45,6 +45,7 @@ export function buildNodeInfo(keys: any, address: string, network: string): Buff
 }
 
 export async function signAndInstallCert(ca: { keys: any }, node: { keys: any }): Promise<void> {
+  node.keys.nodeGenerateKeys(); // Generate keys before CSR generation
   const st: Buffer = node.keys.nodeGenerateCsr();
   const certMsg: Buffer = ca.keys.mobileProcessSetupToken(st);
   node.keys.nodeInstallCertificate(certMsg);

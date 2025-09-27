@@ -271,6 +271,7 @@ export function createTestNodeKeys(tmpDir?: string): any {
   }
   
   keys.initAsNode();
+  keys.nodeGenerateKeys(); // Generate keys after initialization
   return keys;
 }
 

@@ -29,11 +29,16 @@ export declare class CaClient {
 export declare class CaCreator {
   static createRootCa(subject: string): Ca
   static createIssuingCa(rootCa: Ca, subject: string, validityDays: number, serial: number): Ca
+  static createEaKey(): Uint8Array
+  static getEaPublicKey(eaPrivateKeyDer: Uint8Array): Uint8Array
 }
 
 export declare class CaNode {
   constructor()
-  installIssuingCa(caCertDer: Uint8Array): Promise<void>
+  installIssuingCa(caCertDer: Uint8Array): void
+  setupComplete(rootCaSubject: string, issuingCaSubject: string, validityDays: number, issuingCaSerial: number, eaPublicKeys: Uint8Array, networkId: string): void
+  getRootCaCertificate(): Uint8Array
+  getIssuingCaCertificate(): Promise<Uint8Array>
   handleEnroll(requestCbor: Uint8Array): Promise<Uint8Array>
   handleRenew(requestCbor: Uint8Array): Promise<Uint8Array>
   handleRevoke(requestCbor: Uint8Array): Promise<Uint8Array>
@@ -43,13 +48,12 @@ export declare class CaNode {
   addAdminSki(adminSki: string): Promise<void>
   revokeToken(token: string): Promise<void>
   generateCrl(): Promise<Uint8Array>
-  setupComplete(rootCaSubject: string, issuingCaSubject: string, validityDays: number, issuingCaSerial: number, eaPublicKeys: Uint8Array, networkId: string): Promise<void>
   configureEnrollmentAuthority(eaPublicKeysCbor: Uint8Array): Promise<void>
   createShared(): CaNodeShared
 }
 
 export declare class CaNodeShared {
-  addAdminSki(adminSki: string): Promise<void>
+  addAdminSki(adminSki: string): void
 }
 
 export declare class CaServer {
@@ -60,6 +64,13 @@ export declare class CaServer {
   getAuthenticatedAddr(): Promise<string>
   configureAdminSkis(adminSkisCbor: Uint8Array): Promise<void>
   free(): void
+}
+
+export declare class Certificate {
+  /** Extract SKI (Subject Key Identifier) from DER-encoded certificate */
+  static extractSki(certDer: Uint8Array): string
+  /** Extract serial number from DER-encoded certificate */
+  static getSerial(certDer: Uint8Array): string
 }
 
 export declare class Discovery {
@@ -97,11 +108,14 @@ export declare class Keys {
    * Returns true if keys are loaded and ready, false otherwise
    */
   hasKeys(): boolean
+  nodeGetKeystoreState(): number
+  mobileGetKeystoreState(): number
   /**
    * Generate keys for node (explicit key generation when no state exists)
    * Returns error if keys already exist or if generation fails
    */
   generateKeys(): void
+  nodeGenerateKeys(): void
   mobileInitializeUserRootKey(): Promise<void>
   /**
    * Encrypt data using envelope encryption with mobile manager
@@ -117,6 +131,8 @@ export declare class Keys {
    * using the node key manager's envelope encryption.
    */
   nodeEncryptWithEnvelope(data: Uint8Array, networkPublicKey: Uint8Array | undefined | null, profilePublicKeys: Array<Uint8Array>): Uint8Array
+  /** Decrypt data using envelope decryption with node manager */
+  nodeDecryptWithEnvelope(encryptedData: Uint8Array): Uint8Array
   nodeGetNodeId(): string
   nodeGetPublicKey(): Uint8Array
   enableAutoPersist(enabled: boolean): void
@@ -128,6 +144,7 @@ export declare class Keys {
   mobileDecryptEnvelope(eedCbor: Uint8Array): Uint8Array
   nodeDecryptEnvelope(eedCbor: Uint8Array): Uint8Array
   nodeGenerateCsr(): Uint8Array
+  nodeGenerateCsrDer(): Uint8Array
   mobileProcessSetupToken(stCbor: Uint8Array): Uint8Array
   nodeInstallCertificate(ncmCbor: Uint8Array): void
   mobileGenerateNetworkDataKey(): Uint8Array
@@ -147,6 +164,7 @@ export declare class Keys {
    * This is essential for encrypting setup tokens to the mobile
    */
   mobileGetUserPublicKey(): Uint8Array
+  mobileGetPublicKey(): Uint8Array
   /**
    * Get the node agreement public key
    * This is used for verifying agreement keys in CSR flow
@@ -199,3 +217,6 @@ export interface DeviceKeystoreCaps {
   version: number
   flags: number
 }
+
+/** Set the global log level (following FFI pattern) */
+export declare function setLogLevel(level: number): void

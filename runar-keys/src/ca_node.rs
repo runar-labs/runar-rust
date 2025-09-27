@@ -133,6 +133,8 @@ impl CANode {
             "Available enrollment authorities: {:?}",
             self.enrollment_authorities.keys().collect::<Vec<_>>()
         );
+        
+        
         let ea_public_key = self
             .enrollment_authorities
             .get(&token.signer_id)
