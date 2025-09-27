@@ -66,6 +66,22 @@ export declare class CaNodeShared {
   getRootCaCertificate(): Uint8Array
   /** Get issuing CA certificate (following FFI pattern) */
   getIssuingCaCertificate(): Promise<Uint8Array>
+  /** Handle enrollment request (following FFI pattern) */
+  handleEnroll(requestCbor: Uint8Array, remoteAddr: string): Promise<Uint8Array>
+  /** Handle renewal request (following FFI pattern) */
+  handleRenew(requestCbor: Uint8Array, peerCertDer: Uint8Array): Promise<Uint8Array>
+  /** Handle revocation request (following FFI pattern) */
+  handleRevoke(requestCbor: Uint8Array, peerSki: string): Promise<Uint8Array>
+  /** Handle chain request (following FFI pattern) */
+  handleChain(networkId: string): Promise<Uint8Array>
+  /** Handle status request (following FFI pattern) */
+  handleStatus(networkId: string): Promise<Uint8Array>
+  /** Handle CRL request (following FFI pattern) */
+  handleCrl(networkId: string): Promise<Uint8Array>
+  /** Revoke token (following FFI pattern) */
+  revokeToken(tokenId: string): Promise<void>
+  /** Generate CRL-lite (following FFI pattern) */
+  generateCrlLite(): Promise<Uint8Array>
   /** Free shared CA Node resources (following FFI pattern) */
   free(): void
 }

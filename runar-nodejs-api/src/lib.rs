@@ -2915,6 +2915,131 @@ impl CaNodeShared {
         Ok(cert_bytes.into())
     }
 
+    /// Handle enrollment request (following FFI pattern)
+    #[napi]
+    pub async fn handle_enroll(&self, request_cbor: Uint8Array, remote_addr: String) -> Result<Uint8Array> {
+        // Parse the enrollment request
+        let enroll_request: runar_keys::ca_node_types::CsrEnrollRequest = cbor::from_slice(&request_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to parse enroll request: {e}")))?;
+
+        // Handle the enrollment request
+        let mut ca_node = self.inner.write().unwrap();
+        let response = ca_node.handle_enroll(enroll_request, &remote_addr)
+            .map_err(|e| Error::from_reason(format!("Failed to handle enroll request: {e}")))?;
+
+        // Serialize response to CBOR
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize enroll response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    /// Handle renewal request (following FFI pattern)
+    #[napi]
+    pub async fn handle_renew(&self, request_cbor: Uint8Array, peer_cert_der: Uint8Array) -> Result<Uint8Array> {
+        // Parse the renewal request
+        let renew_request: runar_keys::ca_node_types::RenewRequest = cbor::from_slice(&request_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to parse renew request: {e}")))?;
+
+        // Handle the renewal request
+        let mut ca_node = self.inner.write().unwrap();
+        let response = ca_node.handle_renew(renew_request, &peer_cert_der)
+            .map_err(|e| Error::from_reason(format!("Failed to handle renew request: {e}")))?;
+
+        // Serialize response to CBOR
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize renew response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    /// Handle revocation request (following FFI pattern)
+    #[napi]
+    pub async fn handle_revoke(&self, request_cbor: Uint8Array, peer_ski: String) -> Result<Uint8Array> {
+        // Parse the revocation request
+        let revoke_request: runar_keys::ca_node_types::RevokeRequest = cbor::from_slice(&request_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to parse revoke request: {e}")))?;
+
+        // Handle the revocation request
+        let mut ca_node = self.inner.write().unwrap();
+        let response = ca_node.handle_revoke(revoke_request, &peer_ski)
+            .map_err(|e| Error::from_reason(format!("Failed to handle revoke request: {e}")))?;
+
+        // Serialize response to CBOR
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize revoke response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    /// Handle chain request (following FFI pattern)
+    #[napi]
+    pub async fn handle_chain(&self, network_id: String) -> Result<Uint8Array> {
+        // Handle the chain request
+        let ca_node = self.inner.read().unwrap();
+        let response = ca_node.handle_chain(network_id)
+            .map_err(|e| Error::from_reason(format!("Failed to handle chain request: {e}")))?;
+
+        // Serialize response to CBOR
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize chain response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    /// Handle status request (following FFI pattern)
+    #[napi]
+    pub async fn handle_status(&self, network_id: String) -> Result<Uint8Array> {
+        // Handle the status request
+        let ca_node = self.inner.read().unwrap();
+        let response = ca_node.handle_status(network_id)
+            .map_err(|e| Error::from_reason(format!("Failed to handle status request: {e}")))?;
+
+        // Serialize response to CBOR
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize status response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    /// Handle CRL request (following FFI pattern)
+    #[napi]
+    pub async fn handle_crl(&self, network_id: String) -> Result<Uint8Array> {
+        // Handle the CRL request
+        let ca_node = self.inner.read().unwrap();
+        let response = ca_node.handle_crl(network_id)
+            .map_err(|e| Error::from_reason(format!("Failed to handle CRL request: {e}")))?;
+
+        // Serialize response to CBOR
+        let response_cbor = cbor::to_vec(&response)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize CRL response: {e}")))?;
+
+        Ok(response_cbor.into())
+    }
+
+    /// Revoke token (following FFI pattern)
+    #[napi]
+    pub async fn revoke_token(&self, token_id: String) -> Result<()> {
+        let mut ca_node = self.inner.write().unwrap();
+        ca_node.revoke_token(token_id)
+            .map_err(|e| Error::from_reason(format!("Failed to revoke token: {e}")))?;
+        Ok(())
+    }
+
+    /// Generate CRL-lite (following FFI pattern)
+    #[napi]
+    pub async fn generate_crl_lite(&self) -> Result<Uint8Array> {
+        let ca_node = self.inner.read().unwrap();
+        let crl_data = ca_node.generate_crl_lite()
+            .map_err(|e| Error::from_reason(format!("Failed to generate CRL-lite: {e}")))?;
+
+        // Serialize CRL to CBOR
+        let crl_cbor = cbor::to_vec(&crl_data)
+            .map_err(|e| Error::from_reason(format!("Failed to serialize CRL-lite: {e}")))?;
+
+        Ok(crl_cbor.into())
+    }
+
     /// Free shared CA Node resources (following FFI pattern)
     #[napi]
     pub fn free(&self) {
