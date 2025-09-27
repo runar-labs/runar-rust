@@ -326,7 +326,22 @@ describe('NodeJS Native API E2E Integration Tests', () => {
 
     describe('Phase 11: Certificate Revocation', () => {
         test('should perform revocation', async () => {
+            // Get client certificate and extract SKI (following FFI pattern)
             const certificate = nodeKeys.nodeGetNodeCertificate();
+            const clientSki = Certificate.extractSki(certificate!);
+            console.log(`   📋 Client certificate SKI: ${clientSki}`);
+            
+            // Add client SKI to CA Node admin allowlist (following FFI pattern)
+            const sharedCaNode = caNode.createShared();
+            sharedCaNode.addAdminSki(clientSki);
+            console.log(`   ✅ Added client SKI to CA Node admin allowlist: ${clientSki}`);
+            
+            // Also configure admin SKIs on the server (following FFI pattern)
+            const adminSkisCbor = new Uint8Array(cbor.encode([clientSki]));
+            await caServer.configureAdminSkis(adminSkisCbor);
+            console.log(`   ✅ Configured admin SKIs on server: ${clientSki}`);
+            
+            // Now perform revocation
             const serial = await Certificate.getSerial(certificate!);
             const revokeRequest = createRevokeRequest(serial, 'key_compromise');
             

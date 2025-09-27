@@ -20,8 +20,10 @@ import {
     CaServer, 
     CaClient, 
     EnrollmentToken,
-    DeviceKeystoreCaps 
+    DeviceKeystoreCaps,
+    Certificate
 } from '../index';
+import { encode, decode } from 'cbor-x';
 
 // Test configuration
 const TEST_NETWORK_ID = 'test_network_e2e';
@@ -29,6 +31,9 @@ const TEST_SUBJECT_ROOT = 'CN=Test Root CA';
 const TEST_SUBJECT_ISSUING = 'CN=Test Issuing CA';
 const TEST_VALIDITY_DAYS = 365;
 const TEST_SERIAL = 12345;
+
+// Global variables for test
+let eaKey: Uint8Array;
 
 // Helper function to create test logger
 function createTestLogger(): any {
@@ -81,8 +86,8 @@ function createCaClientConfig(
         issuing_ca_der: Array.from(issuingCaDer)
     };
     
-    // Serialize to CBOR (in a real implementation, you'd use a CBOR library)
-    return new Uint8Array(JSON.stringify(config).split('').map(c => c.charCodeAt(0)));
+    // Serialize to CBOR using proper CBOR library
+    return new Uint8Array(encode(config));
 }
 
 // Helper function to create CA server configuration
@@ -100,44 +105,61 @@ function createCaServerConfig(
         admin_skis: adminSkis
     };
     
-    // Serialize to CBOR (in a real implementation, you'd use a CBOR library)
-    return new Uint8Array(JSON.stringify(config).split('').map(c => c.charCodeAt(0)));
+    // Serialize to CBOR using proper CBOR library
+    return new Uint8Array(encode(config));
 }
 
 // Helper function to create enrollment request
 function createEnrollRequest(subject: string, csrDer: Uint8Array): Uint8Array {
+    // Create proper enrollment token using EnrollmentToken.generate()
+    const enrollmentTokenCbor = EnrollmentToken.generate(
+        eaKey,
+        TEST_NETWORK_ID,
+        subject, // subject_hint
+        1, // validity_days
+        ['enroll']
+    );
+    
+    // Decode the CBOR token to get the struct (following FFI pattern)
+    const enrollmentToken = decode(enrollmentTokenCbor);
+    
     const request = {
         network_id: TEST_NETWORK_ID,
-        subject: subject,
         csr_der: Array.from(csrDer),
-        token_cbor: new Uint8Array(0) // Will be filled by the test
+        enrollment_token: enrollmentToken // Use the decoded struct, not CBOR
     };
     
-    // Serialize to CBOR (in a real implementation, you'd use a CBOR library)
-    return new Uint8Array(JSON.stringify(request).split('').map(c => c.charCodeAt(0)));
+    // Serialize to CBOR using proper CBOR library
+    return new Uint8Array(encode(request));
 }
 
-// Helper function to create renewal request
-function createRenewRequest(certificateSerial: string): Uint8Array {
+// Helper function to create renewal request (following FFI pattern exactly)
+function createRenewRequest(certificateSerial: string, csrDer: Uint8Array): Uint8Array {
     const request = {
         network_id: TEST_NETWORK_ID,
-        certificate_serial: certificateSerial
+        csr_der: Array.from(csrDer) // Include CSR like FFI test
     };
     
-    // Serialize to CBOR (in a real implementation, you'd use a CBOR library)
-    return new Uint8Array(JSON.stringify(request).split('').map(c => c.charCodeAt(0)));
+    // Serialize to CBOR using proper CBOR library
+    return new Uint8Array(encode(request));
 }
 
-// Helper function to create revocation request
+// Helper function to create revocation request (following FFI pattern exactly)
 function createRevokeRequest(certificateSerial: string, reason: string): Uint8Array {
+    // Convert hex string to bytes (following FFI pattern exactly)
+    const certSerialBytes = new Uint8Array(certificateSerial.length / 2);
+    for (let i = 0; i < certificateSerial.length; i += 2) {
+        certSerialBytes[i / 2] = parseInt(certificateSerial.substr(i, 2), 16);
+    }
+    
     const request = {
         network_id: TEST_NETWORK_ID,
-        certificate_serial: certificateSerial,
+        certificate_serial: Array.from(certSerialBytes), // Use bytes, not string
         reason: reason
     };
     
-    // Serialize to CBOR (in a real implementation, you'd use a CBOR library)
-    return new Uint8Array(JSON.stringify(request).split('').map(c => c.charCodeAt(0)));
+    // Serialize to CBOR using proper CBOR library
+    return new Uint8Array(encode(request));
 }
 
 // Main E2E test function
@@ -170,20 +192,38 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     const issuingCa = CaCreator.createIssuingCa(rootCa, TEST_SUBJECT_ISSUING, TEST_VALIDITY_DAYS, TEST_SERIAL);
     console.log('   ✅ Created issuing CA');
 
-    // Get CA certificates
-    const rootCaDer = rootCa.getCertificate();
+    // Get issuing CA certificate for installation
     const issuingCaDer = issuingCa.getCertificate();
 
-    // Validate certificate chain
-    validateCertificateChain(rootCaDer, issuingCaDer);
-
-    // Create CA Node
+    // Create CA Node (following FFI pattern exactly)
     const caNode = new CaNode();
     console.log('   ✅ Created CA Node');
 
-    // Install issuing CA in CA Node
+    // Install issuing CA in CA Node (following FFI pattern exactly)
     await caNode.installIssuingCa(issuingCaDer);
     console.log('   ✅ Installed issuing CA in CA Node');
+    
+    // Setup CA Node with EA public keys (following FFI pattern exactly)
+    eaKey = CaCreator.createEaKey();
+    const eaPublicKey = CaCreator.getEaPublicKey(eaKey);
+    const eaPublicKeysCbor = new Uint8Array(encode([Array.from(eaPublicKey)]));
+    
+    await caNode.setupComplete(
+        TEST_SUBJECT_ROOT,
+        TEST_SUBJECT_ISSUING,
+        TEST_VALIDITY_DAYS,
+        1, // issuing_ca_serial
+        eaPublicKeysCbor,
+        TEST_NETWORK_ID
+    );
+    console.log('   ✅ CA Node setup complete with EA public keys');
+
+    // Get CA certificates from SAME CA Node (following FFI pattern exactly)
+    const rootCaDer = caNode.getRootCaCertificate();
+    const issuingCaDerFromNode = await caNode.getIssuingCaCertificate();
+
+    // Validate certificate chain
+    validateCertificateChain(rootCaDer, issuingCaDerFromNode);
 
     // ==========================================
     // Phase 3: CA Server Setup
@@ -192,7 +232,7 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
 
     // Create CA server configuration
     const adminSkis = ['admin_ski_1', 'admin_ski_2'];
-    const serverConfig = createCaServerConfig('0.0.0.0:8443', '0.0.0.0:8444', adminSkis);
+    const serverConfig = createCaServerConfig('127.0.0.1:8443', '127.0.0.1:8444', adminSkis);
 
     // Create CA server
     const caServer = new CaServer(serverConfig, caNode.createShared());
@@ -239,8 +279,8 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     // ==========================================
     console.log('\n🏗️  PHASE 6: CA Client Setup');
 
-    // Create CA client configuration
-    const clientConfig = createCaClientConfig(bootstrapAddr, authenticatedAddr, rootCaDer, issuingCaDer);
+    // Create CA client configuration (using certificates from SAME CA Node)
+    const clientConfig = createCaClientConfig(bootstrapAddr, authenticatedAddr, rootCaDer, issuingCaDerFromNode);
 
     // Create CA client
     const caClient = new CaClient(clientConfig, nodeKeys);
@@ -251,13 +291,13 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     // ==========================================
     console.log('\n🏗️  PHASE 7: Enrollment Token Generation');
 
-    // Get mobile public key for enrollment authority
-    const mobilePublicKey = await mobileKeys.mobileGetPublicKey();
-    console.log('   ✅ Got mobile public key');
+    // Generate enrollment token using EA key (following FFI pattern)
+    const enrollmentEaKey = CaCreator.createEaKey();
+    console.log('   ✅ Created EA key for enrollment token');
 
     // Generate enrollment token
     const token = EnrollmentToken.generate(
-        mobilePublicKey,
+        enrollmentEaKey,
         TEST_NETWORK_ID,
         'test_subject_hint',
         7, // validity days
@@ -271,7 +311,7 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     console.log('\n🏗️  PHASE 8: Certificate Enrollment');
 
     // Generate CSR
-    const csrDer = await nodeKeys.nodeGenerateCsr('CN=Test Node');
+    const csrDer = nodeKeys.nodeGenerateCsrDer();
     console.log('   ✅ Generated CSR');
 
     // Create enrollment request
@@ -281,8 +321,15 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     const enrollResponse = await caClient.enroll(bootstrapAddr, enrollRequest);
     console.log('   ✅ Performed enrollment');
 
-    // Install certificate
-    await nodeKeys.nodeInstallCertificateFromMessage(enrollResponse);
+    // Convert enrollment response to certificate message (following FFI pattern exactly)
+    const certMessage = mobileKeys.mobileFromEnrollResponse(enrollResponse);
+    if (certMessage.length === 0) {
+        throw new Error('Failed to convert enrollment response to certificate message');
+    }
+    console.log('   ✅ Enrollment response converted to certificate message');
+
+    // Install certificate (following FFI pattern exactly)
+    await nodeKeys.nodeInstallCertificate(certMessage);
     console.log('   ✅ Installed certificate');
 
     // ==========================================
@@ -290,25 +337,53 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     // ==========================================
     console.log('\n🏗️  PHASE 9: Certificate Renewal');
 
-    // Get certificate serial for renewal
-    const certificateSerial = await nodeKeys.certificateGetSerial(nodeKeys.nodeGetNodeCertificate()!);
+    // Get certificate serial for renewal (following FFI pattern exactly)
+    const nodeCertificate = nodeKeys.nodeGetNodeCertificate();
+    if (!nodeCertificate) {
+        throw new Error('Node certificate not found');
+    }
+    const certificateSerial = Certificate.getSerial(nodeCertificate);
     console.log(`   ✅ Got certificate serial: ${certificateSerial}`);
 
-    // Create renewal request
-    const renewRequest = createRenewRequest(certificateSerial);
+    // Generate new CSR for renewal (following FFI pattern exactly)
+    const renewalCsrDer = nodeKeys.nodeGenerateCsrDer();
+    console.log('   ✅ Generated renewal CSR');
+
+    // Create renewal request (following FFI pattern exactly)
+    const renewRequest = createRenewRequest(certificateSerial, renewalCsrDer);
 
     // Perform renewal
     const renewResponse = await caClient.renew(authenticatedAddr, renewRequest);
     console.log('   ✅ Performed renewal');
 
-    // Install renewed certificate
-    await nodeKeys.nodeInstallCertificateFromMessage(renewResponse);
+    // Convert renewal response to certificate message (following FFI pattern exactly)
+    const renewCertMessage = mobileKeys.mobileFromRenewResponse(renewResponse);
+    if (renewCertMessage.length === 0) {
+        throw new Error('Failed to convert renewal response to certificate message');
+    }
+    console.log('   ✅ Renewal response converted to certificate message');
+
+    // Install renewed certificate (following FFI pattern exactly)
+    await nodeKeys.nodeInstallCertificate(renewCertMessage);
     console.log('   ✅ Installed renewed certificate');
 
     // ==========================================
     // Phase 10: Certificate Revocation
     // ==========================================
     console.log('\n🏗️  PHASE 10: Certificate Revocation');
+
+    // Extract client SKI for admin authorization (following FFI pattern exactly)
+    const clientSki = Certificate.extractSki(nodeCertificate);
+    console.log(`   📋 Client certificate SKI: ${clientSki}`);
+
+    // Add client SKI to CA Node admin allowlist (following FFI pattern exactly)
+    caNode.addAdminSki(clientSki);
+    console.log(`   ✅ Added client SKI to CA Node admin allowlist: ${clientSki}`);
+
+    // Configure admin SKIs on server (following FFI pattern exactly)
+    const adminSkisCbor = new Uint8Array(encode([clientSki]));
+    await caServer.configureAdminSkis(adminSkisCbor);
+    console.log(`   ✅ Configured admin SKIs on server: ${clientSki}`);
 
     // Create revocation request
     const revokeRequest = createRevokeRequest(certificateSerial, 'key_compromise');
@@ -335,9 +410,9 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     const profileKey = await nodeKeys.nodeDeriveUserProfileKey('test_user_id');
     console.log('   ✅ Derived user profile key');
 
-    // Encrypt with envelope
+    // Encrypt with envelope (following FFI pattern exactly)
     const testData = new Uint8Array([1, 2, 3, 4, 5]);
-    const encryptedData = await nodeKeys.nodeEncryptWithEnvelope(testData, [profileKey]);
+    const encryptedData = await nodeKeys.nodeEncryptWithEnvelope(testData, null, [profileKey]);
     console.log('   ✅ Encrypted with envelope');
 
     // Decrypt with envelope
@@ -369,17 +444,17 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     console.log('\n🏗️  PHASE 14: Certificate Analysis');
 
     // Get node certificate
-    const nodeCertificate = nodeKeys.nodeGetNodeCertificate();
-    if (!nodeCertificate) {
+    const nodeCert = nodeKeys.nodeGetNodeCertificate();
+    if (!nodeCert) {
         throw new Error('Node certificate not found');
     }
 
-    // Extract SKI
-    const ski = await nodeKeys.certificateExtractSki(nodeCertificate);
+    // Extract SKI (following FFI pattern exactly)
+    const ski = Certificate.extractSki(nodeCert);
     console.log(`   ✅ Extracted SKI: ${ski}`);
 
-    // Get serial number
-    const serial = await nodeKeys.certificateGetSerial(nodeCertificate);
+    // Get serial number (following FFI pattern exactly)
+    const serial = Certificate.getSerial(nodeCert);
     console.log(`   ✅ Got serial number: ${serial}`);
 
     // ==========================================
@@ -408,14 +483,13 @@ export async function testNodejsFullTransportE2EQuicMtls(): Promise<void> {
     await caServer.stop();
     console.log('   ✅ Stopped CA Server');
 
-    // Free resources
+    // Free resources (only for objects that have free methods)
     caServer.free();
     caClient.free();
     caNode.free();
     rootCa.free();
     issuingCa.free();
-    nodeKeys.free();
-    mobileKeys.free();
+    // nodeKeys and mobileKeys don't have free methods in NAPI-RS
     console.log('   ✅ Freed all resources');
 
     console.log('\n🎉 NodeJS Full-transport E2E QUIC mTLS test completed successfully!');

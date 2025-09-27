@@ -35,6 +35,8 @@ export declare class CaCreator {
 
 export declare class CaNode {
   constructor()
+  /** Create new shared CA Node (following FFI pattern exactly) */
+  static newShared(): CaNodeShared
   installIssuingCa(caCertDer: Uint8Array): void
   setupComplete(rootCaSubject: string, issuingCaSubject: string, validityDays: number, issuingCaSerial: number, eaPublicKeys: Uint8Array, networkId: string): void
   getRootCaCertificate(): Uint8Array
@@ -48,12 +50,24 @@ export declare class CaNode {
   addAdminSki(adminSki: string): Promise<void>
   revokeToken(token: string): Promise<void>
   generateCrl(): Promise<Uint8Array>
-  configureEnrollmentAuthority(eaPublicKeysCbor: Uint8Array): Promise<void>
   createShared(): CaNodeShared
+  /** Free CA Node resources (following FFI pattern) */
+  free(): void
+  configureEnrollmentAuthority(eaPublicKeysCbor: Uint8Array): Promise<void>
 }
 
 export declare class CaNodeShared {
   addAdminSki(adminSki: string): void
+  /** Setup shared CA Node (following FFI pattern) */
+  setupComplete(rootCaSubject: string, issuingCaSubject: string, validityDays: number, issuingCaSerial: number, eaPublicKeys: Uint8Array, networkId: string): Promise<void>
+  /** Configure enrollment authority (following FFI pattern) */
+  configureEnrollmentAuthority(eaPublicKeysCbor: Uint8Array): Promise<void>
+  /** Get root CA certificate (following FFI pattern) */
+  getRootCaCertificate(): Uint8Array
+  /** Get issuing CA certificate (following FFI pattern) */
+  getIssuingCaCertificate(): Promise<Uint8Array>
+  /** Free shared CA Node resources (following FFI pattern) */
+  free(): void
 }
 
 export declare class CaServer {
@@ -211,6 +225,12 @@ export declare class Transport {
   request(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, networkPublicKey?: Uint8Array | undefined | null, profilePublicKeys?: Array<Uint8Array> | undefined | null): Promise<Uint8Array>
   publish(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, networkPublicKey?: Uint8Array | undefined | null): Promise<void>
   updatePeers(nodeInfoCbor: Uint8Array): Promise<void>
+}
+
+/** Utility functions for common operations */
+export declare class Utils {
+  /** Calculate compact ID from public key (following FFI pattern) */
+  static compactId(publicKey: Uint8Array): string
 }
 
 export interface DeviceKeystoreCaps {

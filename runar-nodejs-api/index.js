@@ -568,4 +568,5 @@ module.exports.Discovery = nativeBinding.Discovery
 module.exports.EnrollmentToken = nativeBinding.EnrollmentToken
 module.exports.Keys = nativeBinding.Keys
 module.exports.Transport = nativeBinding.Transport
+module.exports.Utils = nativeBinding.Utils
 module.exports.setLogLevel = nativeBinding.setLogLevel

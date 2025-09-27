@@ -129,7 +129,7 @@ use runar_transporter::{
 use serde::{Deserialize, Serialize};
 use serde_cbor as cbor;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock as StdRwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
@@ -169,8 +169,8 @@ pub struct Keys {
 }
 
 struct KeysInner {
-    node_key_manager: Option<Arc<StdRwLock<NodeKeyManager>>>,
-    mobile_key_manager: Option<Arc<StdRwLock<MobileKeyManager>>>,
+    node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
+    mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
     persistence_dir: Option<String>,
     auto_persist: bool,
     logger: Arc<Logger>,
@@ -211,7 +211,7 @@ impl Keys {
         if inner.mobile_key_manager.is_none() {
             let mobile = MobileKeyManager::new(inner.logger.clone())
                 .map_err(|e| Error::from_reason(e.to_string()))?;
-            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(mobile)));
+            inner.mobile_key_manager = Some(Arc::new(RwLock::new(mobile)));
         }
 
         Ok(())
@@ -234,7 +234,7 @@ impl Keys {
             let node = NodeKeyManager::new(inner.logger.clone())
                 .map_err(|e| Error::from_reason(e.to_string()))?;
 
-            inner.node_key_manager = Some(Arc::new(StdRwLock::new(node)));
+            inner.node_key_manager = Some(Arc::new(RwLock::new(node)));
         }
 
         Ok(())
@@ -348,7 +348,7 @@ impl Keys {
     pub async fn mobile_initialize_user_root_key(&self) -> Result<()> {
         let mut guard = self.inner.lock().unwrap();
         if guard.mobile_key_manager.is_none() {
-            guard.mobile_key_manager = Some(Arc::new(StdRwLock::new(
+            guard.mobile_key_manager = Some(Arc::new(RwLock::new(
                 MobileKeyManager::new(guard.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             )));
@@ -681,7 +681,7 @@ impl Keys {
     pub fn mobile_process_setup_token(&self, st_cbor: Uint8Array) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile_key_manager.is_none() {
-            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(
+            inner.mobile_key_manager = Some(Arc::new(RwLock::new(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             )));
@@ -718,7 +718,7 @@ impl Keys {
     pub fn mobile_generate_network_data_key(&self) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile_key_manager.is_none() {
-            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(
+            inner.mobile_key_manager = Some(Arc::new(RwLock::new(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             )));
@@ -738,7 +738,7 @@ impl Keys {
     pub fn mobile_install_network_public_key(&self, network_pk: Uint8Array) -> Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile_key_manager.is_none() {
-            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(
+            inner.mobile_key_manager = Some(Arc::new(RwLock::new(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             )));
@@ -853,7 +853,7 @@ impl Keys {
     pub fn mobile_derive_user_profile_key(&self, label: String) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile_key_manager.is_none() {
-            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(
+            inner.mobile_key_manager = Some(Arc::new(RwLock::new(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             )));
@@ -875,7 +875,7 @@ impl Keys {
         if inner.mobile_key_manager.is_none() {
             match MobileKeyManager::new(inner.logger.clone()) {
                 Ok(manager) => {
-                    inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(manager)));
+                    inner.mobile_key_manager = Some(Arc::new(RwLock::new(manager)));
                 }
                 Err(_) => {
                     // Return false if we can't create the manager
@@ -901,7 +901,7 @@ impl Keys {
     ) -> Result<Uint8Array> {
         let mut inner = self.inner.lock().unwrap();
         if inner.mobile_key_manager.is_none() {
-            inner.mobile_key_manager = Some(Arc::new(StdRwLock::new(
+            inner.mobile_key_manager = Some(Arc::new(RwLock::new(
                 MobileKeyManager::new(inner.logger.clone())
                     .map_err(|e| Error::from_reason(e.to_string()))?,
             )));
@@ -1267,16 +1267,36 @@ impl Transport {
             (km_arc, logger, guard.local_node_info.clone(), node_pk)
         };
 
-        // Parse bind address from options (CBOR: { bind_addr: "ip:port" })
+        // Parse options from CBOR: { bind_addr: "ip:port", root_certificates: [...] }
         let mut bind_addr: std::net::SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let mut root_certificates: Vec<Vec<u8>> = Vec::new();
+        
         if let Ok(serde_cbor::Value::Map(map)) =
             cbor::from_slice::<serde_cbor::Value>(options_cbor.as_ref())
         {
+            // Parse bind address
             if let Some(serde_cbor::Value::Text(addr)) =
                 map.get(&serde_cbor::Value::Text("bind_addr".into()))
             {
                 if let Ok(parsed) = addr.parse() {
                     bind_addr = parsed
+                }
+            }
+            
+            // Parse root certificates
+            if let Some(serde_cbor::Value::Array(certs)) =
+                map.get(&serde_cbor::Value::Text("root_certificates".into()))
+            {
+                for cert in certs {
+                    if let serde_cbor::Value::Array(cert_bytes) = cert {
+                        let cert_der: Vec<u8> = cert_bytes.iter()
+                            .filter_map(|b| match b {
+                                serde_cbor::Value::Integer(n) => Some(*n as u8),
+                                _ => None,
+                            })
+                            .collect();
+                        root_certificates.push(cert_der);
+                    }
                 }
             }
         }
@@ -1397,7 +1417,7 @@ impl Transport {
             })
         };
 
-        let opts = QuicTransportOptions::new()
+        let mut opts = QuicTransportOptions::new()
             .with_bind_addr(bind_addr)
             .with_local_node_public_key(node_pk)
             .with_logger(logger)
@@ -1406,6 +1426,15 @@ impl Transport {
             .with_request_callback(request_cb)
             .with_event_callback(event_cb)
             .with_peer_connected_callback(peer_connected_cb);
+            
+        // Add root certificates for mTLS if provided
+        if !root_certificates.is_empty() {
+            let cert_der_vec: Vec<rustls::pki_types::CertificateDer<'static>> = root_certificates
+                .into_iter()
+                .map(|cert_der| rustls::pki_types::CertificateDer::from(cert_der))
+                .collect();
+            opts = opts.with_root_certificates(cert_der_vec);
+        }
 
         let transport = QuicTransport::new(opts)
             .map_err(|e| Error::from_reason(format!("Transport init error: {e}")))?;
@@ -1846,6 +1875,7 @@ impl CaServer {
         .await
         .map_err(|e| Error::from_reason(format!("Failed to stop CA Server: {e}")))?
     }
+
 
     #[napi]
     pub async fn get_bootstrap_addr(&self) -> Result<String> {
@@ -2442,7 +2472,7 @@ impl EnrollmentToken {
 // CA Node Management APIs
 #[napi]
 pub struct CaNode {
-    inner: Arc<StdRwLock<CANode>>,
+    inner: Arc<RwLock<CANode>>,
 }
 
 #[napi]
@@ -2473,7 +2503,38 @@ impl CaNode {
         );
         
         Ok(Self {
-            inner: Arc::new(StdRwLock::new(ca_node)),
+            inner: Arc::new(RwLock::new(ca_node)),
+        })
+    }
+
+    /// Create new shared CA Node (following FFI pattern exactly)
+    #[napi]
+    pub fn new_shared() -> Result<CaNodeShared> {
+        let logger = Arc::new(Logger::new_root(Component::Keys));
+        
+        // Create a proper CA Node with valid certificates
+        // This follows the design pattern from the FFI implementation
+        let temp_key = runar_keys::certificate::EcdsaKeyPair::new()
+            .map_err(|e| Error::from_reason(format!("Failed to create CA key: {e}")))?;
+
+        // Create temporary certificates using CertificateAuthority
+        // These will be replaced by setup_complete with the real certificates
+        let temp_ca_authority = runar_keys::certificate::CertificateAuthority::new("CN=Temp CA,O=Temp,C=US")
+            .map_err(|e| Error::from_reason(format!("Failed to create temporary CA: {e}")))?;
+
+        let temp_cert = temp_ca_authority.ca_certificate().clone();
+        let temp_root_cert = temp_ca_authority.ca_certificate().clone();
+
+        let ca_node = CANode::new(
+            temp_key,
+            temp_cert,
+            temp_root_cert,
+            "uninitialized".to_string(), // Will be updated by setup_complete
+            logger,
+        );
+        
+        Ok(CaNodeShared {
+            inner: Arc::new(RwLock::new(ca_node)),
         })
     }
 
@@ -2724,6 +2785,20 @@ impl CaNode {
         Ok(crl_cbor.into())
     }
 
+    #[napi]
+    pub fn create_shared(&self) -> Result<CaNodeShared> {
+        Ok(CaNodeShared {
+            inner: self.inner.clone(),
+        })
+    }
+
+    /// Free CA Node resources (following FFI pattern)
+    #[napi]
+    pub fn free(&self) {
+        // NAPI-RS handles memory cleanup automatically
+        // This method exists for API consistency with FFI
+    }
+
 
     #[napi]
     pub async fn configure_enrollment_authority(
@@ -2744,18 +2819,12 @@ impl CaNode {
         .map_err(|e| Error::from_reason(format!("Failed to configure enrollment authority: {e}")))?
     }
 
-    #[napi]
-    pub fn create_shared(&self) -> Result<CaNodeShared> {
-        Ok(CaNodeShared {
-            inner: self.inner.clone(),
-        })
-    }
 }
 
 // CA Node Shared Reference API
 #[napi]
 pub struct CaNodeShared {
-    inner: Arc<StdRwLock<CANode>>,
+    inner: Arc<RwLock<CANode>>,
 }
 
 #[napi]
@@ -2765,6 +2834,105 @@ impl CaNodeShared {
         let mut ca_node = self.inner.write().unwrap();
         ca_node.add_admin_ski(admin_ski);
         Ok(())
+    }
+
+    /// Setup shared CA Node (following FFI pattern)
+    #[napi]
+    pub async fn setup_complete(
+        &self,
+        root_ca_subject: String,
+        issuing_ca_subject: String,
+        validity_days: u32,
+        issuing_ca_serial: i64,
+        ea_public_keys: Uint8Array,
+        network_id: String,
+    ) -> Result<()> {
+        // Parse enrollment authority public keys
+        let ea_public_keys_vec: Vec<Vec<u8>> = cbor::from_slice(&ea_public_keys)
+            .map_err(|e| Error::from_reason(format!("Failed to parse EA public keys: {e}")))?;
+
+        // Create Root CA internally (private key never leaves Rust)
+        let root_ca = runar_keys::certificate::CertificateAuthority::new(&root_ca_subject)
+            .map_err(|e| Error::from_reason(format!("Failed to create Root CA: {e}")))?;
+
+        // Create Issuing CA key internally (private key never leaves Rust)
+        let issuing_key = runar_keys::certificate::EcdsaKeyPair::new()
+            .map_err(|e| Error::from_reason(format!("Failed to create Issuing CA key: {e}")))?;
+
+        // Create and sign Issuing CA certificate internally
+        let issuing_csr = runar_keys::certificate::CertificateRequest::create(&issuing_key, &issuing_ca_subject)
+            .map_err(|e| Error::from_reason(format!("Failed to create Issuing CA CSR: {e}")))?;
+
+        let issuing_cert = root_ca
+            .sign_ca_certificate_request_with_serial(&issuing_csr, validity_days, Some(issuing_ca_serial as u64))
+            .map_err(|e| Error::from_reason(format!("Failed to sign Issuing CA certificate: {e}")))?;
+
+        // Install everything in shared CA Node (no private keys exposed) - SYNCHRONOUS like FFI
+        let mut ca_node = self.inner.write().unwrap();
+        ca_node.network_id = network_id.clone();
+        
+        ca_node.install_issuing_ca(
+            issuing_key,
+            issuing_cert,
+            root_ca.ca_certificate().clone(),
+            ea_public_keys_vec,
+        )
+        .map_err(|e| Error::from_reason(format!("Failed to install Issuing CA: {e}")))?;
+        
+        Ok(())
+    }
+
+    /// Configure enrollment authority (following FFI pattern)
+    #[napi]
+    pub async fn configure_enrollment_authority(
+        &self,
+        ea_public_keys_cbor: Uint8Array,
+    ) -> Result<()> {
+        let ea_public_keys: Vec<Vec<u8>> = cbor::from_slice(&ea_public_keys_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to parse EA public keys: {e}")))?;
+
+        let mut ca_node = self.inner.write().unwrap();
+        for ea_public_key in ea_public_keys {
+            let signer_id = runar_common::compact_ids::compact_id(&ea_public_key);
+            ca_node.enrollment_authorities.insert(signer_id, ea_public_key);
+        }
+        Ok(())
+    }
+
+    /// Get root CA certificate (following FFI pattern)
+    #[napi]
+    pub fn get_root_ca_certificate(&self) -> Result<Uint8Array> {
+        let ca_node = self.inner.read().unwrap();
+        let cert_bytes = ca_node.root_ca_cert.der_bytes().to_vec();
+        Ok(cert_bytes.into())
+    }
+
+    /// Get issuing CA certificate (following FFI pattern)
+    #[napi]
+    pub async fn get_issuing_ca_certificate(&self) -> Result<Uint8Array> {
+        let ca_node = self.inner.read().unwrap();
+        let cert_bytes = ca_node.issuing_ca_cert.der_bytes().to_vec();
+        Ok(cert_bytes.into())
+    }
+
+    /// Free shared CA Node resources (following FFI pattern)
+    #[napi]
+    pub fn free(&self) {
+        // NAPI-RS handles memory cleanup automatically
+        // This method exists for API consistency with FFI
+    }
+}
+
+/// Utility functions for common operations
+#[napi]
+pub struct Utils;
+
+#[napi]
+impl Utils {
+    /// Calculate compact ID from public key (following FFI pattern)
+    #[napi]
+    pub fn compact_id(public_key: Uint8Array) -> String {
+        runar_common::compact_ids::compact_id(&public_key)
     }
 }
 

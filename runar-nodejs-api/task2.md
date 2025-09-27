@@ -24,3 +24,6 @@ Follow our code standards /home/rafael/Development/runar-rust/.cursor/rules/code
  DO NOT LEAVE OLD CODE BEHAIND  
  REMOVE all old not used stuff 
  NO BACKWARDS COMPATIBIILITY -> THIS IS A NEW CODEBASE. KEEP IT CLEAN AND ORGANIZED and aligned with the final design and the FFI crate nothing more, nothing less
+
+
+ DO NOT CHANGE ANYTIHNG OURSIDE THE runar-nodejs-api crate. 

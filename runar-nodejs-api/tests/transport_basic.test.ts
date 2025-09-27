@@ -41,9 +41,19 @@ describe('Transport Basic Tests', () => {
     a.keys.setLocalNodeInfo(buildNodeInfo(a.keys, '127.0.0.1:50311', 'test'));
     b.keys.setLocalNodeInfo(buildNodeInfo(b.keys, '127.0.0.1:50312', 'test'));
 
-    // Build transports
-    const ta = new addon.Transport(a.keys, encode({ bind_addr: '127.0.0.1:50311' }));
-    const tb = new addon.Transport(b.keys, encode({ bind_addr: '127.0.0.1:50312' }));
+    // Get root CA certificates for mTLS trust
+    const rootCaCert = ca.caNode.getRootCaCertificate();
+    const issuingCaCert = await ca.caNode.getIssuingCaCertificate();
+    
+    // Build transports with root certificates for mTLS
+    const ta = new addon.Transport(a.keys, encode({ 
+      bind_addr: '127.0.0.1:50311',
+      root_certificates: [Array.from(rootCaCert), Array.from(issuingCaCert)]
+    }));
+    const tb = new addon.Transport(b.keys, encode({ 
+      bind_addr: '127.0.0.1:50312',
+      root_certificates: [Array.from(rootCaCert), Array.from(issuingCaCert)]
+    }));
 
     await withTimeout(Promise.all([ta.start(), tb.start()]), 4000, 'start transports');
 
