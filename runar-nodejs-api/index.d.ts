@@ -231,7 +231,18 @@ export declare class Keys {
 }
 
 export declare class Transport {
-  constructor(keys: Keys, optionsCbor: Uint8Array)
+  constructor(keys: Keys, options: TransportOptions)
+  onRequest(callback: (arg?: unknown) => unknown): void
+  onEvent(callback: (arg?: unknown) => unknown): void
+  onPeerConnected(callback: (arg?: unknown) => unknown): void
+  onPeerDisconnected(callback: (arg?: unknown) => unknown): void
+  removeRequestCallback(): void
+  pollEvent(): Promise<Uint8Array | null>
+  removeEventCallback(): void
+  removePeerConnectedCallback(): void
+  removePeerDisconnectedCallback(): void
+  setCallbackTimeout(timeoutMs: number): void
+  getCallbackTimeout(): number
   completeRequest(requestId: string, responsePayload: Uint8Array, profilePublicKeys: Array<Uint8Array>): Promise<void>
   start(): Promise<void>
   stop(): Promise<void>
@@ -241,6 +252,10 @@ export declare class Transport {
   request(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, networkPublicKey?: Uint8Array | undefined | null, profilePublicKeys?: Array<Uint8Array> | undefined | null): Promise<Uint8Array>
   publish(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, networkPublicKey?: Uint8Array | undefined | null): Promise<void>
   updatePeers(nodeInfoCbor: Uint8Array): Promise<void>
+  getLocalAddr(): Promise<string>
+  requestFfi(requestParamsCbor: Uint8Array): Promise<void>
+  publishFfi(publishParamsCbor: Uint8Array): Promise<void>
+  completeRequestFfi(completeParamsCbor: Uint8Array): Promise<void>
 }
 
 /** Utility functions for common operations */
@@ -254,5 +269,43 @@ export interface DeviceKeystoreCaps {
   flags: number
 }
 
-/** Set the global log level (following FFI pattern) */
+/** Set node ID on root logger (following FFI pattern exactly) */
+export declare function setLoggerNodeId(nodeId: string): void
+
+/** Set the global log level (following FFI pattern exactly) */
 export declare function setLogLevel(level: number): void
+
+export interface TransportEvent {
+  path: string
+  correlationId: string
+  payload: Uint8Array
+  sourceNodeId: string
+  destinationNodeId: string
+  profilePublicKeys: Array<Uint8Array>
+  networkPublicKey?: Uint8Array
+}
+
+export interface TransportOptions {
+  bindAddr?: string
+  connectionIdleTimeout?: number
+  keepAliveInterval?: number
+  maxMessageSize?: number
+  enableRequestCallbacks?: boolean
+  enableEventCallbacks?: boolean
+  enablePeerCallbacks?: boolean
+}
+
+export interface TransportRequest {
+  path: string
+  correlationId: string
+  payload: Uint8Array
+  sourceNodeId: string
+  destinationNodeId: string
+  profilePublicKeys: Array<Uint8Array>
+  networkPublicKey?: Uint8Array
+}
+
+export interface TransportResponse {
+  payload: Uint8Array
+  correlationId: string
+}

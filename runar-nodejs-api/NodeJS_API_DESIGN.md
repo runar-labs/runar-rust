@@ -16,6 +16,44 @@ The current NodeJS API (`runar-nodejs-api`) is significantly behind the updated 
 - **Serialization**: All new APIs use CBOR serialization for complex data structures
 - **API Alignment**: NodeJS API is approximately 60% complete compared to FFI API
 
+## Strategic Design Decision: Callback Pattern vs Polling Pattern
+
+### **DECISION: Use Direct Callbacks Instead of FFI Polling Pattern**
+
+**Rationale:**
+The FFI API uses a polling pattern (`rn_transport_poll_event()`) due to C interface limitations:
+- C function pointers cannot handle async Rust code
+- C callbacks run on C threads, not Rust async runtime
+- Memory management issues across FFI boundaries
+- Threading incompatibilities
+
+**NAPI-RS Advantages:**
+- Native async support bridging Rust to JavaScript
+- Proper memory management across boundaries
+- Threading integration with Node.js event loop
+- Lifetime safety management
+- Direct callback registration capabilities
+
+**Alignment with QuicTransport:**
+The actual `QuicTransport` implementation already uses callbacks internally:
+```rust
+pub struct QuicTransport {
+    request_callback: super::RequestCallback,
+    event_callback: super::EventCallback,
+    peer_connected_callback: Option<super::PeerConnectedCallback>,
+    peer_disconnected_callback: Option<super::PeerDisconnectedCallback>,
+}
+```
+
+**Documentation for Future Reference:**
+This is a **STRATEGIC DEVIATION** from the FFI design. The NodeJS API will use direct callbacks instead of polling to:
+1. Align with the actual `QuicTransport` implementation
+2. Leverage NAPI-RS capabilities
+3. Provide a more intuitive Node.js-style API
+4. Avoid FFI limitations that don't apply to NAPI-RS
+
+**This decision is documented here to prevent future confusion about why the NodeJS API differs from the FFI API in this specific area.**
+
 ## Current State Analysis
 
 ### Existing NodeJS API (What's Working)
@@ -56,6 +94,12 @@ export class Transport {
   stop(): Promise<void>
   request(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, ...): Promise<Uint8Array>
   publish(path: string, correlationId: string, payload: Uint8Array, destPeerId: string, ...): Promise<void>
+  
+  // NEW: Callback registration (replaces FFI polling pattern)
+  onRequest(callback: (request: TransportRequest) => Promise<TransportResponse>): void
+  onEvent(callback: (event: TransportEvent) => void): void
+  onPeerConnected(callback: (peerId: string, nodeInfo: NodeInfo) => void): void
+  onPeerDisconnected(callback: (peerId: string) => void): void
 }
 
 export class Discovery {
@@ -276,9 +320,188 @@ export class EnrollmentToken {
 - `INVALID_TIME_RANGE: 1023` - Invalid time range (notBefore >= expiresAt)
 - `INVALID_NONCE: 1024` - Invalid nonce length (must be 16 bytes)
 
-### 6. Enhanced Keys Class
+### 6. Enhanced Transport Class (Callback Pattern)
 
-#### 6.1 Updated Keys Class
+#### 6.1 Updated Transport Class
+```typescript
+export class Transport {
+  // Constructor
+  constructor(
+    keys: Keys,
+    options: TransportOptions
+  )
+  
+  // Transport control
+  start(): Promise<void>
+  stop(): Promise<void>
+  
+  // Request/Response operations
+  request(
+    path: string,
+    correlationId: string,
+    payload: Uint8Array,
+    destPeerId: string,
+    networkPublicKey?: Uint8Array,
+    profilePublicKeys?: Uint8Array[]
+  ): Promise<Uint8Array>
+  
+  publish(
+    path: string,
+    correlationId: string,
+    payload: Uint8Array,
+    destPeerId: string,
+    networkPublicKey?: Uint8Array
+  ): Promise<void>
+  
+  // Peer management
+  connectPeer(peerInfo: PeerInfo): Promise<void>
+  disconnectPeer(nodeId: string): Promise<void>
+  isConnected(nodeId: string): Promise<boolean>
+  
+  // Address management
+  getLocalAddress(): string
+  
+  // Callback registration (NEW - replaces polling)
+  onRequest(callback: (request: TransportRequest) => Promise<TransportResponse>): void
+  onEvent(callback: (event: TransportEvent) => void): void
+  onPeerConnected(callback: (peerId: string, nodeInfo: NodeInfo) => void): void
+  onPeerDisconnected(callback: (peerId: string) => void): void
+  
+  // Callback removal
+  removeRequestCallback(): void
+  removeEventCallback(): void
+  removePeerConnectedCallback(): void
+  removePeerDisconnectedCallback(): void
+  
+  // Resource management
+  free(): void
+}
+```
+
+#### 6.2 Transport Callback Types
+```typescript
+// Request callback - handles incoming requests
+export interface TransportRequest {
+  path: string
+  correlationId: string
+  payload: Uint8Array
+  sourceNodeId: string
+  destinationNodeId: string
+  profilePublicKeys: Uint8Array[]
+  networkPublicKey?: Uint8Array
+}
+
+export interface TransportResponse {
+  payload: Uint8Array
+  correlationId: string
+}
+
+// Event callback - handles incoming events
+export interface TransportEvent {
+  path: string
+  correlationId: string
+  payload: Uint8Array
+  sourceNodeId: string
+  destinationNodeId: string
+  profilePublicKeys: Uint8Array[]
+  networkPublicKey?: Uint8Array
+}
+
+// Peer connection callbacks
+export interface NodeInfo {
+  version: number
+  capabilities: string[]
+  // ... other NodeInfo fields
+}
+```
+
+#### 6.3 Transport Options
+```typescript
+export interface TransportOptions {
+  // QUIC configuration
+  bindAddr?: string
+  connectionIdleTimeout?: number
+  keepAliveInterval?: number
+  maxMessageSize?: number
+  
+  // Certificate configuration (derived from Keys)
+  // No need for explicit certificate configuration
+  // Transport will use certificates from Keys instance
+  
+  // Callback configuration
+  enableRequestCallbacks?: boolean
+  enableEventCallbacks?: boolean
+  enablePeerCallbacks?: boolean
+}
+```
+
+**Implementation Details:**
+- **Purpose**: Provides QUIC mTLS transport with direct callback support
+- **Callback Pattern**: Uses direct callbacks instead of polling (deviation from FFI)
+- **Alignment**: Matches `QuicTransport` internal callback design
+- **Memory Management**: Proper cleanup of callback references
+- **Thread Safety**: All callbacks run on Node.js event loop
+- **Error Handling**: Callbacks can throw errors that are properly handled
+
+**Callback Registration Pattern:**
+```typescript
+// Example usage
+const transport = new Transport(keys, {
+  bindAddr: "127.0.0.1:0",
+  enableRequestCallbacks: true,
+  enableEventCallbacks: true,
+  enablePeerCallbacks: true
+})
+
+// Register callbacks
+transport.onRequest(async (request) => {
+  console.log(`Received request: ${request.path}`)
+  return {
+    payload: new Uint8Array(Buffer.from("Response data")),
+    correlationId: request.correlationId
+  }
+})
+
+transport.onEvent((event) => {
+  console.log(`Received event: ${event.path}`)
+})
+
+transport.onPeerConnected((peerId, nodeInfo) => {
+  console.log(`Peer connected: ${peerId}`)
+})
+
+transport.onPeerDisconnected((peerId) => {
+  console.log(`Peer disconnected: ${peerId}`)
+})
+
+// Start transport
+await transport.start()
+```
+
+**Benefits of Callback Pattern:**
+1. **Simpler API**: No polling needed
+2. **Better Performance**: No busy waiting
+3. **More Intuitive**: Event-driven like Node.js
+4. **Aligns with Transport**: Matches QuicTransport's internal design
+5. **No FFI Limitations**: NAPI-RS handles async callbacks properly
+
+**Migration from Polling Pattern:**
+```typescript
+// OLD (FFI-style polling)
+const event = await transport.pollEvent()
+if (event) {
+  // Handle event
+}
+
+// NEW (Callback pattern)
+transport.onEvent((event) => {
+  // Handle event directly
+})
+```
+
+### 7. Enhanced Keys Class
+
+#### 7.1 Updated Keys Class
 ```typescript
 export class Keys {
   // CORRECTED: Initialization methods (only create managers, no state loading)
@@ -375,9 +598,9 @@ export class Keys {
 - **Format**: SKI and serial returned as uppercase hex strings
 ```
 
-### 7. Data Structures and Types
+### 8. Data Structures and Types
 
-#### 7.1 Configuration Types
+#### 8.1 Configuration Types
 ```typescript
 // CA Server Configuration
 export interface CaServerConfig {
@@ -426,7 +649,7 @@ export interface EnrollmentTokenParams {
 }
 ```
 
-#### 7.2 Request/Response Types
+#### 8.2 Request/Response Types
 ```typescript
 // CA Node Request/Response Types (CBOR-serialized)
 export interface CsrEnrollRequest {
@@ -502,7 +725,7 @@ export interface NodeCertificateMessage {
 }
 ```
 
-#### 7.3 CBOR Serialization Specifications
+#### 8.3 CBOR Serialization Specifications
 ```typescript
 // CBOR Serialization Examples
 const caServerConfig: CaServerConfig = {
@@ -543,6 +766,13 @@ const response = cbor.decode<CsrEnrollResponse>(responseCbor)
 2. **Add unified state management**: Implement `hasKeys()` and `generateKeys()` methods
 3. **Remove obsolete methods**: Remove `nodeGetKeystoreState()` and `mobileGetKeystoreState()`
 4. **Add missing certificate management**: `nodeGetQuicCertificateConfig()`, `nodeGetNodeCertificate()`
+
+### Phase 1.5: Transport Callback Implementation (Week 1.5)
+1. **Implement callback pattern**: Replace polling with direct callbacks in Transport class
+2. **Add callback types**: Define `TransportRequest`, `TransportResponse`, `TransportEvent` interfaces
+3. **Add callback registration**: Implement `onRequest()`, `onEvent()`, `onPeerConnected()`, `onPeerDisconnected()`
+4. **Add callback removal**: Implement callback removal methods
+5. **Align with QuicTransport**: Ensure callbacks match internal `QuicTransport` callback design
 
 ### Phase 2: CA Node Implementation (Weeks 2-3)
 1. **Implement CaNode class**: All CA Node operations (`setupComplete()`, `handleEnroll()`, etc.)
@@ -610,6 +840,42 @@ describe('CA E2E Integration Test', () => {
     }
     
     console.log('   ✅ Keys handles created and initialized')
+    
+    // Phase 1.5: Transport Setup with Callbacks
+    console.log('🚀 PHASE 1.5: Transport Setup with Callbacks')
+    
+    // Create Transport with callback pattern (deviation from FFI)
+    const transport = new Transport(nodeKeys, {
+      bindAddr: "127.0.0.1:0",
+      enableRequestCallbacks: true,
+      enableEventCallbacks: true,
+      enablePeerCallbacks: true
+    })
+    
+    // Register callbacks (NodeJS-specific pattern)
+    transport.onRequest(async (request) => {
+      console.log(`   📨 Received request: ${request.path} from ${request.sourceNodeId}`)
+      return {
+        payload: new Uint8Array(Buffer.from("Echo response")),
+        correlationId: request.correlationId
+      }
+    })
+    
+    transport.onEvent((event) => {
+      console.log(`   📢 Received event: ${event.path} from ${event.sourceNodeId}`)
+    })
+    
+    transport.onPeerConnected((peerId, nodeInfo) => {
+      console.log(`   🤝 Peer connected: ${peerId}`)
+    })
+    
+    transport.onPeerDisconnected((peerId) => {
+      console.log(`   👋 Peer disconnected: ${peerId}`)
+    })
+    
+    // Start transport
+    await transport.start()
+    console.log(`   ✅ Transport started on ${transport.getLocalAddress()}`)
     
     // Phase 2: CA Node and Server
     console.log('🏗️  PHASE 2: CA Node and Server')
@@ -951,17 +1217,18 @@ describe('CA E2E Integration Test', () => {
 })
 ```
 
-### Test Phases (Matching FFI E2E Test)
+### Test Phases (Matching FFI E2E Test + Callback Pattern)
 1. **Setup**: Logger, crypto provider, key handles
-2. **CA Node and Server**: CA Node creation, certificate chain, server setup
-3. **Mobile Node Enrollment**: CSR generation, enrollment token, certificate installation
-4. **Certificate Renewal**: Renewal CSR, mTLS renewal, certificate installation
-5. **Certificate Revocation**: Admin SKI setup, revocation, CRL generation
-6. **Status and Chain**: CA status, certificate chain retrieval
-7. **Profile Key Functionality**: Profile key derivation, encryption/decryption
-8. **Rate Limiting**: Multiple enrollment requests, rate limit validation
-9. **Token Revocation**: Token revocation, revoked token rejection
-10. **Negative Cases**: Invalid tokens, unauthorized operations
+2. **Transport Callbacks**: Transport setup with callback pattern (NodeJS-specific deviation)
+3. **CA Node and Server**: CA Node creation, certificate chain, server setup
+4. **Mobile Node Enrollment**: CSR generation, enrollment token, certificate installation
+5. **Certificate Renewal**: Renewal CSR, mTLS renewal, certificate installation
+6. **Certificate Revocation**: Admin SKI setup, revocation, CRL generation
+7. **Status and Chain**: CA status, certificate chain retrieval
+8. **Profile Key Functionality**: Profile key derivation, encryption/decryption
+9. **Rate Limiting**: Multiple enrollment requests, rate limit validation
+10. **Token Revocation**: Token revocation, revoked token rejection
+11. **Negative Cases**: Invalid tokens, unauthorized operations
 
 ## Serialization Strategy
 
@@ -1305,7 +1572,9 @@ This design provides a **COMPLETE AND DETAILED** roadmap for bringing the NodeJS
 8. **Complete Implementation Strategy** - 6-phase implementation plan with realistic timelines
 
 ### 🎯 **KEY ACHIEVEMENTS:**
-- **100% API Parity**: Complete alignment with FFI API
+- **100% API Parity**: Complete alignment with FFI API (except strategic callback deviation)
+- **Callback Pattern**: Direct callbacks instead of polling (leverages NAPI-RS capabilities)
+- **QuicTransport Alignment**: Matches actual `QuicTransport` internal callback design
 - **Consistent Initialization**: Fixed inconsistent behavior in `initAsMobile()` and `initAsNode()`
 - **Unified State Management**: Single `hasKeys()` method replaces separate node/mobile methods
 - **Complete Type Safety**: Full TypeScript support with proper interfaces
@@ -1329,7 +1598,9 @@ This design provides a **COMPLETE AND DETAILED** roadmap for bringing the NodeJS
 
 ### 🎯 **SUCCESS CRITERIA:**
 - All FFI E2E test scenarios pass with NodeJS API
-- 100% API parity with FFI API
+- 100% API parity with FFI API (except strategic callback deviation)
+- Callback pattern working correctly (replaces FFI polling)
+- QuicTransport alignment achieved (matches internal callback design)
 - Consistent initialization behavior across all manager types
 - Unified state management with single method approach
 - Complete type safety with TypeScript

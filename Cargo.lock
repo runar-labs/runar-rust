@@ -3436,6 +3436,7 @@ dependencies = [
  "runar-schemas",
  "runar-serializer",
  "runar_common 0.1.0",
+ "runar_ffi",
  "runar_logging",
  "runar_transporter",
  "rustls 0.23.28",

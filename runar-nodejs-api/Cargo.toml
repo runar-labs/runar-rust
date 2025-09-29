@@ -24,6 +24,7 @@ runar-schemas = { path = "../runar-schemas" }
 arc-swap = { package = "arc-swap", version = "1" }
 runar-serializer = { path = "../runar-serializer" }
 runar_logging = { path = "../runar-logging" }
+runar_ffi = { path = "../runar-ffi" }
 uuid = { version = "1", features = ["v4"] }
 rustls = "0.23"
 

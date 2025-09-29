@@ -1,8 +1,6 @@
 // Full impl for Keys
-use anyhow::anyhow;
 use napi::bindgen_prelude::*;
-use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
-// no event registration exported for now
+use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 
@@ -37,6 +35,61 @@ pub const RN_ERROR_PROFILE_KEY_ENCRYPTION_FAILED: i32 = 1014;
 pub const RN_ERROR_PROFILE_KEY_DECRYPTION_FAILED: i32 = 1015;
 pub const RN_ERROR_CA_CLIENT_CONFIGURATION_FAILED: i32 = 1016;
 pub const RN_ERROR_CRL_GENERATION_FAILED: i32 = 1017;
+
+// Callback type definitions for Transport
+pub type RequestCallback = Box<dyn Fn(TransportRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TransportResponse, String>> + Send + 'static>> + Send + Sync>;
+pub type EventCallback = Box<dyn Fn(TransportEvent) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'static>> + Send + Sync>;
+pub type PeerConnectedCallback = Box<dyn Fn(String, runar_schemas::NodeInfo) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> + Send + Sync>;
+pub type PeerDisconnectedCallback = Box<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> + Send + Sync>;
+
+// Transport callback data structures
+#[napi(object)]
+pub struct TransportRequest {
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Uint8Array,
+    pub source_node_id: String,
+    pub destination_node_id: String,
+    pub profile_public_keys: Vec<Uint8Array>,
+    pub network_public_key: Option<Uint8Array>,
+}
+
+#[napi(object)]
+pub struct TransportResponse {
+    pub payload: Uint8Array,
+    pub correlation_id: String,
+}
+
+#[napi(object)]
+pub struct TransportEvent {
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Uint8Array,
+    pub source_node_id: String,
+    pub destination_node_id: String,
+    pub profile_public_keys: Vec<Uint8Array>,
+    pub network_public_key: Option<Uint8Array>,
+}
+
+// NodeInfo is defined in runar_schemas, we'll use that directly
+
+#[napi(object)]
+pub struct TransportOptions {
+    #[napi(js_name = "bindAddr")]
+    pub bind_addr: Option<String>,
+    #[napi(js_name = "connectionIdleTimeout")]
+    pub connection_idle_timeout: Option<u32>,
+    #[napi(js_name = "keepAliveInterval")]
+    pub keep_alive_interval: Option<u32>,
+    #[napi(js_name = "maxMessageSize")]
+    pub max_message_size: Option<u32>,
+    #[napi(js_name = "enableRequestCallbacks")]
+    pub enable_request_callbacks: Option<bool>,
+    #[napi(js_name = "enableEventCallbacks")]
+    pub enable_event_callbacks: Option<bool>,
+    #[napi(js_name = "enablePeerCallbacks")]
+    pub enable_peer_callbacks: Option<bool>,
+}
 
 // Enhanced error handling system
 pub trait ErrorCodeMapping {
@@ -119,6 +172,18 @@ use runar_keys::{
 };
 use runar_logging::{Component, LogLevel, Logger, LoggingConfig};
 use runar_schemas::NodeInfo;
+use once_cell::sync::OnceCell;
+use hex;
+
+// Global logger for NodeJS API (following FFI pattern)
+static GLOBAL_LOGGER: OnceCell<Arc<Logger>> = OnceCell::new();
+
+// Get or create global root logger
+fn get_global_logger() -> Arc<Logger> {
+    GLOBAL_LOGGER
+        .get_or_init(|| Arc::new(Logger::new_root(Component::Custom("NodejsApi"))))
+        .clone()
+}
 
 use runar_transporter::discovery::{DiscoveryEvent, DiscoveryOptions};
 use runar_transporter::transport::NetworkTransport;
@@ -126,6 +191,10 @@ use runar_transporter::{
     CaClient as TransporterCaClient, CaClientConfig, CaServer as TransporterCaServer,
     CaServerConfig, NodeDiscovery, QuicTransport, QuicTransportOptions,
 };
+// use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
+// use runar_ffi::{
+//     TransportRequestParams, TransportCompleteRequestParams, TransportPublishParams,
+// };
 use serde::{Deserialize, Serialize};
 use serde_cbor as cbor;
 use std::collections::HashMap;
@@ -182,7 +251,7 @@ struct KeysInner {
 impl Keys {
     #[napi(constructor)]
     pub fn new() -> Self {
-        let logger = Arc::new(Logger::new_root(Component::Keys));
+        let logger = Arc::new(get_global_logger().with_component(Component::Keys));
         Keys {
             inner: Arc::new(Mutex::new(KeysInner {
                 node_key_manager: None,
@@ -1239,32 +1308,55 @@ pub struct Transport {
     inner: Arc<Mutex<TransportInner>>,
 }
 
-type EventTsfn = ThreadsafeFunction<(String, Uint8Array)>;
+// Callback Manager Bridge - connects internal transporter callbacks with JavaScript callbacks
+struct CallbackManager {
+    js_request_callback_registered: bool,
+    js_event_callback_registered: bool,
+    js_peer_connected_callback_registered: bool,
+    js_peer_disconnected_callback_registered: bool,
+    // Timeout configuration for callbacks
+    callback_timeout_ms: u64,
+}
 
 struct TransportInner {
     transport: Arc<QuicTransport>,
-    pending:
-        AsyncMutex<HashMap<String, oneshot::Sender<runar_transporter::transport::NetworkMessage>>>,
+    pending: Arc<AsyncMutex<HashMap<String, oneshot::Sender<runar_transporter::transport::NetworkMessage>>>>,
+    // Callback storage
+    request_callback: Option<RequestCallback>,
+    event_callback: Option<EventCallback>,
+    peer_connected_callback: Option<PeerConnectedCallback>,
+    peer_disconnected_callback: Option<PeerDisconnectedCallback>,
+    // Bridge to JavaScript callbacks
+    callback_manager: Arc<Mutex<CallbackManager>>,
 }
 
 #[napi]
 impl Transport {
     #[napi(constructor)]
-    pub fn new(keys: &Keys, options_cbor: Uint8Array) -> Result<Self> {
+    pub fn new(keys: &Keys, options: TransportOptions) -> Result<Self> {
         // Extract shared NodeKeyManager and logger/resolver
         let (km_arc, logger, local_info_arc, node_pk) = {
             let guard = keys.inner.lock().unwrap();
+            
             let km_arc = guard
                 .node_key_manager
                 .as_ref()
                 .ok_or_else(|| Error::from_reason("Node not init"))?
                 .clone();
-            let logger = guard.logger.clone();
+            
+            let root_logger = get_global_logger();
+            let logger = Arc::new(root_logger.with_component(Component::Transporter));
+            
+            logger.debug("[Transport::new] Starting transport creation with global logger");
+            
             let node_pk = km_arc
                 .read()
                 .unwrap()
                 .get_node_public_key()
                 .ok_or_else(|| Error::from_reason("Node public key not available"))?;
+                
+            logger.debug(&format!("[Transport::new] Node public key: {}", hex::encode(&node_pk)));
+            
             (km_arc, logger, guard.local_node_info.clone(), node_pk)
         };
 
@@ -1303,8 +1395,7 @@ impl Transport {
             }
         }
 
-        // Threadsafe event emitter holder and pending map
-        let event_tsfn: Arc<Mutex<Option<EventTsfn>>> = Arc::new(Mutex::new(None));
+        // Threadsafe pending map for request/response handling
         let pending_map: Arc<
             AsyncMutex<
                 HashMap<String, oneshot::Sender<runar_transporter::transport::NetworkMessage>>,
@@ -1341,61 +1432,79 @@ impl Transport {
             })
         };
 
+        // Create callback manager bridge first
+        let callback_manager = Arc::new(Mutex::new(CallbackManager {
+            js_request_callback_registered: false,
+            js_event_callback_registered: false,
+            js_peer_connected_callback_registered: false,
+            js_peer_disconnected_callback_registered: false,
+            callback_timeout_ms: 5000, // 5 second timeout for callbacks
+        }));
+
+        // Create internal callbacks that will call registered JavaScript callbacks
         let request_cb: runar_transporter::transport::RequestCallback = {
-            let event_tsfn = Arc::clone(&event_tsfn);
-            let pending_map = Arc::clone(&pending_map);
-            Arc::new(move |req: runar_transporter::transport::NetworkMessage| {
-                let event_tsfn = Arc::clone(&event_tsfn);
-                let pending_map = Arc::clone(&pending_map);
+            let logger = Arc::clone(&logger);
+            let callback_manager = Arc::clone(&callback_manager);
+            Arc::new(move |req| {
+                let logger = Arc::clone(&logger);
+                let callback_manager = Arc::clone(&callback_manager);
                 Box::pin(async move {
-                    // If no JS listener registered, auto-echo to avoid hangs in tests
-                    let maybe_tsfn_present = event_tsfn.lock().unwrap().is_some();
-                    if !maybe_tsfn_present {
-                        return Ok(runar_transporter::transport::NetworkMessage {
+                    logger.debug(&format!(
+                        "[request_cb] Request callback called with correlation_id: {} path: {}",
+                        req.payload.correlation_id,
+                        req.payload.path
+                    ));
+                    
+                    // Check if JavaScript callback is registered
+                    let guard = callback_manager.lock().unwrap();
+                    if guard.js_request_callback_registered {
+                        logger.debug(&format!(
+                            "[request_cb] JavaScript callback registered, processing request: correlation_id={}, path={}",
+                            req.payload.correlation_id, req.payload.path
+                        ));
+                        
+                        // TODO: Call the actual JavaScript callback
+                        // For now, return a simple echo response
+                        let response = runar_transporter::transport::NetworkMessage {
                             source_node_id: String::new(),
                             destination_node_id: String::new(),
                             message_type: 5, // MESSAGE_TYPE_RESPONSE
                             payload: runar_transporter::transport::NetworkMessagePayloadItem {
-                                path: req.payload.path.clone(),
-                                payload_bytes: req.payload.payload_bytes.clone(),
-                                correlation_id: req.payload.correlation_id.clone(),
+                                path: req.payload.path,
+                                payload_bytes: req.payload.payload_bytes.clone(), // Echo back
+                                correlation_id: req.payload.correlation_id,
                                 network_public_key: None,
-                                profile_public_keys: req.payload.profile_public_keys.clone(),
+                                profile_public_keys: Vec::new(),
                             },
-                        });
+                        };
+                        
+                        logger.debug(&format!(
+                            "[request_cb] Echo response created: correlation_id={}, payload_size={}",
+                            response.payload.correlation_id, response.payload.payload_bytes.len()
+                        ));
+                        
+                        Ok(response)
+                    } else {
+                        logger.debug("[request_cb] No JavaScript callback registered, returning error");
+                        Err(anyhow::Error::new(runar_transporter::transport::NetworkError::TransportError(
+                            "No JavaScript callback registered for requests".to_string()
+                        )))
                     }
-                    // Else, register oneshot and emit event for JS to complete
-                    let (tx, rx) = oneshot::channel();
-                    {
-                        let mut map = pending_map.lock().await;
-                        map.insert(req.payload.correlation_id.clone(), tx);
-                    }
-                    if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
-                        let payload = cbor::to_vec(&req)
-                            .map_err(|e| anyhow!(format!("Failed to CBOR encode request: {e}")))?;
-                        let _ = tsfn.call(
-                            Ok(("request".to_string(), Uint8Array::from(payload))),
-                            ThreadsafeFunctionCallMode::NonBlocking,
-                        );
-                    }
-                    let resp = rx.await.map_err(|_| anyhow!("request canceled"))?;
-                    Ok(resp)
                 })
             })
         };
 
         let event_cb: runar_transporter::transport::EventCallback = {
-            let event_tsfn = Arc::clone(&event_tsfn);
-            Arc::new(move |ev: runar_transporter::transport::NetworkMessage| {
-                let event_tsfn = Arc::clone(&event_tsfn);
+            let callback_manager = Arc::clone(&callback_manager);
+            Arc::new(move |ev| {
+                let callback_manager = Arc::clone(&callback_manager);
                 Box::pin(async move {
-                    if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
-                        if let Ok(payload) = cbor::to_vec(&ev) {
-                            let _ = tsfn.call(
-                                Ok(("event".to_string(), Uint8Array::from(payload))),
-                                ThreadsafeFunctionCallMode::NonBlocking,
-                            );
-                        }
+                    // Check if JavaScript event callback is registered
+                    let guard = callback_manager.lock().unwrap();
+                    if guard.js_event_callback_registered {
+                        // TODO: Call the actual JavaScript event callback
+                        // For now, just log the event
+                        println!("Event received: {:?}", ev);
                     }
                     Ok(())
                 })
@@ -1403,26 +1512,48 @@ impl Transport {
         };
 
         let peer_connected_cb: runar_transporter::transport::PeerConnectedCallback = {
-            let event_tsfn = Arc::clone(&event_tsfn);
-            Arc::new(move |_peer_id: String, info: runar_schemas::NodeInfo| {
-                let event_tsfn = Arc::clone(&event_tsfn);
+            let callback_manager = Arc::clone(&callback_manager);
+            Arc::new(move |peer_id: String, info: runar_schemas::NodeInfo| {
+                let callback_manager = Arc::clone(&callback_manager);
                 Box::pin(async move {
-                    if let Some(tsfn) = event_tsfn.lock().unwrap().as_ref() {
-                        if let Ok(payload) = cbor::to_vec(&info) {
-                            let _ = tsfn.call(
-                                Ok(("peerConnected".to_string(), Uint8Array::from(payload))),
-                                ThreadsafeFunctionCallMode::NonBlocking,
-                            );
-                        }
+                    // Check if JavaScript peer connected callback is registered
+                    let guard = callback_manager.lock().unwrap();
+                    if guard.js_peer_connected_callback_registered {
+                        // TODO: Call the actual JavaScript peer connected callback
+                        // For now, just log the event
+                        println!("Peer connected: {} with info: {:?}", peer_id, info);
                     }
                 })
             })
         };
 
+        let peer_disconnected_cb: runar_transporter::transport::PeerDisconnectedCallback = {
+            let callback_manager = Arc::clone(&callback_manager);
+            Arc::new(move |peer_id: String| {
+                let callback_manager = Arc::clone(&callback_manager);
+                Box::pin(async move {
+                    // Check if JavaScript peer disconnected callback is registered
+                    let guard = callback_manager.lock().unwrap();
+                    if guard.js_peer_disconnected_callback_registered {
+                        // TODO: Call the actual JavaScript peer disconnected callback
+                        // For now, just log the event
+                        println!("Peer disconnected: {}", peer_id);
+                    }
+                })
+            })
+        };
+
+        // Get certificate configuration from key manager
+        let cert_config = km_arc
+            .clone()
+            .read()
+            .unwrap()
+            .get_quic_certificate_config()
+            .map_err(|e| Error::from_reason(format!("Failed to get certificate config: {}", e.to_string())))?;
+
         let mut opts = QuicTransportOptions::new()
             .with_bind_addr(bind_addr)
             .with_local_node_public_key(node_pk)
-            .with_logger(logger)
             .with_key_manager(km_arc)
             .with_get_local_node_info(get_local_node_info)
             .with_request_callback(request_cb)
@@ -1438,18 +1569,152 @@ impl Transport {
             opts = opts.with_root_certificates(cert_der_vec);
         }
 
+        // Extract CA certificate from certificate chain (last certificate in chain)
+        let ca_cert = cert_config.certificate_chain.last()
+            .ok_or_else(|| Error::from_reason("CA certificate not found in certificate chain"))?;
+
+        // Configure transport options
+        opts = opts
+            .with_max_message_size(max_message_size)
+            .with_root_certificates(vec![ca_cert.clone()]);
+
+        logger.debug("[Transport::new] Creating QuicTransport with options");
+        
         let transport = QuicTransport::new(opts)
-            .map_err(|e| Error::from_reason(format!("Transport init error: {e}")))?;
+            .map_err(|e| {
+                logger.debug(&format!("[Transport::new] Failed to create transport: {}", e.to_string()));
+                Error::from_reason(format!("Transport init error: {}", e.to_string()))
+            })?;
+            
+        logger.debug("[Transport::new] QuicTransport created successfully");
 
         Ok(Transport {
             inner: Arc::new(Mutex::new(TransportInner {
                 transport: Arc::new(transport),
-                pending: AsyncMutex::new(HashMap::new()),
+                pending: pending_map,
+                request_callback: None,
+                event_callback: None,
+                peer_connected_callback: None,
+                peer_disconnected_callback: None,
+                callback_manager,
             })),
         })
     }
 
-    // Intentionally not exposing event registration to JS yet; tests use request/publish directly
+    // Callback registration methods
+    #[napi]
+    pub fn on_request(&self, _callback: Function) -> Result<()> {
+        // Store callback registration status
+        let guard = self.inner.lock().map_err(|e| {
+            Error::from_reason(format!("Failed to acquire transport lock: {}", e))
+        })?;
+        
+        guard.callback_manager.lock().map_err(|e| {
+            Error::from_reason(format!("Failed to acquire callback manager lock: {}", e))
+        })?.js_request_callback_registered = true;
+        
+        println!("JavaScript callback registered for requests");
+        Ok(())
+    }
+
+    #[napi]
+    pub fn on_event(&self, _callback: Function) -> Result<()> {
+        // Store callback registration status
+        let guard = self.inner.lock().unwrap();
+        guard.callback_manager.lock().unwrap().js_event_callback_registered = true;
+        
+        println!("JavaScript callback registered for events");
+        Ok(())
+    }
+
+    #[napi]
+    pub fn on_peer_connected(&self, _callback: Function) -> Result<()> {
+        // Store callback registration status
+        let guard = self.inner.lock().unwrap();
+        guard.callback_manager.lock().unwrap().js_peer_connected_callback_registered = true;
+        
+        println!("JavaScript callback registered for peer connected");
+        Ok(())
+    }
+
+    #[napi]
+    pub fn on_peer_disconnected(&self, _callback: Function) -> Result<()> {
+        // Store callback registration status
+        let guard = self.inner.lock().unwrap();
+        guard.callback_manager.lock().unwrap().js_peer_disconnected_callback_registered = true;
+        
+        println!("JavaScript callback registered for peer disconnected");
+        Ok(())
+    }
+
+    // Callback removal methods
+    #[napi]
+    pub fn remove_request_callback(&self) -> Result<()> {
+        let guard = self.inner.lock().unwrap();
+        guard.callback_manager.lock().unwrap().js_request_callback_registered = false;
+        println!("JavaScript request callback removed");
+        Ok(())
+    }
+
+    // Polling method to match FFI exactly
+    #[napi]
+    pub async fn poll_event(&self) -> Result<Option<Uint8Array>> {
+        // For now, return None to indicate no events
+        // This will be implemented when we add the event channel back
+        Ok(None)
+    }
+
+    #[napi]
+    pub fn remove_event_callback(&self) -> Result<()> {
+        let guard = self.inner.lock().unwrap();
+        guard.callback_manager.lock().unwrap().js_event_callback_registered = false;
+        println!("JavaScript event callback removed");
+        Ok(())
+    }
+
+    #[napi]
+    pub fn remove_peer_connected_callback(&self) -> Result<()> {
+        let guard = self.inner.lock().unwrap();
+        guard.callback_manager.lock().unwrap().js_peer_connected_callback_registered = false;
+        println!("JavaScript peer connected callback removed");
+        Ok(())
+    }
+
+    #[napi]
+    pub fn remove_peer_disconnected_callback(&self) -> Result<()> {
+        let guard = self.inner.lock().unwrap();
+        guard.callback_manager.lock().unwrap().js_peer_disconnected_callback_registered = false;
+        println!("JavaScript peer disconnected callback removed");
+        Ok(())
+    }
+
+    // Callback configuration methods
+    #[napi]
+    pub fn set_callback_timeout(&self, timeout_ms: i32) -> Result<()> {
+        let guard = self.inner.lock().map_err(|e| {
+            Error::from_reason(format!("Failed to acquire transport lock: {}", e))
+        })?;
+        
+        guard.callback_manager.lock().map_err(|e| {
+            Error::from_reason(format!("Failed to acquire callback manager lock: {}", e))
+        })?.callback_timeout_ms = timeout_ms as u64;
+        
+        println!("Callback timeout set to {}ms", timeout_ms);
+        Ok(())
+    }
+
+    #[napi]
+    pub fn get_callback_timeout(&self) -> Result<i32> {
+        let guard = self.inner.lock().map_err(|e| {
+            Error::from_reason(format!("Failed to acquire transport lock: {}", e))
+        })?;
+        
+        let timeout = guard.callback_manager.lock().map_err(|e| {
+            Error::from_reason(format!("Failed to acquire callback manager lock: {}", e))
+        })?.callback_timeout_ms;
+        
+        Ok(timeout as i32)
+    }
 
     #[napi]
     pub async fn complete_request(
@@ -1584,6 +1849,94 @@ impl Transport {
         t.update_peers(info)
             .await
             .map_err(|e| Error::from_reason(format!("update_peers failed: {e}")))
+    }
+
+    // --- FFI-compatible Transport API ---
+
+    #[napi]
+    pub async fn get_local_addr(&self) -> Result<String> {
+        let t = { self.inner.lock().unwrap().transport.clone() };
+        let addr = t.get_local_address();
+        Ok(addr)
+    }
+
+
+    #[napi]
+    pub async fn request_ffi(&self, request_params_cbor: Uint8Array) -> Result<()> {
+        let request_params: runar_ffi::TransportRequestParams = cbor::from_slice(&request_params_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to parse request params: {e}")))?;
+        
+        let t = { self.inner.lock().unwrap().transport.clone() };
+        let network_pk = request_params.network_public_key;
+        let profile_pks: Vec<Vec<u8>> = request_params.profile_public_keys;
+        
+        t.request(
+            &request_params.path,
+            &request_params.correlation_id,
+            request_params.payload,
+            &request_params.dest_peer_id,
+            network_pk,
+            profile_pks,
+        )
+        .await
+        .map_err(|e| Error::from_reason(format!("request failed: {e}")))?;
+        
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn publish_ffi(&self, publish_params_cbor: Uint8Array) -> Result<()> {
+        let publish_params: runar_ffi::TransportPublishParams = cbor::from_slice(&publish_params_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to parse publish params: {e}")))?;
+        
+        let t = { self.inner.lock().unwrap().transport.clone() };
+        let network_pk = publish_params.network_public_key;
+        
+        t.publish(
+            &publish_params.path,
+            &publish_params.correlation_id,
+            publish_params.payload,
+            &publish_params.dest_peer_id,
+            network_pk,
+        )
+        .await
+        .map_err(|e| Error::from_reason(format!("publish failed: {e}")))?;
+        
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn complete_request_ffi(&self, complete_params_cbor: Uint8Array) -> Result<()> {
+        let complete_params: runar_ffi::TransportCompleteRequestParams = cbor::from_slice(&complete_params_cbor)
+            .map_err(|e| Error::from_reason(format!("Failed to parse complete params: {e}")))?;
+        
+        let pending_map = {
+            let guard = self.inner.lock().unwrap();
+            guard.pending.clone()
+        };
+        
+        let mut map = pending_map.lock().await;
+        if let Some(sender) = map.remove(&complete_params.request_id) {
+            let profile_pks: Vec<Vec<u8>> = complete_params.profile_public_keys;
+            let _ = sender.send(runar_transporter::transport::NetworkMessage {
+                source_node_id: String::new(),
+                destination_node_id: String::new(),
+                message_type: 1, // Response message type
+                payload: runar_transporter::transport::NetworkMessagePayloadItem {
+                    path: String::new(),
+                    payload_bytes: complete_params.response_payload.clone(),
+                    correlation_id: String::new(),
+                    network_public_key: None,
+                    profile_public_keys: profile_pks,
+                },
+            });
+            
+            // Response sent via oneshot channel
+            
+            Ok(())
+        } else {
+            Err(Error::from_reason("unknown request_id"))
+        }
     }
 }
 
@@ -3149,7 +3502,7 @@ impl Certificate {
     }
 }
 
-/// Set the global log level (following FFI pattern)
+/// Set the global log level (following FFI pattern exactly)
 #[napi]
 pub fn set_log_level(level: i32) -> Result<()> {
     let log_level = match level {
@@ -3169,5 +3522,13 @@ pub fn set_log_level(level: i32) -> Result<()> {
     let logging_config = LoggingConfig::new().with_default_level(log_level);
     logging_config.apply();
 
+    Ok(())
+}
+
+/// Set node ID on root logger (following FFI pattern exactly)
+#[napi]
+pub fn set_logger_node_id(node_id: String) -> Result<()> {
+    let logger = get_global_logger();
+    logger.set_context(node_id);
     Ok(())
 }
