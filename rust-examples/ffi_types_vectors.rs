@@ -9,7 +9,9 @@ use runar_keys::ca_node_types::{
 };
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
+use runar_schemas::{NodeInfo, NodeMetadata, ServiceMetadata, SubscriptionMetadata};
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
+use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -63,9 +65,14 @@ fn main() -> Result<()> {
     // 13. Transport Types (task11.md requirement)
     // Note: QuicTransportOptions doesn't implement Serialize, so we skip it for now
     generate_peer_info_vectors(&out)?;
+    generate_node_info_vectors(&out)?;
     generate_transport_request_params_vectors(&out)?;
     generate_transport_publish_params_vectors(&out)?;
     generate_transport_complete_request_params_vectors(&out)?;
+
+    // 14. Network Message Types (task13.md requirement)
+    generate_network_message_payload_item_vectors(&out)?;
+    generate_network_message_vectors(&out)?;
 
     println!("✅ Generated FFI types vectors to {}", out.display());
     Ok(())
@@ -543,6 +550,59 @@ fn generate_peer_info_vectors(out: &Path) -> Result<()> {
     Ok(())
 }
 
+fn generate_node_info_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating NodeInfo vectors...");
+
+    // Basic node info
+    let basic_node = NodeInfo {
+        node_public_key: vec![
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30, 31, 32,
+        ],
+        network_ids: vec!["test-network".to_string()],
+        addresses: vec!["127.0.0.1:8080".to_string()],
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 1,
+    };
+    write_cbor_vector(out, "node_info_basic.bin", &basic_node)?;
+
+    // Node info with metadata
+    let node_with_metadata = NodeInfo {
+        node_public_key: vec![
+            32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11,
+            10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+        ],
+        network_ids: vec!["test-network".to_string(), "another-network".to_string()],
+        addresses: vec![
+            "127.0.0.1:8080".to_string(),
+            "192.168.1.100:8080".to_string(),
+        ],
+        node_metadata: NodeMetadata {
+            services: vec![ServiceMetadata {
+                network_id: "test-network".to_string(),
+                service_path: "/api/test".to_string(),
+                name: "test-service".to_string(),
+                version: "1.0.0".to_string(),
+                description: "A test service".to_string(),
+                actions: vec![],
+                registration_time: 1234567890,
+                last_start_time: Some(1234567891),
+            }],
+            subscriptions: vec![SubscriptionMetadata {
+                path: "test-topic".to_string(),
+            }],
+        },
+        version: 2,
+    };
+    write_cbor_vector(out, "node_info_with_metadata.bin", &node_with_metadata)?;
+
+    println!("✅ NodeInfo vectors generated");
+    Ok(())
+}
+
 fn generate_transport_request_params_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating TransportRequestParams vectors...");
 
@@ -635,6 +695,113 @@ fn generate_transport_complete_request_params_vectors(out: &Path) -> Result<()> 
     )?;
 
     println!("✅ TransportCompleteRequestParams vectors generated");
+    Ok(())
+}
+
+fn generate_network_message_payload_item_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating NetworkMessagePayloadItem vectors...");
+
+    // Basic payload item
+    let basic_payload = NetworkMessagePayloadItem {
+        path: "/api/test".to_string(),
+        payload_bytes: b"test payload data".to_vec(),
+        correlation_id: "corr_123".to_string(),
+        network_public_key: Some(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        profile_public_keys: vec![vec![11, 12, 13, 14, 15], vec![16, 17, 18, 19, 20]],
+    };
+    write_cbor_vector(
+        out,
+        "network_message_payload_item_basic.bin",
+        &basic_payload,
+    )?;
+
+    // Payload item without network key
+    let no_network_payload = NetworkMessagePayloadItem {
+        path: "/api/simple".to_string(),
+        payload_bytes: b"simple payload".to_vec(),
+        correlation_id: "corr_456".to_string(),
+        network_public_key: None,
+        profile_public_keys: vec![vec![1, 2, 3]],
+    };
+    write_cbor_vector(
+        out,
+        "network_message_payload_item_no_network.bin",
+        &no_network_payload,
+    )?;
+
+    // Payload item with empty profile keys
+    let empty_profiles_payload = NetworkMessagePayloadItem {
+        path: "/api/empty".to_string(),
+        payload_bytes: b"empty profiles payload".to_vec(),
+        correlation_id: "corr_789".to_string(),
+        network_public_key: Some(vec![21, 22, 23, 24, 25]),
+        profile_public_keys: vec![],
+    };
+    write_cbor_vector(
+        out,
+        "network_message_payload_item_empty_profiles.bin",
+        &empty_profiles_payload,
+    )?;
+
+    println!("✅ NetworkMessagePayloadItem vectors generated");
+    Ok(())
+}
+
+fn generate_network_message_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating NetworkMessage vectors...");
+
+    // Basic network message
+    let basic_payload = NetworkMessagePayloadItem {
+        path: "/api/request".to_string(),
+        payload_bytes: b"request data".to_vec(),
+        correlation_id: "req_123".to_string(),
+        network_public_key: Some(vec![1, 2, 3, 4, 5]),
+        profile_public_keys: vec![vec![6, 7, 8, 9, 10]],
+    };
+
+    let basic_message = NetworkMessage {
+        source_node_id: "node_123".to_string(),
+        destination_node_id: "node_456".to_string(),
+        message_type: 4, // MESSAGE_TYPE_REQUEST
+        payload: basic_payload,
+    };
+    write_cbor_vector(out, "network_message_basic.bin", &basic_message)?;
+
+    // Response message
+    let response_payload = NetworkMessagePayloadItem {
+        path: "/api/response".to_string(),
+        payload_bytes: b"response data".to_vec(),
+        correlation_id: "resp_456".to_string(),
+        network_public_key: None,
+        profile_public_keys: vec![],
+    };
+
+    let response_message = NetworkMessage {
+        source_node_id: "node_456".to_string(),
+        destination_node_id: "node_123".to_string(),
+        message_type: 5, // MESSAGE_TYPE_RESPONSE
+        payload: response_payload,
+    };
+    write_cbor_vector(out, "network_message_response.bin", &response_message)?;
+
+    // Event message
+    let event_payload = NetworkMessagePayloadItem {
+        path: "/events/notification".to_string(),
+        payload_bytes: b"event notification data".to_vec(),
+        correlation_id: "event_789".to_string(),
+        network_public_key: Some(vec![11, 12, 13, 14, 15]),
+        profile_public_keys: vec![vec![16, 17, 18], vec![19, 20, 21]],
+    };
+
+    let event_message = NetworkMessage {
+        source_node_id: "node_789".to_string(),
+        destination_node_id: "node_123".to_string(),
+        message_type: 6, // MESSAGE_TYPE_EVENT
+        payload: event_payload,
+    };
+    write_cbor_vector(out, "network_message_event.bin", &event_message)?;
+
+    println!("✅ NetworkMessage vectors generated");
     Ok(())
 }
 

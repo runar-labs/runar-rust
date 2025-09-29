@@ -7,6 +7,7 @@ use runar_keys::ca_node_types::{
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
+use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 // use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -415,6 +416,9 @@ fn main() -> Result<()> {
         validate_transport_request_params,
         validate_transport_publish_params,
         validate_transport_complete_request_params,
+        // Network Message types validation (task13.md requirement)
+        validate_network_message_payload_item,
+        validate_network_message,
     ];
 
     let mut passed = 0;
@@ -555,6 +559,62 @@ fn validate_transport_complete_request_params() -> Result<()> {
             "TransportCompleteRequestParams validation failed:\nSwift: {:?}\nRust: {:?}",
             swift_complete,
             rust_complete
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_network_message_payload_item() -> Result<()> {
+    println!("🔍 Validating NetworkMessagePayloadItem...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/network_message_payload_item_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/network_message_payload_item_basic.bin",
+    ))?;
+
+    let swift_payload: NetworkMessagePayloadItem = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift NetworkMessagePayloadItem")?;
+    let rust_payload: NetworkMessagePayloadItem = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust NetworkMessagePayloadItem")?;
+
+    if swift_payload == rust_payload {
+        println!("✅ NetworkMessagePayloadItem validation passed");
+    } else {
+        anyhow::bail!(
+            "NetworkMessagePayloadItem validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_payload,
+            rust_payload
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_network_message() -> Result<()> {
+    println!("🔍 Validating NetworkMessage...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/network_message_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/network_message_basic.bin",
+    ))?;
+
+    let swift_message: NetworkMessage = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift NetworkMessage")?;
+    let rust_message: NetworkMessage =
+        serde_cbor::from_slice(&rust_data).context("Failed to deserialize Rust NetworkMessage")?;
+
+    if swift_message == rust_message {
+        println!("✅ NetworkMessage validation passed");
+    } else {
+        anyhow::bail!(
+            "NetworkMessage validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_message,
+            rust_message
         );
     }
 

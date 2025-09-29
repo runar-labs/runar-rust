@@ -112,7 +112,7 @@ pub fn pick_free_port(port_range: Range<u16>) -> Option<u16> {
     None // No free port found after max attempts
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkMessagePayloadItem {
     /// The path/topic associated with this payload
     pub path: String,
@@ -138,7 +138,7 @@ pub const MESSAGE_TYPE_EVENT: u32 = 6;
 pub const MESSAGE_TYPE_ERROR: u32 = 7;
 
 /// Represents a message exchanged between nodes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkMessage {
     /// Source node identifier
     pub source_node_id: String,
