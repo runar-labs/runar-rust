@@ -456,8 +456,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(!enroll_response.issuing_ca_der.is_empty());
     assert!(enroll_response.expires_at > 0);
 
-    println!("   ✅ Enrollment successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}", 
-        enroll_response.network_id, 
+    println!("   ✅ Enrollment successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}",
+        enroll_response.network_id,
         enroll_response.certificate_der.len(),
         enroll_response.issuing_ca_der.len(),
         enroll_response.expires_at);
@@ -610,8 +610,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(!renew_response.issuing_ca_der.is_empty());
     assert!(renew_response.expires_at > 0);
 
-    println!("   ✅ Certificate renewal successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}", 
-        renew_response.network_id, 
+    println!("   ✅ Certificate renewal successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}",
+        renew_response.network_id,
         renew_response.certificate_der.len(),
         renew_response.issuing_ca_der.len(),
         renew_response.expires_at);
@@ -890,8 +890,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(status_response.not_before > 0);
     assert!(status_response.not_after > status_response.not_before);
 
-    println!("   ✅ CA Status retrieved via REAL QUIC mTLS: network_id={}, issuing_subject={}, issuing_serial={}, not_before={}, not_after={}", 
-        status_response.network_id, 
+    println!("   ✅ CA Status retrieved via REAL QUIC mTLS: network_id={}, issuing_subject={}, issuing_serial={}, not_before={}, not_after={}",
+        status_response.network_id,
         status_response.issuing_subject,
         status_response.issuing_serial_hex,
         status_response.not_before,
@@ -939,8 +939,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(chain_response.root_ca_der.is_some());
     assert!(!chain_response.root_ca_der.as_ref().unwrap().is_empty());
 
-    println!("   ✅ Certificate chain retrieved via REAL QUIC mTLS: network_id={}, issuing_ca_size={} bytes, root_ca_size={} bytes", 
-        chain_response.network_id, 
+    println!("   ✅ Certificate chain retrieved via REAL QUIC mTLS: network_id={}, issuing_ca_size={} bytes, root_ca_size={} bytes",
+        chain_response.network_id,
         chain_response.issuing_ca_der.len(),
         chain_response.root_ca_der.as_ref().unwrap().len());
 
@@ -1886,8 +1886,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(!test_enroll_response.issuing_ca_der.is_empty());
     assert!(test_enroll_response.expires_at > 0);
 
-    println!("   ✅ Test enrollment successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}", 
-        test_enroll_response.network_id, 
+    println!("   ✅ Test enrollment successful: network_id={}, cert_size={} bytes, issuing_ca_size={} bytes, expires_at={}",
+        test_enroll_response.network_id,
         test_enroll_response.certificate_der.len(),
         test_enroll_response.issuing_ca_der.len(),
         test_enroll_response.expires_at);
@@ -1961,8 +1961,8 @@ fn test_ffi_full_transport_e2e_quic_mtls() -> Result<(), Box<dyn std::error::Err
     assert!(test_status_response.not_before > 0);
     assert!(test_status_response.not_after > test_status_response.not_before);
 
-    println!("   ✅ Basic status request with reconstructed CA successful: network_id={}, issuing_subject={}, issuing_serial={}, not_before={}, not_after={}", 
-        test_status_response.network_id, 
+    println!("   ✅ Basic status request with reconstructed CA successful: network_id={}, issuing_subject={}, issuing_serial={}, not_before={}, not_after={}",
+        test_status_response.network_id,
         test_status_response.issuing_subject,
         test_status_response.issuing_serial_hex,
         test_status_response.not_before,

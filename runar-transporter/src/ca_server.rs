@@ -425,16 +425,20 @@ impl CaServer {
         &self,
     ) -> Result<(runar_keys::X509Certificate, EcdsaKeyPair)> {
         let ca_node = self.ca_node.read().unwrap();
-        
+
         println!("🔧 [SERVER DEBUG] Reading from CA Node:");
         println!("  Network ID: {}", ca_node.network_id);
-        println!("  Root CA: {} bytes, subject: {}", 
+        println!(
+            "  Root CA: {} bytes, subject: {}",
             ca_node.root_ca_cert.der_bytes().len(),
-            ca_node.root_ca_cert.subject());
-        println!("  Issuing CA: {} bytes, subject: {}", 
+            ca_node.root_ca_cert.subject()
+        );
+        println!(
+            "  Issuing CA: {} bytes, subject: {}",
             ca_node.issuing_ca_cert.der_bytes().len(),
-            ca_node.issuing_ca_cert.subject());
-        
+            ca_node.issuing_ca_cert.subject()
+        );
+
         let issuing_ca_key = ca_node.issuing_ca_key.clone();
         let issuing_ca_cert = ca_node.issuing_ca_cert.clone();
 

@@ -456,7 +456,7 @@ impl std::fmt::Display for NodeConfig {
 /// async fn example_usage() -> anyhow::Result<()> {
 ///     // Note: This example shows the concept but would need proper
 ///     // key manager state to actually create a Node instance.
-///     
+///
 ///     // let config = NodeConfig::new("my-node", "my-network");
 ///     // let  node = Node::new(config).await?;
 ///     //
@@ -468,7 +468,7 @@ impl std::fmt::Display for NodeConfig {
 ///     //
 ///     // Make requests (note: this would require the service to have action handlers)
 ///     // let result: String = node.request("my-service/action", None).await?;
-///     
+///
 ///     Ok(())
 /// }
 /// ```
@@ -600,12 +600,12 @@ impl Node {
     /// async fn example_usage() -> anyhow::Result<()> {
     ///     // Note: This example shows the concept but would need proper
     ///     // key manager state to actually create a Node instance.
-    ///     
+    ///
     ///     // let config = NodeConfig::new("my-node", "my-network");
     ///     // let _node = Node::new(config).await?;
     ///     //
     ///     // Node is ready but services aren't started yet
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -760,7 +760,7 @@ impl Node {
     /// async fn example_usage() -> anyhow::Result<()> {
     ///     // Note: This example shows the concept but would need proper
     ///     // key manager state to actually create a Node instance.
-    ///     
+    ///
     ///     // let mut config = NodeConfig::new("my-node", "my-network");
     ///     // let  node = Node::new(config).await?;
     ///     //
@@ -770,7 +770,7 @@ impl Node {
     ///     //
     ///     // Start the node to start all services
     ///     // node.start().await?;
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -942,17 +942,17 @@ impl Node {
     ///     // Note: This example shows the concept but would need a running node
     ///     // with services to actually work. The on() method is typically used
     ///     // after the node is started and services are running.
-    ///     
+    ///
     ///     // Wait for an event with default 5-second timeout
     ///     // let handle = node.on("my-service/event", None);
-    ///     
+    ///
     ///     // Wait for the event
     ///     // match handle.await? {
     ///     //     Ok(Some(data)) => println!("Received event: {data:?}"),
     ///     //     Ok(None) => println!("Channel closed"),
     ///     //     Err(e) => println!("Error: {e}"),
     ///     // }
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -1069,7 +1069,7 @@ impl Node {
     /// async fn example_usage() -> anyhow::Result<()> {
     ///     // Note: This example shows the concept but would need proper
     ///     // key manager state to actually create a Node instance.
-    ///     
+    ///
     ///     // let mut config = NodeConfig::new("my-node", "my-network");
     ///     // let  node = Node::new(config).await?;
     ///     //
@@ -1080,7 +1080,7 @@ impl Node {
     ///     // node.start().await?;
     ///     //
     ///     // Node is now running and ready to handle requests
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -3164,7 +3164,7 @@ impl NodeDelegate for Node {
         // This will be combined with `self.network_id` to form the full TopicPath for registry storage.
         let topic_path = TopicPath::new(topic, &self.network_id)
             .map_err(|e| anyhow!(
-                "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'", 
+                "Invalid topic string for subscribe_with_options: {e}. Topic: '{topic}', Network ID: '{network_id}'",
                 network_id=self.network_id
             ))?;
 

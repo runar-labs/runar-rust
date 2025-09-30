@@ -57,20 +57,20 @@ fn main() -> anyhow::Result<()> {
     println!("Creating resolver for system context (no user)...");
     let empty_profile_keys = vec![];
     let system_resolver = cache.get_or_create(&system_config, &empty_profile_keys)?;
-    
+
     println!("Available labels: {:?}", system_resolver.available_labels());
-    
+
     // Test system label resolution
     let system_info = system_resolver.resolve_label_info("system")?.unwrap();
-    println!("System label: network_key={:?}, profile_keys={:?}", 
+    println!("System label: network_key={:?}, profile_keys={:?}",
         system_info.network_public_key, system_info.profile_public_keys);
-    
+
     let admin_info = system_resolver.resolve_label_info("admin")?.unwrap();
-    println!("Admin label: network_key={:?}, profile_keys={:?}", 
+    println!("Admin label: network_key={:?}, profile_keys={:?}",
         admin_info.network_public_key, admin_info.profile_public_keys);
-    
+
     let current_user_info = system_resolver.resolve_label_info("current_user")?.unwrap();
-    println!("Current user label: network_key={:?}, profile_keys={:?}", 
+    println!("Current user label: network_key={:?}, profile_keys={:?}",
         current_user_info.network_public_key, current_user_info.profile_public_keys);
     println!();
 
@@ -78,26 +78,26 @@ fn main() -> anyhow::Result<()> {
     println!("Creating resolver for user context...");
     let user_profile_keys = vec![vec![100, 101, 102], vec![103, 104, 105]];
     let user_resolver = cache.get_or_create(&system_config, &user_profile_keys)?;
-    
+
     println!("Available labels: {:?}", user_resolver.available_labels());
-    
+
     // Test user-specific label resolution
     let current_user_info = user_resolver.resolve_label_info("current_user")?.unwrap();
-    println!("Current user label: network_key={:?}, profile_keys={:?}", 
+    println!("Current user label: network_key={:?}, profile_keys={:?}",
         current_user_info.network_public_key, current_user_info.profile_public_keys);
-    
+
     let private_data_info = user_resolver.resolve_label_info("my_private_data")?.unwrap();
-    println!("Private data label: network_key={:?}, profile_keys={:?}", 
+    println!("Private data label: network_key={:?}, profile_keys={:?}",
         private_data_info.network_public_key, private_data_info.profile_public_keys);
-    
+
     let user_data_info = user_resolver.resolve_label_info("user_data")?.unwrap();
-    println!("User data label: network_key={:?}, profile_keys={:?}", 
+    println!("User data label: network_key={:?}, profile_keys={:?}",
         user_data_info.network_public_key, user_data_info.profile_public_keys);
     println!();
 
     // 6. Demonstrate how this would be used in SerializationContext
     println!("=== SerializationContext Usage Example ===");
-    
+
     // For a system request (no user context)
     let system_context = runar_serializer::traits::SerializationContext {
         keystore: Arc::new(ExampleKeyStore), // Placeholder
@@ -106,7 +106,7 @@ fn main() -> anyhow::Result<()> {
         profile_public_keys: vec![], // No user keys
     };
     println!("System context created with {} labels", system_context.resolver.available_labels().len());
-    
+
     // For a user request
     let user_context = runar_serializer::traits::SerializationContext {
         keystore: Arc::new(ExampleKeyStore), // Placeholder
@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
     println!("Cache entries: {}", stats.total_entries);
     println!("Max cache size: {}", stats.max_size);
     println!("TTL: {} seconds", stats.ttl_seconds);
-    
+
     // Demonstrate cache hit (reuse the same resolver)
     println!("\nDemonstrating cache hit...");
     let _cached_resolver = cache.get_or_create(&system_config, &empty_profile_keys)?;

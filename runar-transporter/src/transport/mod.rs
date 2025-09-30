@@ -230,7 +230,7 @@ pub trait NetworkTransport: Send + Sync {
         profile_public_keys: Vec<Vec<u8>>,
     ) -> Result<Vec<u8>, NetworkError>;
 
-    /// Fire-and-forget / broadcast message (pattern B)  
+    /// Fire-and-forget / broadcast message (pattern B)
     /// events or heart-beats.
     async fn publish(
         &self,

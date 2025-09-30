@@ -951,7 +951,7 @@ impl MobileKeyManager {
         Ok(envelope_data.encrypted_data)
     }
 
-    /// Encrypt data for a network (legacy method for compatibility)  
+    /// Encrypt data for a network (legacy method for compatibility)
     pub fn encrypt_for_network(&self, data: &[u8], network_public_key: &[u8]) -> Result<Vec<u8>> {
         // Use envelope encryption with the provided public key
         let envelope_data =

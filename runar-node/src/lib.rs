@@ -28,7 +28,7 @@
 //! async fn example_usage() -> anyhow::Result<()> {
 //!     // Note: This example shows the concept but would need proper
 //!     // key manager state to actually create a Node instance.
-//!     
+//!
 //!     // Create a node configuration
 //!     // let config = NodeConfig::new("my-node", "my-network");
 //!     //
@@ -37,7 +37,7 @@
 //!     // node.start().await?;
 //!     //
 //!     // Your services can now communicate!
-//!     
+//!
 //!     Ok(())
 //! }
 //! ```

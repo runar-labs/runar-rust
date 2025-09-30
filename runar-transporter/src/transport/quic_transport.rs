@@ -1069,7 +1069,7 @@ impl QuicTransport {
 
         match from_slice::<NetworkMessage>(&msg_buf) {
             Ok(msg) => {
-                log_debug!(self.logger, "[read_message] Decoded message: type={type}, source={source}, dest={dest}", 
+                log_debug!(self.logger, "[read_message] Decoded message: type={type}, source={source}, dest={dest}",
                      type=msg.message_type, source=msg.source_node_id, dest=msg.destination_node_id);
                 Ok(msg)
             }

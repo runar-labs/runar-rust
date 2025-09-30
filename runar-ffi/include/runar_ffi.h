@@ -84,16 +84,27 @@ void rn_clear_error_history(void);
 
 /**
  * Set local NodeInfo from a CBOR buffer.
- *
- * Returns 0 on success.
- * Returns error code on failure; check err for details.
  */
-int32_t rn_keys_set_local_node_info(void *keys,
-                                    const uint8_t *node_info_cbor,
-                                    size_t len,
-                                    struct RnError *err);
-
 int32_t rn_set_log_level(int32_t level, struct RnError *err);
+
+/**
+ * Set local NodeInfo for the transport.
+ * Returns 0 on success, error code on failure.
+ */
+int32_t rn_transport_set_local_node_info(void *transport,
+                                         const uint8_t *node_info_cbor,
+                                         size_t len,
+                                         struct RnError *err);
+
+/**
+ * Get local NodeInfo from the transport.
+ * Returns 0 on success, error code on failure.
+ * The caller must free the returned buffer using rn_buffer_free.
+ */
+int32_t rn_transport_get_local_node_info(void *transport,
+                                         uint8_t **out_buffer,
+                                         size_t *out_len,
+                                         struct RnError *err);
 
 int32_t rn_set_logger_node_id(const char *node_id, struct RnError *err);
 

@@ -73,15 +73,7 @@ fn two_transports_request_response() {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        assert_eq!(
-            rn_keys_set_local_node_info(
-                keys_b,
-                info_buf.as_ptr(),
-                info_buf.len(),
-                &mut err as *mut _ as *mut _
-            ),
-            0
-        );
+        // Note: NodeInfo will be set on transport after creation
 
         // Create mobile keys for processing setup tokens
         let mut keys_c: *mut std::ffi::c_void = std::ptr::null_mut();
@@ -91,16 +83,7 @@ fn two_transports_request_response() {
             0
         );
 
-        // Set node info for A
-        assert_eq!(
-            rn_keys_set_local_node_info(
-                keys_a,
-                info_buf.as_ptr(),
-                info_buf.len(),
-                &mut err as *mut _ as *mut _
-            ),
-            0
-        );
+        // Note: NodeInfo will be set on transport after creation
 
         let mut p: *mut u8 = std::ptr::null_mut();
         let mut l: usize = 0;
@@ -203,6 +186,26 @@ fn two_transports_request_response() {
             0
         );
         assert_eq!(rn_transport_start(tb, &mut err as *mut _ as *mut _), 0);
+
+        // Set NodeInfo for both transports
+        assert_eq!(
+            rn_transport_set_local_node_info(
+                ta,
+                info_buf.as_ptr(),
+                info_buf.len(),
+                &mut err as *mut _ as *mut _
+            ),
+            0
+        );
+        assert_eq!(
+            rn_transport_set_local_node_info(
+                tb,
+                info_buf.as_ptr(),
+                info_buf.len(),
+                &mut err as *mut _ as *mut _
+            ),
+            0
+        );
 
         let mut pk_out: *mut u8 = std::ptr::null_mut();
         let mut pk_len: usize = 0;

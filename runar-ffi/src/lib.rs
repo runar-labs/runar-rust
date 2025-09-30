@@ -150,8 +150,6 @@ struct KeysInner {
     mobile_key_manager: Option<Arc<RwLock<MobileKeyManager>>>,
     node_key_manager: Option<Arc<RwLock<NodeKeyManager>>>,
 
-    // Local NodeInfo holder (push-updated from FFI)
-    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
     // Shared device keystore registered at FFI level
     device_keystore: Option<Arc<dyn keystore::DeviceKeystore>>,
     // Persistence directory and auto-persist flag
@@ -413,18 +411,41 @@ fn alloc_bytes(out_ptr: *mut *mut u8, out_len: *mut usize, data: &[u8]) -> bool 
 }
 
 /// Set local NodeInfo from a CBOR buffer.
-///
-/// Returns 0 on success.
-/// Returns error code on failure; check err for details.
 #[no_mangle]
-pub unsafe extern "C" fn rn_keys_set_local_node_info(
-    keys: *mut c_void,
+pub unsafe extern "C" fn rn_set_log_level(level: i32, err: *mut RnError) -> i32 {
+    let log_level = match level {
+        0 => LogLevel::Off,
+        1 => LogLevel::Error,
+        2 => LogLevel::Warn,
+        3 => LogLevel::Info,
+        4 => LogLevel::Debug,
+        5 => LogLevel::Trace,
+        _ => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Invalid log level: {level}. Must be 0-5"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    let logging_config = LoggingConfig::new().with_default_level(log_level);
+    logging_config.apply();
+    0
+}
+
+/// Set local NodeInfo for the transport.
+/// Returns 0 on success, error code on failure.
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_set_local_node_info(
+    transport: *mut c_void,
     node_info_cbor: *const u8,
     len: usize,
     err: *mut RnError,
 ) -> i32 {
-    let Some(inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return RN_ERROR_INVALID_HANDLE;
     };
     if node_info_cbor.is_null() || len == 0 {
@@ -447,27 +468,51 @@ pub unsafe extern "C" fn rn_keys_set_local_node_info(
     0
 }
 
+/// Get local NodeInfo from the transport.
+/// Returns 0 on success, error code on failure.
+/// The caller must free the returned buffer using rn_buffer_free.
 #[no_mangle]
-pub unsafe extern "C" fn rn_set_log_level(level: i32, err: *mut RnError) -> i32 {
-    let log_level = match level {
-        0 => LogLevel::Off,
-        1 => LogLevel::Error,
-        2 => LogLevel::Warn,
-        3 => LogLevel::Info,
-        4 => LogLevel::Debug,
-        5 => LogLevel::Trace,
-        _ => {
-            set_error(
-                err,
-                RN_ERROR_INVALID_ARGUMENT,
-                &format!("Invalid log level: {level}. Must be 0-5"),
-            );
-            return RN_ERROR_INVALID_ARGUMENT;
+pub unsafe extern "C" fn rn_transport_get_local_node_info(
+    transport: *mut c_void,
+    out_buffer: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    let node_info_arc = inner.local_node_info.load();
+    let node_info = match node_info_arc.as_ref() {
+        Some(info) => info,
+        None => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "local NodeInfo not set");
+            return RN_ERROR_OPERATION_FAILED;
         }
     };
 
-    let logging_config = LoggingConfig::new().with_default_level(log_level);
-    logging_config.apply();
+    let cbor_data = match serde_cbor::to_vec(node_info) {
+        Ok(data) => data,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to encode NodeInfo: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
+    };
+
+    let buffer = libc::malloc(cbor_data.len()) as *mut u8;
+    if buffer.is_null() {
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "failed to allocate buffer");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    std::ptr::copy_nonoverlapping(cbor_data.as_ptr(), buffer, cbor_data.len());
+    *out_buffer = buffer;
+    *out_len = cbor_data.len();
     0
 }
 
@@ -2873,8 +2918,6 @@ fn keys_new_impl(_err: *mut RnError) -> *mut c_void {
         logger,
         mobile_key_manager: None,
         node_key_manager: None,
-
-        local_node_info: Arc::new(ArcSwap::from_pointee(None)),
         device_keystore: None,
         persistence_dir: None,
         auto_persist: true,
@@ -3030,6 +3073,20 @@ fn with_keys_inner<'a>(keys: *mut c_void) -> Option<&'a mut KeysInner> {
     }
     unsafe {
         let handle = &mut *(keys as *mut FfiKeysHandle);
+        if handle.inner.is_null() {
+            None
+        } else {
+            Some(&mut *handle.inner)
+        }
+    }
+}
+
+fn with_transport_inner<'a>(transport: *mut c_void) -> Option<&'a mut TransportInner> {
+    if transport.is_null() {
+        return None;
+    }
+    unsafe {
+        let handle = &mut *(transport as *mut FfiTransportHandle);
         if handle.inner.is_null() {
             None
         } else {
@@ -3888,15 +3945,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
-    // Require local NodeInfo to be set before initializing transport
-    if keys_inner.local_node_info.load().as_ref().is_none() {
-        set_error(
-            err,
-            1,
-            "local NodeInfo is required; call rn_keys_set_local_node_info() before creating the transport",
-        );
-        return RN_ERROR_INVALID_HANDLE;
-    }
     // Get node public key for transport
     let node_public_key = {
         let mgr = match manager.read() {
@@ -3932,8 +3980,9 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             .with_event_callback(ev_cb);
     }
 
-    // Provide NodeInfo getter from the local holder (no FFI callbacks)
-    let holder = keys_inner.local_node_info.clone();
+    // Create a shared local_node_info holder for both callback and transport
+    let shared_local_node_info = Arc::new(ArcSwap::from_pointee(None::<NodeInfo>));
+    let holder = shared_local_node_info.clone();
     let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback =
         Arc::new(move || {
             let holder = holder.clone();
@@ -4193,7 +4242,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         events_tx: tx,
         events_rx: Mutex::new(rx),
         pending,
-        local_node_info: keys_inner.local_node_info.clone(),
+        local_node_info: shared_local_node_info,
     };
     let handle = FfiTransportHandle {
         inner: Box::into_raw(Box::new(inner)),
@@ -7934,7 +7983,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_enroll(
     let request_data = std::slice::from_raw_parts(request, request_len);
     let enroll_request = match serde_cbor::from_slice::<CsrEnrollRequest>(request_data) {
         Ok(req) => {
-            log_trace!(logger, "FFI enroll - request parsed successfully: network_id={}, csr_size={} bytes, token_id={}", 
+            log_trace!(logger, "FFI enroll - request parsed successfully: network_id={}, csr_size={} bytes, token_id={}",
                 req.network_id, req.csr_der.len(), req.enrollment_token.body.token_id);
             req
         }

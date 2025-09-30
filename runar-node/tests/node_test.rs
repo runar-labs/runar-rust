@@ -489,7 +489,7 @@ async fn test_on_method() {
 ///
 /// INTENTION: This test validates that:
 /// - Service initialization triggers state/initialized events
-/// - Service start triggers state/running events  
+/// - Service start triggers state/running events
 /// - Service stop triggers state/stopped events
 /// - Service errors trigger state/error events
 /// - All state events can be received using the on method
