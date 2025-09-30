@@ -371,10 +371,45 @@ void rn_transport_free(void *transport);
 
 int32_t rn_transport_start(void *transport, struct RnError *err);
 
+int32_t rn_transport_poll_peer_connected(void *transport,
+                                         uint8_t **out_cbor,
+                                         size_t *out_len,
+                                         struct RnError *err);
+
+int32_t rn_transport_poll_peer_disconnected(void *transport,
+                                            uint8_t **out_cbor,
+                                            size_t *out_len,
+                                            struct RnError *err);
+
+int32_t rn_transport_poll_discovery_discovered(void *transport,
+                                               uint8_t **out_cbor,
+                                               size_t *out_len,
+                                               struct RnError *err);
+
+int32_t rn_transport_poll_discovery_updated(void *transport,
+                                            uint8_t **out_cbor,
+                                            size_t *out_len,
+                                            struct RnError *err);
+
+int32_t rn_transport_poll_discovery_lost(void *transport,
+                                         uint8_t **out_cbor,
+                                         size_t *out_len,
+                                         struct RnError *err);
+
+int32_t rn_transport_poll_request(void *transport,
+                                  uint8_t **out_cbor,
+                                  size_t *out_len,
+                                  struct RnError *err);
+
 int32_t rn_transport_poll_event(void *transport,
-                                uint8_t **out_event,
+                                uint8_t **out_cbor,
                                 size_t *out_len,
                                 struct RnError *err);
+
+int32_t rn_transport_poll_response(void *transport,
+                                   uint8_t **out_cbor,
+                                   size_t *out_len,
+                                   struct RnError *err);
 
 int32_t rn_transport_connect_peer(void *transport,
                                   const uint8_t *peer_info_cbor,

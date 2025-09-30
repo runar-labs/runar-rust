@@ -269,25 +269,20 @@ fn two_transports_request_response() {
         for _ in 0..50 {
             let mut ev_ptr: *mut u8 = std::ptr::null_mut();
             let mut ev_len: usize = 0;
-            let rc =
-                rn_transport_poll_event(ta, &mut ev_ptr, &mut ev_len, &mut err as *mut _ as *mut _);
+            let rc = rn_transport_poll_request(
+                ta,
+                &mut ev_ptr,
+                &mut ev_len,
+                &mut err as *mut _ as *mut _,
+            );
             assert_eq!(rc, 0);
             if !ev_ptr.is_null() && ev_len > 0 {
-                let v: Value =
+                // Deserialize as TransportRequestEvent
+                let req_event: TransportRequestEvent =
                     serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
                 rn_free(ev_ptr, ev_len);
-                if let Value::Map(m) = v {
-                    let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
-                        Value::Text(s) => Some(s.as_str()),
-                        _ => None,
-                    });
-                    if typ == Some("RequestReceived") {
-                        if let Some(Value::Text(rid)) = m.get(&Value::Text("request_id".into())) {
-                            rid_c = Some(CString::new(rid.as_str()).unwrap());
-                            break;
-                        }
-                    }
-                }
+                rid_c = Some(CString::new(req_event.request_id.as_str()).unwrap());
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -316,24 +311,20 @@ fn two_transports_request_response() {
         for _ in 0..50 {
             let mut ev_ptr: *mut u8 = std::ptr::null_mut();
             let mut ev_len: usize = 0;
-            let rc =
-                rn_transport_poll_event(tb, &mut ev_ptr, &mut ev_len, &mut err as *mut _ as *mut _);
+            let rc = rn_transport_poll_response(
+                tb,
+                &mut ev_ptr,
+                &mut ev_len,
+                &mut err as *mut _ as *mut _,
+            );
             assert_eq!(rc, 0);
             if !ev_ptr.is_null() && ev_len > 0 {
-                let v: Value =
+                // Deserialize as TransportResponseEvent
+                let _resp_event: TransportResponseEvent =
                     serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
-                if let Value::Map(m) = v {
-                    let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
-                        Value::Text(s) => Some(s.as_str()),
-                        _ => None,
-                    });
-                    if typ == Some("ResponseReceived") {
-                        got_resp = true;
-                        rn_free(ev_ptr, ev_len);
-                        break;
-                    }
-                }
+                got_resp = true;
                 rn_free(ev_ptr, ev_len);
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -373,27 +364,15 @@ fn two_transports_request_response() {
                 rn_transport_poll_event(ta, &mut ev_ptr, &mut ev_len, &mut err as *mut _ as *mut _);
             assert_eq!(rc, 0);
             if !ev_ptr.is_null() && ev_len > 0 {
-                let v: Value =
+                // Deserialize as TransportEventEvent
+                let event: TransportEventEvent =
                     serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
-                if let Value::Map(m) = v {
-                    let typ = m.get(&Value::Text("type".into())).and_then(|vv| match vv {
-                        Value::Text(s) => Some(s.as_str()),
-                        _ => None,
-                    });
-                    if typ == Some("EventReceived") {
-                        // Verify the event payload
-                        if let Some(Value::Bytes(payload)) = m.get(&Value::Text("payload".into())) {
-                            assert_eq!(payload, b"test event data", "Event payload mismatch");
-                        }
-                        if let Some(Value::Text(path)) = m.get(&Value::Text("path".into())) {
-                            assert_eq!(path, "/events/test", "Event path mismatch");
-                        }
-                        got_event = true;
-                        rn_free(ev_ptr, ev_len);
-                        break;
-                    }
-                }
+                // Verify the event payload
+                assert_eq!(event.payload, b"test event data", "Event payload mismatch");
+                assert_eq!(event.path, "/events/test", "Event path mismatch");
+                got_event = true;
                 rn_free(ev_ptr, ev_len);
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }

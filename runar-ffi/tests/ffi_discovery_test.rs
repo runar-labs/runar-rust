@@ -36,11 +36,11 @@ fn test_ffi_discovery_ttl_lost_and_debounce() {
 
     // Generate CSRs for both nodes
     assert_eq!(
-        unsafe { rn_keys_node_generate_csr(keys_a, &mut csr_a, &mut csr_len_a, &mut error) },
+        rn_keys_node_generate_csr(keys_a, &mut csr_a, &mut csr_len_a, &mut error),
         0
     );
     assert_eq!(
-        unsafe { rn_keys_node_generate_csr(keys_b, &mut csr_b, &mut csr_len_b, &mut error) },
+        rn_keys_node_generate_csr(keys_b, &mut csr_b, &mut csr_len_b, &mut error),
         0
     );
 
@@ -187,11 +187,11 @@ fn test_ffi_multicast_announce_and_discover() {
 
     // Generate CSRs for both nodes
     assert_eq!(
-        unsafe { rn_keys_node_generate_csr(keys_a, &mut csr_a, &mut csr_len_a, &mut error) },
+        rn_keys_node_generate_csr(keys_a, &mut csr_a, &mut csr_len_a, &mut error),
         0
     );
     assert_eq!(
-        unsafe { rn_keys_node_generate_csr(keys_b, &mut csr_b, &mut csr_len_b, &mut error) },
+        rn_keys_node_generate_csr(keys_b, &mut csr_b, &mut csr_len_b, &mut error),
         0
     );
 
@@ -322,7 +322,7 @@ fn test_ffi_discovery_start_stop_idempotence() {
     let mut csr_len: usize = 0;
 
     assert_eq!(
-        unsafe { rn_keys_node_generate_csr(keys, &mut csr, &mut csr_len, &mut error) },
+        rn_keys_node_generate_csr(keys, &mut csr, &mut csr_len, &mut error),
         0
     );
 
@@ -428,7 +428,7 @@ fn test_ffi_discovery_invalid_cbor_handling() {
     let mut csr_len: usize = 0;
 
     assert_eq!(
-        unsafe { rn_keys_node_generate_csr(keys, &mut csr, &mut csr_len, &mut error) },
+        rn_keys_node_generate_csr(keys, &mut csr, &mut csr_len, &mut error),
         0
     );
 
@@ -452,12 +452,10 @@ fn test_ffi_discovery_invalid_cbor_handling() {
     assert!(!discovery.is_null());
 
     // Cleanup
-    unsafe {
-        rn_discovery_free(discovery);
-        rn_keys_free(keys);
-        if !csr.is_null() {
-            rn_free(csr, csr_len);
-        }
+    rn_discovery_free(discovery);
+    rn_keys_free(keys);
+    if !csr.is_null() {
+        rn_free(csr, csr_len);
     }
 
     println!("✅ FFI Discovery Invalid CBOR Handling Test completed");

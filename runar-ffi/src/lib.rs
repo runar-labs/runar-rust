@@ -340,10 +340,58 @@ fn handle_keystore_creation_error(
     RN_ERROR_KEYSTORE_FAILED
 }
 
+// Typed event structs carried on per-type channels
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct PeerConnectedEvent {
+    pub node_id: String,
+    pub node_info: NodeInfo,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct TransportRequestEvent {
+    pub request_id: String,
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+    pub profile_public_key: Vec<u8>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct TransportEventEvent {
+    pub path: String,
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct TransportResponseEvent {
+    pub correlation_id: String,
+    pub payload: Vec<u8>,
+}
+
 struct TransportInner {
     transport: Arc<QuicTransport>,
-    events_tx: mpsc::Sender<Vec<u8>>,
-    events_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
+    // per-type channels
+    #[allow(dead_code)]
+    peer_connected_tx: mpsc::Sender<PeerConnectedEvent>,
+    peer_connected_rx: Mutex<mpsc::Receiver<PeerConnectedEvent>>,
+    #[allow(dead_code)]
+    peer_disconnected_tx: mpsc::Sender<String>,
+    peer_disconnected_rx: Mutex<mpsc::Receiver<String>>,
+    discovery_discovered_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
+    discovery_discovered_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
+    discovery_updated_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
+    discovery_updated_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
+    discovery_lost_tx: mpsc::Sender<String>,
+    discovery_lost_rx: Mutex<mpsc::Receiver<String>>,
+    #[allow(dead_code)]
+    request_tx: mpsc::Sender<TransportRequestEvent>,
+    request_rx: Mutex<mpsc::Receiver<TransportRequestEvent>>,
+    #[allow(dead_code)]
+    event_tx: mpsc::Sender<TransportEventEvent>,
+    event_rx: Mutex<mpsc::Receiver<TransportEventEvent>>,
+    response_tx: mpsc::Sender<TransportResponseEvent>,
+    response_rx: Mutex<mpsc::Receiver<TransportResponseEvent>>,
     pending: Arc<
         Mutex<
             std::collections::HashMap<
@@ -357,7 +405,6 @@ struct TransportInner {
 
 struct DiscoveryInner {
     discovery: Arc<MulticastDiscovery>,
-    events_tx: Option<mpsc::Sender<Vec<u8>>>,
 }
 
 #[repr(C)]
@@ -2567,10 +2614,7 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
             return RN_ERROR_OPERATION_FAILED;
         }
     };
-    let inner = DiscoveryInner {
-        discovery: disc,
-        events_tx: None,
-    };
+    let inner = DiscoveryInner { discovery: disc };
     let handle = FfiDiscoveryHandle {
         inner: Box::into_raw(Box::new(inner)),
     };
@@ -2660,64 +2704,26 @@ pub unsafe extern "C" fn rn_discovery_bind_events_to_transport(
         set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return RN_ERROR_INVALID_HANDLE;
     }
-    let tx = unsafe { &*t.inner }.events_tx.clone();
-    disc.events_tx = Some(tx.clone());
-
-    // Subscribe discovery events to emit into transport poll channel
-    let emitter = tx.clone();
+    // Subscribe discovery events to emit into transport typed channels
+    let discovery_discovered = unsafe { &*t.inner }.discovery_discovered_tx.clone();
+    let discovery_updated = unsafe { &*t.inner }.discovery_updated_tx.clone();
+    let discovery_lost = unsafe { &*t.inner }.discovery_lost_tx.clone();
     let listener: runar_transporter::discovery::DiscoveryListener = Arc::new(move |ev| {
-        let emitter = emitter.clone();
+        let discovery_discovered = discovery_discovered.clone();
+        let discovery_updated = discovery_updated.clone();
+        let discovery_lost = discovery_lost.clone();
         Box::pin(async move {
-            let mut map = std::collections::BTreeMap::new();
             match ev {
                 DiscoveryEvent::Discovered(peer) => {
-                    map.insert(
-                        serde_cbor::Value::Text("type".into()),
-                        serde_cbor::Value::Text("PeerDiscovered".into()),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("v".into()),
-                        serde_cbor::Value::Integer(1),
-                    );
-                    let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
-                    map.insert(
-                        serde_cbor::Value::Text("peer_info".into()),
-                        serde_cbor::Value::Bytes(pi),
-                    );
+                    let _ = discovery_discovered.send(peer).await;
                 }
                 DiscoveryEvent::Updated(peer) => {
-                    map.insert(
-                        serde_cbor::Value::Text("type".into()),
-                        serde_cbor::Value::Text("PeerUpdated".into()),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("v".into()),
-                        serde_cbor::Value::Integer(1),
-                    );
-                    let pi = serde_cbor::to_vec(&peer).unwrap_or_default();
-                    map.insert(
-                        serde_cbor::Value::Text("peer_info".into()),
-                        serde_cbor::Value::Bytes(pi),
-                    );
+                    let _ = discovery_updated.send(peer).await;
                 }
                 DiscoveryEvent::Lost(node_id) => {
-                    map.insert(
-                        serde_cbor::Value::Text("type".into()),
-                        serde_cbor::Value::Text("PeerLost".into()),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("v".into()),
-                        serde_cbor::Value::Integer(1),
-                    );
-                    map.insert(
-                        serde_cbor::Value::Text("peer_node_id".into()),
-                        serde_cbor::Value::Text(node_id),
-                    );
+                    let _ = discovery_lost.send(node_id).await;
                 }
             }
-            let _ = emitter
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                .await;
         })
     });
     // Register subscription
@@ -3760,63 +3766,42 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         }
     };
 
-    let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
-    let _ = rx; // Suppress unused variable warning - used in future implementation
+    // Create per-type channels (capacity 1024 each)
+    let (peer_connected_tx, peer_connected_rx) = mpsc::channel::<PeerConnectedEvent>(1024);
+    let (peer_disconnected_tx, peer_disconnected_rx) = mpsc::channel::<String>(1024);
+    let (discovery_discovered_tx, discovery_discovered_rx) =
+        mpsc::channel::<runar_transporter::discovery::PeerInfo>(1024);
+    let (discovery_updated_tx, discovery_updated_rx) =
+        mpsc::channel::<runar_transporter::discovery::PeerInfo>(1024);
+    let (discovery_lost_tx, discovery_lost_rx) = mpsc::channel::<String>(1024);
+    let (request_tx, request_rx) = mpsc::channel::<TransportRequestEvent>(1024);
+    let (event_tx, event_rx) = mpsc::channel::<TransportEventEvent>(1024);
+    let (response_tx, response_rx) = mpsc::channel::<TransportResponseEvent>(1024);
 
     // Build callbacks to emit events
-    let pc_tx = tx.clone();
+    let pc_tx = peer_connected_tx.clone();
     let pc_cb: runar_transporter::transport::PeerConnectedCallback =
         Arc::new(move |peer_id, node_info| {
             let pc_tx = pc_tx.clone();
             Box::pin(async move {
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(
-                    serde_cbor::Value::Text("type".into()),
-                    serde_cbor::Value::Text("PeerConnected".into()),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("v".into()),
-                    serde_cbor::Value::Integer(1),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("peer_node_id".into()),
-                    serde_cbor::Value::Text(peer_id),
-                );
-                let ni = serde_cbor::to_vec(&node_info).unwrap_or_default();
-                map.insert(
-                    serde_cbor::Value::Text("node_info".into()),
-                    serde_cbor::Value::Bytes(ni),
-                );
                 let _ = pc_tx
-                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                    .send(PeerConnectedEvent {
+                        node_id: peer_id,
+                        node_info,
+                    })
                     .await;
             })
         });
 
-    let pd_tx = tx.clone();
+    let pd_tx = peer_disconnected_tx.clone();
     let pd_cb: runar_transporter::transport::PeerDisconnectedCallback = Arc::new(move |peer_id| {
         let pd_tx = pd_tx.clone();
         Box::pin(async move {
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("PeerDisconnected".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("peer_node_id".into()),
-                serde_cbor::Value::Text(peer_id),
-            );
-            let _ = pd_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                .await;
+            let _ = pd_tx.send(peer_id).await;
         })
     });
 
-    let req_tx = tx.clone();
+    let req_tx = request_tx.clone();
     let pending: Arc<
         Mutex<
             std::collections::HashMap<
@@ -3833,44 +3818,19 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             let request_id = uuid::Uuid::new_v4().to_string();
             let (tx_resp, rx_resp) = oneshot::channel();
             pending_cb.lock().await.insert(request_id.clone(), tx_resp);
-
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("RequestReceived".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("request_id".into()),
-                serde_cbor::Value::Text(request_id),
-            );
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(req.payload.path.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(req.payload.correlation_id.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(req.payload.payload_bytes.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("profile_public_key".into()),
-                serde_cbor::Value::Bytes(
-                    req.payload
+            let _ = req_tx
+                .send(TransportRequestEvent {
+                    request_id,
+                    path: req.payload.path.clone(),
+                    correlation_id: req.payload.correlation_id.clone(),
+                    payload: req.payload.payload_bytes.clone(),
+                    profile_public_key: req
+                        .payload
                         .profile_public_keys
                         .first()
                         .cloned()
                         .unwrap_or_default(),
-                ),
-            );
-            let _ = req_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                })
                 .await;
 
             match rx_resp.await {
@@ -3891,33 +3851,16 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         })
     });
 
-    let ev_tx = tx.clone();
+    let ev_tx = event_tx.clone();
     let ev_cb: runar_transporter::transport::EventCallback = Arc::new(move |ev| {
         let ev_tx = ev_tx.clone();
         Box::pin(async move {
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("EventReceived".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(ev.payload.path.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(ev.payload.correlation_id.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(ev.payload.payload_bytes.clone()),
-            );
             let _ = ev_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                .send(TransportEventEvent {
+                    path: ev.payload.path.clone(),
+                    correlation_id: ev.payload.correlation_id.clone(),
+                    payload: ev.payload.payload_bytes.clone(),
+                })
                 .await;
             Ok(())
         })
@@ -4052,176 +3995,7 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         .with_root_certificates(vec![ca_cert.clone()])
         .with_local_node_public_key(node_public_key);
 
-    // Configure required callbacks for transport to work
-    let req_tx = tx.clone();
-    let pending: Arc<
-        Mutex<
-            std::collections::HashMap<
-                String,
-                oneshot::Sender<runar_transporter::transport::NetworkMessage>,
-            >,
-        >,
-    > = Arc::new(Mutex::new(std::collections::HashMap::new()));
-    let pending_cb = pending.clone();
-    let request_callback: runar_transporter::transport::RequestCallback = Arc::new(move |req| {
-        let req_tx = req_tx.clone();
-        let pending_cb = pending_cb.clone();
-        Box::pin(async move {
-            let request_id = uuid::Uuid::new_v4().to_string();
-            let (tx_resp, rx_resp) = oneshot::channel();
-            pending_cb.lock().await.insert(request_id.clone(), tx_resp);
-
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("RequestReceived".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("request_id".into()),
-                serde_cbor::Value::Text(request_id),
-            );
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(req.payload.path.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(req.payload.correlation_id.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(req.payload.payload_bytes.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("profile_public_key".into()),
-                serde_cbor::Value::Bytes(
-                    req.payload
-                        .profile_public_keys
-                        .first()
-                        .cloned()
-                        .unwrap_or_default(),
-                ),
-            );
-            let _ = req_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                .await;
-
-            match rx_resp.await {
-                Ok(resp) => Ok(resp),
-                Err(_) => Ok(runar_transporter::transport::NetworkMessage {
-                    source_node_id: String::new(),
-                    destination_node_id: String::new(),
-                    message_type: 5, // MESSAGE_TYPE_RESPONSE
-                    payload: runar_transporter::transport::NetworkMessagePayloadItem {
-                        path: String::new(),
-                        payload_bytes: Vec::new(),
-                        correlation_id: String::new(),
-                        network_public_key: None,
-                        profile_public_keys: Vec::new(),
-                    },
-                }),
-            }
-        })
-    });
-
-    let ev_tx = tx.clone();
-    let event_callback: runar_transporter::transport::EventCallback = Arc::new(move |ev| {
-        let ev_tx = ev_tx.clone();
-        Box::pin(async move {
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(
-                serde_cbor::Value::Text("type".into()),
-                serde_cbor::Value::Text("EventReceived".into()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("v".into()),
-                serde_cbor::Value::Integer(1),
-            );
-            map.insert(
-                serde_cbor::Value::Text("path".into()),
-                serde_cbor::Value::Text(ev.payload.path.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("correlation_id".into()),
-                serde_cbor::Value::Text(ev.payload.correlation_id.clone()),
-            );
-            map.insert(
-                serde_cbor::Value::Text("payload".into()),
-                serde_cbor::Value::Bytes(ev.payload.payload_bytes.clone()),
-            );
-            let _ = ev_tx
-                .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                .await;
-            Ok(())
-        })
-    });
-
-    let pc_tx = tx.clone();
-    let peer_connected_callback: runar_transporter::transport::PeerConnectedCallback =
-        Arc::new(move |peer_id, node_info| {
-            let pc_tx = pc_tx.clone();
-            Box::pin(async move {
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(
-                    serde_cbor::Value::Text("type".into()),
-                    serde_cbor::Value::Text("PeerConnected".into()),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("v".into()),
-                    serde_cbor::Value::Integer(1),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("peer_node_id".into()),
-                    serde_cbor::Value::Text(peer_id),
-                );
-                let ni = serde_cbor::to_vec(&node_info).unwrap_or_default();
-                map.insert(
-                    serde_cbor::Value::Text("node_info".into()),
-                    serde_cbor::Value::Bytes(ni),
-                );
-                let _ = pc_tx
-                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                    .await;
-            })
-        });
-
-    let pd_tx = tx.clone();
-    let peer_disconnected_callback: runar_transporter::transport::PeerDisconnectedCallback =
-        Arc::new(move |peer_id| {
-            let pd_tx = pd_tx.clone();
-            Box::pin(async move {
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(
-                    serde_cbor::Value::Text("type".into()),
-                    serde_cbor::Value::Text("PeerDisconnected".into()),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("v".into()),
-                    serde_cbor::Value::Integer(1),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("peer_node_id".into()),
-                    serde_cbor::Value::Text(peer_id),
-                );
-                let _ = pd_tx
-                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
-                    .await;
-            })
-        });
-
-    let root_logger = get_global_logger();
-    let logger = Arc::new(root_logger.with_component(Component::Transporter));
-
-    options = options
-        .with_request_callback(request_callback)
-        .with_event_callback(event_callback)
-        .with_peer_connected_callback(peer_connected_callback)
-        .with_peer_disconnected_callback(peer_disconnected_callback)
-        .with_logger(logger);
+    // (legacy callback wiring removed; callbacks are configured earlier using typed channels)
 
     // Construct transport
     let transport = match QuicTransport::new(options) {
@@ -4237,8 +4011,22 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     };
     let inner = TransportInner {
         transport,
-        events_tx: tx,
-        events_rx: Mutex::new(rx),
+        peer_connected_tx,
+        peer_connected_rx: Mutex::new(peer_connected_rx),
+        peer_disconnected_tx,
+        peer_disconnected_rx: Mutex::new(peer_disconnected_rx),
+        discovery_discovered_tx,
+        discovery_discovered_rx: Mutex::new(discovery_discovered_rx),
+        discovery_updated_tx,
+        discovery_updated_rx: Mutex::new(discovery_updated_rx),
+        discovery_lost_tx,
+        discovery_lost_rx: Mutex::new(discovery_lost_rx),
+        request_tx,
+        request_rx: Mutex::new(request_rx),
+        event_tx,
+        event_rx: Mutex::new(event_rx),
+        response_tx,
+        response_rx: Mutex::new(response_rx),
         pending,
         local_node_info: shared_local_node_info,
     };
@@ -4291,44 +4079,372 @@ pub unsafe extern "C" fn rn_transport_start(transport: *mut c_void, err: *mut Rn
     0
 }
 
+// Legacy rn_transport_poll_event removed: use per-type poll APIs
+
 #[no_mangle]
-pub unsafe extern "C" fn rn_transport_poll_event(
+pub unsafe extern "C" fn rn_transport_poll_peer_connected(
     transport: *mut c_void,
-    out_event: *mut *mut u8,
+    out_cbor: *mut *mut u8,
     out_len: *mut usize,
     err: *mut RnError,
 ) -> i32 {
-    if transport.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport is null");
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
         return RN_ERROR_INVALID_HANDLE;
-    }
-    if out_event.is_null() || out_len.is_null() {
+    };
+    if out_cbor.is_null() || out_len.is_null() {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
         return RN_ERROR_INVALID_HANDLE;
     }
-    let handle = &mut *(transport as *mut FfiTransportHandle);
-    if handle.inner.is_null() {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
-        return RN_ERROR_INVALID_HANDLE;
-    }
-    let inner = &*handle.inner;
-    let mut rx = runtime().block_on(inner.events_rx.lock());
+    let mut rx = runtime().block_on(inner.peer_connected_rx.lock());
     match rx.try_recv() {
-        Ok(buf) => {
-            if !alloc_bytes(out_event, out_len, &buf) {
-                set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-                return 3;
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
             }
-            0
-        }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
         Err(mpsc::error::TryRecvError::Empty) => {
-            *out_event = std::ptr::null_mut();
+            *out_cbor = std::ptr::null_mut();
             *out_len = 0;
             0
         }
         Err(_) => {
-            set_error(err, RN_ERROR_OPERATION_FAILED, "event channel closed");
-            2
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_peer_disconnected(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.peer_disconnected_rx.lock());
+    match rx.try_recv() {
+        Ok(node_id) => match serde_cbor::to_vec(&node_id) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_discovery_discovered(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.discovery_discovered_rx.lock());
+    match rx.try_recv() {
+        Ok(peer) => match serde_cbor::to_vec(&peer) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_discovery_updated(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.discovery_updated_rx.lock());
+    match rx.try_recv() {
+        Ok(peer) => match serde_cbor::to_vec(&peer) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_discovery_lost(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.discovery_lost_rx.lock());
+    match rx.try_recv() {
+        Ok(node_id) => match serde_cbor::to_vec(&node_id) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_request(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.request_rx.lock());
+    match rx.try_recv() {
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_event(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.event_rx.lock());
+    match rx.try_recv() {
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_transport_poll_response(
+    transport: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_transport_inner(transport) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.response_rx.lock());
+    match rx.try_recv() {
+        Ok(ev) => match serde_cbor::to_vec(&ev) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
         }
     }
 }
@@ -4537,7 +4653,7 @@ pub unsafe extern "C" fn rn_transport_request(
             }
         };
     let t = (&*handle.inner).transport.clone();
-    let events = (&*handle.inner).events_tx.clone();
+    let resp_tx = (&*handle.inner).response_tx.clone();
     runtime().spawn(async move {
         match t
             .request(
@@ -4551,25 +4667,11 @@ pub unsafe extern "C" fn rn_transport_request(
             .await
         {
             Ok(resp) => {
-                let mut map = std::collections::BTreeMap::new();
-                map.insert(
-                    serde_cbor::Value::Text("type".into()),
-                    serde_cbor::Value::Text("ResponseReceived".into()),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("v".into()),
-                    serde_cbor::Value::Integer(1),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("correlation_id".into()),
-                    serde_cbor::Value::Text(request.correlation_id),
-                );
-                map.insert(
-                    serde_cbor::Value::Text("payload".into()),
-                    serde_cbor::Value::Bytes(resp),
-                );
-                let _ = events
-                    .send(serde_cbor::to_vec(&serde_cbor::Value::Map(map)).unwrap_or_default())
+                let _ = resp_tx
+                    .send(TransportResponseEvent {
+                        correlation_id: request.correlation_id,
+                        payload: resp,
+                    })
                     .await;
             }
             Err(_e) => {}
