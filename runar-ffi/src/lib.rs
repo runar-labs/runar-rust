@@ -468,54 +468,6 @@ pub unsafe extern "C" fn rn_transport_set_local_node_info(
     0
 }
 
-/// Get local NodeInfo from the transport.
-/// Returns 0 on success, error code on failure.
-/// The caller must free the returned buffer using rn_buffer_free.
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_get_local_node_info(
-    transport: *mut c_void,
-    out_buffer: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_transport_inner(transport) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-
-    let node_info_arc = inner.local_node_info.load();
-    let node_info = match node_info_arc.as_ref() {
-        Some(info) => info,
-        None => {
-            set_error(err, RN_ERROR_OPERATION_FAILED, "local NodeInfo not set");
-            return RN_ERROR_OPERATION_FAILED;
-        }
-    };
-
-    let cbor_data = match serde_cbor::to_vec(node_info) {
-        Ok(data) => data,
-        Err(e) => {
-            set_error(
-                err,
-                RN_ERROR_SERIALIZATION_FAILED,
-                &format!("Failed to encode NodeInfo: {e}"),
-            );
-            return RN_ERROR_SERIALIZATION_FAILED;
-        }
-    };
-
-    let buffer = libc::malloc(cbor_data.len()) as *mut u8;
-    if buffer.is_null() {
-        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "failed to allocate buffer");
-        return RN_ERROR_MEMORY_ALLOCATION;
-    }
-
-    std::ptr::copy_nonoverlapping(cbor_data.as_ptr(), buffer, cbor_data.len());
-    *out_buffer = buffer;
-    *out_len = cbor_data.len();
-    0
-}
-
 // Global logger management
 static GLOBAL_LOGGER: OnceCell<Arc<Logger>> = OnceCell::new();
 

@@ -96,16 +96,6 @@ int32_t rn_transport_set_local_node_info(void *transport,
                                          size_t len,
                                          struct RnError *err);
 
-/**
- * Get local NodeInfo from the transport.
- * Returns 0 on success, error code on failure.
- * The caller must free the returned buffer using rn_buffer_free.
- */
-int32_t rn_transport_get_local_node_info(void *transport,
-                                         uint8_t **out_buffer,
-                                         size_t *out_len,
-                                         struct RnError *err);
-
 int32_t rn_set_logger_node_id(const char *node_id, struct RnError *err);
 
 int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RnError *err);
