@@ -155,6 +155,8 @@ fn two_transports_request_response() {
         assert_eq!(
             rn_transport_new_with_keys(
                 keys_a,
+                info_buf.as_ptr(),
+                info_buf.len(),
                 buf.as_ptr(),
                 buf.len(),
                 &mut ta,
@@ -178,6 +180,8 @@ fn two_transports_request_response() {
         assert_eq!(
             rn_transport_new_with_keys(
                 keys_b,
+                info_buf.as_ptr(),
+                info_buf.len(),
                 buf.as_ptr(),
                 buf.len(),
                 &mut tb,

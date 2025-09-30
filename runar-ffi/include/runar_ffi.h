@@ -360,6 +360,8 @@ int32_t rn_keys_mobile_from_renew_response(void *mobile,
                                            struct RnError *err);
 
 int32_t rn_transport_new_with_keys(void *keys,
+                                   const uint8_t *node_info_cbor,
+                                   size_t node_info_len,
                                    const uint8_t *options_cbor,
                                    size_t options_len,
                                    void **out_transport,

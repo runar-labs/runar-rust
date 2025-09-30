@@ -7,7 +7,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use arc_swap::ArcSwap;
 use once_cell::sync::OnceCell;
 use runar_keys::keystore;
 use runar_logging::{log_debug, log_error, log_trace, Component, LogLevel, Logger, LoggingConfig};
@@ -353,7 +352,7 @@ struct TransportInner {
             >,
         >,
     >,
-    local_node_info: Arc<ArcSwap<Option<NodeInfo>>>,
+    local_node_info: Arc<RwLock<NodeInfo>>,
 }
 
 struct DiscoveryInner {
@@ -464,7 +463,19 @@ pub unsafe extern "C" fn rn_transport_set_local_node_info(
             return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
-    inner.local_node_info.store(Arc::new(Some(info)));
+    match inner.local_node_info.write() {
+        Ok(mut guard) => {
+            *guard = info;
+        }
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("Failed to acquire write lock for NodeInfo: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    }
     0
 }
 
@@ -1581,7 +1592,6 @@ pub unsafe extern "C" fn rn_keys_mobile_install_network_public_key(
         }
     }
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_mobile_generate_network_data_key(
     keys: *mut c_void,
@@ -2334,7 +2344,6 @@ pub unsafe extern "C" fn rn_keys_encrypt_for_network(
     }
     0
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_decrypt_network_data(
     keys: *mut c_void,
@@ -3136,7 +3145,6 @@ pub extern "C" fn rn_keys_node_get_agreement_public_key(
     }
     0
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_node_get_node_id(
     keys: *mut c_void,
@@ -3602,18 +3610,24 @@ pub unsafe extern "C" fn rn_keys_mobile_from_renew_response(
 
     0
 }
-
 // Removed legacy state import/export APIs (no backwards compatibility)
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_new_with_keys(
     keys: *mut c_void,
+    node_info_cbor: *const u8,
+    node_info_len: usize,
     options_cbor: *const u8,
     options_len: usize,
     out_transport: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
-    if keys.is_null() || options_cbor.is_null() || out_transport.is_null() {
+    if keys.is_null()
+        || node_info_cbor.is_null()
+        || node_info_len == 0
+        || options_cbor.is_null()
+        || out_transport.is_null()
+    {
         set_error(err, RN_ERROR_NULL_ARGUMENT, "null argument");
         return RN_ERROR_INVALID_HANDLE;
     }
@@ -3621,6 +3635,19 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     let Some(keys_inner) = with_keys_inner(keys) else {
         set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
         return RN_ERROR_INVALID_HANDLE;
+    };
+    // Parse NodeInfo
+    let ni_slice = std::slice::from_raw_parts(node_info_cbor, node_info_len);
+    let initial_node_info: NodeInfo = match serde_cbor::from_slice(ni_slice) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_SERIALIZATION_FAILED,
+                &format!("Failed to decode NodeInfo: {e}"),
+            );
+            return RN_ERROR_SERIALIZATION_FAILED;
+        }
     };
     // Parse options from CBOR map { bind_addr, timeouts, max_message_size }
     let slice = std::slice::from_raw_parts(options_cbor, options_len);
@@ -3733,7 +3760,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         }
     };
 
-    // Node ID is now available in the logger from keys_inner
     let (tx, rx) = mpsc::channel::<Vec<u8>>(1024);
     let _ = rx; // Suppress unused variable warning - used in future implementation
 
@@ -3933,19 +3959,39 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
     }
 
     // Create a shared local_node_info holder for both callback and transport
-    let shared_local_node_info = Arc::new(ArcSwap::from_pointee(None::<NodeInfo>));
+    let shared_local_node_info = Arc::new(RwLock::new(initial_node_info));
     let holder = shared_local_node_info.clone();
-    let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback =
-        Arc::new(move || {
+    let get_local_node_info_cb: runar_transporter::transport::GetLocalNodeInfoCallback = Arc::new(
+        move || {
             let holder = holder.clone();
+            let root_logger = get_global_logger();
+            let logger = root_logger.with_component(Component::Custom("get_local_node_info_cb"));
             Box::pin(async move {
-                let cur = holder.load();
-                match cur.as_ref() {
-                    Some(info) => Ok(info.clone()),
-                    None => Err(anyhow::anyhow!("local NodeInfo not set")),
-                }
+                log_trace!(
+                    logger,
+                    "FFI: get_local_node_info_cb called during handshake"
+                );
+                let cur = match holder.read() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        log_trace!(
+                            logger,
+                            "FFI: get_local_node_info_cb - failed to acquire read lock: {e}"
+                        );
+                        return Err(anyhow::anyhow!("Failed to acquire read lock: {e}"));
+                    }
+                };
+                let info = &*cur;
+                log_trace!(
+                    logger,
+                    "FFI: get_local_node_info_cb returning NodeInfo with {} services, {} subscriptions",
+                    info.node_metadata.services.len(),
+                    info.node_metadata.subscriptions.len()
+                );
+                Ok(info.clone())
             })
-        });
+        },
+    );
     options = options.with_get_local_node_info(get_local_node_info_cb);
 
     // Configure mTLS - get certificate configuration from key manager
@@ -4361,7 +4407,6 @@ pub unsafe extern "C" fn rn_transport_disconnect_peer(
     }
     0
 }
-
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_is_connected(
     transport: *mut c_void,
@@ -4420,10 +4465,39 @@ pub unsafe extern "C" fn rn_transport_update_local_node_info(
     };
     // First update the shared holder so subsequent reads see the latest
     let inner_ref = unsafe { &*handle.inner };
-    inner_ref
-        .local_node_info
-        .store(Arc::new(Some(node_info.clone())));
+    let root_logger = get_global_logger();
+    let logger =
+        root_logger.with_component(Component::Custom("rn_transport_update_local_node_info"));
+
+    log_trace!(
+        logger,
+        "FFI: Updating shared local_node_info holder with {} services, {} subscriptions",
+        node_info.node_metadata.services.len(),
+        node_info.node_metadata.subscriptions.len()
+    );
+    match inner_ref.local_node_info.write() {
+        Ok(mut guard) => {
+            *guard = node_info.clone();
+        }
+        Err(e) => {
+            log_trace!(
+                logger,
+                "FFI: Failed to acquire write lock for NodeInfo update: {e}"
+            );
+            // Continue execution - this is not critical enough to fail the entire operation
+            return 0; // Success, but NodeInfo update was skipped
+        }
+    }
+    log_trace!(
+        logger,
+        "FFI: Shared local_node_info holder updated successfully"
+    );
+
     // Then notify transport runtime (now emits latest info)
+    log_trace!(
+        logger,
+        "FFI: Calling transport.update_peers() to notify peers"
+    );
     let res = runtime().block_on((&*handle.inner).transport.update_peers(node_info));
     if let Err(e) = res {
         set_error(
@@ -5142,7 +5216,6 @@ pub unsafe extern "C" fn rn_keys_ca_node_setup_complete(
         }
     }
 }
-
 /// Create EA key pair (private key stays internal)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_create_ea_key_pair(
@@ -5894,7 +5967,6 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_status(
         }
     }
 }
-
 /// Handle CRL request (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_ca_node_handle_crl(
@@ -6615,7 +6687,6 @@ pub unsafe extern "C" fn rn_keys_node_get_node_certificate(
 
     0
 }
-
 /// Extract certificate SKI
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_certificate_extract_ski(
@@ -7405,7 +7476,6 @@ pub unsafe extern "C" fn rn_keys_node_get_certificate_status(
     }
     0
 }
-
 /// Get certificate serial number
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_node_get_certificate_serial(
@@ -8167,7 +8237,6 @@ pub unsafe extern "C" fn rn_transport_ca_client_renew(
         }
     }
 }
-
 /// CA Client revoke (new API)
 #[no_mangle]
 pub unsafe extern "C" fn rn_transport_ca_client_revoke(

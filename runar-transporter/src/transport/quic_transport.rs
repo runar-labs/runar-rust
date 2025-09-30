@@ -15,7 +15,7 @@ use quinn::{
 };
 use rand::{rngs::ThreadRng, Rng};
 use runar_common::compact_ids::compact_id;
-use runar_logging::{log_debug, log_error, log_info, log_warn};
+use runar_logging::{log_debug, log_error, log_info, log_trace, log_warn};
 use runar_logging::{Component, Logger};
 use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::{Deserialize, Serialize};
@@ -1227,9 +1227,19 @@ impl QuicTransport {
         if should_send_response {
             self.logger
                 .debug("[handle_handshake] Sending handshake response");
+            log_trace!(
+                self.logger,
+                "[handle_handshake] Calling get_local_node_info callback for handshake response"
+            );
             let local_node_info = (self.get_local_node_info)()
                 .await
                 .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+            log_trace!(
+                self.logger,
+                "[handle_handshake] Got NodeInfo with {} services, {} subscriptions for handshake response",
+                local_node_info.node_metadata.services.len(),
+                local_node_info.node_metadata.subscriptions.len()
+            );
             let source_node_id = self.local_node_id.clone();
             let response_hs = HandshakeData {
                 node_info: local_node_info,
@@ -1370,9 +1380,19 @@ impl QuicTransport {
             "[handshake_outbound] Starting handshake with peer: {peer_id}"
         );
 
+        log_trace!(
+            self.logger,
+            "[handshake_outbound] Calling get_local_node_info callback for outbound handshake"
+        );
         let local_node_info = (self.get_local_node_info)()
             .await
             .map_err(|e| NetworkError::TransportError(e.to_string()))?;
+        log_trace!(
+            self.logger,
+            "[handshake_outbound] Got NodeInfo with {} services, {} subscriptions for outbound handshake",
+            local_node_info.node_metadata.services.len(),
+            local_node_info.node_metadata.subscriptions.len()
+        );
         let local_node_id = self.local_node_id.clone();
         let hs = HandshakeData {
             node_info: local_node_info,
