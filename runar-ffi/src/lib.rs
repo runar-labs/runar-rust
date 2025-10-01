@@ -5720,7 +5720,8 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
         }
         Err(e) => {
             let root_logger = get_global_logger();
-            let logger = root_logger.with_component(Component::Custom("rn_keys_ca_node_handle_enroll"));
+            let logger =
+                root_logger.with_component(Component::Custom("rn_keys_ca_node_handle_enroll"));
             log_debug!(logger, "Enrollment error details: {e}");
             log_debug!(logger, "Enrollment error chain: {e:#}");
             set_error(
@@ -8007,7 +8008,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
     };
 
     // Create client with all configuration at once (following working test pattern)
-    log_trace!(logger, "FFI client creation - creating CaClientBuilder with config");
+    log_trace!(
+        logger,
+        "FFI client creation - creating CaClientBuilder with config"
+    );
     let client = match CaClientBuilder::new()
         .with_config(client_config.clone())
         .with_node_key_manager(Arc::clone(node_key_manager_arc))
@@ -8030,7 +8034,10 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
         .with_root_ca_cert(config.root_ca_der.clone())
         .with_issuing_ca_cert(config.issuing_ca_der.clone());
 
-    log_trace!(logger, "FFI client creation - client created successfully with certificates");
+    log_trace!(
+        logger,
+        "FFI client creation - client created successfully with certificates"
+    );
 
     let wrapper = CaClientWrapper {
         client,
