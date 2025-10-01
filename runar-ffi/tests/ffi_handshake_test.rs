@@ -29,7 +29,7 @@ fn test_handshake_dataflow_nodeinfo_exchange() {
         assert_eq!(rn_set_log_level(5, &mut err as *mut _ as *mut _), 0); // 5 = trace level
         let node_id = std::ffi::CString::new("handshake-test").unwrap();
         assert_eq!(
-            rn_set_logger_node_id(node_id.as_ptr(), &mut err as *mut _ as *mut _),
+            rn_set_logger_context(node_id.as_ptr(), &mut err as *mut _ as *mut _),
             0
         );
 
@@ -461,7 +461,7 @@ fn test_handshake_nodeinfo_update_during_connection() {
         assert_eq!(rn_set_log_level(5, &mut err as *mut _ as *mut _), 0);
         let node_id = std::ffi::CString::new("handshake-update-test").unwrap();
         assert_eq!(
-            rn_set_logger_node_id(node_id.as_ptr(), &mut err as *mut _ as *mut _),
+            rn_set_logger_context(node_id.as_ptr(), &mut err as *mut _ as *mut _),
             0
         );
 

@@ -538,14 +538,14 @@ fn get_global_logger() -> Arc<Logger> {
 }
 
 // Set node ID on root logger (subsequent calls have no effect)
-fn set_global_logger_node_id(node_id: String) -> Result<(), String> {
+fn set_global_logger_context(node_id: String) -> Result<(), String> {
     let logger = get_global_logger();
     logger.set_context(node_id);
     Ok(())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rn_set_logger_node_id(node_id: *const c_char, err: *mut RnError) -> i32 {
+pub unsafe extern "C" fn rn_set_logger_context(node_id: *const c_char, err: *mut RnError) -> i32 {
     if node_id.is_null() {
         set_error(err, RN_ERROR_INVALID_ARGUMENT, "Node ID cannot be null");
         return RN_ERROR_INVALID_ARGUMENT;
@@ -560,7 +560,7 @@ pub unsafe extern "C" fn rn_set_logger_node_id(node_id: *const c_char, err: *mut
         }
     };
 
-    let _ = set_global_logger_node_id(node_id_string);
+    let _ = set_global_logger_context(node_id_string);
     0 // Always succeeds (subsequent calls have no effect)
 }
 
@@ -5719,8 +5719,10 @@ pub unsafe extern "C" fn rn_keys_ca_node_handle_enroll(
             }
         }
         Err(e) => {
-            println!("DEBUG: Enrollment error details: {e}");
-            println!("DEBUG: Enrollment error chain: {e:#}");
+            let root_logger = get_global_logger();
+            let logger = root_logger.with_component(Component::Custom("rn_keys_ca_node_handle_enroll"));
+            log_debug!(logger, "Enrollment error details: {e}");
+            log_debug!(logger, "Enrollment error chain: {e:#}");
             set_error(
                 err,
                 RN_ERROR_OPERATION_FAILED,
@@ -8005,7 +8007,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
     };
 
     // Create client with all configuration at once (following working test pattern)
-    println!("DEBUG: FFI client creation - creating CaClientBuilder with config");
+    log_trace!(logger, "FFI client creation - creating CaClientBuilder with config");
     let client = match CaClientBuilder::new()
         .with_config(client_config.clone())
         .with_node_key_manager(Arc::clone(node_key_manager_arc))
@@ -8028,7 +8030,7 @@ pub unsafe extern "C" fn rn_transport_ca_client_new_with_config(
         .with_root_ca_cert(config.root_ca_der.clone())
         .with_issuing_ca_cert(config.issuing_ca_der.clone());
 
-    println!("DEBUG: FFI client creation - client created successfully with certificates");
+    log_trace!(logger, "FFI client creation - client created successfully with certificates");
 
     let wrapper = CaClientWrapper {
         client,

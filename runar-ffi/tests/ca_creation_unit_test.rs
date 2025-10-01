@@ -34,7 +34,7 @@ fn test_ca_create_root_ca_happy_path() {
         assert_eq!(rn_set_log_level(5, &mut err as *mut _ as *mut _), 0); // 5 = trace level
         let node_id = std::ffi::CString::new("ca-tests").unwrap();
         assert_eq!(
-            rn_set_logger_node_id(node_id.as_ptr(), &mut err as *mut _ as *mut _),
+            rn_set_logger_context(node_id.as_ptr(), &mut err as *mut _ as *mut _),
             0
         );
     }

@@ -86,7 +86,7 @@ if (state_loaded) {
 - **Log Level**: Can be changed at any time using `rn_set_log_level()`
 
 ### Logger Management Functions
-- `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger (can be called before/after logger creation)
+- `rn_set_logger_context(node_id_cstr, err) -> i32` - Set node ID on root logger (can be called before/after logger creation)
 - `rn_set_log_level(level_i32, err) -> i32` - Set global log level (can be called at any time)
 
 ### Functions Updated (Logger Parameters Removed)
@@ -101,7 +101,7 @@ if (state_loaded) {
 rn_set_log_level(4, &err); // Debug level
 
 // 2. Set node ID (optional, initializes logger if needed)
-rn_set_logger_node_id("node-123", &err);
+rn_set_logger_context("node-123", &err);
 
 // 3. Use FFI functions (no logger parameters needed)
 rn_keys_ca_node_new_shared(&ca_node, &err);
@@ -124,7 +124,7 @@ fn get_global_logger() -> Arc<Logger> {
 }
 
 // Set node ID on root logger (subsequent calls have no effect)
-fn set_global_logger_node_id(node_id: String) -> Result<(), String> {
+fn set_global_logger_context(node_id: String) -> Result<(), String> {
     let logger = get_global_logger();
     logger.set_node_id(node_id);
     Ok(())
@@ -165,7 +165,7 @@ Root Logger (Component::Custom("ffi")) [node_id: "node-123"]
 - `rn_set_log_level(level_i32)`
 
 ### Logger Management Functions (NEW)
-- `rn_set_logger_node_id(node_id_cstr, err) -> i32` - Set node ID on root logger
+- `rn_set_logger_context(node_id_cstr, err) -> i32` - Set node ID on root logger
 - `rn_set_log_level(level_i32, err) -> i32` - Set global log level
 
 ---
@@ -1185,7 +1185,7 @@ The implementation should follow the phased approach to minimize risk and ensure
    - `rn_transport_ca_client_new_with_config` - removed `logger: *mut c_void` parameter
 
 2. **Added 2 new logger management functions**:
-   - `rn_set_logger_node_id(node_id_cstr, err) -> i32`
+   - `rn_set_logger_context(node_id_cstr, err) -> i32`
    - `rn_set_log_level(level_i32, err) -> i32`
 
 3. **Added 4 new error codes**:

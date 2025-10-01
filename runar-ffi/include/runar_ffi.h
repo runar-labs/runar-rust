@@ -96,7 +96,7 @@ int32_t rn_transport_set_local_node_info(void *transport,
                                          size_t len,
                                          struct RnError *err);
 
-int32_t rn_set_logger_node_id(const char *node_id, struct RnError *err);
+int32_t rn_set_logger_context(const char *node_id, struct RnError *err);
 
 int32_t rn_keys_set_persistence_dir(void *keys, const char *dir, struct RnError *err);
 
