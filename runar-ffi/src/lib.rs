@@ -371,19 +371,13 @@ pub struct TransportResponseEvent {
 
 struct TransportInner {
     transport: Arc<QuicTransport>,
-    // per-type channels
+    // per-type channels (transport-specific only)
     #[allow(dead_code)]
     peer_connected_tx: mpsc::Sender<PeerConnectedEvent>,
     peer_connected_rx: Mutex<mpsc::Receiver<PeerConnectedEvent>>,
     #[allow(dead_code)]
     peer_disconnected_tx: mpsc::Sender<String>,
     peer_disconnected_rx: Mutex<mpsc::Receiver<String>>,
-    discovery_discovered_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
-    discovery_discovered_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
-    discovery_updated_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
-    discovery_updated_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
-    discovery_lost_tx: mpsc::Sender<String>,
-    discovery_lost_rx: Mutex<mpsc::Receiver<String>>,
     #[allow(dead_code)]
     request_tx: mpsc::Sender<TransportRequestEvent>,
     request_rx: Mutex<mpsc::Receiver<TransportRequestEvent>>,
@@ -405,6 +399,13 @@ struct TransportInner {
 
 struct DiscoveryInner {
     discovery: Arc<MulticastDiscovery>,
+    // Discovery event channels
+    discovered_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
+    discovered_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
+    updated_tx: mpsc::Sender<runar_transporter::discovery::PeerInfo>,
+    updated_rx: Mutex<mpsc::Receiver<runar_transporter::discovery::PeerInfo>>,
+    lost_tx: mpsc::Sender<String>,
+    lost_rx: Mutex<mpsc::Receiver<String>>,
 }
 
 #[repr(C)]
@@ -2614,7 +2615,21 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
             return RN_ERROR_OPERATION_FAILED;
         }
     };
-    let inner = DiscoveryInner { discovery: disc };
+
+    // Create discovery event channels
+    let (discovered_tx, discovered_rx) = mpsc::channel(1024);
+    let (updated_tx, updated_rx) = mpsc::channel(1024);
+    let (lost_tx, lost_rx) = mpsc::channel(1024);
+
+    let inner = DiscoveryInner {
+        discovery: disc,
+        discovered_tx,
+        discovered_rx: Mutex::new(discovered_rx),
+        updated_tx,
+        updated_rx: Mutex::new(updated_rx),
+        lost_tx,
+        lost_rx: Mutex::new(lost_rx),
+    };
     let handle = FfiDiscoveryHandle {
         inner: Box::into_raw(Box::new(inner)),
     };
@@ -2680,9 +2695,8 @@ pub unsafe extern "C" fn rn_discovery_init(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rn_discovery_bind_events_to_transport(
+pub unsafe extern "C" fn rn_discovery_bind_events(
     discovery: *mut c_void,
-    transport: *mut c_void,
     err: *mut RnError,
 ) -> i32 {
     // Validate parameters upfront - specific error messages
@@ -2690,42 +2704,36 @@ pub unsafe extern "C" fn rn_discovery_bind_events_to_transport(
         set_error(err, RN_ERROR_NULL_ARGUMENT, "discovery handle is null");
         return RN_ERROR_NULL_ARGUMENT;
     }
-    if transport.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "transport handle is null");
-        return RN_ERROR_NULL_ARGUMENT;
-    }
 
     let Some(disc) = with_discovery_inner(discovery) else {
         set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
         return RN_ERROR_INVALID_HANDLE;
     };
-    let t = &mut *(transport as *mut FfiTransportHandle);
-    if t.inner.is_null() {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
-        return RN_ERROR_INVALID_HANDLE;
-    }
-    // Subscribe discovery events to emit into transport typed channels
-    let discovery_discovered = unsafe { &*t.inner }.discovery_discovered_tx.clone();
-    let discovery_updated = unsafe { &*t.inner }.discovery_updated_tx.clone();
-    let discovery_lost = unsafe { &*t.inner }.discovery_lost_tx.clone();
+
+    // Subscribe discovery events to emit into discovery's own channels
+    let discovered_tx = disc.discovered_tx.clone();
+    let updated_tx = disc.updated_tx.clone();
+    let lost_tx = disc.lost_tx.clone();
+
     let listener: runar_transporter::discovery::DiscoveryListener = Arc::new(move |ev| {
-        let discovery_discovered = discovery_discovered.clone();
-        let discovery_updated = discovery_updated.clone();
-        let discovery_lost = discovery_lost.clone();
+        let discovered_tx = discovered_tx.clone();
+        let updated_tx = updated_tx.clone();
+        let lost_tx = lost_tx.clone();
         Box::pin(async move {
             match ev {
                 DiscoveryEvent::Discovered(peer) => {
-                    let _ = discovery_discovered.send(peer).await;
+                    let _ = discovered_tx.send(peer).await;
                 }
                 DiscoveryEvent::Updated(peer) => {
-                    let _ = discovery_updated.send(peer).await;
+                    let _ = updated_tx.send(peer).await;
                 }
                 DiscoveryEvent::Lost(node_id) => {
-                    let _ = discovery_lost.send(node_id).await;
+                    let _ = lost_tx.send(node_id).await;
                 }
             }
         })
     });
+
     // Register subscription
     if let Err(e) = runtime().block_on(disc.discovery.subscribe(listener)) {
         set_error(
@@ -2860,6 +2868,145 @@ pub unsafe extern "C" fn rn_discovery_update_local_peer_info(
     }
     0
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_poll_discovered(
+    discovery: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.discovered_rx.lock());
+    match rx.try_recv() {
+        Ok(peer) => match serde_cbor::to_vec(&peer) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_poll_updated(
+    discovery: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.updated_rx.lock());
+    match rx.try_recv() {
+        Ok(peer) => match serde_cbor::to_vec(&peer) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rn_discovery_poll_lost(
+    discovery: *mut c_void,
+    out_cbor: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let Some(inner) = with_discovery_inner(discovery) else {
+        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid discovery handle");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+    if out_cbor.is_null() || out_len.is_null() {
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
+        return RN_ERROR_INVALID_HANDLE;
+    }
+    let mut rx = runtime().block_on(inner.lost_rx.lock());
+    match rx.try_recv() {
+        Ok(node_id) => match serde_cbor::to_vec(&node_id) {
+            Ok(buf) => {
+                if !alloc_bytes(out_cbor, out_len, &buf) {
+                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+                    return RN_ERROR_MEMORY_ALLOCATION;
+                }
+                0
+            }
+            Err(e) => {
+                set_error(
+                    err,
+                    RN_ERROR_SERIALIZATION_FAILED,
+                    &format!("cbor encode: {e}"),
+                );
+                RN_ERROR_SERIALIZATION_FAILED
+            }
+        },
+        Err(mpsc::error::TryRecvError::Empty) => {
+            *out_cbor = std::ptr::null_mut();
+            *out_len = 0;
+            0
+        }
+        Err(_) => {
+            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
+            RN_ERROR_OPERATION_FAILED
+        }
+    }
+}
+
 // Old implementation removed; now use the keys_new_impl wrapper below
 
 #[no_mangle]
@@ -3766,14 +3913,9 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         }
     };
 
-    // Create per-type channels (capacity 1024 each)
+    // Create per-type channels (capacity 1024 each) - transport-specific only
     let (peer_connected_tx, peer_connected_rx) = mpsc::channel::<PeerConnectedEvent>(1024);
     let (peer_disconnected_tx, peer_disconnected_rx) = mpsc::channel::<String>(1024);
-    let (discovery_discovered_tx, discovery_discovered_rx) =
-        mpsc::channel::<runar_transporter::discovery::PeerInfo>(1024);
-    let (discovery_updated_tx, discovery_updated_rx) =
-        mpsc::channel::<runar_transporter::discovery::PeerInfo>(1024);
-    let (discovery_lost_tx, discovery_lost_rx) = mpsc::channel::<String>(1024);
     let (request_tx, request_rx) = mpsc::channel::<TransportRequestEvent>(1024);
     let (event_tx, event_rx) = mpsc::channel::<TransportEventEvent>(1024);
     let (response_tx, response_rx) = mpsc::channel::<TransportResponseEvent>(1024);
@@ -4015,12 +4157,6 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         peer_connected_rx: Mutex::new(peer_connected_rx),
         peer_disconnected_tx,
         peer_disconnected_rx: Mutex::new(peer_disconnected_rx),
-        discovery_discovered_tx,
-        discovery_discovered_rx: Mutex::new(discovery_discovered_rx),
-        discovery_updated_tx,
-        discovery_updated_rx: Mutex::new(discovery_updated_rx),
-        discovery_lost_tx,
-        discovery_lost_rx: Mutex::new(discovery_lost_rx),
         request_tx,
         request_rx: Mutex::new(request_rx),
         event_tx,
@@ -4143,144 +4279,6 @@ pub unsafe extern "C" fn rn_transport_poll_peer_disconnected(
         return RN_ERROR_INVALID_HANDLE;
     }
     let mut rx = runtime().block_on(inner.peer_disconnected_rx.lock());
-    match rx.try_recv() {
-        Ok(node_id) => match serde_cbor::to_vec(&node_id) {
-            Ok(buf) => {
-                if !alloc_bytes(out_cbor, out_len, &buf) {
-                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-                    return RN_ERROR_MEMORY_ALLOCATION;
-                }
-                0
-            }
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_SERIALIZATION_FAILED,
-                    &format!("cbor encode: {e}"),
-                );
-                RN_ERROR_SERIALIZATION_FAILED
-            }
-        },
-        Err(mpsc::error::TryRecvError::Empty) => {
-            *out_cbor = std::ptr::null_mut();
-            *out_len = 0;
-            0
-        }
-        Err(_) => {
-            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
-            RN_ERROR_OPERATION_FAILED
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_poll_discovery_discovered(
-    transport: *mut c_void,
-    out_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_transport_inner(transport) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    if out_cbor.is_null() || out_len.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
-        return RN_ERROR_INVALID_HANDLE;
-    }
-    let mut rx = runtime().block_on(inner.discovery_discovered_rx.lock());
-    match rx.try_recv() {
-        Ok(peer) => match serde_cbor::to_vec(&peer) {
-            Ok(buf) => {
-                if !alloc_bytes(out_cbor, out_len, &buf) {
-                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-                    return RN_ERROR_MEMORY_ALLOCATION;
-                }
-                0
-            }
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_SERIALIZATION_FAILED,
-                    &format!("cbor encode: {e}"),
-                );
-                RN_ERROR_SERIALIZATION_FAILED
-            }
-        },
-        Err(mpsc::error::TryRecvError::Empty) => {
-            *out_cbor = std::ptr::null_mut();
-            *out_len = 0;
-            0
-        }
-        Err(_) => {
-            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
-            RN_ERROR_OPERATION_FAILED
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_poll_discovery_updated(
-    transport: *mut c_void,
-    out_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_transport_inner(transport) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    if out_cbor.is_null() || out_len.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
-        return RN_ERROR_INVALID_HANDLE;
-    }
-    let mut rx = runtime().block_on(inner.discovery_updated_rx.lock());
-    match rx.try_recv() {
-        Ok(peer) => match serde_cbor::to_vec(&peer) {
-            Ok(buf) => {
-                if !alloc_bytes(out_cbor, out_len, &buf) {
-                    set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
-                    return RN_ERROR_MEMORY_ALLOCATION;
-                }
-                0
-            }
-            Err(e) => {
-                set_error(
-                    err,
-                    RN_ERROR_SERIALIZATION_FAILED,
-                    &format!("cbor encode: {e}"),
-                );
-                RN_ERROR_SERIALIZATION_FAILED
-            }
-        },
-        Err(mpsc::error::TryRecvError::Empty) => {
-            *out_cbor = std::ptr::null_mut();
-            *out_len = 0;
-            0
-        }
-        Err(_) => {
-            set_error(err, RN_ERROR_OPERATION_FAILED, "channel closed");
-            RN_ERROR_OPERATION_FAILED
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn rn_transport_poll_discovery_lost(
-    transport: *mut c_void,
-    out_cbor: *mut *mut u8,
-    out_len: *mut usize,
-    err: *mut RnError,
-) -> i32 {
-    let Some(inner) = with_transport_inner(transport) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid transport handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    if out_cbor.is_null() || out_len.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "null out");
-        return RN_ERROR_INVALID_HANDLE;
-    }
-    let mut rx = runtime().block_on(inner.discovery_lost_rx.lock());
     match rx.try_recv() {
         Ok(node_id) => match serde_cbor::to_vec(&node_id) {
             Ok(buf) => {

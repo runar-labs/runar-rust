@@ -278,9 +278,7 @@ int32_t rn_discovery_init(void *discovery,
                           size_t options_len,
                           struct RnError *err);
 
-int32_t rn_discovery_bind_events_to_transport(void *discovery,
-                                              void *transport,
-                                              struct RnError *err);
+int32_t rn_discovery_bind_events(void *discovery, struct RnError *err);
 
 int32_t rn_discovery_start_announcing(void *discovery, struct RnError *err);
 
@@ -292,6 +290,21 @@ int32_t rn_discovery_update_local_peer_info(void *discovery,
                                             const uint8_t *peer_info_cbor,
                                             size_t len,
                                             struct RnError *err);
+
+int32_t rn_discovery_poll_discovered(void *discovery,
+                                     uint8_t **out_cbor,
+                                     size_t *out_len,
+                                     struct RnError *err);
+
+int32_t rn_discovery_poll_updated(void *discovery,
+                                  uint8_t **out_cbor,
+                                  size_t *out_len,
+                                  struct RnError *err);
+
+int32_t rn_discovery_poll_lost(void *discovery,
+                               uint8_t **out_cbor,
+                               size_t *out_len,
+                               struct RnError *err);
 
 void rn_keys_free(void *keys);
 
@@ -380,21 +393,6 @@ int32_t rn_transport_poll_peer_disconnected(void *transport,
                                             uint8_t **out_cbor,
                                             size_t *out_len,
                                             struct RnError *err);
-
-int32_t rn_transport_poll_discovery_discovered(void *transport,
-                                               uint8_t **out_cbor,
-                                               size_t *out_len,
-                                               struct RnError *err);
-
-int32_t rn_transport_poll_discovery_updated(void *transport,
-                                            uint8_t **out_cbor,
-                                            size_t *out_len,
-                                            struct RnError *err);
-
-int32_t rn_transport_poll_discovery_lost(void *transport,
-                                         uint8_t **out_cbor,
-                                         size_t *out_len,
-                                         struct RnError *err);
 
 int32_t rn_transport_poll_request(void *transport,
                                   uint8_t **out_cbor,

@@ -3,6 +3,9 @@ use runar_ffi::{
     CaClientConfigAll, TransportCompleteRequestParams, TransportPublishParams,
     TransportRequestParams,
 };
+use runar_ffi::{
+    PeerConnectedEvent, TransportEventEvent, TransportRequestEvent, TransportResponseEvent,
+};
 use runar_keys::ca_node_types::{
     CaErrorResponse, CaStatus, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, RenewRequest,
     RenewResponse, RevokeRequest, RevokeResponse,
@@ -73,6 +76,9 @@ fn main() -> Result<()> {
     // 14. Network Message Types (task13.md requirement)
     generate_network_message_payload_item_vectors(&out)?;
     generate_network_message_vectors(&out)?;
+
+    // 15. Typed Transport Events (task18.md requirement)
+    generate_typed_transport_event_vectors(&out)?;
 
     println!("✅ Generated FFI types vectors to {}", out.display());
     Ok(())
@@ -802,6 +808,57 @@ fn generate_network_message_vectors(out: &Path) -> Result<()> {
     write_cbor_vector(out, "network_message_event.bin", &event_message)?;
 
     println!("✅ NetworkMessage vectors generated");
+    Ok(())
+}
+
+fn generate_typed_transport_event_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating typed transport event vectors...");
+
+    // Basic NodeInfo fixture
+    let basic_node = NodeInfo {
+        node_public_key: vec![1, 2, 3, 4, 5],
+        network_ids: vec!["net-a".to_string()],
+        addresses: vec!["127.0.0.1:0".to_string()],
+        node_metadata: NodeMetadata {
+            services: vec![],
+            subscriptions: vec![],
+        },
+        version: 1,
+    };
+
+    // PeerConnectedEvent
+    let pc = PeerConnectedEvent {
+        node_id: "node-123".to_string(),
+        node_info: basic_node,
+    };
+    write_cbor_vector(out, "peer_connected_event_basic.bin", &pc)?;
+
+    // TransportRequestEvent
+    let req = TransportRequestEvent {
+        request_id: "req-1".to_string(),
+        path: "/echo".to_string(),
+        correlation_id: "c1".to_string(),
+        payload: b"hello".to_vec(),
+        profile_public_key: vec![],
+    };
+    write_cbor_vector(out, "transport_request_event_basic.bin", &req)?;
+
+    // TransportEventEvent
+    let evt = TransportEventEvent {
+        path: "/event".to_string(),
+        correlation_id: "e1".to_string(),
+        payload: b"evt".to_vec(),
+    };
+    write_cbor_vector(out, "transport_event_event_basic.bin", &evt)?;
+
+    // TransportResponseEvent
+    let resp = TransportResponseEvent {
+        correlation_id: "c1".to_string(),
+        payload: b"world".to_vec(),
+    };
+    write_cbor_vector(out, "transport_response_event_basic.bin", &resp)?;
+
+    println!("✅ Typed transport event vectors generated");
     Ok(())
 }
 
