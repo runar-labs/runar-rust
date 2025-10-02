@@ -281,6 +281,24 @@ fn two_transports_request_response() {
                 let req_event: TransportRequestEvent =
                     serde_cbor::from_slice(std::slice::from_raw_parts(ev_ptr, ev_len)).unwrap();
                 rn_free(ev_ptr, ev_len);
+
+                // Validate source and destination peer IDs are present and correct
+                assert!(
+                    !req_event.source_peer_id.is_empty(),
+                    "Source peer ID should not be empty"
+                );
+                assert!(
+                    !req_event.destination_peer_id.is_empty(),
+                    "Destination peer ID should not be empty"
+                );
+
+                // The source should be the peer that sent the request (B), destination should be the server (A)
+                // We can't easily get the exact peer IDs in this test, but we can verify they're not empty
+                println!(
+                    "Request event - source: {}, dest: {}, path: {}",
+                    req_event.source_peer_id, req_event.destination_peer_id, req_event.path
+                );
+
                 rid_c = Some(CString::new(req_event.request_id.as_str()).unwrap());
                 break;
             }

@@ -836,6 +836,8 @@ fn generate_typed_transport_event_vectors(out: &Path) -> Result<()> {
     // TransportRequestEvent
     let req = TransportRequestEvent {
         request_id: "req-1".to_string(),
+        source_peer_id: "source-peer-123".to_string(),
+        destination_peer_id: "dest-peer-456".to_string(),
         path: "/echo".to_string(),
         correlation_id: "c1".to_string(),
         payload: b"hello".to_vec(),
@@ -845,6 +847,8 @@ fn generate_typed_transport_event_vectors(out: &Path) -> Result<()> {
 
     // TransportEventEvent
     let evt = TransportEventEvent {
+        source_peer_id: "source-peer-789".to_string(),
+        destination_peer_id: "dest-peer-012".to_string(),
         path: "/event".to_string(),
         correlation_id: "e1".to_string(),
         payload: b"evt".to_vec(),

@@ -350,6 +350,8 @@ pub struct PeerConnectedEvent {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TransportRequestEvent {
     pub request_id: String,
+    pub source_peer_id: String,
+    pub destination_peer_id: String,
     pub path: String,
     pub correlation_id: String,
     pub payload: Vec<u8>,
@@ -358,6 +360,8 @@ pub struct TransportRequestEvent {
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TransportEventEvent {
+    pub source_peer_id: String,
+    pub destination_peer_id: String,
     pub path: String,
     pub correlation_id: String,
     pub payload: Vec<u8>,
@@ -3963,6 +3967,8 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             let _ = req_tx
                 .send(TransportRequestEvent {
                     request_id,
+                    source_peer_id: req.source_node_id.clone(),
+                    destination_peer_id: req.destination_node_id.clone(),
                     path: req.payload.path.clone(),
                     correlation_id: req.payload.correlation_id.clone(),
                     payload: req.payload.payload_bytes.clone(),
@@ -3999,6 +4005,8 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
         Box::pin(async move {
             let _ = ev_tx
                 .send(TransportEventEvent {
+                    source_peer_id: ev.source_node_id.clone(),
+                    destination_peer_id: ev.destination_node_id.clone(),
                     path: ev.payload.path.clone(),
                     correlation_id: ev.payload.correlation_id.clone(),
                     payload: ev.payload.payload_bytes.clone(),
