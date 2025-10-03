@@ -28,8 +28,6 @@ pub mod enrollment_token;
 pub mod error;
 pub mod mobile;
 
-#[cfg(test)]
-mod cbor_test;
 pub mod node;
 pub mod pure_x509;
 #[cfg(test)]

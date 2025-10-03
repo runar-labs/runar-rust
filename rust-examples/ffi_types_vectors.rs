@@ -13,12 +13,13 @@ use runar_keys::ca_node_types::{
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
 use runar_schemas::{
-    NodeInfo, NodeMetadata, ServiceMetadata, SubscriptionMetadata, ActionMetadata, FieldSchema, SchemaDataType,
+    ActionMetadata, FieldSchema, NodeInfo, NodeMetadata, SchemaDataType, ServiceMetadata,
+    SubscriptionMetadata,
 };
+use runar_transporter::ca_server::CaServerConfig;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
 use runar_transporter::discovery::DiscoveryOptions;
 use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
-use runar_transporter::ca_server::CaServerConfig;
 use serde::Serialize;
 use serde_json;
 use std::fs;
@@ -583,7 +584,10 @@ fn generate_peer_info_vectors(out: &Path) -> Result<()> {
     // Peer info with crash data - 65-byte key that causes array out of bounds
     let crash_peer = PeerInfo {
         public_key: vec![
-            4, 153, 2, 196, 43, 31, 92, 22, 163, 135, 11, 82, 104, 178, 143, 174, 102, 148, 57, 206, 112, 4, 198, 171, 61, 155, 127, 163, 193, 48, 219, 26, 16, 32, 21, 161, 65, 27, 62, 51, 6, 217, 8, 104, 0, 0, 71, 170, 30, 158, 90, 44, 254, 244, 252, 30, 238, 182, 30, 18, 88, 215, 234, 203, 173
+            4, 153, 2, 196, 43, 31, 92, 22, 163, 135, 11, 82, 104, 178, 143, 174, 102, 148, 57,
+            206, 112, 4, 198, 171, 61, 155, 127, 163, 193, 48, 219, 26, 16, 32, 21, 161, 65, 27,
+            62, 51, 6, 217, 8, 104, 0, 0, 71, 170, 30, 158, 90, 44, 254, 244, 252, 30, 238, 182,
+            30, 18, 88, 215, 234, 203, 173,
         ],
         addresses: vec!["127.0.0.1:63725".to_string()],
     };
@@ -761,7 +765,9 @@ fn generate_network_message_payload_item_vectors(out: &Path) -> Result<()> {
     // Payload item without network key
     let no_network_payload = NetworkMessagePayloadItem {
         path: "/api/simple".to_string(),
-        payload_bytes: vec![0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c],
+        payload_bytes: vec![
+            0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c,
+        ],
         correlation_id: "corr_456".to_string(),
         network_public_key: None,
         profile_public_keys: vec![vec![1, 2, 3]],
@@ -775,7 +781,10 @@ fn generate_network_message_payload_item_vectors(out: &Path) -> Result<()> {
     // Payload item with empty profile keys
     let empty_profiles_payload = NetworkMessagePayloadItem {
         path: "/api/empty".to_string(),
-        payload_bytes: vec![0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43],
+        payload_bytes: vec![
+            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d,
+            0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43,
+        ],
         correlation_id: "corr_789".to_string(),
         network_public_key: Some(vec![21, 22, 23, 24, 25]),
         profile_public_keys: vec![],
@@ -919,7 +928,7 @@ fn write_cbor_vector<T: Serialize>(out: &Path, filename: &str, data: &T) -> Resu
 // Missing CA Configuration Types
 fn generate_ca_server_config_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating CaServerConfig vectors...");
-    
+
     // Create simple test data that matches Swift expectations (FFI version)
     let config_data = serde_cbor::to_vec(&serde_json::json!({
         "bootstrap_bind": "0.0.0.0:8080",
@@ -929,14 +938,14 @@ fn generate_ca_server_config_vectors(out: &Path) -> Result<()> {
         "rate_limit_per_hour": 1000
     }))?;
     write_cbor_vector_raw(out, "ca_server_config_basic.bin", &config_data)?;
-    
+
     println!("✅ CaServerConfig vectors generated");
     Ok(())
 }
 
 fn generate_custom_ca_server_config_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating CustomCaServerConfig vectors...");
-    
+
     // Create simple test data that matches Swift expectations
     let config_data = serde_cbor::to_vec(&serde_json::json!({
         "bootstrap_bind": "127.0.0.1:8443",
@@ -946,29 +955,28 @@ fn generate_custom_ca_server_config_vectors(out: &Path) -> Result<()> {
         "rate_limit_per_hour": 1000
     }))?;
     write_cbor_vector_raw(out, "custom_ca_server_config_basic.bin", &config_data)?;
-    
+
     println!("✅ CustomCaServerConfig vectors generated");
     Ok(())
 }
 
-
 // Missing Node Info Types
 fn generate_node_metadata_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating NodeMetadata vectors...");
-    
+
     let metadata = NodeMetadata {
         services: vec![],
         subscriptions: vec![],
     };
     write_cbor_vector(out, "node_metadata_basic.bin", &metadata)?;
-    
+
     println!("✅ NodeMetadata vectors generated");
     Ok(())
 }
 
 fn generate_service_metadata_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating ServiceMetadata vectors...");
-    
+
     let service = ServiceMetadata {
         network_id: "test_network".to_string(),
         service_path: "/test_service".to_string(),
@@ -980,14 +988,14 @@ fn generate_service_metadata_vectors(out: &Path) -> Result<()> {
         last_start_time: Some(1678886400),
     };
     write_cbor_vector(out, "service_metadata_basic.bin", &service)?;
-    
+
     println!("✅ ServiceMetadata vectors generated");
     Ok(())
 }
 
 fn generate_action_metadata_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating ActionMetadata vectors...");
-    
+
     let action = ActionMetadata {
         name: "test_action".to_string(),
         description: "Test action description".to_string(),
@@ -995,19 +1003,19 @@ fn generate_action_metadata_vectors(out: &Path) -> Result<()> {
         output_schema: None,
     };
     write_cbor_vector(out, "action_metadata_basic.bin", &action)?;
-    
+
     println!("✅ ActionMetadata vectors generated");
     Ok(())
 }
 
 fn generate_subscription_metadata_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating SubscriptionMetadata vectors...");
-    
+
     let subscription = SubscriptionMetadata {
         path: "/test_topic".to_string(),
     };
     write_cbor_vector(out, "subscription_metadata_basic.bin", &subscription)?;
-    
+
     println!("✅ SubscriptionMetadata vectors generated");
     Ok(())
 }
@@ -1015,7 +1023,7 @@ fn generate_subscription_metadata_vectors(out: &Path) -> Result<()> {
 // Missing Schema Types
 fn generate_field_schema_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating FieldSchema vectors...");
-    
+
     // Create simple test data that matches Swift expectations
     let schema_data = serde_cbor::to_vec(&serde_json::json!({
         "data_type": "String",
@@ -1023,50 +1031,50 @@ fn generate_field_schema_vectors(out: &Path) -> Result<()> {
         "description": "A test field"
     }))?;
     write_cbor_vector_raw(out, "field_schema_basic.bin", &schema_data)?;
-    
+
     println!("✅ FieldSchema vectors generated");
     Ok(())
 }
 
 fn generate_schema_data_type_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating SchemaDataType vectors...");
-    
+
     // String
     let string_data = serde_cbor::to_vec(&serde_json::json!("String"))?;
     write_cbor_vector_raw(out, "schema_data_type_string.bin", &string_data)?;
-    
+
     // Int32
     let int32_data = serde_cbor::to_vec(&serde_json::json!("Int32"))?;
     write_cbor_vector_raw(out, "schema_data_type_int32.bin", &int32_data)?;
-    
+
     // Int64
     let int64_data = serde_cbor::to_vec(&serde_json::json!("Int64"))?;
     write_cbor_vector_raw(out, "schema_data_type_int64.bin", &int64_data)?;
-    
+
     // Float32
     let float32_data = serde_cbor::to_vec(&serde_json::json!("Float32"))?;
     write_cbor_vector_raw(out, "schema_data_type_float32.bin", &float32_data)?;
-    
+
     // Float64
     let float64_data = serde_cbor::to_vec(&serde_json::json!("Float64"))?;
     write_cbor_vector_raw(out, "schema_data_type_float64.bin", &float64_data)?;
-    
+
     // Boolean
     let boolean_data = serde_cbor::to_vec(&serde_json::json!("Boolean"))?;
     write_cbor_vector_raw(out, "schema_data_type_boolean.bin", &boolean_data)?;
-    
+
     // Bytes
     let bytes_data = serde_cbor::to_vec(&serde_json::json!("Bytes"))?;
     write_cbor_vector_raw(out, "schema_data_type_bytes.bin", &bytes_data)?;
-    
+
     // Array
     let array_data = serde_cbor::to_vec(&serde_json::json!("Array"))?;
     write_cbor_vector_raw(out, "schema_data_type_array.bin", &array_data)?;
-    
+
     // Map
     let map_data = serde_cbor::to_vec(&serde_json::json!("Map"))?;
     write_cbor_vector_raw(out, "schema_data_type_map.bin", &map_data)?;
-    
+
     println!("✅ SchemaDataType vectors generated");
     Ok(())
 }
@@ -1074,23 +1082,23 @@ fn generate_schema_data_type_vectors(out: &Path) -> Result<()> {
 // Missing Handshake Types (create simple test data)
 fn generate_connection_role_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating ConnectionRole vectors...");
-    
+
     // Create simple test data that matches Swift expectations
     // Initiator (0)
     let initiator_data = vec![0u8];
     write_cbor_vector_raw(out, "connection_role_initiator.bin", &initiator_data)?;
-    
-    // Responder (1) 
+
+    // Responder (1)
     let responder_data = vec![1u8];
     write_cbor_vector_raw(out, "connection_role_responder.bin", &responder_data)?;
-    
+
     println!("✅ ConnectionRole vectors generated");
     Ok(())
 }
 
 fn generate_handshake_data_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating HandshakeData vectors...");
-    
+
     // Create simple test data that matches Swift expectations
     let handshake_data = serde_cbor::to_vec(&serde_json::json!({
         "node_info": {
@@ -1107,14 +1115,14 @@ fn generate_handshake_data_vectors(out: &Path) -> Result<()> {
         "role": 0
     }))?;
     write_cbor_vector_raw(out, "handshake_data_basic.bin", &handshake_data)?;
-    
+
     println!("✅ HandshakeData vectors generated");
     Ok(())
 }
 
 fn generate_discovery_options_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating DiscoveryOptions vectors...");
-    
+
     // Create simple test data that matches Swift expectations (camelCase field names)
     let options_data = serde_cbor::to_vec(&serde_json::json!({
         "multicastGroup": "224.0.0.251:5353",
@@ -1123,14 +1131,14 @@ fn generate_discovery_options_vectors(out: &Path) -> Result<()> {
         "debounceWindowMs": 200
     }))?;
     write_cbor_vector_raw(out, "discovery_options_basic.bin", &options_data)?;
-    
+
     println!("✅ DiscoveryOptions vectors generated");
     Ok(())
 }
 
 fn generate_quic_transport_options_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating QuicTransportOptions vectors...");
-    
+
     // Create simple test data that matches Swift expectations
     let options_data = serde_cbor::to_vec(&serde_json::json!({
         "requestTimeoutSeconds": 30,
@@ -1142,14 +1150,14 @@ fn generate_quic_transport_options_vectors(out: &Path) -> Result<()> {
         "maxRequestRetries": 3
     }))?;
     write_cbor_vector_raw(out, "quic_transport_options_basic.bin", &options_data)?;
-    
+
     println!("✅ QuicTransportOptions vectors generated");
     Ok(())
 }
 
 fn generate_ffi_quic_transport_options_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating FFIQuicTransportOptions vectors...");
-    
+
     // Create simple test data that matches Swift expectations
     let options_data = serde_cbor::to_vec(&serde_json::json!({
         "bind_addr": "0.0.0.0:8080",
@@ -1160,7 +1168,7 @@ fn generate_ffi_quic_transport_options_vectors(out: &Path) -> Result<()> {
         "max_request_retries": 3
     }))?;
     write_cbor_vector_raw(out, "ffi_quic_transport_options_basic.bin", &options_data)?;
-    
+
     println!("✅ FFIQuicTransportOptions vectors generated");
     Ok(())
 }
@@ -1175,4 +1183,3 @@ fn write_cbor_vector_raw(out: &Path, filename: &str, data: &[u8]) -> Result<()> 
     println!("   📝 {}: {} bytes", filename, data.len());
     Ok(())
 }
-
