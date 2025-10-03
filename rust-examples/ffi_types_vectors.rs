@@ -555,10 +555,7 @@ fn generate_peer_info_vectors(out: &Path) -> Result<()> {
     // Peer info with crash data - 65-byte key that causes array out of bounds
     let crash_peer = PeerInfo {
         public_key: vec![
-            4, 153, 2, 196, 43, 31, 92, 22, 163, 135, 11, 82, 104, 178, 143, 174, 102, 148, 57,
-            206, 112, 4, 198, 171, 61, 155, 127, 163, 193, 48, 219, 26, 16, 32, 21, 161, 65, 27,
-            62, 51, 6, 217, 8, 104, 0, 0, 71, 170, 30, 158, 90, 44, 254, 244, 252, 30, 238, 182,
-            30, 18, 88, 215, 234, 203, 173,
+            4, 153, 2, 196, 43, 31, 92, 22, 163, 135, 11, 82, 104, 178, 143, 174, 102, 148, 57, 206, 112, 4, 198, 171, 61, 155, 127, 163, 193, 48, 219, 26, 16, 32, 21, 161, 65, 27, 62, 51, 6, 217, 8, 104, 0, 0, 71, 170, 30, 158, 90, 44, 254, 244, 252, 30, 238, 182, 30, 18, 88, 215, 234, 203, 173
         ],
         addresses: vec!["127.0.0.1:63725".to_string()],
     };
@@ -722,7 +719,7 @@ fn generate_network_message_payload_item_vectors(out: &Path) -> Result<()> {
     // Basic payload item
     let basic_payload = NetworkMessagePayloadItem {
         path: "/api/test".to_string(),
-        payload_bytes: b"test payload data".to_vec(),
+        payload_bytes: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11],
         correlation_id: "corr_123".to_string(),
         network_public_key: Some(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
         profile_public_keys: vec![vec![11, 12, 13, 14, 15], vec![16, 17, 18, 19, 20]],
@@ -736,7 +733,7 @@ fn generate_network_message_payload_item_vectors(out: &Path) -> Result<()> {
     // Payload item without network key
     let no_network_payload = NetworkMessagePayloadItem {
         path: "/api/simple".to_string(),
-        payload_bytes: b"simple payload".to_vec(),
+        payload_bytes: vec![0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c],
         correlation_id: "corr_456".to_string(),
         network_public_key: None,
         profile_public_keys: vec![vec![1, 2, 3]],
@@ -750,7 +747,7 @@ fn generate_network_message_payload_item_vectors(out: &Path) -> Result<()> {
     // Payload item with empty profile keys
     let empty_profiles_payload = NetworkMessagePayloadItem {
         path: "/api/empty".to_string(),
-        payload_bytes: b"empty profiles payload".to_vec(),
+        payload_bytes: vec![0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43],
         correlation_id: "corr_789".to_string(),
         network_public_key: Some(vec![21, 22, 23, 24, 25]),
         profile_public_keys: vec![],
