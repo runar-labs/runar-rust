@@ -31,6 +31,7 @@ pub struct EnrollmentToken {
     /// The token body
     pub body: EnrollmentTokenBody,
     /// ECDSA P-256 DER signature
+    #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
     /// compact_id of EA public key
     pub signer_id: String,

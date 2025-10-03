@@ -1,4 +1,6 @@
+use runar_macros_common::VecVecBytes;
 use serde::{Deserialize, Serialize};
+use serde_bytes;
 
 use crate::enrollment_token::EnrollmentToken;
 
@@ -74,6 +76,7 @@ pub struct CsrEnrollRequest {
     /// Network ID for the request
     pub network_id: String,
     /// DER-encoded CSR
+    #[serde(with = "serde_bytes")]
     pub csr_der: Vec<u8>,
     /// Enrollment token for authorization
     pub enrollment_token: EnrollmentToken,
@@ -85,10 +88,13 @@ pub struct CsrEnrollResponse {
     /// Network ID for the response
     pub network_id: String,
     /// DER-encoded device certificate
+    #[serde(with = "serde_bytes")]
     pub certificate_der: Vec<u8>,
     /// DER-encoded issuing CA certificate
+    #[serde(with = "serde_bytes")]
     pub issuing_ca_der: Vec<u8>,
     /// DER-encoded root CA certificate (optional)
+    #[serde(with = "serde_bytes")]
     pub root_ca_der: Option<Vec<u8>>,
     /// Certificate expiration time (UNIX seconds)
     pub expires_at: u64,
@@ -100,6 +106,7 @@ pub struct RenewRequest {
     /// Network ID for the request
     pub network_id: String,
     /// DER-encoded CSR for renewal
+    #[serde(with = "serde_bytes")]
     pub csr_der: Vec<u8>,
 }
 
@@ -109,8 +116,10 @@ pub struct RenewResponse {
     /// Network ID for the response
     pub network_id: String,
     /// DER-encoded renewed certificate
+    #[serde(with = "serde_bytes")]
     pub certificate_der: Vec<u8>,
     /// DER-encoded issuing CA certificate
+    #[serde(with = "serde_bytes")]
     pub issuing_ca_der: Vec<u8>,
     /// Certificate expiration time (UNIX seconds)
     pub expires_at: u64,
@@ -122,6 +131,7 @@ pub struct RevokeRequest {
     /// Network ID for the request
     pub network_id: String,
     /// Certificate serial number to revoke
+    #[serde(with = "serde_bytes")]
     pub certificate_serial: Vec<u8>,
     /// Reason for revocation
     pub reason: String,
@@ -142,8 +152,10 @@ pub struct ChainResponse {
     /// Network ID for the response
     pub network_id: String,
     /// DER-encoded issuing CA certificate
+    #[serde(with = "serde_bytes")]
     pub issuing_ca_der: Vec<u8>,
     /// DER-encoded root CA certificate (optional)
+    #[serde(with = "serde_bytes")]
     pub root_ca_der: Option<Vec<u8>>,
 }
 
@@ -170,12 +182,15 @@ pub struct CaRevocationList {
     /// Issuing CA serial number (hex string)
     pub issuing_ca_serial_hex: String,
     /// List of revoked certificate serials (raw bytes)
+    #[serde(with = "VecVecBytes")]
     pub revoked_serials: Vec<Vec<u8>>,
     /// Generation time (UNIX seconds)
     pub generated_at: u64,
     /// ECDSA P-256 DER signature (raw DER bytes)
+    #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
     /// Subject Key Identifier of signer
+    #[serde(with = "serde_bytes")]
     pub signer_ski: Vec<u8>,
     /// Signature algorithm identifier
     pub sig_alg: String,
@@ -185,6 +200,7 @@ pub struct CaRevocationList {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RevokedSerial {
     /// Certificate serial number
+    #[serde(with = "serde_bytes")]
     pub serial: Vec<u8>,
     /// Revocation time (UNIX seconds)
     pub revocation_time: u64,

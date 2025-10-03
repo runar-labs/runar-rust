@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use rand;
 use runar_schemas::NodeInfo;
 
+use runar_macros_common::VecVecBytes;
 use serde::{Deserialize, Serialize};
+use serde_bytes;
+
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::ops::Range;
@@ -118,14 +121,17 @@ pub struct NetworkMessagePayloadItem {
     pub path: String,
 
     /// The serialized value/payload data as bytes
+    #[serde(with = "serde_bytes")]
     pub payload_bytes: Vec<u8>,
 
     /// Correlation ID
     pub correlation_id: String,
 
     /// Network public key for encryption context
+    #[serde(with = "serde_bytes")]
     pub network_public_key: Option<Vec<u8>>,
 
+    #[serde(with = "VecVecBytes")]
     pub profile_public_keys: Vec<Vec<u8>>,
 }
 

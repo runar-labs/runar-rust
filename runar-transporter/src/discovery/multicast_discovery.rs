@@ -13,6 +13,7 @@ use runar_common::compact_ids::compact_id;
 use runar_logging::{log_debug, log_error, log_info, log_warn};
 use runar_logging::{Component, Logger};
 use serde::{Deserialize, Serialize};
+use serde_bytes;
 use serde_cbor::{from_slice, to_vec};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -37,6 +38,7 @@ const DEFAULT_MULTICAST_PORT: u16 = 45678;
 /// Unique identifier for a node in the network
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PeerInfo {
+    #[serde(with = "serde_bytes")]
     pub public_key: Vec<u8>,
     pub addresses: Vec<String>,
 }
@@ -392,7 +394,52 @@ impl MulticastDiscovery {
                 announce: Some(peer_info),
                 goodbye: None,
             } => {
-                log_debug!(logger, "Processing announce message from peer");
+                log_debug!(logger, "Processing announce message from peer #1");
+                log_debug!(logger, "About to access peer_info struct");
+
+                // Add safety checks to debug the crash
+                log_debug!(logger, "PeerInfo struct address: {:p}", peer_info);
+                log_debug!(logger, "About to access public_key");
+                log_debug!(
+                    logger,
+                    "PeerInfo public_key address: {:p}",
+                    peer_info.public_key.as_ptr()
+                );
+                log_debug!(logger, "About to access capacity");
+                log_debug!(
+                    logger,
+                    "PeerInfo public_key capacity: {}",
+                    peer_info.public_key.capacity()
+                );
+
+                // Check if the vector is valid before accessing
+                if peer_info.public_key.is_empty() {
+                    log_warn!(logger, "PeerInfo public_key is empty");
+                } else {
+                    log_debug!(
+                        logger,
+                        "PeerInfo public_key length: {}",
+                        peer_info.public_key.len()
+                    );
+                    log_debug!(
+                        logger,
+                        "PeerInfo public_key hex: {:02x?}",
+                        peer_info.public_key
+                    );
+                }
+
+                log_debug!(logger, "PeerInfo addresses: {:?}", peer_info.addresses);
+                //TODO REMOVCE THIS AFTER DEBUG IS COMPLETED
+                // Serialize to CBOR to see what's being sent
+                match serde_cbor::to_vec(peer_info) {
+                    Ok(cbor_data) => {
+                        log_debug!(logger, "PeerInfo CBOR length: {}", cbor_data.len());
+                        log_debug!(logger, "PeerInfo CBOR hex: {:02x?}", cbor_data);
+                    }
+                    Err(e) => {
+                        log_error!(logger, "Failed to serialize PeerInfo to CBOR: {}", e);
+                    }
+                }
 
                 // Emit Discovered event to all listeners
                 let listeners_read = listeners.read().await;

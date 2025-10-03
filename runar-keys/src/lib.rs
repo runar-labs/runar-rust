@@ -27,8 +27,13 @@ pub mod derivation;
 pub mod enrollment_token;
 pub mod error;
 pub mod mobile;
+
+#[cfg(test)]
+mod cbor_test;
 pub mod node;
 pub mod pure_x509;
+#[cfg(test)]
+mod vec_vec_u8_integration_test;
 
 // Re-export key types for convenience
 pub use ca_node::CANode;

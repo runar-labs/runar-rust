@@ -10,7 +10,7 @@ use std::collections::HashMap;
 ///
 /// INTENTION: Represents a snapshot of a node's presence and capabilities
 /// within one or more networks. This information is shared via discovery mechanisms.
-#[derive(Clone, Serialize, Deserialize, Debug, Plain)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug, Plain)]
 pub struct NodeInfo {
     /// The node's unique identifier
     pub node_public_key: Vec<u8>,

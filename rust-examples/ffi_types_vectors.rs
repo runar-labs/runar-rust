@@ -552,6 +552,18 @@ fn generate_peer_info_vectors(out: &Path) -> Result<()> {
     };
     write_cbor_vector(out, "peer_info_single_addr.bin", &single_addr_peer)?;
 
+    // Peer info with crash data - 65-byte key that causes array out of bounds
+    let crash_peer = PeerInfo {
+        public_key: vec![
+            4, 153, 2, 196, 43, 31, 92, 22, 163, 135, 11, 82, 104, 178, 143, 174, 102, 148, 57,
+            206, 112, 4, 198, 171, 61, 155, 127, 163, 193, 48, 219, 26, 16, 32, 21, 161, 65, 27,
+            62, 51, 6, 217, 8, 104, 0, 0, 71, 170, 30, 158, 90, 44, 254, 244, 252, 30, 238, 182,
+            30, 18, 88, 215, 234, 203, 173,
+        ],
+        addresses: vec!["127.0.0.1:63725".to_string()],
+    };
+    write_cbor_vector(out, "peer_info_crash_data.bin", &crash_peer)?;
+
     println!("✅ PeerInfo vectors generated");
     Ok(())
 }

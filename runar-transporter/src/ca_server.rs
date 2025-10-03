@@ -20,6 +20,7 @@ use runar_keys::ca_node_types::{
 };
 use runar_keys::{ca_node::CANode, certificate::EcdsaKeyPair};
 use runar_logging::{log_debug, log_info};
+use runar_macros_common::VecVecBytes;
 use rustls::{server::WebPkiClientVerifier, RootCertStore, ServerConfig as RustlsServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use serde_cbor;
@@ -84,7 +85,7 @@ impl CaMessageType {
 }
 
 /// CA Node QUIC Server configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CaServerConfig {
     /// Bootstrap bind address (server-auth only)
     pub bootstrap_bind: SocketAddr,
@@ -97,11 +98,12 @@ pub struct CaServerConfig {
     /// Admin SKI allowlist for admin-only endpoints
     pub admin_skis: Vec<String>,
     /// Additional CA certificates for client verification (for overlap periods)
+    #[serde(with = "VecVecBytes")]
     pub additional_ca_certs: Vec<Vec<u8>>,
 }
 
 /// Rate limiting configuration for bootstrap endpoints
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RateLimitConfig {
     /// Burst limit (requests per window)
     pub burst_limit: u32,

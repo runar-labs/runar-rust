@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
-use runar_ffi::{TransportCompleteRequestParams, TransportPublishParams, TransportRequestParams};
+use runar_ffi::{
+    PeerConnectedEvent, TransportCompleteRequestParams, TransportEventEvent,
+    TransportPublishParams, TransportRequestEvent, TransportRequestParams, TransportResponseEvent,
+};
 use runar_keys::ca_node_types::{
     CaErrorResponse, CaStatus, ChainResponse, CsrEnrollRequest, CsrEnrollResponse, RenewRequest,
     RenewResponse, RevokeRequest, RevokeResponse,
@@ -419,6 +422,11 @@ fn main() -> Result<()> {
         // Network Message types validation (task13.md requirement)
         validate_network_message_payload_item,
         validate_network_message,
+        // Typed Transport Events validation (task18.md requirement)
+        validate_peer_connected_event,
+        validate_transport_request_event,
+        validate_transport_event_event,
+        validate_transport_response_event,
     ];
 
     let mut passed = 0;
@@ -615,6 +623,120 @@ fn validate_network_message() -> Result<()> {
             "NetworkMessage validation failed:\nSwift: {:?}\nRust: {:?}",
             swift_message,
             rust_message
+        );
+    }
+
+    Ok(())
+}
+
+// MARK: - Typed Transport Events Validation (task18.md requirement)
+
+fn validate_peer_connected_event() -> Result<()> {
+    println!("🔍 Validating PeerConnectedEvent...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/peer_connected_event_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/peer_connected_event_basic.bin",
+    ))?;
+
+    let swift_event: PeerConnectedEvent = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift PeerConnectedEvent")?;
+    let rust_event: PeerConnectedEvent = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust PeerConnectedEvent")?;
+
+    if swift_event == rust_event {
+        println!("✅ PeerConnectedEvent validation passed");
+    } else {
+        anyhow::bail!(
+            "PeerConnectedEvent validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_event,
+            rust_event
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_transport_request_event() -> Result<()> {
+    println!("🔍 Validating TransportRequestEvent...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/transport_request_event_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/transport_request_event_basic.bin",
+    ))?;
+
+    let swift_event: TransportRequestEvent = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift TransportRequestEvent")?;
+    let rust_event: TransportRequestEvent = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust TransportRequestEvent")?;
+
+    if swift_event == rust_event {
+        println!("✅ TransportRequestEvent validation passed");
+    } else {
+        anyhow::bail!(
+            "TransportRequestEvent validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_event,
+            rust_event
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_transport_event_event() -> Result<()> {
+    println!("🔍 Validating TransportEventEvent...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/transport_event_event_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/transport_event_event_basic.bin",
+    ))?;
+
+    let swift_event: TransportEventEvent = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift TransportEventEvent")?;
+    let rust_event: TransportEventEvent = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust TransportEventEvent")?;
+
+    if swift_event == rust_event {
+        println!("✅ TransportEventEvent validation passed");
+    } else {
+        anyhow::bail!(
+            "TransportEventEvent validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_event,
+            rust_event
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_transport_response_event() -> Result<()> {
+    println!("🔍 Validating TransportResponseEvent...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/transport_response_event_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/transport_response_event_basic.bin",
+    ))?;
+
+    let swift_event: TransportResponseEvent = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift TransportResponseEvent")?;
+    let rust_event: TransportResponseEvent = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust TransportResponseEvent")?;
+
+    if swift_event == rust_event {
+        println!("✅ TransportResponseEvent validation passed");
+    } else {
+        anyhow::bail!(
+            "TransportResponseEvent validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_event,
+            rust_event
         );
     }
 

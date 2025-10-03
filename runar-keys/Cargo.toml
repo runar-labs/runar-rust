@@ -41,6 +41,8 @@ time = { version = "0.3", features = ["formatting"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
+serde_bytes = "0.11"  # For proper CBOR byte string encoding of Vec<u8>
+runar_macros_common = { path = "../runar-macros-common" }  # For Vec<Vec<u8>> support
 hex = "0.4"
 base64 = "0.21"  # For compact Base64 URL-safe encoding of public keys
 

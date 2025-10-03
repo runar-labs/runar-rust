@@ -47,6 +47,7 @@ pub struct CaServerWrapper {
 use rustls::crypto::aws_lc_rs;
 use serde_cbor as _; // keep dependency linked for now
                      // panic handling imports removed - no longer needed without ffi_guard
+use runar_macros_common::VecVecBytes;
 use std::sync::Mutex as StdMutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -157,13 +158,17 @@ struct KeysInner {
 }
 
 // New transport parameter types for CBOR serialization
+
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportRequestParams {
     pub path: String,
     pub correlation_id: String,
+    #[serde(with = "serde_bytes")]
     pub payload: Vec<u8>,
     pub dest_peer_id: String,
+    #[serde(with = "serde_bytes")]
     pub network_public_key: Option<Vec<u8>>,
+    #[serde(with = "VecVecBytes")]
     pub profile_public_keys: Vec<Vec<u8>>,
 }
 
@@ -171,15 +176,19 @@ pub struct TransportRequestParams {
 pub struct TransportPublishParams {
     pub path: String,
     pub correlation_id: String,
+    #[serde(with = "serde_bytes")]
     pub payload: Vec<u8>,
     pub dest_peer_id: String,
+    #[serde(with = "serde_bytes")]
     pub network_public_key: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportCompleteRequestParams {
     pub request_id: String,
+    #[serde(with = "serde_bytes")]
     pub response_payload: Vec<u8>,
+    #[serde(with = "VecVecBytes")]
     pub profile_public_keys: Vec<Vec<u8>>,
 }
 
@@ -341,13 +350,13 @@ fn handle_keystore_creation_error(
 }
 
 // Typed event structs carried on per-type channels
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PeerConnectedEvent {
     pub node_id: String,
     pub node_info: NodeInfo,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportRequestEvent {
     pub request_id: String,
     pub source_peer_id: String,
@@ -358,7 +367,7 @@ pub struct TransportRequestEvent {
     pub profile_public_key: Vec<u8>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportEventEvent {
     pub source_peer_id: String,
     pub destination_peer_id: String,
@@ -367,7 +376,7 @@ pub struct TransportEventEvent {
     pub payload: Vec<u8>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransportResponseEvent {
     pub correlation_id: String,
     pub payload: Vec<u8>,
