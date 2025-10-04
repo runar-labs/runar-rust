@@ -1178,12 +1178,21 @@ fn generate_quic_transport_options_vectors(out: &Path) -> Result<()> {
     // Create simple test data that matches Swift expectations
     let options_data = serde_cbor::to_vec(&serde_json::json!({
         "requestTimeoutSeconds": 30,
-        "bindAddr": "0.0.0.0:0",
+        "bindAddr": "0.0.0.0:8080",
         "handshakeTimeoutMs": 5000,
         "openStreamTimeoutMs": 1000,
         "maxMessageSize": 1048576,
         "responseCacheTtlMs": 30000,
-        "maxRequestRetries": 3
+        "maxRequestRetries": 3,
+        "certChainDer": [
+            [0x30, 0x82, 0x01, 0x22],
+            [0x30, 0x82, 0x01, 0x33]
+        ],
+        "privateKeyDer": [0x30, 0x82, 0x01, 0x44],
+        "rootCertsDer": [
+            [0x30, 0x82, 0x01, 0x55],
+            [0x30, 0x82, 0x01, 0x66]
+        ]
     }))?;
     write_cbor_vector_raw(out, "quic_transport_options_basic.bin", &options_data)?;
 
@@ -1194,16 +1203,30 @@ fn generate_quic_transport_options_vectors(out: &Path) -> Result<()> {
 fn generate_ffi_quic_transport_options_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating FFIQuicTransportOptions vectors...");
 
-    // Create simple test data that matches Swift expectations
-    let options_data = serde_cbor::to_vec(&serde_json::json!({
-        "bind_addr": "0.0.0.0:8080",
-        "handshake_timeout_ms": 5000,
-        "open_stream_timeout_ms": 1000,
-        "max_message_size": 1048576,
-        "response_cache_ttl_ms": 30000,
-        "max_request_retries": 3
-    }))?;
-    write_cbor_vector_raw(out, "ffi_quic_transport_options_basic.bin", &options_data)?;
+    // Use the actual QuicTransportOptionsConfig struct (which is the FFI struct)
+    use runar_ffi::QuicTransportOptionsConfig;
+
+    let config = QuicTransportOptionsConfig {
+        bind_addr: Some("0.0.0.0:8080".to_string()),
+        handshake_timeout_ms: Some(5000),
+        open_stream_timeout_ms: Some(1000),
+        max_message_size: Some(1024 * 1024), // 1MB
+        response_cache_ttl_ms: Some(30000),
+        max_request_retries: Some(3),
+        cert_chain_der: vec![
+            vec![0x30, 0x82, 0x01, 0x22], // Sample DER data
+            vec![0x30, 0x82, 0x01, 0x33],
+        ],
+        private_key_der: Some(vec![0x30, 0x82, 0x01, 0x44]), // Sample DER data
+        root_certs_der: vec![
+            vec![0x30, 0x82, 0x01, 0x55], // Sample DER data
+            vec![0x30, 0x82, 0x01, 0x66],
+        ],
+    };
+
+    let config_data =
+        serde_cbor::to_vec(&config).context("Failed to serialize FFIQuicTransportOptions")?;
+    write_cbor_vector_raw(out, "ffi_quic_transport_options_basic.bin", &config_data)?;
 
     println!("✅ FFIQuicTransportOptions vectors generated");
     Ok(())
