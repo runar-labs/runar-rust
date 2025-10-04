@@ -265,3 +265,50 @@ pub unsafe fn get_node_public_key(keys: *mut c_void) -> Vec<u8> {
 
     key_vec
 }
+
+/// Create transport options in CBOR format
+#[allow(dead_code, clippy::too_many_arguments)]
+pub fn create_transport_options_cbor(
+    bind_addr: Option<String>,
+    handshake_timeout_ms: Option<u64>,
+    open_stream_timeout_ms: Option<u64>,
+    max_message_size: Option<usize>,
+    response_cache_ttl_ms: Option<u64>,
+    max_request_retries: Option<u32>,
+    cert_chain_der: Vec<Vec<u8>>,
+    private_key_der: Option<Vec<u8>>,
+    root_certs_der: Vec<Vec<u8>>,
+) -> Vec<u8> {
+    use runar_ffi::QuicTransportOptionsConfig;
+    use serde_cbor;
+
+    let options = QuicTransportOptionsConfig {
+        bind_addr,
+        handshake_timeout_ms,
+        open_stream_timeout_ms,
+        max_message_size,
+        response_cache_ttl_ms,
+        max_request_retries,
+        cert_chain_der,
+        private_key_der,
+        root_certs_der,
+    };
+
+    serde_cbor::to_vec(&options).expect("Failed to serialize transport options")
+}
+
+/// Create simple transport options with just bind_addr and max_message_size
+#[allow(dead_code)]
+pub fn create_simple_transport_options_cbor(bind_addr: &str, max_message_size: usize) -> Vec<u8> {
+    create_transport_options_cbor(
+        Some(bind_addr.to_string()),
+        None,
+        None,
+        Some(max_message_size),
+        None,
+        None,
+        Vec::new(),
+        None,
+        Vec::new(),
+    )
+}

@@ -1,9 +1,25 @@
 use runar_ffi::*;
-use serde_cbor::Value;
 use std::ffi::CString;
 
-// Import common utilities
-mod common;
+/// Create simple transport options with just bind_addr and max_message_size
+fn create_simple_transport_options_cbor(bind_addr: &str, max_message_size: usize) -> Vec<u8> {
+    use runar_ffi::QuicTransportOptionsConfig;
+    use serde_cbor;
+
+    let options = QuicTransportOptionsConfig {
+        bind_addr: Some(bind_addr.to_string()),
+        handshake_timeout_ms: None,
+        open_stream_timeout_ms: None,
+        max_message_size: Some(max_message_size),
+        response_cache_ttl_ms: None,
+        max_request_retries: None,
+        cert_chain_der: Vec::new(),
+        private_key_der: None,
+        root_certs_der: Vec::new(),
+    };
+
+    serde_cbor::to_vec(&options).expect("Failed to serialize transport options")
+}
 
 #[repr(C)]
 struct RnError {
@@ -139,17 +155,7 @@ fn two_transports_request_response() {
         );
         rn_free(ncm_p2, ncm_l2);
 
-        let mut omap = std::collections::BTreeMap::<Value, Value>::new();
-        omap.insert(
-            Value::Text("bind_addr".into()),
-            Value::Text("127.0.0.1:0".into()),
-        );
-        omap.insert(
-            Value::Text("max_message_size".into()),
-            Value::Integer(65536),
-        );
-        let options = Value::Map(omap);
-        let buf = serde_cbor::to_vec(&options).unwrap();
+        let buf = create_simple_transport_options_cbor("127.0.0.1:0", 65536);
 
         let mut ta: *mut std::ffi::c_void = std::ptr::null_mut();
         assert_eq!(

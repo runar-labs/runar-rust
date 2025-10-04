@@ -625,6 +625,32 @@ struct CustomCaServerConfig {
     rate_limit_per_hour: u32,
 }
 
+/// FFI-specific transport options configuration for CBOR serialization
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct QuicTransportOptionsConfig {
+    /// Bind address for the transport (e.g., "0.0.0.0:0")
+    pub bind_addr: Option<String>,
+    /// Handshake response timeout in milliseconds
+    pub handshake_timeout_ms: Option<u64>,
+    /// Open stream timeout in milliseconds
+    pub open_stream_timeout_ms: Option<u64>,
+    /// Maximum message size in bytes
+    pub max_message_size: Option<usize>,
+    /// Response cache TTL in milliseconds
+    pub response_cache_ttl_ms: Option<u64>,
+    /// Maximum number of request retries
+    pub max_request_retries: Option<u32>,
+    /// Certificate chain DER data (for testing only)
+    #[serde(with = "runar_macros_common::VecVecBytes")]
+    pub cert_chain_der: Vec<Vec<u8>>,
+    /// Private key DER data (for testing only)
+    #[serde(with = "serde_bytes")]
+    pub private_key_der: Option<Vec<u8>>,
+    /// Root certificates DER data (for testing only)
+    #[serde(with = "runar_macros_common::VecVecBytes")]
+    pub root_certs_der: Vec<Vec<u8>>,
+}
+
 // ------------------------------
 // Persistence and keystore management
 // ------------------------------
@@ -3754,107 +3780,87 @@ pub unsafe extern "C" fn rn_transport_new_with_keys(
             return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
-    // Parse options from CBOR map { bind_addr, timeouts, max_message_size }
+    // Parse transport options from CBOR using proper struct serialization
     let slice = std::slice::from_raw_parts(options_cbor, options_len);
-    let mut options = QuicTransportOptions::new();
-    // Minimal: expect a CBOR map with optional fields
-    let value: serde_cbor::Value = match serde_cbor::from_slice(slice) {
-        Ok(v) => v,
+    let config: QuicTransportOptionsConfig = match serde_cbor::from_slice(slice) {
+        Ok(config) => config,
         Err(e) => {
             set_error(
                 err,
                 RN_ERROR_SERIALIZATION_FAILED,
-                &format!("Failed to decode options: {e}"),
+                &format!("Failed to parse transport options: {e}"),
             );
-            return 2;
+            return RN_ERROR_SERIALIZATION_FAILED;
         }
     };
-    if let serde_cbor::Value::Map(m) = value {
-        for (k, v) in m {
-            if let serde_cbor::Value::Text(s) = k {
-                match s.as_str() {
-                    "bind_addr" => {
-                        if let serde_cbor::Value::Text(addr) = v {
-                            if let Ok(sock) = addr.parse() {
-                                options = options.with_bind_addr(sock);
-                            }
-                        }
-                    }
-                    "handshake_timeout_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                options = options.with_handshake_response_timeout(
-                                    std::time::Duration::from_millis(ms as u64),
-                                );
-                            }
-                        }
-                    }
-                    "open_stream_timeout_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                options = options.with_open_stream_timeout(
-                                    std::time::Duration::from_millis(ms as u64),
-                                );
-                            }
-                        }
-                    }
-                    "max_message_size" => {
-                        if let serde_cbor::Value::Integer(sz) = v {
-                            if sz > 0 {
-                                options = options.with_max_message_size(sz as usize);
-                            }
-                        }
-                    }
-                    "response_cache_ttl_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                options = options.with_response_cache_ttl(
-                                    std::time::Duration::from_millis(ms as u64),
-                                );
-                            }
-                        }
-                    }
-                    "max_request_retries" => {
-                        if let serde_cbor::Value::Integer(n) = v {
-                            if n >= 0 {
-                                options = options.with_max_request_retries(n as u32);
-                            }
-                        }
-                    }
-                    // Inline certs (discouraged in production; for testing)
-                    "cert_chain_der" => {
-                        if let serde_cbor::Value::Array(arr) = v {
-                            let mut certs = Vec::with_capacity(arr.len());
-                            for item in arr {
-                                if let serde_cbor::Value::Bytes(b) = item {
-                                    certs.push(rustls_pki_types::CertificateDer::from(b));
-                                }
-                            }
-                            options = options.with_certificates(certs);
-                        }
-                    }
-                    "private_key_der" => {
-                        if let serde_cbor::Value::Bytes(b) = v {
-                            // Assume PKCS#8 for FFI simplicity
-                            let pk = rustls_pki_types::PrivatePkcs8KeyDer::from(b);
-                            options = options.with_private_key(pk.into());
-                        }
-                    }
-                    "root_certs_der" => {
-                        if let serde_cbor::Value::Array(arr) = v {
-                            let mut certs = Vec::with_capacity(arr.len());
-                            for item in arr {
-                                if let serde_cbor::Value::Bytes(b) = item {
-                                    certs.push(rustls_pki_types::CertificateDer::from(b));
-                                }
-                            }
-                            options = options.with_root_certificates(certs);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+
+    // Convert config to QuicTransportOptions
+    let mut options = QuicTransportOptions::new();
+
+    // Set bind address if provided
+    if let Some(bind_addr_str) = config.bind_addr {
+        if let Ok(sock) = bind_addr_str.parse() {
+            options = options.with_bind_addr(sock);
         }
+    }
+
+    // Set handshake timeout if provided
+    if let Some(ms) = config.handshake_timeout_ms {
+        if ms > 0 {
+            options = options.with_handshake_response_timeout(std::time::Duration::from_millis(ms));
+        }
+    }
+
+    // Set open stream timeout if provided
+    if let Some(ms) = config.open_stream_timeout_ms {
+        if ms > 0 {
+            options = options.with_open_stream_timeout(std::time::Duration::from_millis(ms));
+        }
+    }
+
+    // Set max message size if provided
+    if let Some(sz) = config.max_message_size {
+        if sz > 0 {
+            options = options.with_max_message_size(sz);
+        }
+    }
+
+    // Set response cache TTL if provided
+    if let Some(ms) = config.response_cache_ttl_ms {
+        if ms > 0 {
+            options = options.with_response_cache_ttl(std::time::Duration::from_millis(ms));
+        }
+    }
+
+    // Set max request retries if provided
+    if let Some(n) = config.max_request_retries {
+        options = options.with_max_request_retries(n);
+    }
+
+    // Set certificates if provided (for testing only)
+    if !config.cert_chain_der.is_empty() {
+        let certs: Vec<rustls_pki_types::CertificateDer<'static>> = config
+            .cert_chain_der
+            .into_iter()
+            .map(rustls_pki_types::CertificateDer::from)
+            .collect();
+        options = options.with_certificates(certs);
+    }
+
+    // Set private key if provided (for testing only)
+    if let Some(private_key_der) = config.private_key_der {
+        let pk = rustls_pki_types::PrivatePkcs8KeyDer::from(private_key_der);
+        options = options.with_private_key(pk.into());
+    }
+
+    // Set root certificates if provided (for testing only)
+    if !config.root_certs_der.is_empty() {
+        let certs: Vec<rustls_pki_types::CertificateDer<'static>> = config
+            .root_certs_der
+            .into_iter()
+            .map(rustls_pki_types::CertificateDer::from)
+            .collect();
+        options = options.with_root_certificates(certs);
     }
     // Wire key manager and local pk/logger
     let manager = match validate_node_manager(keys_inner) {

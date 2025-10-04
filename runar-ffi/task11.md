@@ -1,4 +1,4 @@
-Lets improve rn_discovery_new_with_multicast
+Goal 1: Lets improve rn_discovery_new_with_multicast (completed)
 
 It shuold not receive keys: *mut c_void, as parameter.. keys is onlyn used for:
 let node_pk = match node_manager.get_node_public_key() {
@@ -25,3 +25,23 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
 Both objects PeerIndo and DiscoveryOptions shuold use standard CBOR serailization. not specialized method like parse_discovery_options
 
 Update tehe FFI lib and all tests to use this API.. no backwared compat.. do a full refactory. 
+
+
+GOAL 2: lets improve rn_transport_new_with_keys
+
+CRITICAL ISSUES FOUND:
+1. rn_transport_new_with_keys Function (Lines 3721-3858)
+Issue: Manual CBOR map parsing instead of using a proper struct
+Location: Lines 3757-3858
+Problem: The function manually parses a CBOR map with fields like:
+bind_addr
+handshake_timeout_ms
+open_stream_timeout_ms
+max_message_size
+response_cache_ttl_ms
+max_request_retries
+cert_chain_der
+private_key_der
+root_certs_der
+Current Code:
+Should Be: A proper QuicTransportOptions struct with serde derives, similar to how DiscoveryOptions was fixed.

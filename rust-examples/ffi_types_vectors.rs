@@ -1119,13 +1119,20 @@ fn generate_handshake_data_vectors(out: &Path) -> Result<()> {
 fn generate_discovery_options_vectors(out: &Path) -> Result<()> {
     println!("🔍 Generating DiscoveryOptions vectors...");
 
-    // Create simple test data that matches Swift expectations (camelCase field names)
-    let options_data = serde_cbor::to_vec(&serde_json::json!({
-        "multicastGroup": "224.0.0.251:5353",
-        "announceIntervalMs": 1000,
-        "discoveryTimeoutMs": 5000,
-        "debounceWindowMs": 200
-    }))?;
+    // Use the actual DiscoveryOptions struct with correct field names
+    use runar_transporter::discovery::DiscoveryOptions;
+    use std::time::Duration;
+
+    let options = DiscoveryOptions {
+        announce_interval: Duration::from_secs(1),
+        discovery_timeout: Duration::from_secs(5),
+        debounce_window: Duration::from_millis(200),
+        use_multicast: true,
+        local_network_only: true,
+        multicast_group: "239.255.42.98".to_string(),
+    };
+
+    let options_data = serde_cbor::to_vec(&options)?;
     write_cbor_vector_raw(out, "discovery_options_basic.bin", &options_data)?;
 
     println!("✅ DiscoveryOptions vectors generated");
