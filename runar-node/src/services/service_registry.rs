@@ -1047,38 +1047,6 @@ impl ServiceRegistry {
         Ok(result)
     }
 
-    /// Optimized version that pre-allocates the result vector
-    pub async fn get_all_subscriptions_optimized(
-        &self,
-        include_internal_services: bool,
-    ) -> Result<Vec<SubscriptionMetadata>> {
-        let subscriptions = self.event_subscriptions.read().await;
-        let all_values = subscriptions.get_all_values();
-
-        // Pre-allocate with estimated capacity to reduce reallocations
-        let estimated_capacity = all_values.iter().map(|vec| vec.len()).sum();
-        let mut result = Vec::with_capacity(estimated_capacity);
-
-        for subscription_vec in all_values {
-            for (_, _, metadata) in subscription_vec {
-                // Filter out internal services if not included
-                if !include_internal_services {
-                    // metadata.path is a full topic path including network id prefix
-                    let tp = TopicPath::from_full_path(&metadata.path).map_err(|e| {
-                        anyhow!("Invalid subscription topic path {}: {e}", metadata.path)
-                    })?;
-                    let service_path = tp.service_path();
-                    if is_internal_service(service_path.as_str()) {
-                        continue;
-                    }
-                }
-                result.push(metadata);
-            }
-        }
-
-        Ok(result)
-    }
-
     /// Get metadata for all services with an option to filter internal services
     ///
     /// INTENTION: Retrieve metadata for all registered services with the option
