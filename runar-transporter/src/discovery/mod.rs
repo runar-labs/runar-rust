@@ -6,6 +6,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ pub mod multicast_discovery;
 pub use multicast_discovery::{MulticastDiscovery, PeerInfo};
 
 /// Configuration options for node discovery
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiscoveryOptions {
     /// How often to announce this node's presence (in seconds)
     pub announce_interval: Duration,

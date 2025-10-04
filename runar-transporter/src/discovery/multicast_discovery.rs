@@ -10,8 +10,8 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use core::fmt;
 use runar_common::compact_ids::compact_id;
+use runar_logging::Logger;
 use runar_logging::{log_debug, log_error, log_info, log_warn};
-use runar_logging::{Component, Logger};
 use serde::{Deserialize, Serialize};
 use serde_bytes;
 use serde_cbor::{from_slice, to_vec};
@@ -96,7 +96,7 @@ pub struct MulticastDiscovery {
     // Multicast address field
     multicast_addr: Arc<Mutex<SocketAddr>>,
     // Logger
-    logger: Logger,
+    logger: Arc<Logger>,
 }
 
 impl MulticastDiscovery {
@@ -104,10 +104,8 @@ impl MulticastDiscovery {
     pub async fn new(
         local_peer_info: PeerInfo,
         options: DiscoveryOptions,
-        logger: Logger,
+        logger: Arc<Logger>,
     ) -> Result<Self> {
-        let logger = logger.with_component(Component::NetworkDiscovery);
-
         // Parse multicast group - handle both formats: "239.255.42.98" and "239.255.42.98:45678"
         let (multicast_addr, port) = if options.multicast_group.contains(':') {
             // Parse as a SocketAddr "IP:PORT"

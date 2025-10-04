@@ -2481,69 +2481,25 @@ pub unsafe extern "C" fn rn_keys_decrypt_network_data(
     }
     0
 }
-fn parse_discovery_options(cbor: &[u8]) -> DiscoveryOptions {
-    let mut opts = DiscoveryOptions::default();
-    if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(cbor) {
-        for (k, v) in m {
-            if let serde_cbor::Value::Text(s) = k {
-                match s.as_str() {
-                    "announce_interval_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                opts.announce_interval = std::time::Duration::from_millis(ms as u64)
-                            }
-                        }
-                    }
-                    "discovery_timeout_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                opts.discovery_timeout = std::time::Duration::from_millis(ms as u64)
-                            }
-                        }
-                    }
-                    "debounce_window_ms" => {
-                        if let serde_cbor::Value::Integer(ms) = v {
-                            if ms > 0 {
-                                opts.debounce_window = std::time::Duration::from_millis(ms as u64)
-                            }
-                        }
-                    }
-                    "use_multicast" => {
-                        if let serde_cbor::Value::Bool(b) = v {
-                            opts.use_multicast = b
-                        }
-                    }
-                    "local_network_only" => {
-                        if let serde_cbor::Value::Bool(b) = v {
-                            opts.local_network_only = b
-                        }
-                    }
-                    "multicast_group" => {
-                        if let serde_cbor::Value::Text(addr) = v {
-                            opts.multicast_group = addr
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    opts
-}
 
 // ffi_guard removed - violates design principles by preventing proper error handling flow
 
 #[no_mangle]
 pub unsafe extern "C" fn rn_discovery_new_with_multicast(
-    keys: *mut c_void,
+    peer_info_cbor: *const u8,
+    peer_info_len: usize,
     options_cbor: *const u8,
     options_len: usize,
     out_discovery: *mut *mut c_void,
     err: *mut RnError,
 ) -> i32 {
     // Validate parameters upfront - specific error messages
-    if keys.is_null() {
-        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+    if peer_info_cbor.is_null() {
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "peer_info CBOR pointer is null",
+        );
         return RN_ERROR_NULL_ARGUMENT;
     }
     if options_cbor.is_null() {
@@ -2559,64 +2515,37 @@ pub unsafe extern "C" fn rn_discovery_new_with_multicast(
         return RN_ERROR_NULL_ARGUMENT;
     }
 
-    let Some(keys_inner) = with_keys_inner(keys) else {
-        set_error(err, RN_ERROR_INVALID_HANDLE, "invalid keys handle");
-        return RN_ERROR_INVALID_HANDLE;
-    };
-    let slice = std::slice::from_raw_parts(options_cbor, options_len);
-    let opts = parse_discovery_options(slice);
-
-    // Build local peer info from node keys and provided addresses if any
-    let mut addresses: Vec<String> = Vec::new();
-    if let Ok(serde_cbor::Value::Map(m)) = serde_cbor::from_slice::<serde_cbor::Value>(slice) {
-        for (k, v) in m {
-            if let serde_cbor::Value::Text(s) = k {
-                if s == "local_addresses" {
-                    if let serde_cbor::Value::Array(arr) = v {
-                        for it in arr {
-                            if let serde_cbor::Value::Text(a) = it {
-                                addresses.push(a)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let manager = match validate_node_manager(keys_inner) {
-        Ok(mgr) => mgr,
+    // Parse peer info from CBOR
+    let peer_info_slice = std::slice::from_raw_parts(peer_info_cbor, peer_info_len);
+    let local_peer: PeerInfo = match serde_cbor::from_slice(peer_info_slice) {
+        Ok(peer) => peer,
         Err(e) => {
-            set_error(err, e.code(), &e.message());
-            return e.code();
-        }
-    };
-
-    let node_manager = match manager.read() {
-        Ok(mgr) => mgr,
-        Err(_) => {
-            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
-            return RN_ERROR_LOCK_ERROR;
-        }
-    };
-
-    let node_pk = match node_manager.get_node_public_key() {
-        Some(pk) => pk,
-        None => {
             set_error(
                 err,
-                RN_ERROR_OPERATION_FAILED,
-                "Node public key not available - call rn_keys_node_generate_keys first",
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse peer info: {e}"),
             );
-            return RN_ERROR_OPERATION_FAILED;
+            return RN_ERROR_INVALID_ARGUMENT;
         }
     };
 
-    let local_peer = PeerInfo {
-        public_key: node_pk,
-        addresses,
+    // Parse discovery options from CBOR
+    let options_slice = std::slice::from_raw_parts(options_cbor, options_len);
+    let opts: DiscoveryOptions = match serde_cbor::from_slice(options_slice) {
+        Ok(options) => options,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse discovery options: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
     };
-    let logger = keys_inner.logger.as_ref().clone();
+
+    let root_logger = get_global_logger();
+    let logger = Arc::new(root_logger.with_component(Component::NetworkDiscovery));
+
     let disc = match runtime().block_on(MulticastDiscovery::new(local_peer, opts, logger)) {
         Ok(d) => Arc::new(d),
         Err(e) => {
@@ -2699,7 +2628,17 @@ pub unsafe extern "C" fn rn_discovery_init(
         return RN_ERROR_INVALID_HANDLE;
     };
     let slice = std::slice::from_raw_parts(options_cbor, options_len);
-    let opts = parse_discovery_options(slice);
+    let opts: DiscoveryOptions = match serde_cbor::from_slice(slice) {
+        Ok(options) => options,
+        Err(e) => {
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                &format!("Failed to parse discovery options: {e}"),
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
     if let Err(e) = runtime().block_on(inner.discovery.init(opts)) {
         set_error(err, RN_ERROR_OPERATION_FAILED, &format!("init failed: {e}"));
         return RN_ERROR_OPERATION_FAILED;

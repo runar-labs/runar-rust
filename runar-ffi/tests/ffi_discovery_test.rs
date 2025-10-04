@@ -45,27 +45,22 @@ fn test_ffi_discovery_ttl_lost_and_debounce() {
     );
 
     // Create discovery options with short TTL for testing
-    let discovery_options = serde_cbor::to_vec(&serde_cbor::Value::Map({
-        let mut map = std::collections::BTreeMap::new();
-        map.insert(
-            serde_cbor::Value::Text("multicast_group".into()),
-            serde_cbor::Value::Text("239.255.0.1:45678".into()),
-        );
-        map.insert(
-            serde_cbor::Value::Text("announce_interval_ms".into()),
-            serde_cbor::Value::Integer(50),
-        );
-        map.insert(
-            serde_cbor::Value::Text("discovery_timeout_ms".into()),
-            serde_cbor::Value::Integer(1000),
-        );
-        map.insert(
-            serde_cbor::Value::Text("debounce_window_ms".into()),
-            serde_cbor::Value::Integer(100),
-        );
-        map
-    }))
-    .expect("Failed to serialize discovery options");
+    let discovery_options = create_discovery_options_cbor(
+        50,                              // announce_interval_ms
+        1000,                            // discovery_timeout_ms
+        100,                             // debounce_window_ms
+        true,                            // use_multicast
+        true,                            // local_network_only
+        "239.255.0.1:45678".to_string(), // multicast_group
+    );
+
+    // Get public keys for both nodes
+    let public_key_a = unsafe { get_node_public_key(keys_a) };
+    let public_key_b = unsafe { get_node_public_key(keys_b) };
+
+    // Create peer info for both nodes
+    let peer_info_a = create_peer_info_cbor(public_key_a, vec!["127.0.0.1:8080".to_string()]);
+    let peer_info_b = create_peer_info_cbor(public_key_b, vec!["127.0.0.1:8081".to_string()]);
 
     // Create discovery instances for both nodes
     let mut discovery_a: *mut c_void = ptr::null_mut();
@@ -74,7 +69,8 @@ fn test_ffi_discovery_ttl_lost_and_debounce() {
     assert_eq!(
         unsafe {
             rn_discovery_new_with_multicast(
-                keys_a,
+                peer_info_a.as_ptr(),
+                peer_info_a.len(),
                 discovery_options.as_ptr(),
                 discovery_options.len(),
                 &mut discovery_a,
@@ -87,7 +83,8 @@ fn test_ffi_discovery_ttl_lost_and_debounce() {
     assert_eq!(
         unsafe {
             rn_discovery_new_with_multicast(
-                keys_b,
+                peer_info_b.as_ptr(),
+                peer_info_b.len(),
                 discovery_options.as_ptr(),
                 discovery_options.len(),
                 &mut discovery_b,
@@ -196,27 +193,22 @@ fn test_ffi_discovery_event_polling() {
     );
 
     // Create discovery options with short intervals for testing
-    let discovery_options = serde_cbor::to_vec(&serde_cbor::Value::Map({
-        let mut map = std::collections::BTreeMap::new();
-        map.insert(
-            serde_cbor::Value::Text("multicast_group".into()),
-            serde_cbor::Value::Text("239.255.0.2:45679".into()),
-        );
-        map.insert(
-            serde_cbor::Value::Text("announce_interval_ms".into()),
-            serde_cbor::Value::Integer(50),
-        );
-        map.insert(
-            serde_cbor::Value::Text("discovery_timeout_ms".into()),
-            serde_cbor::Value::Integer(1000),
-        );
-        map.insert(
-            serde_cbor::Value::Text("debounce_window_ms".into()),
-            serde_cbor::Value::Integer(100),
-        );
-        map
-    }))
-    .expect("Failed to serialize discovery options");
+    let discovery_options = create_discovery_options_cbor(
+        50,                              // announce_interval_ms
+        1000,                            // discovery_timeout_ms
+        100,                             // debounce_window_ms
+        true,                            // use_multicast
+        true,                            // local_network_only
+        "239.255.0.2:45679".to_string(), // multicast_group
+    );
+
+    // Get public keys for both nodes
+    let public_key_a = unsafe { get_node_public_key(keys_a) };
+    let public_key_b = unsafe { get_node_public_key(keys_b) };
+
+    // Create peer info for both nodes
+    let peer_info_a = create_peer_info_cbor(public_key_a, vec!["127.0.0.1:8080".to_string()]);
+    let peer_info_b = create_peer_info_cbor(public_key_b, vec!["127.0.0.1:8081".to_string()]);
 
     // Create discovery instances
     let mut discovery_a: *mut c_void = ptr::null_mut();
@@ -225,7 +217,8 @@ fn test_ffi_discovery_event_polling() {
     assert_eq!(
         unsafe {
             rn_discovery_new_with_multicast(
-                keys_a,
+                peer_info_a.as_ptr(),
+                peer_info_a.len(),
                 discovery_options.as_ptr(),
                 discovery_options.len(),
                 &mut discovery_a,
@@ -237,7 +230,8 @@ fn test_ffi_discovery_event_polling() {
     assert_eq!(
         unsafe {
             rn_discovery_new_with_multicast(
-                keys_b,
+                peer_info_b.as_ptr(),
+                peer_info_b.len(),
                 discovery_options.as_ptr(),
                 discovery_options.len(),
                 &mut discovery_b,
@@ -438,27 +432,22 @@ fn test_ffi_multicast_announce_and_discover() {
     );
 
     // Create discovery options
-    let discovery_options = serde_cbor::to_vec(&serde_cbor::Value::Map({
-        let mut map = std::collections::BTreeMap::new();
-        map.insert(
-            serde_cbor::Value::Text("multicast_group".into()),
-            serde_cbor::Value::Text("239.255.0.1:45679".into()),
-        );
-        map.insert(
-            serde_cbor::Value::Text("announce_interval_ms".into()),
-            serde_cbor::Value::Integer(100),
-        );
-        map.insert(
-            serde_cbor::Value::Text("discovery_timeout_ms".into()),
-            serde_cbor::Value::Integer(2000),
-        );
-        map.insert(
-            serde_cbor::Value::Text("debounce_window_ms".into()),
-            serde_cbor::Value::Integer(200),
-        );
-        map
-    }))
-    .expect("Failed to serialize discovery options");
+    let discovery_options = create_discovery_options_cbor(
+        100,                             // announce_interval_ms
+        2000,                            // discovery_timeout_ms
+        200,                             // debounce_window_ms
+        true,                            // use_multicast
+        true,                            // local_network_only
+        "239.255.0.1:45679".to_string(), // multicast_group
+    );
+
+    // Get public keys for both nodes
+    let public_key_a = unsafe { get_node_public_key(keys_a) };
+    let public_key_b = unsafe { get_node_public_key(keys_b) };
+
+    // Create peer info for both nodes
+    let peer_info_a = create_peer_info_cbor(public_key_a, vec!["127.0.0.1:8080".to_string()]);
+    let peer_info_b = create_peer_info_cbor(public_key_b, vec!["127.0.0.1:8081".to_string()]);
 
     // Create discovery instances for both nodes
     let mut discovery_a: *mut c_void = ptr::null_mut();
@@ -467,7 +456,8 @@ fn test_ffi_multicast_announce_and_discover() {
     assert_eq!(
         unsafe {
             rn_discovery_new_with_multicast(
-                keys_a,
+                peer_info_a.as_ptr(),
+                peer_info_a.len(),
                 discovery_options.as_ptr(),
                 discovery_options.len(),
                 &mut discovery_a,
@@ -480,7 +470,8 @@ fn test_ffi_multicast_announce_and_discover() {
     assert_eq!(
         unsafe {
             rn_discovery_new_with_multicast(
-                keys_b,
+                peer_info_b.as_ptr(),
+                peer_info_b.len(),
                 discovery_options.as_ptr(),
                 discovery_options.len(),
                 &mut discovery_b,
@@ -569,27 +560,20 @@ fn test_ffi_discovery_start_stop_idempotence() {
     );
 
     // Create discovery options
-    let discovery_options = serde_cbor::to_vec(&serde_cbor::Value::Map({
-        let mut map = std::collections::BTreeMap::new();
-        map.insert(
-            serde_cbor::Value::Text("multicast_group".into()),
-            serde_cbor::Value::Text("239.255.0.1:45680".into()),
-        );
-        map.insert(
-            serde_cbor::Value::Text("announce_interval_ms".into()),
-            serde_cbor::Value::Integer(100),
-        );
-        map.insert(
-            serde_cbor::Value::Text("discovery_timeout_ms".into()),
-            serde_cbor::Value::Integer(2000),
-        );
-        map.insert(
-            serde_cbor::Value::Text("debounce_window_ms".into()),
-            serde_cbor::Value::Integer(200),
-        );
-        map
-    }))
-    .expect("Failed to serialize discovery options");
+    let discovery_options = create_discovery_options_cbor(
+        100,                             // announce_interval_ms
+        2000,                            // discovery_timeout_ms
+        200,                             // debounce_window_ms
+        true,                            // use_multicast
+        true,                            // local_network_only
+        "239.255.0.1:45680".to_string(), // multicast_group
+    );
+
+    // Get public key for the node
+    let public_key = unsafe { get_node_public_key(keys) };
+
+    // Create peer info for the node
+    let peer_info = create_peer_info_cbor(public_key, vec!["127.0.0.1:8080".to_string()]);
 
     // Create discovery instance
     let mut discovery: *mut c_void = ptr::null_mut();
@@ -597,7 +581,8 @@ fn test_ffi_discovery_start_stop_idempotence() {
     assert_eq!(
         unsafe {
             rn_discovery_new_with_multicast(
-                keys,
+                peer_info.as_ptr(),
+                peer_info.len(),
                 discovery_options.as_ptr(),
                 discovery_options.len(),
                 &mut discovery,
@@ -674,14 +659,21 @@ fn test_ffi_discovery_invalid_cbor_handling() {
         0
     );
 
+    // Get public key for the node
+    let public_key = unsafe { get_node_public_key(keys) };
+
+    // Create peer info for the node
+    let peer_info = create_peer_info_cbor(public_key, vec!["127.0.0.1:8080".to_string()]);
+
     // Create discovery instance
     let mut discovery: *mut c_void = ptr::null_mut();
 
-    // Test with invalid CBOR data
+    // Test with invalid CBOR data for options
     let invalid_cbor = b"invalid cbor data";
     let result = unsafe {
         rn_discovery_new_with_multicast(
-            keys,
+            peer_info.as_ptr(),
+            peer_info.len(),
             invalid_cbor.as_ptr(),
             invalid_cbor.len(),
             &mut discovery,
@@ -689,12 +681,14 @@ fn test_ffi_discovery_invalid_cbor_handling() {
         )
     };
 
-    // Should succeed with invalid CBOR (uses default options)
-    assert_eq!(result, 0);
-    assert!(!discovery.is_null());
+    // Should fail with invalid CBOR options
+    assert_ne!(result, 0);
+    assert!(discovery.is_null());
 
     // Cleanup
-    rn_discovery_free(discovery);
+    if !discovery.is_null() {
+        rn_discovery_free(discovery);
+    }
     rn_keys_free(keys);
     if !csr.is_null() {
         rn_free(csr, csr_len);

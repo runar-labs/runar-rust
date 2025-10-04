@@ -1705,7 +1705,7 @@ impl Node {
                 let discovery = MulticastDiscovery::new(
                     local_peer_info,
                     discovery_options.unwrap_or_default(),
-                    self.logger.with_component(Component::NetworkDiscovery),
+                    Arc::new(self.logger.with_component(Component::NetworkDiscovery)),
                 )
                 .await?;
                 Ok(Arc::new(discovery))

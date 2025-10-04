@@ -199,3 +199,69 @@ pub fn create_enrollment_token(network_id: &str, token_id: &str) -> Vec<u8> {
 
     serde_cbor::to_vec(&enrollment_token).expect("Failed to serialize enrollment token")
 }
+
+/// Create peer info in CBOR format for discovery
+#[allow(dead_code)]
+pub fn create_peer_info_cbor(public_key: Vec<u8>, addresses: Vec<String>) -> Vec<u8> {
+    use runar_transporter::discovery::multicast_discovery::PeerInfo;
+    use serde_cbor;
+
+    let peer_info = PeerInfo::new(public_key, addresses);
+    serde_cbor::to_vec(&peer_info).expect("Failed to serialize peer info")
+}
+
+/// Create discovery options in CBOR format
+#[allow(dead_code)]
+pub fn create_discovery_options_cbor(
+    announce_interval_ms: u64,
+    discovery_timeout_ms: u64,
+    debounce_window_ms: u64,
+    use_multicast: bool,
+    local_network_only: bool,
+    multicast_group: String,
+) -> Vec<u8> {
+    use runar_transporter::discovery::DiscoveryOptions;
+    use serde_cbor;
+    use std::time::Duration;
+
+    let options = DiscoveryOptions {
+        announce_interval: Duration::from_millis(announce_interval_ms),
+        discovery_timeout: Duration::from_millis(discovery_timeout_ms),
+        debounce_window: Duration::from_millis(debounce_window_ms),
+        use_multicast,
+        local_network_only,
+        multicast_group,
+    };
+
+    serde_cbor::to_vec(&options).expect("Failed to serialize discovery options")
+}
+
+/// Get node public key from keys handle
+///
+/// # Safety
+///
+/// The `keys` parameter must be a valid, non-null pointer to a keys handle.
+/// The caller is responsible for ensuring the pointer is valid and properly aligned.
+#[allow(dead_code)]
+pub unsafe fn get_node_public_key(keys: *mut c_void) -> Vec<u8> {
+    let mut error = create_test_error();
+    let mut public_key: *mut u8 = ptr::null_mut();
+    let mut public_key_len: usize = 0;
+
+    let result =
+        rn_keys_node_get_public_key(keys, &mut public_key, &mut public_key_len, &mut error);
+    assert_eq!(result, 0, "Failed to get node public key");
+
+    let key_slice = std::slice::from_raw_parts(public_key, public_key_len);
+    let key_vec = key_slice.to_vec();
+
+    // Free the allocated memory
+    if !public_key.is_null() {
+        std::alloc::dealloc(
+            public_key,
+            std::alloc::Layout::from_size_align(public_key_len, 1).unwrap(),
+        );
+    }
+
+    key_vec
+}

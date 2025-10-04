@@ -265,7 +265,8 @@ int32_t rn_keys_decrypt_network_data(void *keys,
                                      size_t *out_len,
                                      struct RnError *err);
 
-int32_t rn_discovery_new_with_multicast(void *keys,
+int32_t rn_discovery_new_with_multicast(const uint8_t *peer_info_cbor,
+                                        size_t peer_info_len,
                                         const uint8_t *options_cbor,
                                         size_t options_len,
                                         void **out_discovery,
