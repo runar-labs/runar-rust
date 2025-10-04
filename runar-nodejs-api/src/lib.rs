@@ -1681,7 +1681,7 @@ impl Discovery {
             .block_on(runar_transporter::discovery::MulticastDiscovery::new(
                 local_peer,
                 opts,
-                (*logger).clone(),
+                Arc::new((*logger).clone()),
             ))
             .map_err(|e| Error::from_reason(e.to_string()))?;
         Ok(Discovery {

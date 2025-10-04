@@ -3,7 +3,6 @@ mod tests {
     use crate::ca_node_types::CaRevocationList;
     use runar_macros_common::VecVecBytes;
     use serde::{Deserialize, Serialize};
-    use serde_cbor;
 
     #[derive(Serialize, Deserialize)]
     struct TestStruct {
@@ -25,7 +24,7 @@ mod tests {
         };
 
         let cbor = serde_cbor::to_vec(&crl).unwrap();
-        println!("CaRevocationList CBOR: {:02x?}", cbor);
+        println!("CaRevocationList CBOR: {cbor:02x?}");
 
         // Verify that the revoked_serials field contains byte string markers
         // Look for 0x44 markers (byte string of length 4)
@@ -72,14 +71,14 @@ mod tests {
 
         // OLD APPROACH: Direct Vec<Vec<u8>> serialization
         let old_cbor = serde_cbor::to_vec(&data).unwrap();
-        println!("OLD approach (direct Vec<Vec<u8>>): {:02x?}", old_cbor);
+        println!("OLD approach (direct Vec<Vec<u8>>): {old_cbor:02x?}");
 
         // NEW APPROACH: Using our VecVecBytes serializer
         let test_struct = TestStruct {
             revoked_serials: data.clone(),
         };
         let new_cbor = serde_cbor::to_vec(&test_struct).unwrap();
-        println!("NEW approach (with VecVecBytes): {:02x?}", new_cbor);
+        println!("NEW approach (with VecVecBytes): {new_cbor:02x?}");
 
         // Verify the new approach has byte string markers
         let new_byte_string_markers: Vec<usize> = new_cbor

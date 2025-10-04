@@ -13,15 +13,11 @@ use runar_keys::ca_node_types::{
 use runar_keys::enrollment_token::{EnrollmentToken, EnrollmentTokenBody};
 use runar_keys::mobile::SetupToken;
 use runar_schemas::{
-    ActionMetadata, FieldSchema, NodeInfo, NodeMetadata, SchemaDataType, ServiceMetadata,
-    SubscriptionMetadata,
+    ActionMetadata, NodeInfo, NodeMetadata, ServiceMetadata, SubscriptionMetadata,
 };
-use runar_transporter::ca_server::CaServerConfig;
 use runar_transporter::discovery::multicast_discovery::PeerInfo;
-use runar_transporter::discovery::DiscoveryOptions;
 use runar_transporter::transport::{NetworkMessage, NetworkMessagePayloadItem};
 use serde::Serialize;
-use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
 
