@@ -102,6 +102,7 @@ fn main() -> Result<()> {
 
     // 20. Missing Transport Options
     generate_discovery_options_vectors(&out)?;
+    generate_quic_transport_options_config_vectors(&out)?;
     generate_quic_transport_options_vectors(&out)?;
     generate_ffi_quic_transport_options_vectors(&out)?;
 
@@ -1136,6 +1137,38 @@ fn generate_discovery_options_vectors(out: &Path) -> Result<()> {
     write_cbor_vector_raw(out, "discovery_options_basic.bin", &options_data)?;
 
     println!("✅ DiscoveryOptions vectors generated");
+    Ok(())
+}
+
+fn generate_quic_transport_options_config_vectors(out: &Path) -> Result<()> {
+    println!("🔍 Generating QuicTransportOptionsConfig vectors...");
+
+    // Use the actual QuicTransportOptionsConfig struct
+    use runar_ffi::QuicTransportOptionsConfig;
+
+    let config = QuicTransportOptionsConfig {
+        bind_addr: Some("0.0.0.0:0".to_string()),
+        handshake_timeout_ms: Some(5000),
+        open_stream_timeout_ms: Some(10000),
+        max_message_size: Some(1024 * 1024), // 1MB
+        response_cache_ttl_ms: Some(30000),
+        max_request_retries: Some(3),
+        cert_chain_der: vec![
+            vec![0x30, 0x82, 0x01, 0x22], // Sample DER data
+            vec![0x30, 0x82, 0x01, 0x33],
+        ],
+        private_key_der: Some(vec![0x30, 0x82, 0x01, 0x44]), // Sample DER data
+        root_certs_der: vec![
+            vec![0x30, 0x82, 0x01, 0x55], // Sample DER data
+            vec![0x30, 0x82, 0x01, 0x66],
+        ],
+    };
+
+    let config_data =
+        serde_cbor::to_vec(&config).context("Failed to serialize QuicTransportOptionsConfig")?;
+    write_cbor_vector_raw(out, "quic_transport_options_config_basic.bin", &config_data)?;
+
+    println!("✅ QuicTransportOptionsConfig vectors generated");
     Ok(())
 }
 

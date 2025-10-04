@@ -390,6 +390,36 @@ fn check_directories_exist() -> Result<()> {
     Ok(())
 }
 
+fn validate_quic_transport_options_config() -> Result<()> {
+    println!("🔍 Validating QuicTransportOptionsConfig...");
+
+    let swift_data = read_bytes(Path::new(
+        "../../runar-swift/swift-ffi/target/ffi-types-vectors-swift/quic_transport_options_config_basic.bin",
+    ))?;
+    let rust_data = read_bytes(Path::new(
+        "target/ffi-types-vectors/quic_transport_options_config_basic.bin",
+    ))?;
+
+    // Deserialize both Swift and Rust data
+    let swift_value: runar_ffi::QuicTransportOptionsConfig = serde_cbor::from_slice(&swift_data)
+        .context("Failed to deserialize Swift QuicTransportOptionsConfig")?;
+    let rust_value: runar_ffi::QuicTransportOptionsConfig = serde_cbor::from_slice(&rust_data)
+        .context("Failed to deserialize Rust QuicTransportOptionsConfig")?;
+
+    // Compare the values
+    if swift_value == rust_value {
+        println!("✅ QuicTransportOptionsConfig validation passed");
+    } else {
+        anyhow::bail!(
+            "QuicTransportOptionsConfig validation failed:\nSwift: {:?}\nRust: {:?}",
+            swift_value,
+            rust_value
+        );
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     println!("🔬 FFI Types CBOR Cross-Platform Validation");
     println!("===========================================");
@@ -427,6 +457,8 @@ fn main() -> Result<()> {
         validate_transport_request_event,
         validate_transport_event_event,
         validate_transport_response_event,
+        // Transport Config validation (task23.md requirement)
+        validate_quic_transport_options_config,
     ];
 
     let mut passed = 0;

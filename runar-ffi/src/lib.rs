@@ -626,7 +626,7 @@ struct CustomCaServerConfig {
 }
 
 /// FFI-specific transport options configuration for CBOR serialization
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct QuicTransportOptionsConfig {
     /// Bind address for the transport (e.g., "0.0.0.0:0")
     pub bind_addr: Option<String>,
