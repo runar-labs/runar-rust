@@ -539,6 +539,160 @@ fn test_mobile_initialize_user_root_key_wrong_manager_type() {
 }
 
 #[test]
+fn test_mobile_get_network_public_key_by_id_happy_path() {
+    let keys = create_keys_handle();
+    unsafe { init_as_mobile(keys) };
+    let mut error = create_test_error();
+
+    // First, generate a network data key to have something to look up
+    let mut network_pk_ptr: *mut u8 = ptr::null_mut();
+    let mut network_pk_len: usize = 0;
+    let result = unsafe {
+        rn_keys_mobile_generate_network_data_key(
+            keys,
+            &mut network_pk_ptr,
+            &mut network_pk_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Should successfully generate network data key");
+
+    let network_public_key =
+        unsafe { std::slice::from_raw_parts(network_pk_ptr, network_pk_len) }.to_vec();
+    rn_free(network_pk_ptr, network_pk_len);
+
+    // Derive the network ID from the public key
+    let network_id = runar_common::compact_ids::compact_id(&network_public_key);
+    let network_id_cstr = std::ffi::CString::new(network_id.clone()).expect("Invalid network ID");
+
+    // Now test getting the public key by ID
+    let mut out_public_key: *mut u8 = ptr::null_mut();
+    let mut out_len: usize = 0;
+
+    let result = unsafe {
+        rn_keys_mobile_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, 0,
+        "Should successfully get network public key by ID"
+    );
+
+    let retrieved_key = unsafe { std::slice::from_raw_parts(out_public_key, out_len) }.to_vec();
+    rn_free(out_public_key, out_len);
+
+    assert_eq!(
+        retrieved_key, network_public_key,
+        "Retrieved key should match original"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_mobile_get_network_public_key_by_id_not_found() {
+    let keys = create_keys_handle();
+    unsafe { init_as_mobile(keys) };
+    let mut error = create_test_error();
+
+    let non_existent_id = "non_existent_network_id";
+    let network_id_cstr = std::ffi::CString::new(non_existent_id).expect("Invalid network ID");
+
+    let mut out_public_key: *mut u8 = ptr::null_mut();
+    let mut out_len: usize = 0;
+
+    let result = unsafe {
+        rn_keys_mobile_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_OPERATION_FAILED,
+        "Should fail when network ID not found"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_mobile_get_network_public_key_by_id_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_mobile(keys) };
+    let mut error = create_test_error();
+
+    let network_id_cstr = std::ffi::CString::new("test_network_id").expect("Invalid network ID");
+    let mut out_public_key: *mut u8 = ptr::null_mut();
+    let mut out_len: usize = 0;
+
+    // Test null keys
+    let result = unsafe {
+        rn_keys_mobile_get_network_public_key_by_id(
+            ptr::null_mut(),
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should fail with null keys");
+
+    // Test null network_id
+    let result = unsafe {
+        rn_keys_mobile_get_network_public_key_by_id(
+            keys,
+            ptr::null(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null network_id"
+    );
+
+    // Test null output pointers
+    let result = unsafe {
+        rn_keys_mobile_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            ptr::null_mut(),
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null output public_key"
+    );
+
+    let result = unsafe {
+        rn_keys_mobile_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null output length"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
 fn test_node_get_public_key_happy_path() {
     let keys = create_keys_handle();
     unsafe { init_as_node(keys) };
@@ -1009,6 +1163,216 @@ fn test_node_get_node_id_v2_not_initialized() {
     assert_eq!(
         result, RN_ERROR_NOT_INITIALIZED,
         "Should fail when not initialized"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_node_get_network_public_key_by_id_happy_path() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    // First, we need to install a network key to have something to look up
+    // We'll use the mobile key manager to generate a network key message
+    let mobile_keys = create_keys_handle();
+    unsafe { init_as_mobile(mobile_keys) };
+
+    // Generate network data key on mobile
+    let mut network_pk_ptr: *mut u8 = ptr::null_mut();
+    let mut network_pk_len: usize = 0;
+    let result = unsafe {
+        rn_keys_mobile_generate_network_data_key(
+            mobile_keys,
+            &mut network_pk_ptr,
+            &mut network_pk_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Should successfully generate network data key");
+
+    let network_public_key =
+        unsafe { std::slice::from_raw_parts(network_pk_ptr, network_pk_len) }.to_vec();
+    rn_free(network_pk_ptr, network_pk_len);
+
+    // Get node agreement public key
+    let mut node_agreement_pk_ptr: *mut u8 = ptr::null_mut();
+    let mut node_agreement_pk_len: usize = 0;
+    let result = rn_keys_node_get_agreement_public_key(
+        keys,
+        &mut node_agreement_pk_ptr,
+        &mut node_agreement_pk_len,
+        &mut error,
+    );
+    assert_eq!(
+        result, 0,
+        "Should successfully get node agreement public key"
+    );
+
+    let node_agreement_pk =
+        unsafe { std::slice::from_raw_parts(node_agreement_pk_ptr, node_agreement_pk_len) }
+            .to_vec();
+    rn_free(node_agreement_pk_ptr, node_agreement_pk_len);
+
+    // Create network key message on mobile
+    let mut nkm_ptr: *mut u8 = ptr::null_mut();
+    let mut nkm_len: usize = 0;
+    let result = unsafe {
+        rn_keys_mobile_create_network_key_message(
+            mobile_keys,
+            network_public_key.as_ptr(),
+            network_public_key.len(),
+            node_agreement_pk.as_ptr(),
+            node_agreement_pk.len(),
+            &mut nkm_ptr,
+            &mut nkm_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Should successfully create network key message");
+
+    let network_key_message = unsafe { std::slice::from_raw_parts(nkm_ptr, nkm_len) }.to_vec();
+    rn_free(nkm_ptr, nkm_len);
+
+    // Install network key on node
+    let result = unsafe {
+        rn_keys_node_install_network_key(
+            keys,
+            network_key_message.as_ptr(),
+            network_key_message.len(),
+            &mut error,
+        )
+    };
+    assert_eq!(result, 0, "Should successfully install network key");
+
+    // Derive the network ID from the public key
+    let network_id = runar_common::compact_ids::compact_id(&network_public_key);
+    let network_id_cstr = std::ffi::CString::new(network_id.clone()).expect("Invalid network ID");
+
+    // Now test getting the public key by ID
+    let mut out_public_key: *mut u8 = ptr::null_mut();
+    let mut out_len: usize = 0;
+
+    let result = unsafe {
+        rn_keys_node_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, 0,
+        "Should successfully get network public key by ID"
+    );
+
+    let retrieved_key = unsafe { std::slice::from_raw_parts(out_public_key, out_len) }.to_vec();
+    rn_free(out_public_key, out_len);
+
+    assert_eq!(
+        retrieved_key, network_public_key,
+        "Retrieved key should match original"
+    );
+
+    destroy_keys_handle(keys);
+    destroy_keys_handle(mobile_keys);
+}
+
+#[test]
+fn test_node_get_network_public_key_by_id_not_found() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    let non_existent_id = "non_existent_network_id";
+    let network_id_cstr = std::ffi::CString::new(non_existent_id).expect("Invalid network ID");
+
+    let mut out_public_key: *mut u8 = ptr::null_mut();
+    let mut out_len: usize = 0;
+
+    let result = unsafe {
+        rn_keys_node_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_OPERATION_FAILED,
+        "Should fail when network ID not found"
+    );
+
+    destroy_keys_handle(keys);
+}
+
+#[test]
+fn test_node_get_network_public_key_by_id_null_pointers() {
+    let keys = create_keys_handle();
+    unsafe { init_as_node(keys) };
+    let mut error = create_test_error();
+
+    let network_id_cstr = std::ffi::CString::new("test_network_id").expect("Invalid network ID");
+    let mut out_public_key: *mut u8 = ptr::null_mut();
+    let mut out_len: usize = 0;
+
+    // Test null keys
+    let result = unsafe {
+        rn_keys_node_get_network_public_key_by_id(
+            ptr::null_mut(),
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(result, RN_ERROR_NULL_ARGUMENT, "Should fail with null keys");
+
+    // Test null network_id
+    let result = unsafe {
+        rn_keys_node_get_network_public_key_by_id(
+            keys,
+            ptr::null(),
+            &mut out_public_key,
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null network_id"
+    );
+
+    // Test null output pointers
+    let result = unsafe {
+        rn_keys_node_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            ptr::null_mut(),
+            &mut out_len,
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null output public_key"
+    );
+
+    let result = unsafe {
+        rn_keys_node_get_network_public_key_by_id(
+            keys,
+            network_id_cstr.as_ptr(),
+            &mut out_public_key,
+            ptr::null_mut(),
+            &mut error,
+        )
+    };
+    assert_eq!(
+        result, RN_ERROR_NULL_ARGUMENT,
+        "Should fail with null output length"
     );
 
     destroy_keys_handle(keys);

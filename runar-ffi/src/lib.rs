@@ -1967,6 +1967,177 @@ pub unsafe extern "C" fn rn_keys_mobile_create_network_key_message(
     0
 }
 
+/// Get network public key by network ID for mobile key manager
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_mobile_get_network_public_key_by_id(
+    keys: *mut c_void,
+    network_id: *const std::os::raw::c_char,
+    out_public_key: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom(
+        "rn_keys_mobile_get_network_public_key_by_id",
+    ));
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Starting function"
+    );
+    log_trace!(logger, "  keys: {:?}", keys);
+    log_trace!(logger, "  network_id: {:?}", network_id);
+
+    // Validate parameters upfront
+    if keys.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: keys handle is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if network_id.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: network_id pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_public_key.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: output public_key pointer is null"
+        );
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output public_key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: output length pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Parameter validation passed"
+    );
+
+    let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: keys handle is null in with_keys_inner"
+        );
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Got keys inner"
+    );
+
+    let manager = match validate_mobile_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_get_network_public_key_by_id: validate_mobile_manager failed: {}",
+                e.message()
+            );
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Mobile manager validated"
+    );
+
+    let mobile_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_get_network_public_key_by_id: failed to acquire lock"
+            );
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: Got mobile manager lock"
+    );
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_mobile_get_network_public_key_by_id: invalid UTF-8 in network_id: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                "invalid UTF-8 in network_id",
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: network_id: {}",
+        network_id_str
+    );
+
+    let public_key = match mobile_manager.get_network_public_key_by_id(network_id_str) {
+        Ok(pk) => pk,
+        Err(e) => {
+            log_error!(logger, "rn_keys_mobile_get_network_public_key_by_id: get_network_public_key_by_id failed: {}", e);
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("get_network_public_key_by_id failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: public_key len: {}",
+        public_key.len()
+    );
+
+    if !alloc_bytes(out_public_key, out_len, &public_key) {
+        log_error!(
+            logger,
+            "rn_keys_mobile_get_network_public_key_by_id: alloc_bytes failed"
+        );
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    log_trace!(
+        logger,
+        "rn_keys_mobile_get_network_public_key_by_id: returning 0 (success)"
+    );
+    0
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn rn_keys_decrypt_local_data(
     keys: *mut c_void,
@@ -7867,6 +8038,177 @@ pub unsafe extern "C" fn rn_keys_node_has_network_private_key(
     unsafe {
         *out_has_key = if has_key { 1 } else { 0 };
     }
+    0
+}
+
+/// Get network public key by network ID for node key manager
+#[no_mangle]
+pub unsafe extern "C" fn rn_keys_node_get_network_public_key_by_id(
+    keys: *mut c_void,
+    network_id: *const std::os::raw::c_char,
+    out_public_key: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut RnError,
+) -> i32 {
+    let root_logger = get_global_logger();
+    let logger = root_logger.with_component(Component::Custom(
+        "rn_keys_node_get_network_public_key_by_id",
+    ));
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Starting function"
+    );
+    log_trace!(logger, "  keys: {:?}", keys);
+    log_trace!(logger, "  network_id: {:?}", network_id);
+
+    // Validate parameters upfront
+    if keys.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: keys handle is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "keys handle is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if network_id.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: network_id pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "network_id pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_public_key.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: output public_key pointer is null"
+        );
+        set_error(
+            err,
+            RN_ERROR_NULL_ARGUMENT,
+            "output public_key pointer is null",
+        );
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+    if out_len.is_null() {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: output length pointer is null"
+        );
+        set_error(err, RN_ERROR_NULL_ARGUMENT, "output length pointer is null");
+        return RN_ERROR_NULL_ARGUMENT;
+    }
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Parameter validation passed"
+    );
+
+    let Some(inner) = with_keys_inner(keys) else {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: keys handle is null in with_keys_inner"
+        );
+        set_error(err, RN_ERROR_INVALID_HANDLE, "keys handle is null");
+        return RN_ERROR_INVALID_HANDLE;
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Got keys inner"
+    );
+
+    let manager = match validate_node_manager(inner) {
+        Ok(mgr) => mgr,
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_network_public_key_by_id: validate_node_manager failed: {}",
+                e.message()
+            );
+            set_error(err, e.code(), &e.message());
+            return e.code();
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Node manager validated"
+    );
+
+    let node_manager = match manager.read() {
+        Ok(mgr) => mgr,
+        Err(_) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_network_public_key_by_id: failed to acquire lock"
+            );
+            set_error(err, RN_ERROR_LOCK_ERROR, "failed to acquire lock");
+            return RN_ERROR_LOCK_ERROR;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: Got node manager lock"
+    );
+
+    let network_id_str = match std::ffi::CStr::from_ptr(network_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            log_error!(
+                logger,
+                "rn_keys_node_get_network_public_key_by_id: invalid UTF-8 in network_id: {}",
+                e
+            );
+            set_error(
+                err,
+                RN_ERROR_INVALID_ARGUMENT,
+                "invalid UTF-8 in network_id",
+            );
+            return RN_ERROR_INVALID_ARGUMENT;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: network_id: {}",
+        network_id_str
+    );
+
+    let public_key = match node_manager.get_network_public_key_by_id(network_id_str) {
+        Ok(pk) => pk,
+        Err(e) => {
+            log_error!(logger, "rn_keys_node_get_network_public_key_by_id: get_network_public_key_by_id failed: {}", e);
+            set_error(
+                err,
+                RN_ERROR_OPERATION_FAILED,
+                &format!("get_network_public_key_by_id failed: {e}"),
+            );
+            return RN_ERROR_OPERATION_FAILED;
+        }
+    };
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: public_key len: {}",
+        public_key.len()
+    );
+
+    if !alloc_bytes(out_public_key, out_len, &public_key) {
+        log_error!(
+            logger,
+            "rn_keys_node_get_network_public_key_by_id: alloc_bytes failed"
+        );
+        set_error(err, RN_ERROR_MEMORY_ALLOCATION, "alloc failed");
+        return RN_ERROR_MEMORY_ALLOCATION;
+    }
+
+    log_trace!(
+        logger,
+        "rn_keys_node_get_network_public_key_by_id: returning 0 (success)"
+    );
     0
 }
 

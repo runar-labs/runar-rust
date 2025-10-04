@@ -204,6 +204,15 @@ int32_t rn_keys_mobile_create_network_key_message(void *keys,
                                                   size_t *out_len,
                                                   struct RnError *err);
 
+/**
+ * Get network public key by network ID for mobile key manager
+ */
+int32_t rn_keys_mobile_get_network_public_key_by_id(void *keys,
+                                                    const char *network_id,
+                                                    uint8_t **out_public_key,
+                                                    size_t *out_len,
+                                                    struct RnError *err);
+
 int32_t rn_keys_decrypt_local_data(void *keys,
                                    const uint8_t *encrypted,
                                    size_t enc_len,
@@ -837,6 +846,15 @@ int32_t rn_keys_node_has_network_private_key(void *keys,
                                              size_t key_len,
                                              int32_t *out_has_key,
                                              struct RnError *err);
+
+/**
+ * Get network public key by network ID for node key manager
+ */
+int32_t rn_keys_node_get_network_public_key_by_id(void *keys,
+                                                  const char *network_id,
+                                                  uint8_t **out_public_key,
+                                                  size_t *out_len,
+                                                  struct RnError *err);
 
 /**
  * Create new CA Client (new API)
