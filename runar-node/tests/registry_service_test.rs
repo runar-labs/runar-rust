@@ -1134,15 +1134,12 @@ async fn test_registry_service_remote_discovery() {
         logger.debug("🧪 Testing remote service calls through registry discovery");
 
         // Node1 should be able to call Node2's math2 service
+        let mut add_params_map_1: std::collections::HashMap<String, ArcValue> =
+            std::collections::HashMap::new();
+        add_params_map_1.insert("a".into(), ArcValue::new_primitive(10.0f64));
+        add_params_map_1.insert("b".into(), ArcValue::new_primitive(5.0f64));
         let response_av: ArcValue = node1
-            .request(
-                "math2/add",
-                Some(ArcValue::new_list(vec![
-                    ArcValue::new_primitive(10.0f64),
-                    ArcValue::new_primitive(5.0f64),
-                ])),
-                None,
-            )
+            .request("math2/add", Some(ArcValue::new_map(add_params_map_1)), None)
             .await
             .unwrap();
 
@@ -1153,13 +1150,14 @@ async fn test_registry_service_remote_discovery() {
         ));
 
         // Node2 should be able to call Node1's math1 service
+        let mut mul_params_map_2: std::collections::HashMap<String, ArcValue> =
+            std::collections::HashMap::new();
+        mul_params_map_2.insert("a".into(), ArcValue::new_primitive(3.0f64));
+        mul_params_map_2.insert("b".into(), ArcValue::new_primitive(4.0f64));
         let response_av: ArcValue = node2
             .request(
                 "math1/multiply",
-                Some(ArcValue::new_list(vec![
-                    ArcValue::new_primitive(3.0f64),
-                    ArcValue::new_primitive(4.0f64),
-                ])),
+                Some(ArcValue::new_map(mul_params_map_2)),
                 None,
             )
             .await
@@ -1170,6 +1168,9 @@ async fn test_registry_service_remote_discovery() {
         logger.debug(format!(
             "✅ Remote service call successful: 3 * 4 = {result}"
         ));
+
+        // NOTE: Remote service invocation tests are covered elsewhere. This test focuses on
+        // $registry/services list/info/state behavior to validate discovery and registry APIs.
 
         // ==========================================
         // Cleanup

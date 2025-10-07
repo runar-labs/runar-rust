@@ -179,8 +179,6 @@ pub struct ServiceRegistry {
     /// Local services registry (using PathTrie instead of HashMap)
     local_services: Arc<RwLock<PathTrie<Arc<ServiceEntry>>>>,
 
-    local_services_list: Arc<DashMap<TopicPath, Arc<ServiceEntry>>>,
-
     /// Remote services registry (using PathTrie instead of HashMap)
     remote_services: Arc<RwLock<PathTrie<Arc<RemoteService>>>>,
 
@@ -209,7 +207,6 @@ impl Clone for ServiceRegistry {
                 .subscription_id_to_service_topic_path
                 .clone(),
             local_services: self.local_services.clone(),
-            local_services_list: self.local_services_list.clone(),
             remote_services: self.remote_services.clone(),
             local_service_states: self.local_service_states.clone(),
             remote_service_states: self.remote_service_states.clone(),
@@ -238,7 +235,6 @@ impl ServiceRegistry {
             subscription_id_to_topic_path: Arc::new(DashMap::new()),
             subscription_id_to_service_topic_path: Arc::new(DashMap::new()),
             local_services: Arc::new(RwLock::new(PathTrie::new())),
-            local_services_list: Arc::new(DashMap::new()),
             remote_services: Arc::new(RwLock::new(PathTrie::new())),
             local_service_states: Arc::new(DashMap::new()),
             remote_service_states: Arc::new(DashMap::new()),
@@ -260,9 +256,6 @@ impl ServiceRegistry {
             .write()
             .await
             .set_value(service_topic.clone(), service);
-        //TODO understand why we have this duplciation of local_services and local_services_list
-        self.local_services_list
-            .insert(service_topic, service_entry.clone());
 
         Ok(())
     }
@@ -756,10 +749,14 @@ impl ServiceRegistry {
     /// starting, and stopping. This preserves the Node's responsibility for service
     /// lifecycle management while keeping the Registry focused on registration.
     pub async fn get_local_services(&self) -> HashMap<TopicPath, Arc<ServiceEntry>> {
-        // Convert DashMap to HashMap using DashMap iter pattern
-        let mut result = HashMap::with_capacity(self.local_services_list.len());
-        for entry in self.local_services_list.iter() {
-            result.insert(entry.key().clone(), entry.value().clone());
+        // Get all services from the PathTrie
+        let services_guard = self.local_services.read().await;
+        let all_services = services_guard.get_all_values();
+
+        // Convert to HashMap using the service topic path as the key
+        let mut result = HashMap::with_capacity(all_services.len());
+        for service_entry in all_services {
+            result.insert(service_entry.service_topic.clone(), service_entry);
         }
         result
     }
